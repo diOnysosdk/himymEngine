@@ -5,13 +5,20 @@ A lightweight, modular framework for creating demoscene intros and small demos. 
 ## Project Status
 
 **Phase 1: Foundation Libraries** ✅ COMPLETE
+**Phase 2: Animation Libraries** ✅ COMPLETE
+**Phase 3: Editor Foundation** ✅ INFRASTRUCTURE READY
 
 - ✅ `rev_platform` - Win32 window + WGL OpenGL context + timing
 - ✅ `rev_shader` - GLSL shader compilation and uniform management  
 - ✅ `rev_xm` - XM music playback (stub, needs libxm)
+- ✅ `rev_curve` - Time-value curves with easing
+- ✅ `rev_sequence` - Timeline and cue system
+- ✅ `rev_editor` - Editor infrastructure (needs Dear ImGui)
 - ✅ Minimal intro integration test
+- ✅ Animated intro with curves and timeline
+- ✅ Editor application framework
 
-**Next: Phase 2 - Animation Libraries**
+**Next: Add ImGui for full editor UI**
 
 ## Quick Start
 
@@ -50,23 +57,37 @@ himym/
 ├── revision_libs/              # Core libraries
 │   ├── rev_platform/           # Platform abstraction (Win32/WGL)
 │   ├── rev_shader/             # Shader compilation
-│   └── rev_xm/                 # XM music player (needs libxm)
+│   ├── rev_xm/                 # XM music player (needs libxm)
+│   ├── rev_curve/              # Animation curves
+│   ├── rev_sequence/           # Timeline system
+│   └── rev_editor/             # Editor framework (needs ImGui)
 ├── examples/
-│   └── minimal_intro/          # Phase 1 integration test
+│   ├── minimal_intro/          # Phase 1 integration test
+│   ├── animated_intro/         # Phase 2 animation test
+│   └── editor_app/             # Phase 3 editor application
 └── CMakeLists.txt              # Root build configuration
 ```
-
-## Library Overview
-
-### rev_platform
-Win32 window creation, WGL OpenGL 3.3 context, high-precision timing, keyboard/mouse input.
-
 **Size**: ~15 KB
 
 ### rev_shader
 GLSL shader compilation, program linking, uniform setters (float, vec2/3/4, mat4, int).
-
 **Size**: ~10 KB
+
+### rev_xm
+XM module playback. Currently a stub - requires libxm integration (see `revision_libs/rev_xm/README.md`).
+**Size**: ~30 KB (with libxm)
+
+### rev_curve
+Time-value curves with 6 easing modes (Linear, EaseIn/Out, EaseInOut, Smoothstep, Hold).
+**Size**: ~8 KB
+
+### rev_sequence
+Timeline management with cue system, fade in/out, and opacity calculation.
+**Size**: ~12 KB
+
+### rev_editor
+Editor infrastructure with project management, UI framework (requires Dear ImGui).
+**Size**: ~150 KB (with ImGui
 
 ### rev_xm
 XM module playback. Currently a stub - requires libxm integration (see `revision_libs/rev_xm/README.md`).
@@ -76,19 +97,22 @@ XM module playback. Currently a stub - requires libxm integration (see `revision
 ## Documentation
 
 All project documentation is in the `PR/` folder:
+Dear ImGui** for editor UI (optional)
+   - Download from https://github.com/ocornut/imgui
+   - Follow instructions in `revision_libs/rev_editor/README.md`
 
-- **[ROADMAP.md](PR/ROADMAP.md)** - 6-week implementation plan with milestones
-- **[LIBRARY_DESIGN.md](PR/LIBRARY_DESIGN.md)** - Complete API reference for all libraries
-- **[FROM_SCRATCH_V2.md](PR/FROM_SCRATCH_V2.md)** - Architecture rationale and design decisions
-- **[SHADER_GUIDE.md](PR/guides/SHADER_GUIDE.md)** - Shader authoring workflow
-- **[EDITOR_GUIDE.md](PR/guides/EDITOR_GUIDE.md)** - Editor usage (Phase 3+)
-
-## Next Steps
-
-1. **Add libxm** for audio playback
+2. **Add libxm** for audio playback (optional)
    - Download from https://github.com/Artefact2/libxm
    - Follow instructions in `revision_libs/rev_xm/README.md`
 
+3. **Continue with Phase 4**: Editor features
+   - Timeline UI with visual cue editing
+   - Curve editor canvas
+   - Shader parameter modal
+   - Export and build integration
+
+4. **Phase 5**: 3D rendering (optional)
+   - `rev_mesh` library for 3D models
 2. **Phase 2: Animation Libraries** (see ROADMAP.md)
    - `rev_curve` - Time-value curves with easing
    - `rev_sequence` - Timeline and cue system
