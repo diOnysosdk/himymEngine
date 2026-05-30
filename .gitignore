@@ -1,6 +1,7 @@
 # Build directories
 build/
 build_mingw/
+build_clang/
 out/
 bin/
 lib/

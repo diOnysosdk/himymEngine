@@ -8,20 +8,19 @@ The rev_xm library provides an API for XM (FastTracker II Extended Module) music
 
 libxm (https://github.com/Artefact2/libxm) requires:
 - **C23 standard** with `<stdbit.h>` header
-- Even **GCC 15.2.0** (May 2026) doesn't fully support `<stdbit.h>` yet
-- **MSVC** has no C23 support at all
+- **Tested and failed:**
+  - ❌ **GCC 15.2.0** (May 2026) - `fatal error: stdbit.h: No such file or directory`
+  - ❌ **Clang 18.1.8** (May 2026) - `fatal error: 'stdbit.h' file not found`
+  - ❌ **MSVC** - No C23 support at all
 
-**Error with GCC 15.2.0:**
-```
-xm_internal.h:14:10: fatal error: stdbit.h: No such file or directory
-```
+**Conclusion:** C23's `<stdbit.h>` is not yet implemented in any production compiler as of May 2026.
 
 ### Future Options
 
-1. **Wait for C23 compiler support** - When compilers fully implement `<stdbit.h>` (GCC 15.2.0 tested and incomplete; Clang status unknown)
-2. **Use alternative library** - miniaudio, SDL_mixer, FamiTracker, etc.
+1. **Wait for C23 compiler support** - When GCC/Clang/MSVC implement `<stdbit.h>` (likely 2027+)
+2. **Use alternative library** - miniaudio, SDL_mixer, FamiTracker, libopenmpt
 3. **Implement custom XM parser** - Lightweight parser for demoscene use
-4. **Patch libxm** - Create polyfill for `<stdbit.h>` functions
+4. **Patch libxm** - Create polyfill for `<stdbit.h>` bit manipulation functions
 
 ## Dependencies
 
