@@ -1,0 +1,38 @@
+# Build directories
+build/
+out/
+bin/
+lib/
+*.exe
+*.dll
+*.lib
+*.a
+*.o
+*.obj
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+!CMakeLists.txt
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sln
+*.vcxproj
+*.vcxproj.filters
+
+# IDEs
+.vscode/
+.idea/
+
+# Compression tools output
+*_packed.exe
+*_compressed.exe
+
+# Temporary files
+*.tmp
+*.log
