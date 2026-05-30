@@ -26,9 +26,11 @@ add_subdirectory(revision_libs/rev_xm)
 add_subdirectory(revision_libs/rev_curve)
 add_subdirectory(revision_libs/rev_sequence)
 add_subdirectory(revision_libs/rev_editor)
+add_subdirectory(revision_libs/rev_mesh)
 
 # Add examples
 add_subdirectory(examples/minimal_intro)
 add_subdirectory(examples/animated_intro)
 add_subdirectory(examples/editor_app)
 add_subdirectory(examples/demo_intro)
+add_subdirectory(examples/mesh_demo)
