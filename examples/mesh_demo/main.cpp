@@ -3,12 +3,16 @@
 #include "rev_mesh.h"
 #include <windows.h>
 #include <cmath>
+#include <cstring>
+#include <cstdio>
 
 // OpenGL function declarations
 extern "C" {
     void glEnable(unsigned int cap);
     void glClear(unsigned int mask);
     void glClearColor(float red, float green, float blue, float alpha);
+    void glViewport(int x, int y, int width, int height);
+    void glDepthFunc(unsigned int func);
 }
 
 const char* vertex_shader = R"(
@@ -117,6 +121,27 @@ void MatrixRotateY(float* m, float angle) {
     m[10] = c;
 }
 
+void MatrixTranslate(float* m, float x, float y, float z) {
+    MatrixIdentity(m);
+    m[12] = x;
+    m[13] = y;
+    m[14] = z;
+}
+
+void MatrixMultiply(float* out, const float* a, const float* b) {
+    float temp[16];
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            temp[row * 4 + col] = 
+                a[row * 4 + 0] * b[0 * 4 + col] +
+                a[row * 4 + 1] * b[1 * 4 + col] +
+                a[row * 4 + 2] * b[2 * 4 + col] +
+                a[row * 4 + 3] * b[3 * 4 + col];
+        }
+    }
+    memcpy(out, temp, sizeof(temp));
+}
+
 int main() {
     // Create window
     rev::platform::WindowConfig config;
@@ -128,13 +153,21 @@ int main() {
     rev::platform::Window* window = rev::platform::CreateIntroWindow(config);
     rev::platform::LoadGLFunctions();
     
+    // Set viewport
+    glViewport(0, 0, config.width, config.height);
+    
     // Compile shader
     rev::shader::Program* shader = rev::shader::CompileFromSource(vertex_shader, fragment_shader);
+    if (!shader) {
+        MessageBox(nullptr, "Failed to compile shader", "Error", MB_OK | MB_ICONERROR);
+        rev::platform::DestroyIntroWindow(window);
+        return -1;
+    }
     
     // Create meshes
-    rev::mesh::Mesh* cube = rev::mesh::CreateCube(1.0f);
-    rev::mesh::Mesh* sphere = rev::mesh::CreateSphere(0.8f, 32);
-    rev::mesh::Mesh* torus = rev::mesh::CreateTorus(0.8f, 0.3f, 32, 16);
+    rev::mesh::Mesh* cube = rev::mesh::CreateCube(2.0f);
+    rev::mesh::Mesh* sphere = rev::mesh::CreateSphere(1.5f, 32);
+    rev::mesh::Mesh* torus = rev::mesh::CreateTorus(1.5f, 0.5f, 32, 16);
     
     rev::mesh::UploadToGPU(cube);
     rev::mesh::UploadToGPU(sphere);
@@ -153,12 +186,13 @@ int main() {
     MatrixPerspective(projection, 3.14159f / 4.0f, 1280.0f / 720.0f, 0.1f, 100.0f);
     
     float view[16];
-    MatrixLookAt(view, 0.0f, 2.0f, 8.0f, 0.0f, 0.0f, 0.0f);
+    MatrixLookAt(view, 0.0f, 0.0f, 15.0f, 0.0f, 0.0f, 0.0f);  // Camera directly in front, looking at origin
     
     double start_time = rev::platform::GetTime();
     
     // Enable depth testing
     glEnable(0x0B71);  // GL_DEPTH_TEST
+    glDepthFunc(0x0203);  // GL_LEQUAL
     glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
     
     // Render loop
@@ -176,29 +210,32 @@ int main() {
         rev::shader::Use(shader);
         rev::shader::SetMat4(shader, u_view_loc, view);
         rev::shader::SetMat4(shader, u_projection_loc, projection);
-        rev::shader::SetVec3(shader, u_light_pos_loc, 5.0f, 5.0f, 5.0f);
-        rev::shader::SetVec3(shader, u_view_pos_loc, 0.0f, 2.0f, 8.0f);
+        rev::shader::SetVec3(shader, u_light_pos_loc, 10.0f, 10.0f, 10.0f);
+        rev::shader::SetVec3(shader, u_view_pos_loc, 0.0f, 0.0f, 15.0f);
         
         // Render cube (left)
-        float cube_model[16];
-        MatrixRotateY(cube_model, time * 0.5f);
-        cube_model[12] = -2.5f;  // Translate left
+        float cube_rotate[16], cube_translate[16], cube_model[16];
+        MatrixRotateY(cube_rotate, time * 0.5f);
+        MatrixTranslate(cube_translate, -5.0f, 0.0f, 0.0f);  // Spread more
+        MatrixMultiply(cube_model, cube_translate, cube_rotate);
         rev::shader::SetMat4(shader, u_model_loc, cube_model);
         rev::shader::SetVec3(shader, u_color_loc, 1.0f, 0.3f, 0.3f);
         rev::mesh::Render(cube);
         
         // Render sphere (center)
-        float sphere_model[16];
-        MatrixRotateY(sphere_model, time * 0.7f);
-        sphere_model[12] = 0.0f;  // Center
+        float sphere_rotate[16], sphere_translate[16], sphere_model[16];
+        MatrixRotateY(sphere_rotate, time * 0.7f);
+        MatrixTranslate(sphere_translate, 0.0f, 0.0f, 0.0f);  // Center at origin
+        MatrixMultiply(sphere_model, sphere_translate, sphere_rotate);
         rev::shader::SetMat4(shader, u_model_loc, sphere_model);
         rev::shader::SetVec3(shader, u_color_loc, 0.3f, 1.0f, 0.3f);
         rev::mesh::Render(sphere);
         
         // Render torus (right)
-        float torus_model[16];
-        MatrixRotateY(torus_model, time * 0.9f);
-        torus_model[12] = 2.5f;  // Translate right
+        float torus_rotate[16], torus_translate[16], torus_model[16];
+        MatrixRotateY(torus_rotate, time * 0.9f);
+        MatrixTranslate(torus_translate, 5.0f, 0.0f, 0.0f);  // Spread more
+        MatrixMultiply(torus_model, torus_translate, torus_rotate);
         rev::shader::SetMat4(shader, u_model_loc, torus_model);
         rev::shader::SetVec3(shader, u_color_loc, 0.3f, 0.3f, 1.0f);
         rev::mesh::Render(torus);

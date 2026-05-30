@@ -16,6 +16,11 @@ typedef int GLint;
 #define GL_TRIANGLES 0x0004
 #define GL_FLOAT 0x1406
 #define GL_FALSE 0
+#define GL_UNSIGNED_INT 0x1405
+
+// Load GL functions
+#include <windows.h>
+#include <gl/gl.h>  // For glDrawElements from opengl32.dll
 
 extern "C" {
     typedef void (*PFNGLGENVERTEXARRAYSPROC)(GLsizei n, GLuint* arrays);
@@ -25,12 +30,11 @@ extern "C" {
     typedef void (*PFNGLBUFFERDATAPROC)(GLenum target, ptrdiff_t size, const void* data, GLenum usage);
     typedef void (*PFNGLENABLEVERTEXATTRIBARRAYPROC)(GLuint index);
     typedef void (*PFNGLVERTEXATTRIBPOINTERPROC)(GLuint index, GLint size, GLenum type, unsigned char normalized, GLsizei stride, const void* pointer);
-    typedef void (*PFNGLDRAWELEMENTSPROC)(GLenum mode, GLsizei count, GLenum type, const void* indices);
     typedef void (*PFNGLDELETEVERTEXARRAYSPROC)(GLsizei n, const GLuint* arrays);
     typedef void (*PFNGLDELETEBUFFERSPROC)(GLsizei n, const GLuint* buffers);
 }
 
-// GL function pointers
+// GL function pointers (extensions only - glDrawElements is core 1.1 from opengl32.lib)
 static PFNGLGENVERTEXARRAYSPROC glGenVertexArrays = nullptr;
 static PFNGLBINDVERTEXARRAYPROC glBindVertexArray = nullptr;
 static PFNGLGENBUFFERSPROC glGenBuffers = nullptr;
@@ -38,7 +42,6 @@ static PFNGLBINDBUFFERPROC glBindBuffer = nullptr;
 static PFNGLBUFFERDATAPROC glBufferData = nullptr;
 static PFNGLENABLEVERTEXATTRIBARRAYPROC glEnableVertexAttribArray = nullptr;
 static PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer = nullptr;
-static PFNGLDRAWELEMENTSPROC glDrawElements = nullptr;
 static PFNGLDELETEVERTEXARRAYSPROC glDeleteVertexArrays = nullptr;
 static PFNGLDELETEBUFFERSPROC glDeleteBuffers = nullptr;
 
@@ -56,9 +59,10 @@ static void LoadGLFunctions() {
     glBufferData = (PFNGLBUFFERDATAPROC)wglGetProcAddress("glBufferData");
     glEnableVertexAttribArray = (PFNGLENABLEVERTEXATTRIBARRAYPROC)wglGetProcAddress("glEnableVertexAttribArray");
     glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC)wglGetProcAddress("glVertexAttribPointer");
-    glDrawElements = (PFNGLDRAWELEMENTSPROC)wglGetProcAddress("glDrawElements");
     glDeleteVertexArrays = (PFNGLDELETEVERTEXARRAYSPROC)wglGetProcAddress("glDeleteVertexArrays");
     glDeleteBuffers = (PFNGLDELETEBUFFERSPROC)wglGetProcAddress("glDeleteBuffers");
+    
+    // Note: glDrawElements is core OpenGL 1.1, loaded from opengl32.lib via <gl/gl.h>
     
     loaded = true;
 }
@@ -177,11 +181,11 @@ void Render(Mesh* mesh, int material_slot_index) {
     
     if (material_slot_index < 0) {
         // Render all material slots
-        glDrawElements(GL_TRIANGLES, mesh->index_count, 0x1405, nullptr);  // GL_UNSIGNED_INT = 0x1405
+        glDrawElements(GL_TRIANGLES, mesh->index_count, GL_UNSIGNED_INT, nullptr);
     } else if ((uint32_t)material_slot_index < mesh->material_slot_count) {
         // Render specific material slot
         MaterialSlot& slot = mesh->material_slots[material_slot_index];
-        glDrawElements(GL_TRIANGLES, slot.count, 0x1405, (void*)(slot.start_index * sizeof(uint32_t)));
+        glDrawElements(GL_TRIANGLES, slot.count, GL_UNSIGNED_INT, (void*)(slot.start_index * sizeof(uint32_t)));
     }
     
     glBindVertexArray(0);
