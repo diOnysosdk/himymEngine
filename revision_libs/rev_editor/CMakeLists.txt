@@ -15,24 +15,26 @@ project(rev_editor)
 #
 # Then uncomment the ImGui library section below.
 
-# ImGui library (uncomment when ImGui is added)
-# add_library(imgui STATIC
-#     third_party/imgui/imgui.cpp
-#     third_party/imgui/imgui_draw.cpp
-#     third_party/imgui/imgui_tables.cpp
-#     third_party/imgui/imgui_widgets.cpp
-#     third_party/imgui/backends/imgui_impl_win32.cpp
-#     third_party/imgui/backends/imgui_impl_opengl3.cpp
-# )
-# 
-# target_include_directories(imgui PUBLIC
-#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
-#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/backends
-# )
-# 
-# target_link_libraries(imgui PRIVATE
-#     opengl32
-# )
+# ImGui library
+add_library(imgui STATIC
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/imgui_impl_win32.cpp
+    third_party/imgui/imgui_impl_opengl3.cpp
+)
+
+target_include_directories(imgui PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
+)
+
+target_link_libraries(imgui PRIVATE
+    opengl32
+    user32
+    gdi32
+    imm32
+)
 
 # Editor library
 add_library(rev_editor STATIC
@@ -47,10 +49,8 @@ target_link_libraries(rev_editor PUBLIC
     rev_platform
     rev_sequence
     rev_curve
+    imgui
 )
-
-# Uncomment when ImGui is added:
-# target_link_libraries(rev_editor PUBLIC imgui)
 
 # Size optimization
 if(MSVC)
