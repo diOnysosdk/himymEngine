@@ -12,6 +12,13 @@
 #define GL_TRIANGLE_STRIP 0x0005
 #endif
 
+// GL 3.3 function pointers (VAO support required for core profile)
+typedef void (APIENTRY *PFNGLGENVERTEXARRAYSPROC)(GLsizei n, GLuint* arrays);
+typedef void (APIENTRY *PFNGLBINDVERTEXARRAYPROC)(GLuint array);
+
+static PFNGLGENVERTEXARRAYSPROC glGenVertexArrays = nullptr;
+static PFNGLBINDVERTEXARRAYPROC glBindVertexArray = nullptr;
+
 // Minimal vertex shader - fullscreen quad
 const char* vertex_shader = R"(
 #version 330 core
@@ -64,6 +71,15 @@ int main() {
     
     // Load OpenGL functions
     rev::platform::LoadGLFunctions();
+    
+    // Load GL 3.3 VAO functions (required for core profile)
+    glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)rev::platform::GetProcAddress("glGenVertexArrays");
+    glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)rev::platform::GetProcAddress("glBindVertexArray");
+    
+    // Create and bind VAO (required for OpenGL 3.3 core)
+    GLuint vao;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
     
     // Compile shader
     rev::shader::Program* shader = rev::shader::CompileFromSource(vertex_shader, fragment_shader);
