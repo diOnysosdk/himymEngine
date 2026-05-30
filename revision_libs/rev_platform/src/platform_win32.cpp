@@ -34,7 +34,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
     return DefWindowProc(hwnd, msg, wparam, lparam);
 }
 
-Window* CreateWindow(const WindowConfig& config) {
+Window* CreateIntroWindow(const WindowConfig& config) {
     Window* window = new Window();
     window->should_close = false;
     
@@ -115,7 +115,7 @@ Window* CreateWindow(const WindowConfig& config) {
     return window;
 }
 
-void DestroyWindow(Window* window) {
+void DestroyIntroWindow(Window* window) {
     if (!window) return;
     
     HWND hwnd = static_cast<HWND>(window->hwnd);
@@ -125,7 +125,7 @@ void DestroyWindow(Window* window) {
     wglMakeCurrent(nullptr, nullptr);
     wglDeleteContext(hglrc);
     ReleaseDC(hwnd, hdc);
-    DestroyWindow(hwnd);
+    ::DestroyWindow(hwnd);  // Use Windows API DestroyWindow
     
     delete window;
 }

@@ -1,6 +1,16 @@
+#include <windows.h>
+#include <gl/gl.h>
 #include "rev_platform.h"
 #include "rev_shader.h"
 #include "rev_xm.h"
+
+// Define missing GL constants
+#ifndef GL_COLOR_BUFFER_BIT
+#define GL_COLOR_BUFFER_BIT 0x00004000
+#endif
+#ifndef GL_TRIANGLE_STRIP
+#define GL_TRIANGLE_STRIP 0x0005
+#endif
 
 // Minimal vertex shader - fullscreen quad
 const char* vertex_shader = R"(
@@ -47,7 +57,7 @@ int main() {
     config.fullscreen = false;  // Windowed for testing
     config.title = "HiMYM - Minimal Intro Test";
     
-    rev::platform::Window* window = rev::platform::CreateWindow(config);
+    rev::platform::Window* window = rev::platform::CreateIntroWindow(config);
     if (!window) {
         return -1;
     }
@@ -58,7 +68,7 @@ int main() {
     // Compile shader
     rev::shader::Program* shader = rev::shader::CompileFromSource(vertex_shader, fragment_shader);
     if (!shader) {
-        rev::platform::DestroyWindow(window);
+        rev::platform::DestroyIntroWindow(window);
         return -1;
     }
     
@@ -98,7 +108,7 @@ int main() {
     
     // Cleanup
     rev::shader::DestroyProgram(shader);
-    rev::platform::DestroyWindow(window);
+    rev::platform::DestroyIntroWindow(window);
     
     return 0;
 }

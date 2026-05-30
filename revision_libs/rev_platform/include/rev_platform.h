@@ -22,8 +22,8 @@ struct Window {
 };
 
 // Lifecycle
-Window* CreateWindow(const WindowConfig& config);
-void DestroyWindow(Window* window);
+Window* CreateIntroWindow(const WindowConfig& config);
+void DestroyIntroWindow(Window* window);
 bool PollEvents(Window* window);
 void SwapBuffers(Window* window);
 
