@@ -1,0 +1,87 @@
+{
+  "version": "1.0",
+  "workspace_path": "",
+  "total_duration": 20.000,
+  "scenes": [
+    {
+      "name": "New Scene",
+      "duration": 10.000,
+      "shader_cues": [
+        {
+          "shader_name": "Glow Orbs",
+          "shader_scene_id": 8,
+          "palette_low": [0.446, 0.119, 0.005],
+          "palette_mid": [0.009, 0.378, 0.532],
+          "palette_high": [0.571, 0.602, 0.607],
+          "speed": 5.000,
+          "intensity": 2.000,
+          "warp": 0.989,
+          "exposure_base": 2.000,
+          "exposure_ramp": 0.020,
+          "fade_base": 0.040,
+          "fade_ramp": -0.040,
+          "cue_start": 0.000,
+          "cue_end": -1.000,
+          "fade_in": 0.500,
+          "fade_out": 0.500,
+          "layer_role": 0,
+          "opacity": 1.000,
+          "blend_mode": 0,
+          "layer_order": 0,
+          "curve_speed": -1,
+          "curve_intensity": -1,
+          "curve_warp": -1,
+          "curve_exposure": -1,
+          "curve_fade": -1
+        }
+      ],
+      "image_cues": [
+      ],
+      "text_cues": [
+      ],
+      "music_cues": [
+      ]
+    },
+    {
+      "name": "New Scene",
+      "duration": 10.000,
+      "shader_cues": [
+        {
+          "shader_name": "Raymarcher SDF",
+          "shader_scene_id": 2,
+          "palette_low": [0.100, 0.300, 0.800],
+          "palette_mid": [0.450, 0.250, 0.700],
+          "palette_high": [0.800, 0.200, 0.600],
+          "speed": 1.000,
+          "intensity": 1.000,
+          "warp": 0.500,
+          "exposure_base": 0.760,
+          "exposure_ramp": 0.020,
+          "fade_base": 0.040,
+          "fade_ramp": -0.040,
+          "cue_start": 0.000,
+          "cue_end": -1.000,
+          "fade_in": 0.500,
+          "fade_out": 0.500,
+          "layer_role": 0,
+          "opacity": 1.000,
+          "blend_mode": 0,
+          "layer_order": 0,
+          "curve_speed": -1,
+          "curve_intensity": -1,
+          "curve_warp": -1,
+          "curve_exposure": -1,
+          "curve_fade": -1
+        }
+      ],
+      "image_cues": [
+      ],
+      "text_cues": [
+      ],
+      "music_cues": [
+      ]
+    }
+  ],
+  "curves": [
+  ]
+}

@@ -16,6 +16,14 @@ static PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB = nullptr;
 static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     Window* window = reinterpret_cast<Window*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
     
+    // Allow external message handler (e.g., ImGui)
+    if (window && window->message_callback) {
+        LRESULT result = window->message_callback(hwnd, msg, wparam, lparam);
+        if (result != 0) {
+            return result;
+        }
+    }
+    
     switch (msg) {
         case WM_CLOSE:
         case WM_DESTROY:
@@ -37,6 +45,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 Window* CreateIntroWindow(const WindowConfig& config) {
     Window* window = new Window();
     window->should_close = false;
+    window->message_callback = nullptr;
     
     // Register window class
     WNDCLASSEX wc = {};
@@ -146,6 +155,12 @@ void SwapBuffers(Window* window) {
 
 bool IsKeyPressed(Window* window, int vk_code) {
     return (GetAsyncKeyState(vk_code) & 0x8000) != 0;
+}
+
+void SetMessageCallback(Window* window, MessageCallbackFn callback) {
+    if (window) {
+        window->message_callback = callback;
+    }
 }
 
 bool IsMouseButtonPressed(Window* window, int button) {

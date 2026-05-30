@@ -45,14 +45,8 @@ int main() {
         return -1;
     }
     
-    // Create a sample project
+    // Start with blank project (user can Open to choose file)
     rev::editor::NewProject(editor);
-    
-    // Add some sample cues for testing
-    rev::sequence::AddCue(editor->project->timeline, 0.0f, 5.0f, 1.0f, 1.0f, 1);
-    rev::sequence::AddCue(editor->project->timeline, 4.0f, 10.0f, 2.0f, 1.0f, 2);
-    rev::sequence::AddCue(editor->project->timeline, 9.0f, 15.0f, 1.5f, 0.5f, 3);
-    rev::sequence::SortCues(editor->project->timeline);
     
     // Main loop
     while (rev::platform::PollEvents(window) && !window->should_close) {

@@ -5,6 +5,9 @@
 namespace rev {
 namespace platform {
 
+// Message callback for external message handling (e.g., ImGui)
+typedef long long (*MessageCallbackFn)(void* hwnd, unsigned int msg, unsigned long long wparam, long long lparam);
+
 // Window configuration
 struct WindowConfig {
     int width = 1920;
@@ -19,6 +22,7 @@ struct Window {
     void* hdc;
     void* hglrc;
     bool should_close;
+    MessageCallbackFn message_callback;
 };
 
 // Lifecycle
@@ -35,6 +39,9 @@ void Sleep(double seconds);
 bool IsKeyPressed(Window* window, int vk_code);
 bool IsMouseButtonPressed(Window* window, int button);
 void GetMousePosition(Window* window, int* x, int* y);
+
+// Message handling
+void SetMessageCallback(Window* window, MessageCallbackFn callback);
 
 // OpenGL
 void* GetProcAddress(const char* name);
