@@ -18,7 +18,7 @@ xm_internal.h:14:10: fatal error: stdbit.h: No such file or directory
 
 ### Future Options
 
-1. **Wait for C23 compiler support** - When GCC/Clang fully implement `<stdbit.h>`
+1. **Wait for C23 compiler support** - When compilers fully implement `<stdbit.h>` (GCC 15.2.0 tested and incomplete; Clang status unknown)
 2. **Use alternative library** - miniaudio, SDL_mixer, FamiTracker, etc.
 3. **Implement custom XM parser** - Lightweight parser for demoscene use
 4. **Patch libxm** - Create polyfill for `<stdbit.h>` functions
