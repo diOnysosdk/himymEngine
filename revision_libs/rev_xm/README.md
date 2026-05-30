@@ -1,30 +1,27 @@
 # rev_xm - XM Module Player
 
-## Current Status: Stub Implementation
+## Current Status: ✅ FULLY WORKING with libxm-windows
 
-The rev_xm library provides an API for XM (FastTracker II Extended Module) music playback, but currently uses a **stub implementation** because the underlying libxm library requires C23 features that are not yet widely available.
+The rev_xm library now uses **libxm-windows** - a C89-compatible fork of libxm that works with MSVC!
 
-### Why Stub?
+### Implementation
 
-libxm (https://github.com/Artefact2/libxm) requires:
-- **C23 standard** with `<stdbit.h>` header
-- **Tested and failed:**
-  - ❌ **GCC 15.2.0** (May 2026) - `fatal error: stdbit.h: No such file or directory`
-  - ❌ **Clang 18.1.8** (May 2026) - `fatal error: 'stdbit.h' file not found`
-  - ❌ **MSVC** - No C23 support at all
+- **Library:** [libxm-windows](https://github.com/MikeEviscerate/libxm-windows) by MikeEviscerate
+- **Compatibility:** C89-compliant, compiles with VC 6.0, VS 2005, and VS 2026 (MSVC)
+- **Features:** Full XM/MOD/S3M playback support
+- **License:** WTFPL (same as original libxm)
 
-**Conclusion:** C23's `<stdbit.h>` is not yet implemented in any production compiler as of May 2026.
+### Why libxm-windows?
 
-### Future Options
+The original libxm requires C23's `<stdbit.h>` header, which is not yet implemented in any production compiler as of May 2026:
+- ❌ **GCC 15.2.0** - `fatal error: stdbit.h: No such file or directory`
+- ❌ **Clang 18.1.8** - `fatal error: 'stdbit.h' file not found`
+- ❌ **MSVC** - No C23 support at all
 
-1. **Wait for C23 compiler support** - When GCC/Clang/MSVC implement `<stdbit.h>` (likely 2027+)
-2. **Use alternative library** - miniaudio, SDL_mixer, FamiTracker, libopenmpt
-3. **Implement custom XM parser** - Lightweight parser for demoscene use
-4. **Patch libxm** - Create polyfill for `<stdbit.h>` bit manipulation functions
-
-## Dependencies
-
-This library has **libxm** downloaded in `third_party/libxm/` but cannot compile it yet due to C23 requirements.
+**libxm-windows** solves this by:
+- Converting the codebase to C89
+- Providing polyfills for C23 features
+- Using compiler intrinsics instead of stdbit.h functions
 
 ## Usage Example
 
