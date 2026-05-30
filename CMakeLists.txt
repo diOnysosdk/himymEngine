@@ -25,7 +25,9 @@ add_subdirectory(revision_libs/rev_shader)
 add_subdirectory(revision_libs/rev_xm)
 add_subdirectory(revision_libs/rev_curve)
 add_subdirectory(revision_libs/rev_sequence)
+add_subdirectory(revision_libs/rev_editor)
 
 # Add examples
 add_subdirectory(examples/minimal_intro)
 add_subdirectory(examples/animated_intro)
+add_subdirectory(examples/editor_app)
