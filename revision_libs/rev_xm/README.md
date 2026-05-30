@@ -1,20 +1,31 @@
 # rev_xm - XM Module Player
 
-This library provides XM music playback functionality.
+## Current Status: Stub Implementation
+
+The rev_xm library provides an API for XM (FastTracker II Extended Module) music playback, but currently uses a **stub implementation** because the underlying libxm library requires C23 features that are not yet widely available.
+
+### Why Stub?
+
+libxm (https://github.com/Artefact2/libxm) requires:
+- **C23 standard** with `<stdbit.h>` header
+- Even **GCC 15.2.0** (May 2026) doesn't fully support `<stdbit.h>` yet
+- **MSVC** has no C23 support at all
+
+**Error with GCC 15.2.0:**
+```
+xm_internal.h:14:10: fatal error: stdbit.h: No such file or directory
+```
+
+### Future Options
+
+1. **Wait for C23 compiler support** - When GCC/Clang fully implement `<stdbit.h>`
+2. **Use alternative library** - miniaudio, SDL_mixer, FamiTracker, etc.
+3. **Implement custom XM parser** - Lightweight parser for demoscene use
+4. **Patch libxm** - Create polyfill for `<stdbit.h>` functions
 
 ## Dependencies
 
-This library requires **libxm** to function. To set it up:
-
-1. Download libxm from: https://github.com/Artefact2/libxm
-2. Create the directory: `revision_libs/rev_xm/third_party/libxm/`
-3. Copy `xm.h` and `xm.c` to that directory
-4. Uncomment the libxm configuration in `CMakeLists.txt`
-5. Uncomment the include in `src/xm_player.cpp`
-
-## Current Status
-
-**STUB IMPLEMENTATION**: The library currently contains stub functions that compile but don't produce audio. Once libxm is added, the implementation will be complete.
+This library has **libxm** downloaded in `third_party/libxm/` but cannot compile it yet due to C23 requirements.
 
 ## Usage Example
 
