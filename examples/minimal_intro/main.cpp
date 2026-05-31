@@ -344,10 +344,12 @@ bool LoadImageTextureFromMemory(const unsigned char* data, size_t size, ImageTex
     }
 
     Gdiplus::Bitmap* bitmap = new Gdiplus::Bitmap(stream);
-    stream->Release();  // IStream owns hMem (TRUE above), released here
+    // Do NOT release stream until after the bitmap is fully decoded (GDI+ PNG
+    // decodes lazily — it reads the stream during LockBits, not just at ctor).
 
     if (bitmap->GetLastStatus() != Gdiplus::Ok) {
         delete bitmap;
+        stream->Release();  // TRUE above means hMem is freed here too
         return false;
     }
 
@@ -358,6 +360,7 @@ bool LoadImageTextureFromMemory(const unsigned char* data, size_t size, ImageTex
     Gdiplus::BitmapData bitmapData;
     if (bitmap->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &bitmapData) != Gdiplus::Ok) {
         delete bitmap;
+        stream->Release();
         return false;
     }
 
@@ -382,6 +385,7 @@ bool LoadImageTextureFromMemory(const unsigned char* data, size_t size, ImageTex
     delete[] pixels;
     bitmap->UnlockBits(&bitmapData);
     delete bitmap;
+    stream->Release();  // safe to release now — all pixel data is in GL
 
     return true;
 }
@@ -1094,17 +1098,28 @@ int main(int argc, char* argv[]) {
     // Load image texture
     if (has_image && image_cue.asset_key[0] != '\0') {
 #ifdef HIMYM_PACKED_ASSETS
+        if (g_logfile) fprintf(g_logfile, "[Packed] Looking up asset: %s (table count=%d)\n", image_cue.asset_key, kPackedAssetCount);
         const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(image_cue.asset_key, kPackedAssets, kPackedAssetCount);
         if (pa) {
+            if (g_logfile) fprintf(g_logfile, "[Packed] Found asset: %s size=%zu, calling LoadImageTextureFromMemory\n", pa->key, pa->size);
             if (LoadImageTextureFromMemory(pa->data, pa->size, &image_tex)) {
                 image_loaded = true;
                 printf("Image loaded (packed): %s %dx%d\n", image_cue.asset_key, image_tex.width, image_tex.height);
+                if (g_logfile) fprintf(g_logfile, "[Packed] Image loaded: %s %dx%d\n", image_cue.asset_key, image_tex.width, image_tex.height);
             } else {
                 printf("FAILED to load packed image: %s\n", image_cue.asset_key);
+                if (g_logfile) fprintf(g_logfile, "[Packed] FAILED to load image from memory: %s\n", image_cue.asset_key);
             }
         } else {
             printf("Packed asset not found: %s\n", image_cue.asset_key);
+            if (g_logfile) {
+                fprintf(g_logfile, "[Packed] Asset NOT found: %s\n", image_cue.asset_key);
+                fprintf(g_logfile, "[Packed] Available keys (%d):\n", kPackedAssetCount);
+                for (int _i = 0; _i < kPackedAssetCount; ++_i)
+                    fprintf(g_logfile, "  [%d] %s\n", _i, kPackedAssets[_i].key ? kPackedAssets[_i].key : "(null)");
+            }
         }
+        if (g_logfile) fflush(g_logfile);
 #else
         // asset_path is workspace-root-relative (e.g. "project_assets/logo.png")
         // Working directory is always workspace root (whether launched from editor or start script)
