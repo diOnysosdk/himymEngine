@@ -752,7 +752,7 @@ int main(int argc, char* argv[]) {
     rev::platform::WindowConfig config;
     config.width = 1920;
     config.height = 1080;
-    config.fullscreen = false;  // Windowed for testing
+    config.fullscreen = true;
     config.title = "HiMYM - Minimal Intro Test";
     
     rev::platform::Window* window = rev::platform::CreateIntroWindow(config);

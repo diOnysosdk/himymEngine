@@ -33,9 +33,6 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
             return 0;
             
         case WM_KEYDOWN:
-            if (wparam == VK_ESCAPE && window) {
-                window->should_close = true;
-            }
             return 0;
     }
     
@@ -57,12 +54,13 @@ Window* CreateIntroWindow(const WindowConfig& config) {
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     RegisterClassEx(&wc);
     
-    // Window style
+    // Window style — fullscreen uses WS_POPUP (no border/titlebar), windowed uses WS_OVERLAPPEDWINDOW.
+    // Always use config.width/height so the GL viewport matches the configured render resolution.
     DWORD style = config.fullscreen ? WS_POPUP : WS_OVERLAPPEDWINDOW;
     int x = config.fullscreen ? 0 : CW_USEDEFAULT;
     int y = config.fullscreen ? 0 : CW_USEDEFAULT;
-    int width = config.fullscreen ? GetSystemMetrics(SM_CXSCREEN) : config.width;
-    int height = config.fullscreen ? GetSystemMetrics(SM_CYSCREEN) : config.height;
+    int width  = config.width;
+    int height = config.height;
     
     // Create window
     HWND hwnd = CreateWindowEx(

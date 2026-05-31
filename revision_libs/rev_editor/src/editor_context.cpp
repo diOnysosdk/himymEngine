@@ -4405,7 +4405,16 @@ void RenderPreviewPanel(EditorContext* editor) {
             h = avail.y;
             w = h * aspect;
         }
-        
+
+        // Resize the FBO to match the panel's pixel dimensions so that all
+        // size formulas (tex_pixels / preview_width * 2) produce the same
+        // proportional result as in the final product.
+        int panel_w = (int)w;
+        int panel_h = (int)h;
+        if (panel_w > 0 && panel_h > 0) {
+            ResizePreview(editor, panel_w, panel_h);
+        }
+
         // Center the preview
         float offset_x = (avail.x - w) * 0.5f;
         if (offset_x > 0.0f) {

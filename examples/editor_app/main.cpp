@@ -87,10 +87,7 @@ int main() {
         // Swap buffers
         rev::platform::SwapBuffers(window);
         
-        // Exit on ESC
-        if (rev::platform::IsKeyPressed(window, VK_ESCAPE)) {
-            break;
-        }
+
     }
     
     // Cleanup
