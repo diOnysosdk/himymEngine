@@ -71,13 +71,16 @@ struct MusicCue {
 // mesh_param: secondary param (sphere segment count, plane height, torus minor_radius)
 struct MeshCue {
     char  asset_key[64];
-    int   mesh_type;
+    char  asset_path[512];  // file path for mesh_type==4 (glTF/GLB); empty for procedural types
+    int   mesh_type;        // 0=Cube 1=Sphere 2=Plane 3=Torus 4=External(glTF/GLB)
     float pos[3];
     float rot[3];
     float scale[3];
-    float color[4];         // RGBA
+    float color[4];         // RGBA base color
     float mesh_size;
     float mesh_param;
+    float metallic;         // PBR metallic factor [0..1] (0=dielectric, 1=metal)
+    float roughness;        // PBR roughness factor [0..1] (0=glossy, 1=rough)
     int   effect_type;      // 0=none  1=fade_in_out
     float cue_start;
     float cue_end;

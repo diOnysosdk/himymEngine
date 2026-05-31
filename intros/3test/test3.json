@@ -79,10 +79,11 @@
       "mesh_cues": [
         {
           "asset_key": "mesh_0",
-          "mesh_type": 0,
+          "asset_path": "intros/3test/test3_assets/newbox.glb",
+          "mesh_type": 4,
           "pos": [0.000, 0.000, 0.000],
-          "rot": [0.000, 0.000, 0.000],
-          "scale": [1.000, 1.000, 1.000],
+          "rot": [39.000, 46.000, 41.000],
+          "scale": [0.400, 0.400, 0.400],
           "color": [1.000, 1.000, 1.000, 1.000],
           "mesh_size": 1.000,
           "mesh_param": 16.000,

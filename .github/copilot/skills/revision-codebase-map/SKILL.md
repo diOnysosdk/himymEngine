@@ -59,7 +59,7 @@ PR/
 - `MusicCue`: `asset_key[64]`, `asset_path[512]`, `cue_start`, `cue_end`
 - `ImageCue`: `asset_key`, `asset_path`, `x`, `y`, `scale`, `opacity`, `effect_type`, `cue_start`, `cue_end`, `fade_in_start`, `fade_in_end`, `fade_out_start`, `fade_out_end`, `layer_order`
 - `TextCue`: `text`, `font_name`, `x`, `y`, `size` (float), `color` (ColorRGB), `effect_type`, `cue_start`, `cue_end`, `fade_in_start`, `fade_in_end`, `fade_out_start`, `fade_out_end`, `layer_order`
-- `MeshCue`: `asset_key[64]`, `mesh_type` (0=cube 1=sphere 2=plane 3=torus), `pos[3]`, `rot[3]`, `scale[3]`, `color[4]` (RGBA), `mesh_size`, `mesh_param`, `effect_type`, `cue_start`, `cue_end`, `fade_in_start`, `fade_in_end`, `fade_out_start`, `fade_out_end`, `layer_order`
+- `MeshCue`: `asset_key[64]`, `asset_path[512]` (glTF/GLB path for type 4, else empty), `mesh_type` (0=cube 1=sphere 2=plane 3=torus 4=glTF/GLB via rev_gltf), `pos[3]`, `rot[3]`, `scale[3]`, `color[4]` (RGBA), `mesh_size`, `mesh_param`, `effect_type`, `cue_start`, `cue_end`, `fade_in_start`, `fade_in_end`, `fade_out_start`, `fade_out_end`, `layer_order`
 - `SceneBlock` has: `mesh_cues*` (MeshCue*), `mesh_cue_count`, `mesh_cue_capacity`
 - `EditorContext` has: `mesh_shader` (void*), `mesh_modal_open`, `mesh_modal_request_open`, `editing_mesh` (MeshCue)
 - `ProjectData.assets_path` = `{workspace}\{project_name}_assets` — set on LoadProject, folder auto-created
@@ -76,7 +76,7 @@ text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fa
 asset_key|asset_path|cue_start|cue_end
 
 [mesh_cues]
-asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order
+asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness
 ```
 - All `asset_path` values are workspace-relative with forward slashes (`{project_name}_assets/{key}`)
 - CWD is always workspace root (runtime walks up 3 dirs from exe at `build/bin/Release/`)
@@ -109,7 +109,7 @@ asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|
 - Keep authoring/export semantics aligned with runtime loaders.
 - Keep `LoadImageCue` parser field count matching the export format (currently 14 fields).
 - Keep `LoadTextCue` parser field count matching the export format (currently 16 fields).
-- Keep `LoadMeshCue` parser field count matching the export format (currently 25 fields).
+- Keep `LoadMeshCue` parser field count matching the export format (currently 26 fields). asset_path[512] is field 2; mesh_type 4 = external glTF/GLB.
 - When adding a new cue type, follow the pattern: struct in `rev_runtime.h` → parser in `rev_runtime.cpp` → `ExportProject` in `editor_context.cpp` → `LoadProject` round-trip → render in `RenderPreviewFrame` → render in `minimal_intro/main.cpp`.
 - When adding fields to any shared cue struct, update `rev_runtime.h` and `rev_runtime.cpp` — NOT main.cpp or editor_context.cpp.
 - Treat build validation as part of the change, not a separate optional step.

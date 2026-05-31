@@ -8,6 +8,7 @@ add_executable(editor_app
 target_link_libraries(editor_app PRIVATE
     rev_platform
     rev_editor
+    rev_gltf
     rev_sequence
     rev_curve
 )

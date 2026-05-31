@@ -19,7 +19,7 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 - Keep GDI+ initialized (`GdiplusStartup`) before any `LoadImageTexture` call.
 - Keep `LoadImageCue` parser field count aligned with the export format: currently 14 fields — `asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end`.
 - Keep `LoadTextCue` parser field count aligned with the export format: currently 16 fields.
-- Keep `LoadMeshCue` parser field count aligned with the export format: currently 25 fields — `asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order`.
+- Keep `LoadMeshCue` parser field count aligned with the export format: currently 28 fields — `asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness`. mesh_type 4 = glTF/GLB external file (asset_path). Old 26-field files still load (metallic/roughness default to 0.0/0.5).
 - Do NOT redefine `ImageCue`, `TextCue`, `MusicCue`, `MeshCue`, `ImageTexture`, `TextTexture` in `main.cpp` — they come from `rev_runtime.h` via `using` declarations.
 - Do NOT redefine cue loaders or `Mat4*` functions in `main.cpp` — they are implemented in `rev_runtime.cpp`.
 - `glUniformMatrix4fv` and other GL 2.0+ functions are NOT in Windows `<gl/gl.h>`; load via `wglGetProcAddress` before first use.

@@ -2,6 +2,7 @@
 #include "rev_shader.h"
 #include "rev_pack.h"
 #include "rev_mesh.h"
+#include "rev_gltf.h"
 #include <cstring>
 #include <cstdio>
 #include <cmath>
@@ -77,6 +78,7 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->preview_fbo = 0;
     editor->preview_texture = 0;
     editor->preview_depth = 0;
+    editor->preview_vao = 0;
     editor->preview_width = 1920;
     editor->preview_height = 1080;
     editor->preview_initialized = false;
@@ -464,6 +466,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
         if (in_mesh_cues && current_scene) {
             if (strstr(start, "\"asset_key\":")) {
                 sscanf_s(start, "\"asset_key\": \"%63[^\"]\"", current_mesh_cue.asset_key, (unsigned)sizeof(current_mesh_cue.asset_key));
+            } else if (strstr(start, "\"asset_path\":")) {
+                sscanf_s(start, "\"asset_path\": \"%511[^\"]\"", current_mesh_cue.asset_path, (unsigned)sizeof(current_mesh_cue.asset_path));
             } else if (strstr(start, "\"mesh_type\":")) {
                 sscanf_s(start, "\"mesh_type\": %d", &current_mesh_cue.mesh_type);
             } else if (strstr(start, "\"pos\":")) {
@@ -478,6 +482,10 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"mesh_size\": %f", &current_mesh_cue.mesh_size);
             } else if (strstr(start, "\"mesh_param\":")) {
                 sscanf_s(start, "\"mesh_param\": %f", &current_mesh_cue.mesh_param);
+            } else if (strstr(start, "\"metallic\":")) {
+                sscanf_s(start, "\"metallic\": %f", &current_mesh_cue.metallic);
+            } else if (strstr(start, "\"roughness\":")) {
+                sscanf_s(start, "\"roughness\": %f", &current_mesh_cue.roughness);
             } else if (strstr(start, "\"effect_type\":")) {
                 sscanf_s(start, "\"effect_type\": %d", &current_mesh_cue.effect_type);
             } else if (strstr(start, "\"cue_start\":")) {
@@ -496,7 +504,9 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"layer_order\": %d", &current_mesh_cue.layer_order);
             } else if (start[0] == '}' && current_mesh_cue.asset_key[0] != '\0') {
                 AddMeshCue(current_scene, current_mesh_cue);
-                MeshCue blank = {}; blank.scale[0] = blank.scale[1] = blank.scale[2] = 1.0f;
+                MeshCue blank = {};
+                blank.scale[0] = blank.scale[1] = blank.scale[2] = 1.0f;
+                blank.roughness = 0.5f;
                 current_mesh_cue = blank;
             }
         }
@@ -689,14 +699,17 @@ bool SaveProject(EditorContext* editor, const char* path) {
         for (int i = 0; i < scene->mesh_cue_count; ++i) {
             MeshCue* cue = &scene->mesh_cues[i];
             fprintf(f, "        {\n");
-            fprintf(f, "          \"asset_key\": \"%s\",\n",  cue->asset_key);
-            fprintf(f, "          \"mesh_type\": %d,\n",       cue->mesh_type);
+            fprintf(f, "          \"asset_key\": \"%s\",\n",   cue->asset_key);
+            fprintf(f, "          \"asset_path\": \"%s\",\n",  cue->asset_path);
+            fprintf(f, "          \"mesh_type\": %d,\n",        cue->mesh_type);
             fprintf(f, "          \"pos\": [%.3f, %.3f, %.3f],\n",   cue->pos[0],   cue->pos[1],   cue->pos[2]);
             fprintf(f, "          \"rot\": [%.3f, %.3f, %.3f],\n",   cue->rot[0],   cue->rot[1],   cue->rot[2]);
             fprintf(f, "          \"scale\": [%.3f, %.3f, %.3f],\n", cue->scale[0], cue->scale[1], cue->scale[2]);
             fprintf(f, "          \"color\": [%.3f, %.3f, %.3f, %.3f],\n", cue->color[0], cue->color[1], cue->color[2], cue->color[3]);
             fprintf(f, "          \"mesh_size\": %.3f,\n",  cue->mesh_size);
             fprintf(f, "          \"mesh_param\": %.3f,\n", cue->mesh_param);
+            fprintf(f, "          \"metallic\": %.3f,\n",   cue->metallic);
+            fprintf(f, "          \"roughness\": %.3f,\n",  cue->roughness);
             fprintf(f, "          \"effect_type\": %d,\n",  cue->effect_type);
             fprintf(f, "          \"cue_start\": %.3f,\n",  cue->cue_start);
             fprintf(f, "          \"cue_end\": %.3f,\n",    cue->cue_end);
@@ -1320,6 +1333,8 @@ void RenderProperties(EditorContext* editor) {
                 cue.mesh_param = 16.0f;
                 cue.scale[0]   = cue.scale[1] = cue.scale[2] = 1.0f;
                 cue.color[0]   = cue.color[1] = cue.color[2] = cue.color[3] = 1.0f;
+                cue.metallic   = 0.0f;
+                cue.roughness  = 0.5f;
                 cue.cue_start  = 0.0f;
                 cue.cue_end    = scene->duration;
                 snprintf(cue.asset_key, sizeof(cue.asset_key), "mesh_%d", scene->mesh_cue_count);
@@ -1404,12 +1419,12 @@ void RenderProperties(EditorContext* editor) {
 
             // Display existing mesh cues
             if (scene->mesh_cue_count > 0) {
-                static const char* mesh_type_names[] = {"Cube","Sphere","Plane","Torus"};
+                static const char* mesh_type_names[] = {"Cube","Sphere","Plane","Torus","glTF"};
                 ImGui::Text("Mesh Cues:");
                 for (int i = 0; i < scene->mesh_cue_count; ++i) {
                     ImGui::PushID(5000 + i);
                     MeshCue* mc = &scene->mesh_cues[i];
-                    const char* type_str = (mc->mesh_type >= 0 && mc->mesh_type < 4)
+                    const char* type_str = (mc->mesh_type >= 0 && mc->mesh_type < 5)
                         ? mesh_type_names[mc->mesh_type] : "Mesh";
                     char label[80];
                     snprintf(label, sizeof(label), "%s (%s)", mc->asset_key[0] ? mc->asset_key : "mesh", type_str);
@@ -2253,7 +2268,7 @@ void RenderTextModal(EditorContext* editor) {
 void RenderMeshModal(EditorContext* editor) {
     if (!editor) return;
 
-    static const char* mesh_type_names[] = { "Cube", "Sphere", "Plane", "Torus" };
+    static const char* mesh_type_names[] = { "Cube", "Sphere", "Plane", "Torus", "glTF/GLB" };
 
     if (editor->mesh_modal_request_open) {
         ImGui::OpenPopup("Edit Mesh Cue");
@@ -2266,9 +2281,100 @@ void RenderMeshModal(EditorContext* editor) {
         MeshCue* cue = &editor->editing_mesh;
 
         ImGui::InputText("Asset Key", cue->asset_key, sizeof(cue->asset_key));
-        ImGui::Combo("Shape", &cue->mesh_type, mesh_type_names, 4);
-        ImGui::DragFloat("Size",  &cue->mesh_size,  0.01f, 0.01f, 100.0f);
-        ImGui::DragFloat("Param (segs/minor-r)", &cue->mesh_param, 0.1f, 0.01f, 100.0f);
+        ImGui::Combo("Shape", &cue->mesh_type, mesh_type_names, 5);
+
+        // glTF asset path (only shown for type 4)
+        if (cue->mesh_type == 4) {
+            ImGui::Text("glTF / GLB File:");
+            ImGui::SetNextItemWidth(-80.0f);
+            ImGui::InputText("##gltfpath", cue->asset_path, sizeof(cue->asset_path));
+            ImGui::SameLine();
+            if (ImGui::Button("Browse##gltf")) {
+                OPENFILENAMEA ofn = {};
+                char filepath[512] = {};
+                ofn.lStructSize   = sizeof(ofn);
+                ofn.hwndOwner     = (HWND)editor->window->hwnd;
+                ofn.lpstrFile     = filepath;
+                ofn.nMaxFile      = sizeof(filepath);
+                ofn.lpstrFilter   = "glTF Files\0*.gltf;*.glb\0GLB Binary\0*.glb\0glTF JSON\0*.gltf\0All Files\0*.*\0";
+                ofn.nFilterIndex  = 1;
+                ofn.lpstrInitialDir = editor->project->assets_path[0]
+                                        ? editor->project->assets_path
+                                        : editor->startup_dir;
+                ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+                if (GetOpenFileNameA(&ofn)) {
+                    // Extract filename
+                    const char* filename = strrchr(filepath, '\\');
+                    if (!filename) filename = strrchr(filepath, '/');
+                    if (filename) filename++; else filename = filepath;
+
+                    // Auto-fill asset_key from filename stem if still empty
+                    if (cue->asset_key[0] == '\0') {
+                        strncpy_s(cue->asset_key, filename, _TRUNCATE);
+                        char* dot = strrchr(cue->asset_key, '.');
+                        if (dot) *dot = '\0';
+                    }
+
+                    // Copy file into project assets folder
+                    if (editor->project->assets_path[0]) {
+                        char dest_path[512] = {};
+                        snprintf(dest_path, sizeof(dest_path), "%s\\%s",
+                                 editor->project->assets_path, filename);
+                        if (!CopyFileA(filepath, dest_path, FALSE)) {
+                            printf("[GLTF] Warning: could not copy asset to %s (err=%lu)\n",
+                                   dest_path, GetLastError());
+                        }
+                        // Store workspace-relative path with forward slashes
+                        size_t cwd_len = strlen(editor->startup_dir);
+                        if (cwd_len > 0 &&
+                            _strnicmp(dest_path, editor->startup_dir, cwd_len) == 0 &&
+                            (dest_path[cwd_len] == '\\' || dest_path[cwd_len] == '/')) {
+                            strncpy_s(cue->asset_path, dest_path + cwd_len + 1, _TRUNCATE);
+                        } else {
+                            strncpy_s(cue->asset_path, dest_path, _TRUNCATE);
+                        }
+                        for (char* p = cue->asset_path; *p; ++p) if (*p == '\\') *p = '/';
+                    } else {
+                        strncpy_s(cue->asset_path, filepath, _TRUNCATE);
+                        printf("[GLTF] Warning: project not saved yet, asset not copied.\n");
+                    }
+
+                    // Extract material properties from the glTF and pre-fill the cue.
+                    // This reads the Blender-exported PBR material: base color, metallic,
+                    // roughness.  The user can override these in the sliders below.
+                    rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(filepath);
+                    if (ir && ir->ok) {
+                        const rev::gltf::Material& mat = ir->material;
+                        // Only overwrite color if it's still the default white
+                        bool color_is_default =
+                            cue->color[0] == 1.0f && cue->color[1] == 1.0f &&
+                            cue->color[2] == 1.0f && cue->color[3] == 1.0f;
+                        if (color_is_default) {
+                            cue->color[0] = mat.base_color[0];
+                            cue->color[1] = mat.base_color[1];
+                            cue->color[2] = mat.base_color[2];
+                            cue->color[3] = mat.base_color[3];
+                        }
+                        cue->metallic  = mat.metallic;
+                        cue->roughness = mat.roughness;
+                        printf("[GLTF] Material: name=\"%s\" base=(%.2f,%.2f,%.2f) metallic=%.2f roughness=%.2f\n",
+                               mat.name[0] ? mat.name : "(unnamed)",
+                               mat.base_color[0], mat.base_color[1], mat.base_color[2],
+                               mat.metallic, mat.roughness);
+                    }
+                    if (ir) rev::gltf::FreeImportResult(ir);
+                }
+            }
+            if (cue->asset_path[0])
+                ImGui::TextDisabled("%s", cue->asset_path);
+            else
+                ImGui::TextDisabled("No file selected");
+            ImGui::TextDisabled("mesh_size / mesh_param not used for external meshes");
+        } else {
+            ImGui::DragFloat("Size",  &cue->mesh_size,  0.01f, 0.01f, 100.0f);
+            ImGui::DragFloat("Param (segs/minor-r)", &cue->mesh_param, 0.1f, 0.01f, 100.0f);
+        }
 
         ImGui::Separator();
         ImGui::DragFloat3("Position", cue->pos,   0.01f);
@@ -2276,7 +2382,9 @@ void RenderMeshModal(EditorContext* editor) {
         ImGui::DragFloat3("Scale",    cue->scale, 0.01f, 0.001f, 100.0f);
 
         ImGui::Separator();
-        ImGui::ColorEdit4("Color", cue->color);
+        ImGui::ColorEdit4("Color (Base Color)", cue->color);
+        ImGui::SliderFloat("Metallic",  &cue->metallic,  0.0f, 1.0f);
+        ImGui::SliderFloat("Roughness", &cue->roughness, 0.0f, 1.0f);
 
         ImGui::Separator();
         ImGui::DragFloat("Cue Start", &cue->cue_start, 0.01f, 0.0f, 9999.0f);
@@ -2669,7 +2777,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 
     // [mesh_cues] section
     fprintf(f, "[mesh_cues]\n");
-    fprintf(f, "# asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end\n");
+    fprintf(f, "# asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness\n");
 
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
@@ -2688,15 +2796,16 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             float abs_fade_out_start  = scene_start + cue->fade_out_start;
             float abs_fade_out_end    = scene_start + cue->fade_out_end;
 
-            fprintf(f, "%s|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f\n",
-                cue->asset_key, cue->mesh_type,
+            fprintf(f, "%s|%s|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f\n",
+                cue->asset_key, cue->asset_path, cue->mesh_type,
                 cue->pos[0],   cue->pos[1],   cue->pos[2],
                 cue->rot[0],   cue->rot[1],   cue->rot[2],
                 cue->scale[0], cue->scale[1], cue->scale[2],
                 cue->color[0], cue->color[1], cue->color[2], cue->color[3],
                 cue->mesh_size, cue->mesh_param,
                 abs_start, abs_end, cue->layer_order, cue->effect_type,
-                abs_fade_in_start, abs_fade_in_end, abs_fade_out_start, abs_fade_out_end
+                abs_fade_in_start, abs_fade_in_end, abs_fade_out_start, abs_fade_out_end,
+                cue->metallic, cue->roughness
             );
         }
     }
@@ -3299,16 +3408,25 @@ out vec4 fragColor;
 uniform vec3  u_light_pos;
 uniform vec3  u_view_pos;
 uniform vec4  u_color;
+uniform float u_metallic;
+uniform float u_roughness;
 void main() {
-    float ambient  = 0.2;
+    vec3  base     = u_color.rgb;
     vec3  norm     = normalize(v_normal);
-    vec3  light_dir = normalize(u_light_pos - v_frag_pos);
-    float diff     = max(dot(norm, light_dir), 0.0);
-    vec3  view_dir = normalize(u_view_pos - v_frag_pos);
-    vec3  reflect_dir = reflect(-light_dir, norm);
-    float spec     = pow(max(dot(view_dir, reflect_dir), 0.0), 32.0);
-    float light    = ambient + diff + spec * 0.5;
-    fragColor = vec4(u_color.rgb * light, u_color.a);
+    vec3  ldir     = normalize(u_light_pos - v_frag_pos);
+    vec3  vdir     = normalize(u_view_pos  - v_frag_pos);
+    vec3  hdir     = normalize(ldir + vdir);
+    // Ambient
+    float ambient  = 0.15;
+    // Diffuse — metals have little diffuse
+    float diff     = max(dot(norm, ldir), 0.0) * (1.0 - u_metallic * 0.9);
+    // Specular: shininess driven by roughness; colour tinted for metals
+    float shininess   = mix(2.0, 256.0, 1.0 - u_roughness);
+    float spec_fac    = pow(max(dot(norm, hdir), 0.0), shininess);
+    vec3  spec_col    = mix(vec3(0.04), base, u_metallic);
+    vec3  spec        = spec_col * spec_fac * (1.0 - u_roughness * 0.85);
+    vec3  result      = base * (ambient + diff) + spec;
+    fragColor = vec4(result, u_color.a);
 }
 )";
 
@@ -3749,6 +3867,14 @@ void InitializePreview(EditorContext* editor, int width, int height) {
     editor->mesh_shader = rev::shader::CompileFromSource(mesh_vertex_shader, mesh_fragment_shader);
     // mesh_shader failure is non-fatal — mesh cues just won't render
 
+    // Create a dummy VAO so gl_VertexID-based fullscreen-quad draws are valid in
+    // OpenGL 3.3 core profile (draw calls with VAO 0 are undefined behaviour).
+    typedef void (*PFNGLGENVERTEXARRAYSPROC)(int n, unsigned int* arrays);
+    auto glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)wglGetProcAddress("glGenVertexArrays");
+    if (glGenVertexArrays) {
+        glGenVertexArrays(1, &editor->preview_vao);
+    }
+
     editor->preview_initialized = true;
 }
 
@@ -3790,7 +3916,14 @@ void CleanupPreview(EditorContext* editor) {
         glDeleteFramebuffers(1, &editor->preview_fbo);
         editor->preview_fbo = 0;
     }
-    
+
+    if (editor->preview_vao) {
+        typedef void (*PFNGLDELETEVERTEXARRAYSPROC)(int n, const unsigned int* arrays);
+        auto glDeleteVertexArrays = (PFNGLDELETEVERTEXARRAYSPROC)wglGetProcAddress("glDeleteVertexArrays");
+        if (glDeleteVertexArrays) glDeleteVertexArrays(1, &editor->preview_vao);
+        editor->preview_vao = 0;
+    }
+
     editor->preview_initialized = false;
 }
 
@@ -3813,7 +3946,16 @@ void RenderPreviewFrame(EditorContext* editor) {
     
     // Bind preview framebuffer
     glBindFramebuffer(0x8D40, editor->preview_fbo); // GL_FRAMEBUFFER
-    
+
+    // Bind the dummy VAO — required in OpenGL 3.3 core profile for any glDrawArrays
+    // call, including gl_VertexID-based fullscreen quads.  Without this, draw calls
+    // silently fail (e.g. background shader shows as black).
+    if (editor->preview_vao) {
+        typedef void (*PFNGLBINDVERTEXARRAYPROC)(unsigned int array);
+        auto glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
+        if (glBindVertexArray) glBindVertexArray(editor->preview_vao);
+    }
+
     // Set viewport
     glViewport(0, 0, editor->preview_width, editor->preview_height);
     
@@ -4106,6 +4248,8 @@ void RenderPreviewFrame(EditorContext* editor) {
         int loc_light = rev::shader::GetUniformLocation(mesh_prog, "u_light_pos");
         int loc_vpos  = rev::shader::GetUniformLocation(mesh_prog, "u_view_pos");
         int loc_color = rev::shader::GetUniformLocation(mesh_prog, "u_color");
+        int loc_metal = rev::shader::GetUniformLocation(mesh_prog, "u_metallic");
+        int loc_rough = rev::shader::GetUniformLocation(mesh_prog, "u_roughness");
 
         if (glUniformMatrix4fv) {
             glUniformMatrix4fv(loc_view, 1, 0, view_mat);
@@ -4139,6 +4283,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float col[4] = { cue->color[0], cue->color[1], cue->color[2], cue->color[3] * opacity };
                     glUniform4fv_fn(loc_color, 1, col);
                 }
+                rev::shader::SetFloat(mesh_prog, loc_metal, cue->metallic);
+                rev::shader::SetFloat(mesh_prog, loc_rough, cue->roughness);
 
                 // Create procedural mesh based on type
                 float size  = cue->mesh_size  > 0.0f ? cue->mesh_size  : 1.0f;
@@ -4149,6 +4295,19 @@ void RenderPreviewFrame(EditorContext* editor) {
                     case 1: mesh = rev::mesh::CreateSphere(size, (int)param);           break;
                     case 2: mesh = rev::mesh::CreatePlane(size, param > 0.0f ? param : size); break;
                     case 3: mesh = rev::mesh::CreateTorus(size, param > 0.0f ? param : 0.3f, 32, 16); break;
+                    case 4: {
+                        // External glTF/GLB
+                        if (cue->asset_path[0]) {
+                            rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(cue->asset_path);
+                            if (ir && ir->ok) {
+                                mesh = ir->mesh;
+                                ir->mesh = nullptr;
+                            }
+                            if (ir) rev::gltf::FreeImportResult(ir);
+                        }
+                        if (!mesh) mesh = rev::mesh::CreateCube(1.0f); // fallback if path empty or failed
+                        break;
+                    }
                     default: mesh = rev::mesh::CreateCube(1.0f); break;
                 }
                 if (!mesh) continue;

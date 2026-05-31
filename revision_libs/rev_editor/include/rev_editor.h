@@ -140,6 +140,7 @@ struct EditorContext {
     unsigned int preview_fbo;        // Framebuffer object
     unsigned int preview_texture;    // Color attachment
     unsigned int preview_depth;      // Depth attachment
+    unsigned int preview_vao;        // Dummy VAO required by OpenGL 3.3 core for gl_VertexID draws
     int preview_width;
     int preview_height;
     bool preview_initialized;

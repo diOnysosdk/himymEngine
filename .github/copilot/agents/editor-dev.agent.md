@@ -18,7 +18,7 @@ Expert in the HiMYM C++ editor: `rev_editor` lib, ImGui authoring tools, project
 
 - **rev_editor**: `editor_context.cpp` (LoadProject, SaveProject, ExportProject, PackBuildAndRun, RenderPreviewFrame, AddMeshCue, DeleteMeshCue, RenderMeshModal)
 - **rev_editor.h**: `ProjectData`, `SceneBlock`, `ShaderCue` (shared cue types come from rev_runtime via `using`)
-- **Cue types supported**: ImageCue (14 fields), TextCue (16 fields), MusicCue (4 fields), MeshCue (25 fields)
+- **Cue types supported**: ImageCue (14 fields), TextCue (16 fields), MusicCue (4 fields), MeshCue (26 fields — asset_path + mesh_type 0-4, type 4=glTF/GLB via rev_gltf)
 - **Mesh support**: `mesh_shader` (Phong, compiled at InitializePreview), mesh modal, RenderPreviewFrame 3D layer
 - **ImGui**: Dear ImGui (Docking branch), Win32+OpenGL3 backends
 

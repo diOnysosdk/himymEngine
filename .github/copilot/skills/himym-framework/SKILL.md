@@ -53,7 +53,7 @@ The cue system is the core data flow between the editor and runtime:
 | ImageCue | `rev_runtime.h` | 14 fields (key, path, x/y/scale/opacity, timing, effect, fades, layer) | `[image_cues]` |
 | TextCue  | `rev_runtime.h` | 16 fields (text, font, x/y/size/color, timing, effect, fades, layer) | `[text_cues]` |
 | MusicCue | `rev_runtime.h` | 4 fields (key, path, cue_start, cue_end) | `[music_cues]` |
-| MeshCue  | `rev_runtime.h` | 25 fields (key, mesh_type, pos/rot/scale, color, size, param, timing, fades, layer) | `[mesh_cues]` |
+| MeshCue  | `rev_runtime.h` | 26 fields (key, asset_path, mesh_type 0-4, pos/rot/scale, color, size, param, timing, fades, layer) | `[mesh_cues]` |
 
 **Rule**: never define these structs anywhere except `rev_runtime.h`. Both `rev_editor.h` and `minimal_intro/main.cpp` use them via `using` declarations.
 

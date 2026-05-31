@@ -6,6 +6,9 @@
 #include "rev_xm.h"
 #include "rev_runtime.h"
 #include "rev_mesh.h"
+#if defined(REV_GLTF_AVAILABLE)
+#include "rev_gltf.h"
+#endif
 #include <cstdio>
 #include <cstring>
 
@@ -262,16 +265,22 @@ out vec4 fragColor;
 uniform vec3  u_light_pos;
 uniform vec3  u_view_pos;
 uniform vec4  u_color;
+uniform float u_metallic;
+uniform float u_roughness;
 void main() {
-    float ambient   = 0.2;
-    vec3  norm      = normalize(v_normal);
-    vec3  light_dir = normalize(u_light_pos - v_frag_pos);
-    float diff      = max(dot(norm, light_dir), 0.0);
-    vec3  view_dir  = normalize(u_view_pos - v_frag_pos);
-    vec3  ref_dir   = reflect(-light_dir, norm);
-    float spec      = pow(max(dot(view_dir, ref_dir), 0.0), 32.0);
-    float light     = ambient + diff + spec * 0.5;
-    fragColor = vec4(u_color.rgb * light, u_color.a);
+    vec3  base     = u_color.rgb;
+    vec3  norm     = normalize(v_normal);
+    vec3  ldir     = normalize(u_light_pos - v_frag_pos);
+    vec3  vdir     = normalize(u_view_pos  - v_frag_pos);
+    vec3  hdir     = normalize(ldir + vdir);
+    float ambient  = 0.15;
+    float diff     = max(dot(norm, ldir), 0.0) * (1.0 - u_metallic * 0.9);
+    float shininess   = mix(2.0, 256.0, 1.0 - u_roughness);
+    float spec_fac    = pow(max(dot(norm, hdir), 0.0), shininess);
+    vec3  spec_col    = mix(vec3(0.04), base, u_metallic);
+    vec3  spec        = spec_col * spec_fac * (1.0 - u_roughness * 0.85);
+    vec3  result      = base * (ambient + diff) + spec;
+    fragColor = vec4(result, u_color.a);
 }
 )";
 
@@ -803,6 +812,25 @@ int main(int argc, char* argv[]) {
             case 1: mesh_obj = rev::mesh::CreateSphere(size, (int)param); break;
             case 2: mesh_obj = rev::mesh::CreatePlane(size, param > 0.0f ? param : size); break;
             case 3: mesh_obj = rev::mesh::CreateTorus(size, param > 0.0f ? param : 0.3f, 32, 16); break;
+            case 4: {
+                // External glTF/GLB — loaded via rev_gltf (editor/dev builds only)
+#if defined(REV_GLTF_AVAILABLE)
+                rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(mesh_cue.asset_path);
+                if (ir && ir->ok) {
+                    mesh_obj = ir->mesh;
+                    ir->mesh = nullptr; // take ownership
+                    printf("glTF loaded: %s\n", mesh_cue.asset_path);
+                } else {
+                    printf("glTF load failed: %s\n", (ir ? ir->error : "null result"));
+                    mesh_obj = rev::mesh::CreateCube(1.0f); // fallback
+                }
+                if (ir) rev::gltf::FreeImportResult(ir);
+#else
+                printf("mesh_type=4 (glTF) not available in this build — using cube fallback\n");
+                mesh_obj = rev::mesh::CreateCube(1.0f);
+#endif
+                break;
+            }
             default: mesh_obj = rev::mesh::CreateCube(1.0f); break;
         }
         if (mesh_obj) {
@@ -972,7 +1000,12 @@ int main(int argc, char* argv[]) {
         // Clear screen
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
-        
+
+        // Rebind the global VAO: rev::mesh::UploadToGPU / Render leave the mesh VAO
+        // (or VAO 0) current, but the background fullscreen quad requires a valid VAO
+        // in OpenGL 3.3 core profile (vertex shader only uses gl_VertexID, no attribs).
+        glBindVertexArray(vao);
+
         // Use shader and set uniforms
         rev::shader::Use(shader);
         rev::shader::SetFloat(shader, u_time_loc, time);
@@ -1117,6 +1150,8 @@ int main(int argc, char* argv[]) {
             int loc_light = rev::shader::GetUniformLocation(mesh_shader, "u_light_pos");
             int loc_vpos  = rev::shader::GetUniformLocation(mesh_shader, "u_view_pos");
             int loc_color = rev::shader::GetUniformLocation(mesh_shader, "u_color");
+            int loc_metal = rev::shader::GetUniformLocation(mesh_shader, "u_metallic");
+            int loc_rough = rev::shader::GetUniformLocation(mesh_shader, "u_roughness");
             if (loc_light >= 0) rev::shader::SetVec3(mesh_shader, loc_light, light_pos[0], light_pos[1], light_pos[2]);
             if (loc_vpos  >= 0) rev::shader::SetVec3(mesh_shader, loc_vpos,  eye[0], eye[1], eye[2]);
             if (loc_color >= 0) {
@@ -1130,6 +1165,8 @@ int main(int argc, char* argv[]) {
                     glUniform4fv_fn(loc_color, 1, col);
                 }
             }
+            if (loc_metal >= 0) rev::shader::SetFloat(mesh_shader, loc_metal, mesh_cue.metallic);
+            if (loc_rough >= 0) rev::shader::SetFloat(mesh_shader, loc_rough, mesh_cue.roughness);
 
             rev::mesh::Render(mesh_obj, -1);
 

@@ -29,6 +29,7 @@ add_subdirectory(revision_libs/rev_sequence)
 add_subdirectory(revision_libs/rev_pack)
 add_subdirectory(revision_libs/rev_editor)
 add_subdirectory(revision_libs/rev_mesh)
+add_subdirectory(revision_libs/rev_gltf)
 
 # Add examples
 add_subdirectory(examples/minimal_intro)

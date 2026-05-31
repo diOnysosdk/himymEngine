@@ -53,6 +53,7 @@ target_link_libraries(rev_editor PUBLIC
     rev_shader
     rev_pack
     rev_mesh
+    rev_gltf
     imgui
 )
 

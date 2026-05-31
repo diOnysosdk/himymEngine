@@ -374,10 +374,11 @@ namespace rev {
 namespace runtime {
 
 // ---- LoadMeshCue ---------------------------------------------------
-// Format: asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|
+// Format: asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|
 //         scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|
 //         mesh_size|mesh_param|cue_start|cue_end|layer_order|
 //         effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end
+// mesh_type 4 = external file (asset_path holds path to .gltf/.glb)
 bool LoadMeshCue(const char* cues_path, MeshCue* cue)
 {
     FILE* f = nullptr;
@@ -394,7 +395,7 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
         if (s[0] == '[' && in_section) {                    break;    }
         if (!in_section || s[0] == '#' || s[0] == '\0' || s[0] == '\n') continue;
 
-        // Split off asset_key (first pipe)
+        // Split off asset_key (before first pipe)
         char* pipe1 = strchr(s, '|');
         if (!pipe1) continue;
         size_t key_len = (size_t)(pipe1 - s);
@@ -402,9 +403,21 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
         strncpy_s(cue->asset_key, s, key_len);
         cue->asset_key[key_len] = '\0';
 
-        // Parse remaining 24 numeric fields
-        int n = sscanf_s(pipe1 + 1,
-            "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f",
+        // Split off asset_path (between first and second pipe)
+        char* pipe2 = strchr(pipe1 + 1, '|');
+        if (!pipe2) continue;
+        size_t path_len = (size_t)(pipe2 - (pipe1 + 1));
+        if (path_len >= sizeof(cue->asset_path)) path_len = sizeof(cue->asset_path) - 1;
+        strncpy_s(cue->asset_path, pipe1 + 1, path_len);
+        cue->asset_path[path_len] = '\0';
+
+        // Parse remaining numeric fields
+        // 28-field format: mesh_type|pos(3)|rot(3)|scale(3)|color(4)|mesh_size|mesh_param|
+        //                  cue_start|cue_end|layer_order|effect_type|fade_in/out(4)|metallic|roughness
+        cue->metallic  = 0.0f;  // defaults for old 26-field files
+        cue->roughness = 0.5f;
+        int n = sscanf_s(pipe2 + 1,
+            "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%f|%f",
             &cue->mesh_type,
             &cue->pos[0],   &cue->pos[1],   &cue->pos[2],
             &cue->rot[0],   &cue->rot[1],   &cue->rot[2],
@@ -414,8 +427,9 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
             &cue->cue_start, &cue->cue_end,
             &cue->layer_order, &cue->effect_type,
             &cue->fade_in_start, &cue->fade_in_end,
-            &cue->fade_out_start, &cue->fade_out_end);
-        if (n >= 18) {   // minimum viable parse (first 18 fields after key)
+            &cue->fade_out_start, &cue->fade_out_end,
+            &cue->metallic, &cue->roughness);
+        if (n >= 18) {   // minimum viable parse (first 18 fields after key+path)
             found = true;
             break;
         }
