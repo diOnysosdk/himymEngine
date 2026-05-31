@@ -78,6 +78,26 @@ Analyze the user's request and **route it to the appropriate specialized agent**
 3. **Check dependencies**: Will this affect multiple systems?
 4. **Recommend agent(s)**: Clear recommendation with reasoning
 
+## Skills to load first
+Before domain work, load the relevant skill for context:
+- `Revision Codebase Map` — orientation, struct relationships, all cue types, cues.txt format
+- `Revision Runtime Core` — rev_runtime, minimal_intro, Mat4, MeshCue loaders
+- `Scene Block Editor` — rev_editor, export/import, mesh cue authoring
+- `Shader Authoring` — rev_shader, Phong shader contract
+- `Revision Build Validation` — cmake commands, rebuild targets
+- `Revision Director` — cross-domain coordination rules
+
+## Adding a new cue type
+Follow this exact sequence (all domains, in order):
+1. Struct in `rev_runtime.h` (@runtime-dev)
+2. Parser in `rev_runtime.cpp` (@runtime-dev)
+3. `using` declaration + SceneBlock/EditorContext fields in `rev_editor.h` (@editor-dev)
+4. `AddXxx`/`DeleteXxx`, modal, UI, ExportProject, LoadProject in `editor_context.cpp` (@editor-dev)
+5. Render block in `RenderPreviewFrame` (@editor-dev + @mesh-graphics)
+6. Render block in `minimal_intro/main.cpp` (@runtime-dev)
+7. Rebuild both targets (@build-system)
+
+
 ## Example Routing
 
 **User:** "The sphere normals look wrong in mesh_demo"

@@ -14,6 +14,7 @@ using rev::runtime::ColorRGB;
 using rev::runtime::ImageCue;
 using rev::runtime::TextCue;
 using rev::runtime::MusicCue;
+using rev::runtime::MeshCue;
 
 // Forward declarations
 struct EditorContext;
@@ -83,6 +84,10 @@ struct SceneBlock {
     MusicCue* music_cues;
     int music_cue_count;
     int music_cue_capacity;
+
+    MeshCue* mesh_cues;
+    int mesh_cue_count;
+    int mesh_cue_capacity;
 };
 
 // Project data structure
@@ -124,7 +129,7 @@ struct EditorContext {
     float timeline_scroll;
     int selected_scene_index;
     int selected_cue_index;
-    int selected_cue_type;      // 0=shader, 1=image, 2=text, 3=music
+    int selected_cue_type;      // 0=shader, 1=image, 2=text, 3=music, 4=mesh
     
     // Playback
     float current_time;
@@ -140,6 +145,7 @@ struct EditorContext {
     bool preview_initialized;
     void* preview_shader;            // rev::shader::Program* for fullscreen shader
     void* sprite_shader;             // rev::shader::Program* for sprite rendering
+    void* mesh_shader;               // rev::shader::Program* for 3D mesh rendering
     int preview_current_shader_id;   // Currently compiled shader preset ID (-1 = none)
     
     // Shader modal state
@@ -161,7 +167,12 @@ struct EditorContext {
     TextCue editing_text;
     bool text_modal_open;
     bool text_modal_request_open;
-    
+
+    // Mesh modal state
+    MeshCue editing_mesh;
+    bool mesh_modal_open;
+    bool mesh_modal_request_open;
+
     // Curve editor state
     int selected_curve_index;
     int dragging_point_index;
@@ -199,7 +210,8 @@ void RenderCurveEditor(EditorContext* editor);
 void RenderShaderModal(EditorContext* editor);
 void RenderMusicModal(EditorContext* editor);
 void RenderImageModal(EditorContext* editor);
-void RenderTextModal(EditorContext* editor);
+void RenderTextModal (EditorContext* editor);
+void RenderMeshModal (EditorContext* editor);
 void RenderProperties(EditorContext* editor);
 void RenderAssetBrowser(EditorContext* editor);
 void RenderPreviewPanel(EditorContext* editor);
@@ -219,14 +231,16 @@ SceneBlock* GetScene(EditorContext* editor, int scene_index);
 
 // Cue management
 int AddShaderCue(SceneBlock* scene, const ShaderCue& cue);
-int AddImageCue(SceneBlock* scene, const ImageCue& cue);
-int AddTextCue(SceneBlock* scene, const TextCue& cue);
-int AddMusicCue(SceneBlock* scene, const MusicCue& cue);
+int AddImageCue (SceneBlock* scene, const ImageCue&  cue);
+int AddTextCue  (SceneBlock* scene, const TextCue&   cue);
+int AddMusicCue (SceneBlock* scene, const MusicCue&  cue);
+int AddMeshCue  (SceneBlock* scene, const MeshCue&   cue);
 
 void DeleteShaderCue(SceneBlock* scene, int cue_index);
-void DeleteImageCue(SceneBlock* scene, int cue_index);
-void DeleteTextCue(SceneBlock* scene, int cue_index);
-void DeleteMusicCue(SceneBlock* scene, int cue_index);
+void DeleteImageCue (SceneBlock* scene, int cue_index);
+void DeleteTextCue  (SceneBlock* scene, int cue_index);
+void DeleteMusicCue (SceneBlock* scene, int cue_index);
+void DeleteMeshCue  (SceneBlock* scene, int cue_index);
 
 // Shader presets
 void LoadShaderPreset(ShaderCue* cue, int preset_id);

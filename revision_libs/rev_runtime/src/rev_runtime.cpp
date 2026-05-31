@@ -364,3 +364,171 @@ bool LoadMusicCue(const char* cues_path, MusicCue* cue)
 
 } // namespace runtime
 } // namespace rev
+
+// ============================================================
+// LoadMeshCue + Mat4 math
+// ============================================================
+#include <cmath>
+
+namespace rev {
+namespace runtime {
+
+// ---- LoadMeshCue ---------------------------------------------------
+// Format: asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|
+//         scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|
+//         mesh_size|mesh_param|cue_start|cue_end|layer_order|
+//         effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end
+bool LoadMeshCue(const char* cues_path, MeshCue* cue)
+{
+    FILE* f = nullptr;
+    fopen_s(&f, cues_path, "r");
+    if (!f) return false;
+
+    char line[2048];
+    bool in_section = false;
+    bool found      = false;
+
+    while (fgets(line, sizeof(line), f)) {
+        char* s = line; TrimLeft(s);
+        if (strstr(s, "[mesh_cues]")) { in_section = true;  continue; }
+        if (s[0] == '[' && in_section) {                    break;    }
+        if (!in_section || s[0] == '#' || s[0] == '\0' || s[0] == '\n') continue;
+
+        // Split off asset_key (first pipe)
+        char* pipe1 = strchr(s, '|');
+        if (!pipe1) continue;
+        size_t key_len = (size_t)(pipe1 - s);
+        if (key_len >= sizeof(cue->asset_key)) key_len = sizeof(cue->asset_key) - 1;
+        strncpy_s(cue->asset_key, s, key_len);
+        cue->asset_key[key_len] = '\0';
+
+        // Parse remaining 24 numeric fields
+        int n = sscanf_s(pipe1 + 1,
+            "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f",
+            &cue->mesh_type,
+            &cue->pos[0],   &cue->pos[1],   &cue->pos[2],
+            &cue->rot[0],   &cue->rot[1],   &cue->rot[2],
+            &cue->scale[0], &cue->scale[1], &cue->scale[2],
+            &cue->color[0], &cue->color[1], &cue->color[2], &cue->color[3],
+            &cue->mesh_size, &cue->mesh_param,
+            &cue->cue_start, &cue->cue_end,
+            &cue->layer_order, &cue->effect_type,
+            &cue->fade_in_start, &cue->fade_in_end,
+            &cue->fade_out_start, &cue->fade_out_end);
+        if (n >= 18) {   // minimum viable parse (first 18 fields after key)
+            found = true;
+            break;
+        }
+    }
+
+    fclose(f);
+    return found;
+}
+
+// ---- Mat4 math -----------------------------------------------------
+
+static const float kPi = 3.14159265358979323846f;
+
+void Mat4Identity(float* m) {
+    for (int i = 0; i < 16; ++i) m[i] = 0.0f;
+    m[0] = m[5] = m[10] = m[15] = 1.0f;
+}
+
+void Mat4Perspective(float* m, float fov_rad, float aspect, float znear, float zfar) {
+    float f = 1.0f / tanf(fov_rad * 0.5f);
+    Mat4Identity(m);
+    m[0]  =  f / aspect;
+    m[5]  =  f;
+    m[10] =  (zfar + znear) / (znear - zfar);
+    m[11] = -1.0f;
+    m[14] =  (2.0f * zfar * znear) / (znear - zfar);
+    m[15] =  0.0f;
+}
+
+void Mat4LookAt(float* m, const float eye[3], const float center[3], const float up[3]) {
+    float fx = center[0]-eye[0], fy = center[1]-eye[1], fz = center[2]-eye[2];
+    float len = sqrtf(fx*fx + fy*fy + fz*fz);
+    if (len < 1e-6f) { Mat4Identity(m); return; }
+    fx /= len; fy /= len; fz /= len;
+
+    float sx = fy*up[2] - fz*up[1];
+    float sy = fz*up[0] - fx*up[2];
+    float sz = fx*up[1] - fy*up[0];
+    len = sqrtf(sx*sx + sy*sy + sz*sz);
+    if (len < 1e-6f) { Mat4Identity(m); return; }
+    sx /= len; sy /= len; sz /= len;
+
+    float ux = sy*fz - sz*fy;
+    float uy = sz*fx - sx*fz;
+    float uz = sx*fy - sy*fx;
+
+    Mat4Identity(m);
+    m[0] = sx; m[4] = ux; m[8]  = -fx;
+    m[1] = sy; m[5] = uy; m[9]  = -fy;
+    m[2] = sz; m[6] = uz; m[10] = -fz;
+    m[12] = -(sx*eye[0] + sy*eye[1] + sz*eye[2]);
+    m[13] = -(ux*eye[0] + uy*eye[1] + uz*eye[2]);
+    m[14] =   fx*eye[0] + fy*eye[1] + fz*eye[2];
+}
+
+void Mat4Translate(float* m, float x, float y, float z) {
+    Mat4Identity(m);
+    m[12] = x; m[13] = y; m[14] = z;
+}
+
+void Mat4RotateEuler(float* m, float rx_deg, float ry_deg, float rz_deg) {
+    float rx = rx_deg * kPi / 180.0f;
+    float ry = ry_deg * kPi / 180.0f;
+    float rz = rz_deg * kPi / 180.0f;
+
+    float cx = cosf(rx), sx = sinf(rx);
+    float cy = cosf(ry), sy = sinf(ry);
+    float cz = cosf(rz), sz = sinf(rz);
+
+    // Rx
+    float Rx[16]; Mat4Identity(Rx);
+    Rx[5] = cx; Rx[9] = -sx; Rx[6] = sx; Rx[10] = cx;
+
+    // Ry
+    float Ry[16]; Mat4Identity(Ry);
+    Ry[0] = cy; Ry[8] = sy; Ry[2] = -sy; Ry[10] = cy;
+
+    // Rz
+    float Rz[16]; Mat4Identity(Rz);
+    Rz[0] = cz; Rz[4] = -sz; Rz[1] = sz; Rz[5] = cz;
+
+    float tmp[16];
+    Mat4Multiply(tmp, Ry, Rx);
+    Mat4Multiply(m, Rz, tmp);
+}
+
+void Mat4Scale(float* m, float sx, float sy, float sz) {
+    Mat4Identity(m);
+    m[0] = sx; m[5] = sy; m[10] = sz;
+}
+
+void Mat4Multiply(float* out, const float* a, const float* b) {
+    float tmp[16];
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            tmp[col*4 + row] =
+                a[0*4 + row] * b[col*4 + 0] +
+                a[1*4 + row] * b[col*4 + 1] +
+                a[2*4 + row] * b[col*4 + 2] +
+                a[3*4 + row] * b[col*4 + 3];
+        }
+    }
+    for (int i = 0; i < 16; ++i) out[i] = tmp[i];
+}
+
+void Mat4Model(float* out, const float pos[3], const float rot_deg[3], const float scale[3]) {
+    float T[16], R[16], S[16], tmp[16];
+    Mat4Translate(T, pos[0], pos[1], pos[2]);
+    Mat4RotateEuler(R, rot_deg[0], rot_deg[1], rot_deg[2]);
+    Mat4Scale(S, scale[0], scale[1], scale[2]);
+    Mat4Multiply(tmp, R, S);
+    Mat4Multiply(out, T, tmp);
+}
+
+} // namespace runtime
+} // namespace rev

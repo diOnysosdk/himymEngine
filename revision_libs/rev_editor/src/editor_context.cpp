@@ -1,6 +1,7 @@
 #include "rev_editor.h"
 #include "rev_shader.h"
 #include "rev_pack.h"
+#include "rev_mesh.h"
 #include <cstring>
 #include <cstdio>
 #include <cmath>
@@ -90,6 +91,11 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->image_modal_request_open = false;
     editor->text_modal_open = false;
     editor->text_modal_request_open = false;
+    editor->mesh_modal_open = false;
+    editor->mesh_modal_request_open = false;
+    memset(&editor->editing_mesh, 0, sizeof(editor->editing_mesh));
+    editor->editing_mesh.scale[0] = editor->editing_mesh.scale[1] = editor->editing_mesh.scale[2] = 1.0f;
+    editor->mesh_shader = nullptr;
     editor->selected_curve_index = -1;
     editor->dragging_point_index = -1;
     editor->show_curve_grid = true;
@@ -155,6 +161,7 @@ void DestroyEditor(EditorContext* editor) {
             delete[] scene->image_cues;
             delete[] scene->text_cues;
             delete[] scene->music_cues;
+            delete[] scene->mesh_cues;
         }
         delete[] editor->project->scenes;
         
@@ -195,6 +202,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
     bool in_image_cues = false;
     bool in_text_cues = false;
     bool in_music_cues = false;
+    bool in_mesh_cues = false;
     bool in_curves = false;
     bool in_curve_points = false;
     
@@ -202,7 +210,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
     ImageCue current_image_cue = {};
     TextCue current_text_cue = {};
     MusicCue current_music_cue = {};
-    rev::curve::Curve* current_curve = nullptr;
+    MeshCue current_mesh_cue = {};
+    current_mesh_cue.scale[0] = current_mesh_cue.scale[1] = current_mesh_cue.scale[2] = 1.0f;    rev::curve::Curve* current_curve = nullptr;
     
     char scene_name[64] = {};
     float scene_duration = 0.0f;
@@ -247,6 +256,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_image_cues = false;
             in_text_cues = false;
             in_music_cues = false;
+            in_mesh_cues = false;
         }
         
         // Section detection
@@ -270,6 +280,13 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_image_cues = false;
             in_text_cues = false;
             in_music_cues = true;
+            in_mesh_cues = false;
+        } else if (strstr(start, "\"mesh_cues\":")) {
+            in_shader_cues = false;
+            in_image_cues = false;
+            in_text_cues = false;
+            in_music_cues = false;
+            in_mesh_cues = true;
         } else if (strstr(start, "\"curves\":")) {
             in_curves = true;
         }
@@ -440,6 +457,47 @@ bool LoadProject(EditorContext* editor, const char* path) {
                        current_music_cue.asset_key, current_music_cue.asset_path);
                 AddMusicCue(current_scene, current_music_cue);
                 memset(&current_music_cue, 0, sizeof(current_music_cue));
+            }
+        }
+
+        // Parse mesh cue fields
+        if (in_mesh_cues && current_scene) {
+            if (strstr(start, "\"asset_key\":")) {
+                sscanf_s(start, "\"asset_key\": \"%63[^\"]\"", current_mesh_cue.asset_key, (unsigned)sizeof(current_mesh_cue.asset_key));
+            } else if (strstr(start, "\"mesh_type\":")) {
+                sscanf_s(start, "\"mesh_type\": %d", &current_mesh_cue.mesh_type);
+            } else if (strstr(start, "\"pos\":")) {
+                sscanf_s(start, "\"pos\": [%f, %f, %f]", &current_mesh_cue.pos[0], &current_mesh_cue.pos[1], &current_mesh_cue.pos[2]);
+            } else if (strstr(start, "\"rot\":")) {
+                sscanf_s(start, "\"rot\": [%f, %f, %f]", &current_mesh_cue.rot[0], &current_mesh_cue.rot[1], &current_mesh_cue.rot[2]);
+            } else if (strstr(start, "\"scale\":")) {
+                sscanf_s(start, "\"scale\": [%f, %f, %f]", &current_mesh_cue.scale[0], &current_mesh_cue.scale[1], &current_mesh_cue.scale[2]);
+            } else if (strstr(start, "\"color\":")) {
+                sscanf_s(start, "\"color\": [%f, %f, %f, %f]", &current_mesh_cue.color[0], &current_mesh_cue.color[1], &current_mesh_cue.color[2], &current_mesh_cue.color[3]);
+            } else if (strstr(start, "\"mesh_size\":")) {
+                sscanf_s(start, "\"mesh_size\": %f", &current_mesh_cue.mesh_size);
+            } else if (strstr(start, "\"mesh_param\":")) {
+                sscanf_s(start, "\"mesh_param\": %f", &current_mesh_cue.mesh_param);
+            } else if (strstr(start, "\"effect_type\":")) {
+                sscanf_s(start, "\"effect_type\": %d", &current_mesh_cue.effect_type);
+            } else if (strstr(start, "\"cue_start\":")) {
+                sscanf_s(start, "\"cue_start\": %f", &current_mesh_cue.cue_start);
+            } else if (strstr(start, "\"cue_end\":")) {
+                sscanf_s(start, "\"cue_end\": %f", &current_mesh_cue.cue_end);
+            } else if (strstr(start, "\"fade_in_start\":")) {
+                sscanf_s(start, "\"fade_in_start\": %f", &current_mesh_cue.fade_in_start);
+            } else if (strstr(start, "\"fade_in_end\":")) {
+                sscanf_s(start, "\"fade_in_end\": %f", &current_mesh_cue.fade_in_end);
+            } else if (strstr(start, "\"fade_out_start\":")) {
+                sscanf_s(start, "\"fade_out_start\": %f", &current_mesh_cue.fade_out_start);
+            } else if (strstr(start, "\"fade_out_end\":")) {
+                sscanf_s(start, "\"fade_out_end\": %f", &current_mesh_cue.fade_out_end);
+            } else if (strstr(start, "\"layer_order\":")) {
+                sscanf_s(start, "\"layer_order\": %d", &current_mesh_cue.layer_order);
+            } else if (start[0] == '}' && current_mesh_cue.asset_key[0] != '\0') {
+                AddMeshCue(current_scene, current_mesh_cue);
+                MeshCue blank = {}; blank.scale[0] = blank.scale[1] = blank.scale[2] = 1.0f;
+                current_mesh_cue = blank;
             }
         }
 
@@ -624,6 +682,31 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"cue_end\": %.3f\n", cue->cue_end);
             fprintf(f, "        }%s\n", (i < scene->music_cue_count - 1) ? "," : "");
         }
+        fprintf(f, "      ],\n");
+
+        // Mesh cues
+        fprintf(f, "      \"mesh_cues\": [\n");
+        for (int i = 0; i < scene->mesh_cue_count; ++i) {
+            MeshCue* cue = &scene->mesh_cues[i];
+            fprintf(f, "        {\n");
+            fprintf(f, "          \"asset_key\": \"%s\",\n",  cue->asset_key);
+            fprintf(f, "          \"mesh_type\": %d,\n",       cue->mesh_type);
+            fprintf(f, "          \"pos\": [%.3f, %.3f, %.3f],\n",   cue->pos[0],   cue->pos[1],   cue->pos[2]);
+            fprintf(f, "          \"rot\": [%.3f, %.3f, %.3f],\n",   cue->rot[0],   cue->rot[1],   cue->rot[2]);
+            fprintf(f, "          \"scale\": [%.3f, %.3f, %.3f],\n", cue->scale[0], cue->scale[1], cue->scale[2]);
+            fprintf(f, "          \"color\": [%.3f, %.3f, %.3f, %.3f],\n", cue->color[0], cue->color[1], cue->color[2], cue->color[3]);
+            fprintf(f, "          \"mesh_size\": %.3f,\n",  cue->mesh_size);
+            fprintf(f, "          \"mesh_param\": %.3f,\n", cue->mesh_param);
+            fprintf(f, "          \"effect_type\": %d,\n",  cue->effect_type);
+            fprintf(f, "          \"cue_start\": %.3f,\n",  cue->cue_start);
+            fprintf(f, "          \"cue_end\": %.3f,\n",    cue->cue_end);
+            fprintf(f, "          \"fade_in_start\": %.3f,\n",  cue->fade_in_start);
+            fprintf(f, "          \"fade_in_end\": %.3f,\n",    cue->fade_in_end);
+            fprintf(f, "          \"fade_out_start\": %.3f,\n", cue->fade_out_start);
+            fprintf(f, "          \"fade_out_end\": %.3f,\n",   cue->fade_out_end);
+            fprintf(f, "          \"layer_order\": %d\n",   cue->layer_order);
+            fprintf(f, "        }%s\n", (i < scene->mesh_cue_count - 1) ? "," : "");
+        }
         fprintf(f, "      ]\n");
         
         fprintf(f, "    }%s\n", (s < editor->project->scene_count - 1) ? "," : "");
@@ -701,6 +784,7 @@ bool NewProject(EditorContext* editor) {
         delete[] scene->image_cues;
         delete[] scene->text_cues;
         delete[] scene->music_cues;
+        delete[] scene->mesh_cues;
     }
     delete[] editor->project->scenes;
     editor->project->scenes = nullptr;
@@ -841,6 +925,10 @@ void RenderUI(EditorContext* editor) {
     
     if (editor->text_modal_open || editor->text_modal_request_open) {
         RenderTextModal(editor);
+    }
+
+    if (editor->mesh_modal_open || editor->mesh_modal_request_open) {
+        RenderMeshModal(editor);
     }
     
     if (editor->show_preview) {
@@ -1223,6 +1311,25 @@ void RenderProperties(EditorContext* editor) {
                 editor->music_modal_request_open = true;
                 editor->project->modified = true;
             }
+
+            ImGui::SameLine();
+            if (ImGui::Button("+ Mesh Cue")) {
+                MeshCue cue = {};
+                cue.mesh_type  = 0;
+                cue.mesh_size  = 1.0f;
+                cue.mesh_param = 16.0f;
+                cue.scale[0]   = cue.scale[1] = cue.scale[2] = 1.0f;
+                cue.color[0]   = cue.color[1] = cue.color[2] = cue.color[3] = 1.0f;
+                cue.cue_start  = 0.0f;
+                cue.cue_end    = scene->duration;
+                snprintf(cue.asset_key, sizeof(cue.asset_key), "mesh_%d", scene->mesh_cue_count);
+                int new_index = AddMeshCue(scene, cue);
+                editor->editing_mesh = scene->mesh_cues[new_index];
+                editor->selected_cue_index = new_index;
+                editor->selected_cue_type = 4;
+                editor->mesh_modal_request_open = true;
+                editor->project->modified = true;
+            }
             
             ImGui::Separator();
             
@@ -1289,6 +1396,32 @@ void RenderProperties(EditorContext* editor) {
                     ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {
                         DeleteMusicCue(scene, i);
+                        editor->project->modified = true;
+                    }
+                    ImGui::PopID();
+                }
+            }
+
+            // Display existing mesh cues
+            if (scene->mesh_cue_count > 0) {
+                static const char* mesh_type_names[] = {"Cube","Sphere","Plane","Torus"};
+                ImGui::Text("Mesh Cues:");
+                for (int i = 0; i < scene->mesh_cue_count; ++i) {
+                    ImGui::PushID(5000 + i);
+                    MeshCue* mc = &scene->mesh_cues[i];
+                    const char* type_str = (mc->mesh_type >= 0 && mc->mesh_type < 4)
+                        ? mesh_type_names[mc->mesh_type] : "Mesh";
+                    char label[80];
+                    snprintf(label, sizeof(label), "%s (%s)", mc->asset_key[0] ? mc->asset_key : "mesh", type_str);
+                    if (ImGui::Button(label)) {
+                        editor->editing_mesh = *mc;
+                        editor->selected_cue_index = i;
+                        editor->selected_cue_type = 4;
+                        editor->mesh_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X")) {
+                        DeleteMeshCue(scene, i);
                         editor->project->modified = true;
                     }
                     ImGui::PopID();
@@ -2117,6 +2250,78 @@ void RenderTextModal(EditorContext* editor) {
     }
 }
 
+void RenderMeshModal(EditorContext* editor) {
+    if (!editor) return;
+
+    static const char* mesh_type_names[] = { "Cube", "Sphere", "Plane", "Torus" };
+
+    if (editor->mesh_modal_request_open) {
+        ImGui::OpenPopup("Edit Mesh Cue");
+        editor->mesh_modal_request_open = false;
+        editor->mesh_modal_open = true;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(480, 500), ImGuiCond_FirstUseEver);
+    if (ImGui::BeginPopupModal("Edit Mesh Cue", &editor->mesh_modal_open)) {
+        MeshCue* cue = &editor->editing_mesh;
+
+        ImGui::InputText("Asset Key", cue->asset_key, sizeof(cue->asset_key));
+        ImGui::Combo("Shape", &cue->mesh_type, mesh_type_names, 4);
+        ImGui::DragFloat("Size",  &cue->mesh_size,  0.01f, 0.01f, 100.0f);
+        ImGui::DragFloat("Param (segs/minor-r)", &cue->mesh_param, 0.1f, 0.01f, 100.0f);
+
+        ImGui::Separator();
+        ImGui::DragFloat3("Position", cue->pos,   0.01f);
+        ImGui::DragFloat3("Rotation", cue->rot,   1.0f, -360.0f, 360.0f);
+        ImGui::DragFloat3("Scale",    cue->scale, 0.01f, 0.001f, 100.0f);
+
+        ImGui::Separator();
+        ImGui::ColorEdit4("Color", cue->color);
+
+        ImGui::Separator();
+        ImGui::DragFloat("Cue Start", &cue->cue_start, 0.01f, 0.0f, 9999.0f);
+        ImGui::DragFloat("Cue End",   &cue->cue_end,   0.01f, 0.0f, 9999.0f);
+        ImGui::DragInt  ("Layer Order", &cue->layer_order, 1, -100, 100);
+
+        ImGui::Separator();
+        const char* effect_names[] = { "None", "Fade In/Out" };
+        ImGui::Combo("Effect", &cue->effect_type, effect_names, 2);
+        if (cue->effect_type != 0) {
+            ImGui::DragFloat("Fade In Start",  &cue->fade_in_start,  0.01f);
+            ImGui::DragFloat("Fade In End",    &cue->fade_in_end,    0.01f);
+            ImGui::DragFloat("Fade Out Start", &cue->fade_out_start, 0.01f);
+            ImGui::DragFloat("Fade Out End",   &cue->fade_out_end,   0.01f);
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button("Apply")) {
+            // Find this cue in the selected scene and update it
+            if (editor->project && editor->selected_scene_index >= 0 &&
+                editor->selected_scene_index < editor->project->scene_count) {
+                SceneBlock* scene = &editor->project->scenes[editor->selected_scene_index];
+                if (editor->selected_cue_index >= 0 &&
+                    editor->selected_cue_index < scene->mesh_cue_count) {
+                    scene->mesh_cues[editor->selected_cue_index] = *cue;
+                    editor->project->modified = true;
+                }
+            }
+            ImGui::CloseCurrentPopup();
+            editor->mesh_modal_open = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            ImGui::CloseCurrentPopup();
+            editor->mesh_modal_open = false;
+        }
+
+        ImGui::EndPopup();
+    } else {
+        if (editor->mesh_modal_open) {
+            editor->mesh_modal_open = false;
+        }
+    }
+}
+
 bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     if (!editor || !cues_path) return false;
     
@@ -2461,6 +2666,42 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     }
     
     fprintf(f, "\n");
+
+    // [mesh_cues] section
+    fprintf(f, "[mesh_cues]\n");
+    fprintf(f, "# asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end\n");
+
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        SceneBlock* scene = &editor->project->scenes[scene_idx];
+        float scene_start = 0.0f;
+
+        for (int i = 0; i < scene_idx; ++i) {
+            scene_start += editor->project->scenes[i].duration;
+        }
+
+        for (int cue_idx = 0; cue_idx < scene->mesh_cue_count; ++cue_idx) {
+            MeshCue* cue = &scene->mesh_cues[cue_idx];
+            float abs_start           = scene_start + cue->cue_start;
+            float abs_end             = scene_start + cue->cue_end;
+            float abs_fade_in_start   = scene_start + cue->fade_in_start;
+            float abs_fade_in_end     = scene_start + cue->fade_in_end;
+            float abs_fade_out_start  = scene_start + cue->fade_out_start;
+            float abs_fade_out_end    = scene_start + cue->fade_out_end;
+
+            fprintf(f, "%s|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f\n",
+                cue->asset_key, cue->mesh_type,
+                cue->pos[0],   cue->pos[1],   cue->pos[2],
+                cue->rot[0],   cue->rot[1],   cue->rot[2],
+                cue->scale[0], cue->scale[1], cue->scale[2],
+                cue->color[0], cue->color[1], cue->color[2], cue->color[3],
+                cue->mesh_size, cue->mesh_param,
+                abs_start, abs_end, cue->layer_order, cue->effect_type,
+                abs_fade_in_start, abs_fade_in_end, abs_fade_out_start, abs_fade_out_end
+            );
+        }
+    }
+
+    fprintf(f, "\n");
     
     // [curves] section (placeholder for now)
     fprintf(f, "[curves]\n");
@@ -2710,7 +2951,11 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
     scene->music_cues = nullptr;
     scene->music_cue_count = 0;
     scene->music_cue_capacity = 0;
-    
+
+    scene->mesh_cues = nullptr;
+    scene->mesh_cue_count = 0;
+    scene->mesh_cue_capacity = 0;
+
     // Update total duration
     editor->project->total_duration += duration;
     editor->project->modified = true;
@@ -2731,6 +2976,7 @@ void DeleteScene(EditorContext* editor, int scene_index) {
     delete[] scene->image_cues;
     delete[] scene->text_cues;
     delete[] scene->music_cues;
+    delete[] scene->mesh_cues;
     
     // Shift remaining scenes
     for (int i = scene_index; i < editor->project->scene_count - 1; ++i) {
@@ -2892,6 +3138,36 @@ void DeleteMusicCue(SceneBlock* scene, int cue_index) {
     scene->music_cue_count--;
 }
 
+int AddMeshCue(SceneBlock* scene, const MeshCue& cue) {
+    if (!scene) return -1;
+
+    if (scene->mesh_cue_count >= scene->mesh_cue_capacity) {
+        int new_capacity = scene->mesh_cue_capacity == 0 ? 4 : scene->mesh_cue_capacity * 2;
+        MeshCue* new_cues = new MeshCue[new_capacity];
+
+        for (int i = 0; i < scene->mesh_cue_count; ++i) {
+            new_cues[i] = scene->mesh_cues[i];
+        }
+
+        delete[] scene->mesh_cues;
+        scene->mesh_cues = new_cues;
+        scene->mesh_cue_capacity = new_capacity;
+    }
+
+    int index = scene->mesh_cue_count++;
+    scene->mesh_cues[index] = cue;
+    return index;
+}
+
+void DeleteMeshCue(SceneBlock* scene, int cue_index) {
+    if (!scene || cue_index < 0 || cue_index >= scene->mesh_cue_count) return;
+
+    for (int i = cue_index; i < scene->mesh_cue_count - 1; ++i) {
+        scene->mesh_cues[i] = scene->mesh_cues[i + 1];
+    }
+    scene->mesh_cue_count--;
+}
+
 // ===== Shader Presets =====
 
 void LoadShaderPreset(ShaderCue* cue, int preset_id) {
@@ -2993,6 +3269,46 @@ uniform float u_opacity;
 void main() {
     vec4 texColor = texture(u_texture, uv);
     fragColor = vec4(texColor.rgb, texColor.a * u_opacity);
+}
+)";
+
+// Mesh (3D Phong) shaders
+static const char* mesh_vertex_shader = R"(
+#version 330 core
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec2 a_uv;
+out vec3 v_frag_pos;
+out vec3 v_normal;
+uniform mat4 u_model;
+uniform mat4 u_view;
+uniform mat4 u_projection;
+void main() {
+    vec4 world_pos = u_model * vec4(a_pos, 1.0);
+    v_frag_pos = world_pos.xyz;
+    v_normal   = mat3(transpose(inverse(u_model))) * a_normal;
+    gl_Position = u_projection * u_view * world_pos;
+}
+)";
+
+static const char* mesh_fragment_shader = R"(
+#version 330 core
+in vec3 v_frag_pos;
+in vec3 v_normal;
+out vec4 fragColor;
+uniform vec3  u_light_pos;
+uniform vec3  u_view_pos;
+uniform vec4  u_color;
+void main() {
+    float ambient  = 0.2;
+    vec3  norm     = normalize(v_normal);
+    vec3  light_dir = normalize(u_light_pos - v_frag_pos);
+    float diff     = max(dot(norm, light_dir), 0.0);
+    vec3  view_dir = normalize(u_view_pos - v_frag_pos);
+    vec3  reflect_dir = reflect(-light_dir, norm);
+    float spec     = pow(max(dot(view_dir, reflect_dir), 0.0), 32.0);
+    float light    = ambient + diff + spec * 0.5;
+    fragColor = vec4(u_color.rgb * light, u_color.a);
 }
 )";
 
@@ -3429,7 +3745,10 @@ void InitializePreview(EditorContext* editor, int width, int height) {
         CleanupPreview(editor);
         return;
     }
-    
+
+    editor->mesh_shader = rev::shader::CompileFromSource(mesh_vertex_shader, mesh_fragment_shader);
+    // mesh_shader failure is non-fatal — mesh cues just won't render
+
     editor->preview_initialized = true;
 }
 
@@ -3450,6 +3769,10 @@ void CleanupPreview(EditorContext* editor) {
     if (editor->sprite_shader) {
         rev::shader::DestroyProgram((rev::shader::Program*)editor->sprite_shader);
         editor->sprite_shader = nullptr;
+    }
+    if (editor->mesh_shader) {
+        rev::shader::DestroyProgram((rev::shader::Program*)editor->mesh_shader);
+        editor->mesh_shader = nullptr;
     }
     editor->preview_current_shader_id = -1;
     
@@ -3748,6 +4071,95 @@ void RenderPreviewFrame(EditorContext* editor) {
         }
 
         glDisable(GL_BLEND);
+    }
+
+    // Render mesh cues (3D Phong)
+    if (editor->mesh_shader && editor->project) {
+        typedef void (*PFNGLENABLEPROC)(unsigned int cap);
+        typedef void (*PFNGLDISABLEPROC)(unsigned int cap);
+        typedef void (*PFNGLDEPTHFUNCPROC)(unsigned int func);
+        auto glDepthFunc_fn = (PFNGLDEPTHFUNCPROC)wglGetProcAddress("glDepthFunc");
+
+        glEnable(0x0B71);           // GL_DEPTH_TEST
+        if (glDepthFunc_fn) glDepthFunc_fn(0x0201);  // GL_LESS
+
+        auto* mesh_prog = (rev::shader::Program*)editor->mesh_shader;
+        rev::shader::Use(mesh_prog);
+
+        float aspect = (editor->preview_height > 0)
+            ? (float)editor->preview_width / (float)editor->preview_height : 1.0f;
+
+        // Camera
+        float eye[3]    = {0.0f, 0.0f, 5.0f};
+        float center[3] = {0.0f, 0.0f, 0.0f};
+        float up[3]     = {0.0f, 1.0f, 0.0f};
+
+        float view_mat[16], proj_mat[16];
+        rev::runtime::Mat4Perspective(proj_mat, 3.14159265f * 0.25f, aspect, 0.1f, 100.0f);
+        rev::runtime::Mat4LookAt(view_mat, eye, center, up);
+
+        auto glUniformMatrix4fv = (void(*)(int,int,unsigned char,const float*))wglGetProcAddress("glUniformMatrix4fv");
+
+        int loc_model = rev::shader::GetUniformLocation(mesh_prog, "u_model");
+        int loc_view  = rev::shader::GetUniformLocation(mesh_prog, "u_view");
+        int loc_proj  = rev::shader::GetUniformLocation(mesh_prog, "u_projection");
+        int loc_light = rev::shader::GetUniformLocation(mesh_prog, "u_light_pos");
+        int loc_vpos  = rev::shader::GetUniformLocation(mesh_prog, "u_view_pos");
+        int loc_color = rev::shader::GetUniformLocation(mesh_prog, "u_color");
+
+        if (glUniformMatrix4fv) {
+            glUniformMatrix4fv(loc_view, 1, 0, view_mat);
+            glUniformMatrix4fv(loc_proj, 1, 0, proj_mat);
+        }
+
+        float light_pos[3] = {3.0f, 5.0f, 4.0f};
+        rev::shader::SetVec3(mesh_prog, loc_light, light_pos[0], light_pos[1], light_pos[2]);
+        rev::shader::SetVec3(mesh_prog, loc_vpos, eye[0], eye[1], eye[2]);
+
+        for (int s = 0; s < editor->project->scene_count; s++) {
+            SceneBlock* scene = &editor->project->scenes[s];
+            for (int i = 0; i < scene->mesh_cue_count; i++) {
+                MeshCue* cue = &scene->mesh_cues[i];
+                float actual_end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                if (editor->current_time < cue->cue_start || editor->current_time > actual_end) continue;
+
+                float opacity = rev::runtime::ComputeEffectOpacity(
+                    cue->effect_type, cue->fade_in_start, cue->fade_in_end,
+                    cue->fade_out_start, cue->fade_out_end, editor->current_time);
+
+                // Build model matrix
+                float model[16];
+                rev::runtime::Mat4Model(model, cue->pos, cue->rot, cue->scale);
+                if (glUniformMatrix4fv) glUniformMatrix4fv(loc_model, 1, 0, model);
+
+                // Set color with opacity
+                typedef void (*PFNGLUNIFORM4FVPROC)(int, int, const float*);
+                auto glUniform4fv_fn = (PFNGLUNIFORM4FVPROC)wglGetProcAddress("glUniform4fv");
+                if (glUniform4fv_fn) {
+                    float col[4] = { cue->color[0], cue->color[1], cue->color[2], cue->color[3] * opacity };
+                    glUniform4fv_fn(loc_color, 1, col);
+                }
+
+                // Create procedural mesh based on type
+                float size  = cue->mesh_size  > 0.0f ? cue->mesh_size  : 1.0f;
+                float param = cue->mesh_param > 0.0f ? cue->mesh_param : 16.0f;
+                rev::mesh::Mesh* mesh = nullptr;
+                switch (cue->mesh_type) {
+                    case 0: mesh = rev::mesh::CreateCube(size);                         break;
+                    case 1: mesh = rev::mesh::CreateSphere(size, (int)param);           break;
+                    case 2: mesh = rev::mesh::CreatePlane(size, param > 0.0f ? param : size); break;
+                    case 3: mesh = rev::mesh::CreateTorus(size, param > 0.0f ? param : 0.3f, 32, 16); break;
+                    default: mesh = rev::mesh::CreateCube(1.0f); break;
+                }
+                if (!mesh) continue;
+
+                rev::mesh::UploadToGPU(mesh);
+                rev::mesh::Render(mesh, -1);
+                rev::mesh::DestroyMesh(mesh);
+            }
+        }
+
+        glDisable(0x0B71); // GL_DEPTH_TEST
     }
 
     // Unbind framebuffer (restore default)

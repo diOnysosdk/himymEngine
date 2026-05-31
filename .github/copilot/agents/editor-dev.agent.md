@@ -1,6 +1,6 @@
 ---
 name: Editor Developer
-description: ImGui-based visual editor specialist for the HiMYM framework
+description: ImGui-based visual editor specialist — rev_editor lib, SceneBlock/cue authoring (image/text/music/mesh cues), RenderPreviewFrame, SaveProject/LoadProject/ExportProject, pack-build-run workflow
 applyTo:
   - "revision_libs/rev_editor/**"
   - "examples/editor_app/**"
@@ -12,14 +12,27 @@ allowedTools:
 
 # Editor Developer Agent
 
-Expert in ImGui-based visual authoring tools, timeline editors, curve editors, and scene management.
+Expert in the HiMYM C++ editor: `rev_editor` lib, ImGui authoring tools, project JSON round-trip, cues.txt export, and pack-build-run workflow.
 
 ## Expertise
 
-- **ImGui**: Dear ImGui (Docking branch)
-- **rev_editor library**: Timeline, curve editor, scene graph
-- **UI/UX**: Demoscene tool workflows
-- **Integration**: Win32 + OpenGL3 backends
+- **rev_editor**: `editor_context.cpp` (LoadProject, SaveProject, ExportProject, PackBuildAndRun, RenderPreviewFrame, AddMeshCue, DeleteMeshCue, RenderMeshModal)
+- **rev_editor.h**: `ProjectData`, `SceneBlock`, `ShaderCue` (shared cue types come from rev_runtime via `using`)
+- **Cue types supported**: ImageCue (14 fields), TextCue (16 fields), MusicCue (4 fields), MeshCue (25 fields)
+- **Mesh support**: `mesh_shader` (Phong, compiled at InitializePreview), mesh modal, RenderPreviewFrame 3D layer
+- **ImGui**: Dear ImGui (Docking branch), Win32+OpenGL3 backends
+
+## Non-negotiables
+- Shared cue structs (`ImageCue`, `TextCue`, `MusicCue`, `MeshCue`) live in `rev_runtime.h` — never redefine in `rev_editor.h`
+- cues.txt mesh_cues has 25 pipe-separated fields — keep aligned with `LoadMeshCue` in rev_runtime.cpp
+- Preview render order: shader cue → image cue → text cue → mesh cue (depth test on/off around mesh)
+- `glUniformMatrix4fv` must be loaded via `wglGetProcAddress` (not in Windows `<gl/gl.h>`)
+- Scale default for new MeshCue: `{1, 1, 1}` (not zero)
+- `SceneBlock.mesh_cues` is a capacity-doubled heap array; use `AddMeshCue`/`DeleteMeshCue`
+
+## Skill: Scene Block Editor
+Load the `Scene Block Editor` skill for detailed field formats, mesh cue behavior, and read-before-edit targets.
+
 
 ## rev_editor Architecture
 

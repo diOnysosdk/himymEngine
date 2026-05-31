@@ -20,36 +20,42 @@ Comprehensive knowledge of the HiMYM demoscene framework architecture, library A
 
 ## Library Architecture
 
-### 7 Modular Static Libraries
+### 8 Modular Static Libraries
 
 ```
 revision_libs/
+├── rev_runtime/      # Shared cue structs, parsers, GDI+ helpers, Mat4 math (SOURCE OF TRUTH)
 ├── rev_platform/     # Window creation, OpenGL context, input
 ├── rev_shader/       # GLSL shader compilation and management
 ├── rev_xm/           # XM/MOD music playback (libxm-windows)
 ├── rev_curve/        # Bézier curve evaluation
 ├── rev_sequence/     # Timeline sequencing for music sync
 ├── rev_editor/       # ImGui-based visual authoring tools
-└── rev_mesh/         # 3D mesh loading and rendering (VAO/VBO/IBO)
+└── rev_mesh/         # 3D procedural mesh generation and rendering (VAO/VBO/IBO)
 ```
+
+**`rev_runtime` is the shared source of truth** for all cue structs (`ImageCue`, `TextCue`, `MusicCue`, `MeshCue`) and their file parsers (`LoadImageCue`, `LoadTextCue`, `LoadMusicCue`, `LoadMeshCue`), plus Mat4 matrix math for 3D rendering.
 
 ### Dependency Graph
 
 ```
-Examples (minimal_intro, mesh_demo, editor_app, etc.)
-    ↓
-rev_sequence ──→ rev_curve
-    ↓                ↓
-rev_editor ─────────┘
-    ↓
-rev_mesh
-    ↓
-rev_shader
-    ↓
-rev_xm
-    ↓
-rev_platform ──→ OpenGL, Win32 API
+editor_app ──→ rev_editor ──→ rev_runtime, rev_mesh, rev_shader, rev_xm, rev_platform
+minimal_intro ──────────────→ rev_runtime, rev_mesh, rev_shader, rev_xm, rev_platform
+rev_editor ──→ rev_runtime (shared structs), rev_mesh (3D preview), rev_shader, rev_pack
 ```
+
+## Cue System
+
+The cue system is the core data flow between the editor and runtime:
+
+| Cue Type | Struct | Fields | cues.txt section |
+|----------|--------|--------|-----------------|
+| ImageCue | `rev_runtime.h` | 14 fields (key, path, x/y/scale/opacity, timing, effect, fades, layer) | `[image_cues]` |
+| TextCue  | `rev_runtime.h` | 16 fields (text, font, x/y/size/color, timing, effect, fades, layer) | `[text_cues]` |
+| MusicCue | `rev_runtime.h` | 4 fields (key, path, cue_start, cue_end) | `[music_cues]` |
+| MeshCue  | `rev_runtime.h` | 25 fields (key, mesh_type, pos/rot/scale, color, size, param, timing, fades, layer) | `[mesh_cues]` |
+
+**Rule**: never define these structs anywhere except `rev_runtime.h`. Both `rev_editor.h` and `minimal_intro/main.cpp` use them via `using` declarations.
 
 ## Library APIs
 
@@ -635,13 +641,24 @@ examples/
 
 ## When to Use Which Library
 
+- **rev_runtime**: Always (cue structs, parsers, GDI+ helpers, Mat4 math — source of truth)
 - **rev_platform**: Always (window + OpenGL context)
 - **rev_shader**: Always (unless raw OpenGL)
 - **rev_xm**: When you need music
 - **rev_curve**: For smooth animations
 - **rev_sequence**: For music-visual sync
 - **rev_editor**: During authoring phase only
-- **rev_mesh**: For 3D geometry (vs. raymarching)
+- **rev_mesh**: For 3D geometry (cube/sphere/plane/torus) — linked into both editor and runtime
+
+## Specialized Skills (use these for focused work)
+
+- **`Revision Codebase Map`**: Project layout, file ownership, struct relationships, all cue types and cues.txt format
+- **`Revision Runtime Core`**: `examples/minimal_intro/main.cpp`, `rev_runtime/` changes, cue loaders, Mat4 math, packed build
+- **`Scene Block Editor`**: `rev_editor/`, editor_app, cue UI/export/import, pack-build-run workflow
+- **`Shader Authoring`**: GLSL shaders, rev_shader, Phong shader contract, wglGetProcAddress patterns
+- **`Revision Build Validation`**: CMake build commands, rebuild targets, stale binary detection
+- **`Revision Director`**: Cross-domain routing (spans runtime + editor + shader + mesh)
+
 
 ## Response Guidelines
 

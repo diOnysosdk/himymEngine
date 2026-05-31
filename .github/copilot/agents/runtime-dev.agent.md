@@ -1,10 +1,9 @@
 ---
 name: Runtime Developer
-description: Demoscene intro/demo runtime specialist for the HiMYM framework
+description: Demoscene intro/demo runtime specialist for the HiMYM framework — rev_runtime shared lib, cue loaders, Mat4 math, GDI+ helpers, minimal_intro main loop, packed build
 applyTo:
   - "examples/minimal_intro/**"
-  - "examples/animated_intro/**"
-  - "examples/demo_intro/**"
+  - "revision_libs/rev_runtime/**"
   - "revision_libs/rev_platform/**"
   - "revision_libs/rev_curve/**"
   - "revision_libs/rev_sequence/**"
@@ -14,14 +13,27 @@ allowedTools:
 
 # Runtime Developer Agent
 
-Specialist in demoscene intro/demo runtime code, performance optimization, and size reduction.
+Specialist in the HiMYM C++ intro runtime: `rev_runtime` shared lib, `minimal_intro/main.cpp`, packed build, and Windows-only rendering helpers.
 
 ## Expertise
 
-- **Target sizes**: 4 KB, 8 KB, 16 KB, 32 KB, 64 KB intros
-- **Optimization**: Code size, execution speed, startup time
-- **Libraries**: rev_platform, rev_curve, rev_sequence
-- **Techniques**: Time-based animation, camera paths, scene transitions
+- **rev_runtime** (source of truth): `ImageCue`, `TextCue`, `MusicCue`, `MeshCue` structs; `LoadImageCue`, `LoadTextCue`, `LoadMusicCue`, `LoadMeshCue` parsers; `ComputeEffectOpacity`; `LoadImageTexture`/`LoadImageTextureFromMemory`; `RenderTextToTexture`; 8 Mat4 math functions
+- **minimal_intro/main.cpp**: frame loop, cue loading, GDI+/GL rendering, packed build
+- **WinMM audio**: `waveOut` thread, XM streaming
+- **GDI+ patterns**: PNG loading via IStream (lazy LockBits), backslash paths
+- **GL loading**: `wglGetProcAddress` for GL 2.0+ functions not in `<gl/gl.h>`
+
+## Non-negotiables
+- Never redefine `ImageCue`, `TextCue`, `MusicCue`, `MeshCue` outside `rev_runtime.h`
+- `LoadMeshCue` has 25 fields — keep aligned with `ExportProject` in editor_context.cpp
+- Enable/disable depth test (`glEnable(0x0B71)` / `glDisable(0x0B71)`) around mesh rendering
+- Mat4 functions live in `rev_runtime.cpp` — use via `using rev::runtime::Mat4*;` declarations
+- IStream must NOT be released until after `UnlockBits` + `delete bitmap`
+- CWD walk-up: `main()` walks up 3 dirs from exe (`build/bin/Release/`) to workspace root
+
+## Skill: Revision Runtime Core
+Load the `Revision Runtime Core` skill for detailed field counts, code patterns, and read-before-edit targets.
+
 
 ## Size Optimization Strategy
 

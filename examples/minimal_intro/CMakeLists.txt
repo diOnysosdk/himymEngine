@@ -11,6 +11,7 @@ target_link_libraries(minimal_intro PRIVATE
     rev_runtime
     rev_shader
     rev_xm
+    rev_mesh
 )
 
 if(MSVC)
@@ -30,6 +31,7 @@ target_link_libraries(minimal_intro_packed PRIVATE
     rev_runtime
     rev_shader
     rev_xm
+    rev_mesh
 )
 
 target_compile_definitions(minimal_intro_packed PRIVATE HIMYM_PACKED_ASSETS)

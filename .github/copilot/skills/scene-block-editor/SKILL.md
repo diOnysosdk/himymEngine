@@ -1,6 +1,6 @@
 ---
 name: Scene Block Editor
-description: "Use for revision_libs/rev_editor/ and editor_app changes: scene blocks, image cues, music cues, shader cues, project assets, export (cues.txt), pack-build-run workflow, and preview rendering."
+description: "Use for revision_libs/rev_editor/ and editor_app changes: scene blocks, image cues, music cues, mesh cues, shader cues, project assets, export (cues.txt), pack-build-run workflow, and preview rendering."
 applyTo:
   - "revision_libs/rev_editor/**"
   - "examples/editor_app/**"
@@ -10,9 +10,9 @@ applyTo:
 Use this skill for editor-side authoring work.
 
 ## Scope
-- `revision_libs/rev_editor/src/editor_context.cpp` — core editor logic: `LoadProject`, `SaveProject`, `ExportProject`, `BuildAndRun`, `PackBuildAndRun`, `RenderPreviewFrame`
-- `revision_libs/rev_editor/include/rev_editor.h` — `ProjectData`, `SceneBlock`, `ShaderCue` structs; `ImageCue`/`TextCue`/`MusicCue` via `using rev::runtime::*` declarations
-- `revision_libs/rev_runtime/include/rev_runtime.h` — source of truth for `ImageCue`, `TextCue`, `MusicCue`, `ColorRGB`, `ImageTexture`
+- `revision_libs/rev_editor/src/editor_context.cpp` — core editor logic: `LoadProject`, `SaveProject`, `ExportProject`, `BuildAndRun`, `PackBuildAndRun`, `RenderPreviewFrame`, `AddMeshCue`, `DeleteMeshCue`, `RenderMeshModal`
+- `revision_libs/rev_editor/include/rev_editor.h` — `ProjectData`, `SceneBlock`, `ShaderCue` structs; `ImageCue`/`TextCue`/`MusicCue`/`MeshCue` via `using rev::runtime::*` declarations
+- `revision_libs/rev_runtime/include/rev_runtime.h` — source of truth for `ImageCue`, `TextCue`, `MusicCue`, `MeshCue`, `ColorRGB`, `ImageTexture`
 - `examples/editor_app/main.cpp` — editor entry point, GDI+ init, ImGui integration
 
 ## Non-negotiables
@@ -25,13 +25,13 @@ Use this skill for editor-side authoring work.
 - Keep the cues.txt text_cues format: `text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order` (16 fields).
 - Keep the cues.txt mesh_cues format: `asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order` (25 fields).
 - Keep `ProjectData.assets_path` memset-cleared in `CreateEditor`, `NewProject`, and `LoadProject`.
-- Keep editor preview frame rendering: shader cue composited first, image cue overlaid on top, text cue after image, mesh cue last (with depth test).
+- Keep editor preview frame rendering order: shader cue → image cue → text cue → mesh cue (last, with depth test).
 - Do NOT define `ImageCue`, `TextCue`, `MusicCue`, `MeshCue` in `rev_editor.h` — they are imported from `rev_runtime.h` via `using` declarations.
 - When adding fields to shared cue structs, update `rev_runtime.h` and `rev_runtime.cpp` first, then update `ExportProject` and parser in rev_runtime.
 
 ## Music cue behavior
 - `MusicCue` fields: `asset_key[64]`, `asset_path[512]`, `cue_start`, `cue_end`.
-- Browse dialog copies the `.xm` file to `{assets_path}\{filename}` (same as images) and stores a workspace-relative forward-slash path in `asset_path`.
+- Browse dialog copies the `.xm` file to `{assets_path}\{filename}` and stores a workspace-relative forward-slash path in `asset_path`.
 - `SaveProject` / `LoadProject` round-trip all four fields through JSON (`music_cues` array).
 - `ExportProject` writes `asset_key|asset_path|cue_start|cue_end` to the `[music_cues]` section.
 - `ImportFromCues` parses `[music_cues]` lines with the same pipe-split pattern.
@@ -66,10 +66,10 @@ The PRE_BUILD touch on `main.cpp` ensures MSBuild always recompiles main.cpp aga
 5. `ExportProject` builds workspace-relative paths for the runtime
 
 ## Read-before-edit targets
-- `revision_libs/rev_runtime/include/rev_runtime.h` — struct layout (source of truth for ImageCue, TextCue, MusicCue)
-- `revision_libs/rev_editor/include/rev_editor.h` — editor-specific struct layout (ShaderCue, ProjectData)
+- `revision_libs/rev_runtime/include/rev_runtime.h` — struct layout (source of truth for ImageCue, TextCue, MusicCue, MeshCue)
+- `revision_libs/rev_editor/include/rev_editor.h` — editor-specific struct layout (ShaderCue, ProjectData, SceneBlock)
 - `revision_libs/rev_editor/src/editor_context.cpp` — `LoadProject`, `ExportProject`, `PackBuildAndRun`
-- `revision_libs/rev_runtime/src/rev_runtime.cpp` — `LoadImageCue`, `LoadTextCue` parsers must stay aligned with export format
+- `revision_libs/rev_runtime/src/rev_runtime.cpp` — parsers must stay aligned with export format
 
 ## Pair with
 - `Revision Runtime Core` when export semantics affect runtime behavior.

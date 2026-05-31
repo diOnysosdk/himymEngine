@@ -1,6 +1,6 @@
 ---
 name: Revision Runtime Core
-description: "Use for C++ runtime work in examples/minimal_intro/ that changes frame flow, cue loading, image/music rendering, shader dispatch, asset path resolution, or packed build behavior."
+description: "Use for C++ runtime work in examples/minimal_intro/ that changes frame flow, cue loading, image/music/mesh rendering, shader dispatch, asset path resolution, or packed build behavior."
 ---
 # Revision Runtime Core
 
@@ -28,6 +28,7 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 - Convert forward slashes to backslashes before passing paths to GDI+.
 - `TextCue.size` is `float` — do not cast to `int` at call sites.
 - `TextCue.color` is `ColorRGB color` — access as `cue.color.r/g/b`.
+
 ## Mat4 math (rev_runtime.cpp, namespace rev::runtime)
 - 8 canonical column-major matrix functions for OpenGL: `Mat4Identity`, `Mat4Perspective`, `Mat4LookAt`, `Mat4Translate`, `Mat4RotateEuler`, `Mat4Scale`, `Mat4Multiply`, `Mat4Model`
 - `Mat4Model(pos, rot, scale)` builds a combined TRS matrix.
@@ -53,6 +54,7 @@ if (has_mesh && elapsed >= mesh_cue.cue_start && elapsed < mesh_cue.cue_end) {
 }
 ```
 
+## CWD walk-up invariant
 `main()` walks up 3 dirs from the exe location (`build/bin/Release/ → workspace root`) via `GetModuleFileNameA` + `SetCurrentDirectoryA`. All relative paths are then workspace-relative. Do not change or remove this.
 
 ## Packed build (`HIMYM_PACKED_ASSETS`)
@@ -70,20 +72,17 @@ if (has_mesh && elapsed >= mesh_cue.cue_start && elapsed < mesh_cue.cue_end) {
   3. Poll `WHDR_DONE` each iteration: call `rev::xm::Update(player, float_buf, frames)`, clamp to [-1,1], convert to int16, `waveOutWrite`.
   4. On stop: set `stop=true`, `WaitForSingleObject`, `waveOutReset`, `waveOutUnprepareHeader`, `waveOutClose`.
 - `#pragma comment(lib, "winmm.lib")` + `#include <mmsystem.h>` required.
-- Packed path: look up music asset key in `kPackedAssets`; file path: read the `.xm` file from `music_cue.asset_path` (workspace-relative).
 
 ## Image loading notes (GDI+)
 - Error 3 from GDI+ = FileNotFound OR GDI+ not initialized — check both.
-- GDI+ error 5 = access denied / wrong format.
 - Always check `bitmap->GetLastStatus() == Gdiplus::Ok` after `new Gdiplus::Bitmap(wpath)`.
 - **IStream lifetime**: GDI+ decodes PNG lazily at `LockBits`, not at `Bitmap` ctor. Do NOT `stream->Release()` until after `UnlockBits` + `delete bitmap`.
 
 ## Read-before-edit targets
 - A project's `cues.txt` — verify field layout before changing any sscanf patterns
 - `revision_libs/rev_runtime/include/rev_runtime.h` — struct definitions and function signatures (source of truth)
-- `revision_libs/rev_runtime/src/rev_runtime.cpp` — parser implementations (`LoadImageCue`, `LoadTextCue`, `LoadMusicCue`, `LoadMeshCue`, Mat4 functions)
+- `revision_libs/rev_runtime/src/rev_runtime.cpp` — parser implementations and Mat4 functions
 - `revision_libs/rev_editor/src/editor_context.cpp` — `ExportProject()` for export format source of truth
-- `revision_libs/rev_pack/include/rev_pack.h` — `PackedAsset` struct
 - `revision_libs/rev_mesh/include/rev_mesh.h` — `Vertex`, `Mesh` structs and procedural geometry API
 
 ## Pair with

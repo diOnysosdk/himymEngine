@@ -1,247 +1,93 @@
 # GitHub Copilot Agent System for HiMYM
 
-This directory contains a comprehensive agent system for the HiMYM demoscene framework, providing intelligent task routing and specialized expertise.
+Copilot customizations for the HiMYM C++17 demoscene framework.
 
-## 📁 Directory Structure
+## Directory Structure
 
 ```
-.github/copilot/
-├── README.md                          # This file
-├── agents/                            # Specialized agents
-│   ├── director.agent.md              # Main routing agent (start here)
-│   ├── shader-author.agent.md         # GLSL shader specialist
-│   ├── runtime-dev.agent.md           # Demoscene runtime specialist
-│   ├── mesh-graphics.agent.md         # 3D graphics specialist
-│   ├── editor-dev.agent.md            # ImGui editor specialist
-│   ├── music-system.agent.md          # XM/MOD music specialist
-│   ├── build-system.agent.md          # CMake/compiler specialist
-│   └── docs.agent.md                  # Documentation specialist
-├── instructions/                      # Shared coding standards
-│   ├── coding-standards.instructions.md       # C++17 conventions
-│   ├── size-optimization.instructions.md      # Demoscene size techniques
-│   └── opengl-patterns.instructions.md        # OpenGL usage patterns
-└── skills/                            # Shared knowledge bases
-    └── himym-framework/
-        └── SKILL.md                   # HiMYM framework reference
+.github/
+├── copilot-instructions.md            # Workspace routing (auto-loaded by Copilot)
+└── copilot/
+    ├── README.md                      # This file
+    ├── agents/                        # Specialist agents
+    │   ├── director.agent.md          # Routing + cross-domain orchestration
+    │   ├── runtime-dev.agent.md       # rev_runtime, minimal_intro, cue loaders, Mat4
+    │   ├── editor-dev.agent.md        # rev_editor, cue authoring, export, pack-build-run
+    │   ├── mesh-graphics.agent.md     # rev_mesh, MeshCue, Phong shader, 3D geometry
+    │   ├── shader-author.agent.md     # GLSL, rev_shader, shader contracts
+    │   ├── build-system.agent.md      # CMake, build flags, target linking
+    │   ├── music-system.agent.md      # rev_xm, XM playback, WinMM audio
+    │   └── docs.agent.md              # README, architecture, API docs
+    ├── instructions/                  # File-pattern-scoped instructions
+    │   ├── coding-standards.instructions.md      # C++17 conventions
+    │   ├── size-optimization.instructions.md     # Size discipline
+    │   ├── opengl-patterns.instructions.md       # OpenGL loading patterns
+    │   └── agent-customizations.instructions.md  # Customization system rules
+    └── skills/                        # Reusable knowledge bases
+        ├── himym-framework/SKILL.md   # Framework overview, all library APIs
+        ├── revision-codebase-map/SKILL.md        # Layout, structs, cues.txt format
+        ├── revision-runtime-core/SKILL.md        # rev_runtime, minimal_intro, Mat4
+        ├── scene-block-editor/SKILL.md           # rev_editor, cue authoring/export
+        ├── revision-shader-authoring/SKILL.md    # rev_shader, Phong, wglGetProcAddress
+        ├── revision-build-validation/SKILL.md    # CMake commands, rebuild targets
+        └── revision-director/SKILL.md            # Cross-domain routing rules
 ```
 
-## 🎯 How It Works
+## Agents
 
-### 1. Director Agent (Entry Point)
+| Agent | Scope |
+|-------|-------|
+| `@director` | Mixed/cross-domain tasks — routes to specialists, applies new-cue-type pattern |
+| `@runtime-dev` | `rev_runtime/`, `minimal_intro/` — cue structs, parsers, Mat4, packed build |
+| `@editor-dev` | `rev_editor/`, `editor_app/` — cue authoring, export, mesh modal, pack-build-run |
+| `@mesh-graphics` | `rev_mesh/` — procedural geometry, MeshCue render integration |
+| `@shader-author` | `rev_shader/`, `.glsl` — shader compilation, Phong contract |
+| `@build-system` | `CMakeLists.txt` — cmake config, target linking, build flags |
+| `@music-system` | `rev_xm/` — XM playback, WinMM audio thread |
+| `@docs` | `**/*.md` — documentation |
 
-The **Director** agent (`director.agent.md`) is your starting point. It:
-- Analyzes your task
-- Determines which specialized agent(s) to activate
-- Routes the task to the appropriate expert(s)
+## Skills
 
-**Usage**: Just ask your question naturally. The Director will automatically delegate to the right specialist.
+Load these by name when relevant context is needed:
 
-### 2. Specialized Agents
+| Skill | Use for |
+|-------|---------|
+| `HiMYM Framework` | General framework overview, library APIs |
+| `Revision Codebase Map` | Layout, all struct relationships, cues.txt format (all 4 sections) |
+| `Revision Runtime Core` | rev_runtime, minimal_intro render loop, Mat4, MeshCue fields |
+| `Scene Block Editor` | rev_editor, mesh cue authoring/export, pack-build-run |
+| `Shader Authoring` | GLSL, Phong contract, rev_shader API, wglGetProcAddress |
+| `Revision Build Validation` | CMake commands, rebuild targets, stale binary detection |
+| `Revision Director` | Cross-domain coordination, new-cue-type pattern |
 
-Each agent has deep expertise in a specific domain:
+## Cue System Quick Reference
 
-| Agent | Expertise | Use For |
-|-------|-----------|---------|
-| **shader-author** | GLSL shaders | Writing/optimizing vertex, fragment, compute shaders |
-| **runtime-dev** | Demoscene runtime | Intros, demos, animations, size optimization |
-| **mesh-graphics** | 3D rendering | Mesh creation, VAO/VBO/IBO, procedural geometry |
-| **editor-dev** | ImGui tools | Timeline editor, curve editor, UI development |
-| **music-system** | Audio playback | XM/MOD music integration, synchronization |
-| **build-system** | CMake/compilers | Build configuration, optimization flags |
-| **docs** | Documentation | README, tutorials, API docs |
+All cue structs live in `rev_runtime.h`. Never redefine elsewhere.
 
-### 3. Shared Resources
+| Type | Fields | cues.txt section |
+|------|--------|-----------------|
+| ImageCue | 14 | `[image_cues]` |
+| TextCue | 16 | `[text_cues]` |
+| MusicCue | 4 | `[music_cues]` |
+| MeshCue | 25 | `[mesh_cues]` |
 
-#### Instructions
-Apply coding standards automatically based on file patterns:
-- **coding-standards**: C++17 conventions, naming, memory management
-- **size-optimization**: Compiler flags, code patterns for small executables
-- **opengl-patterns**: Function loading, rendering pipeline best practices
+**New cue type pattern**: struct in `rev_runtime.h` → parser in `rev_runtime.cpp` → `rev_editor.h` using → SceneBlock/EditorContext fields → Add/Delete/Modal/UI/Export/Load in `editor_context.cpp` → `RenderPreviewFrame` → `minimal_intro/main.cpp` → rebuild both targets.
 
-#### Skills
-Shared knowledge bases available to all agents:
-- **himym-framework**: Complete API reference for all 7 libraries
+## Framework Libraries (8)
 
-## 🚀 Quick Start
+| Library | Purpose |
+|---------|---------|
+| `rev_runtime` | Shared cue structs, parsers, GDI+ helpers, Mat4 math (source of truth) |
+| `rev_platform` | Win32 window, OpenGL context |
+| `rev_shader` | GLSL shader compile/link |
+| `rev_xm` | XM/MOD music (libxm-windows, C89) |
+| `rev_curve` | Bézier curve evaluation |
+| `rev_sequence` | Timeline sequencing |
+| `rev_editor` | ImGui visual authoring |
+| `rev_mesh` | Procedural 3D geometry (cube/sphere/plane/torus), VAO/VBO/IBO |
 
-### Example Conversations
+## Maintenance
 
-**Creating a shader:**
-```
-You: "Create a Phong lighting shader for 3D meshes"
-Director → Routes to shader-author
-Result: Complete vertex/fragment shader with lighting
-```
-
-**Building an intro:**
-```
-You: "I want to make a 16KB intro with raymarching"
-Director → Routes to runtime-dev + shader-author
-Result: Complete intro structure with size-optimized shader
-```
-
-**Adding music:**
-```
-You: "How do I sync visuals to XM music?"
-Director → Routes to music-system
-Result: Complete integration with timeline synchronization
-```
-
-**Fixing build issues:**
-```
-You: "CMake can't find OpenGL functions"
-Director → Routes to build-system
-Result: CMake fix with proper library linking
-```
-
-## 📚 Agent Capabilities
-
-### shader-author
-- GLSL syntax and optimization
-- Phong/PBR lighting models
-- Raymarching and SDF functions
-- Shader minification for size
-- Common demoscene effects
-
-### runtime-dev
-- Intro/demo structure templates
-- Animation system (curves + sequences)
-- Size optimization techniques
-- Platform abstraction patterns
-- Real-time rendering loops
-
-### mesh-graphics
-- VAO/VBO/IBO setup and rendering
-- Vertex formats and attributes
-- Procedural geometry (cube, sphere, torus, plane)
-- Matrix transformations
-- Phong lighting implementation
-
-### editor-dev
-- Dear ImGui integration
-- Timeline editor with playback controls
-- Curve editor with draggable points
-- Scene graph hierarchical display
-- Property inspector patterns
-
-### music-system
-- libxm-windows integration (C89-compatible)
-- XM/MOD/S3M playback
-- Music-to-visual synchronization
-- Pattern-based vs. time-based sync
-- Audio buffer management
-
-### build-system
-- CMake configuration (Visual Studio, Ninja, MinGW)
-- Compiler optimization flags (MSVC, GCC, Clang)
-- Static library management
-- Size analysis and optimization
-- Cross-compilation setup
-
-### docs
-- Technical writing standards
-- API documentation templates
-- Tutorial structure
-- README best practices
-- Markdown formatting
-
-## 🎨 Framework Libraries
-
-The HiMYM framework consists of 7 modular libraries:
-
-| Library | Purpose | Size Impact |
-|---------|---------|-------------|
-| **rev_platform** | Window, OpenGL context, input | Essential |
-| **rev_shader** | GLSL shader compilation | Essential |
-| **rev_xm** | XM/MOD music playback | +2-4 KB |
-| **rev_curve** | Bézier curve animations | +1-2 KB |
-| **rev_sequence** | Timeline/cue management | +1 KB |
-| **rev_editor** | ImGui visual tools | Editor only |
-| **rev_mesh** | 3D mesh rendering | +2-3 KB |
-
-**Typical intro sizes:**
-- Minimal (shader only): 16 KB
-- Animated (shader + curves): 20 KB
-- With music (shader + XM): 24 KB
-- Full intro: 30-64 KB
-
-## 🔧 Customization
-
-### Adding New Agents
-
-1. Create `new-agent.agent.md` in `agents/` directory
-2. Add YAML frontmatter with name, description, applyTo, allowedTools
-3. Document expertise and provide examples
-4. Update `director.agent.md` to include the new agent in routing logic
-
-### Creating New Instructions
-
-1. Create `new-topic.instructions.md` in `instructions/` directory
-2. Add YAML frontmatter with applyTo patterns
-3. Document standards, patterns, and best practices
-4. Files automatically apply based on applyTo glob patterns
-
-### Adding New Skills
-
-1. Create subdirectory in `skills/` (e.g., `skills/my-skill/`)
-2. Create `SKILL.md` with YAML frontmatter
-3. Document knowledge, APIs, examples
-4. Skills are available to all agents
-
-## 📖 Best Practices
-
-### For Users
-
-1. **Be specific**: "Create a Phong shader" vs. "Make it look nice"
-2. **Mention constraints**: "For a 16KB intro" helps agents optimize
-3. **State the goal**: "I want to render a rotating cube with lighting"
-4. **Trust the routing**: Director will find the right expert(s)
-
-### For Agent Development
-
-1. **Stay focused**: Each agent should have a clear domain
-2. **Provide examples**: Show working code, not just theory
-3. **Consider size**: Always mention size impact for demoscene work
-4. **Cross-reference**: Link to related agents/skills when relevant
-
-## 🐛 Troubleshooting
-
-### Agent not activating?
-- Check `applyTo` patterns in agent frontmatter
-- Verify file paths match the patterns
-- Try explicitly mentioning the agent: "Use shader-author to..."
-
-### Wrong agent selected?
-- Provide more context in your query
-- Mention the specific library: "Using rev_mesh..."
-- Reference the desired agent directly
-
-### Need multiple agents?
-- Director can activate multiple agents for complex tasks
-- Example: "Create a music-synchronized mesh animation" → runtime-dev + mesh-graphics + music-system
-
-## 📝 Notes
-
-- **C++17 only**: No C++20/23 features
-- **Windows target**: Primary platform is Windows 10/11
-- **OpenGL 3.3**: Core profile, no compatibility mode
-- **libxm-windows**: Uses C89-compatible fork (not original libxm)
-- **Size matters**: All code decisions consider executable size
-
-## 🤝 Contributing
-
-When adding agents, instructions, or skills:
-1. Follow existing structure and naming conventions
-2. Test with real scenarios
-3. Document with examples
-4. Consider size impact for demoscene priorities
-
-## 📄 License
-
-Same license as the HiMYM framework project.
-
----
-
-**Created**: 2026
-**Framework**: HiMYM (How I Met Your Mother) demoscene framework
-**Purpose**: Intelligent coding assistance for demoscene development
+- **`PR/ai/skills/`** is the maintained source; sync to `.github/copilot/skills/` each session.
+- When a domain changes, update: agent description + relevant skill + `copilot-instructions.md`.
+- `agent-customizations.instructions.md` tracks the full skill/agent inventory.

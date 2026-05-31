@@ -1,6 +1,6 @@
 ---
 name: Mesh & Graphics
-description: 3D mesh rendering, procedural geometry, and graphics programming specialist
+description: 3D mesh rendering, procedural geometry, and Phong shader specialist — rev_mesh lib, MeshCue integration into rev_editor and minimal_intro, Mat4 math in rev_runtime
 applyTo:
   - "revision_libs/rev_mesh/**"
   - "examples/mesh_demo/**"
@@ -12,52 +12,38 @@ allowedTools:
 
 # Mesh & Graphics Agent
 
-Expert in 3D graphics, mesh rendering, procedural geometry, and OpenGL rendering pipelines.
+Expert in 3D graphics, mesh rendering, procedural geometry, and the MeshCue integration across rev_mesh, rev_runtime, rev_editor, and minimal_intro.
 
-## Expertise
-
-- **rev_mesh library**: VAO/VBO/IBO management
-- **Procedural geometry**: Cube, Sphere, Torus, Plane generation
-- **Lighting**: Phong, Blinn-Phong, PBR
-- **Transformations**: Model, View, Projection matrices
-- **Optimization**: Indexed rendering, instancing
+## Integration Status (fully wired)
+- `MeshCue` struct lives in `rev_runtime.h` (namespace `rev::runtime`)
+- `LoadMeshCue` parser lives in `rev_runtime.cpp` — 25 pipe-separated fields
+- `rev_mesh` is linked into both `rev_editor` (CMakeLists `target_link_libraries`) and `minimal_intro` + `minimal_intro_packed`
+- Mat4 math (8 functions) lives in `rev_runtime.cpp` — used by both editor preview and runtime render
+- Phong shader source is inline in both `editor_context.cpp` and `minimal_intro/main.cpp`
 
 ## rev_mesh API Reference
 
-### Mesh Creation
 ```cpp
-// Create empty mesh
-Mesh* mesh = rev::mesh::CreateMesh(max_vertices, max_indices);
+// Procedural geometry (allocates + fills vertices/indices, does NOT upload)
+Mesh* cube   = rev::mesh::CreateCube(size);
+Mesh* sphere = rev::mesh::CreateSphere(radius, segments, rings);
+Mesh* plane  = rev::mesh::CreatePlane(width, height, subdivisions);
+Mesh* torus  = rev::mesh::CreateTorus(major_r, minor_r, major_seg, minor_seg);
 
-// Set vertex data
-rev::mesh::SetVertex(mesh, 0, {
-    .pos = {0.0f, 1.0f, 0.0f},
-    .normal = {0.0f, 1.0f, 0.0f},
-    .uv = {0.5f, 1.0f}
-});
-
-// Set index data
-rev::mesh::SetIndex(mesh, 0, 0);
-rev::mesh::SetIndex(mesh, 1, 1);
-rev::mesh::SetIndex(mesh, 2, 2);
-
-// Upload to GPU
+// Must call before rendering
 rev::mesh::UploadToGPU(mesh);
+
+// Render (pass -1 for all indices)
+rev::mesh::Render(mesh, -1);
+
+// Free CPU + GPU resources
+rev::mesh::DestroyMesh(mesh);
 ```
 
-### Procedural Geometry
+## Vertex Format
 ```cpp
-// Cube (24 vertices, 36 indices)
-Mesh* cube = rev::mesh::CreateCube(size);
-
-// Sphere (parametric, configurable segments)
-Mesh* sphere = rev::mesh::CreateSphere(radius, segments, rings);
-
-// Torus
-Mesh* torus = rev::mesh::CreateTorus(major_radius, minor_radius, 
-                                      major_segments, minor_segments);
-
-// Plane
+struct Vertex {
+    float pos[3];     // Position (layout location 0)
 Mesh* plane = rev::mesh::CreatePlane(width, height, subdivisions);
 ```
 
