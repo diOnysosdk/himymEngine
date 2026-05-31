@@ -15,9 +15,74 @@
 #endif
 
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "winmm.lib")
+#include <mmsystem.h>
 
 // Global debug log file
 static FILE* g_logfile = nullptr;
+
+// ===== WinMM audio thread for XM playback =====
+static const int kAudioSampleRate = 48000;
+static const int kAudioChannels   = 2;
+static const int kAudioFrames     = 2048;   // frames per waveOut buffer
+static const int kAudioBufCount   = 4;      // ring-buffer depth
+
+struct AudioState {
+    rev::xm::Player* player;
+    HWAVEOUT         wave_out;
+    WAVEHDR          headers[kAudioBufCount];
+    int16_t*         pcm[kAudioBufCount];
+    float            fbuf[kAudioFrames * kAudioChannels];
+    volatile bool    stop;
+};
+
+static DWORD WINAPI AudioThreadProc(LPVOID param) {
+    AudioState* a = (AudioState*)param;
+
+    for (int i = 0; i < kAudioBufCount; ++i) {
+        a->pcm[i] = new int16_t[kAudioFrames * kAudioChannels];
+        memset(&a->headers[i], 0, sizeof(WAVEHDR));
+        a->headers[i].lpData         = (LPSTR)a->pcm[i];
+        a->headers[i].dwBufferLength = kAudioFrames * kAudioChannels * (DWORD)sizeof(int16_t);
+        waveOutPrepareHeader(a->wave_out, &a->headers[i], sizeof(WAVEHDR));
+    }
+
+    // Pre-fill and submit all buffers before entering the loop
+    for (int i = 0; i < kAudioBufCount; ++i) {
+        rev::xm::Update(a->player, a->fbuf, kAudioFrames);
+        for (int s = 0; s < kAudioFrames * kAudioChannels; ++s) {
+            float v = a->fbuf[s];
+            if (v >  1.0f) v =  1.0f;
+            if (v < -1.0f) v = -1.0f;
+            a->pcm[i][s] = (int16_t)(v * 32767.0f);
+        }
+        waveOutWrite(a->wave_out, &a->headers[i], sizeof(WAVEHDR));
+    }
+
+    while (!a->stop) {
+        for (int i = 0; i < kAudioBufCount; ++i) {
+            if (a->headers[i].dwFlags & WHDR_DONE) {
+                a->headers[i].dwFlags &= ~WHDR_DONE;
+                rev::xm::Update(a->player, a->fbuf, kAudioFrames);
+                for (int s = 0; s < kAudioFrames * kAudioChannels; ++s) {
+                    float v = a->fbuf[s];
+                    if (v >  1.0f) v =  1.0f;
+                    if (v < -1.0f) v = -1.0f;
+                    a->pcm[i][s] = (int16_t)(v * 32767.0f);
+                }
+                waveOutWrite(a->wave_out, &a->headers[i], sizeof(WAVEHDR));
+            }
+        }
+        Sleep(1);
+    }
+
+    waveOutReset(a->wave_out);
+    for (int i = 0; i < kAudioBufCount; ++i) {
+        waveOutUnprepareHeader(a->wave_out, &a->headers[i], sizeof(WAVEHDR));
+        delete[] a->pcm[i];
+    }
+    return 0;
+}
 
 // Define missing GL constants
 #ifndef GL_COLOR_BUFFER_BIT
@@ -1174,19 +1239,39 @@ int main(int argc, char* argv[]) {
         }
     }
     
+    // Start audio thread
+    AudioState* audio_state = nullptr;
+    HANDLE audio_thread = nullptr;
+    if (xm_player) {
+        WAVEFORMATEX wfx = {};
+        wfx.wFormatTag      = WAVE_FORMAT_PCM;
+        wfx.nChannels       = (WORD)kAudioChannels;
+        wfx.nSamplesPerSec  = kAudioSampleRate;
+        wfx.wBitsPerSample  = 16;
+        wfx.nBlockAlign     = wfx.nChannels * wfx.wBitsPerSample / 8;
+        wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign;
+
+        audio_state = new AudioState();
+        memset(audio_state, 0, sizeof(AudioState));
+        audio_state->player = xm_player;
+        audio_state->stop   = false;
+
+        if (waveOutOpen(&audio_state->wave_out, WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL) == MMSYSERR_NOERROR) {
+            audio_thread = CreateThread(nullptr, 0, AudioThreadProc, audio_state, 0, nullptr);
+            printf("Audio started: %d Hz stereo\n", kAudioSampleRate);
+        } else {
+            printf("ERROR: waveOutOpen failed\n");
+            delete audio_state;
+            audio_state = nullptr;
+        }
+    }
+
     // Main loop
     double start_time = rev::platform::GetTime();
-    bool music_started = false;
-    
+
     while (rev::platform::PollEvents(window) && !window->should_close) {
         double current_time = rev::platform::GetTime();
         float time = static_cast<float>(current_time - start_time);
-        
-        // Music acknowledgment (audio playback requires audio device setup)
-        if (xm_player && !music_started && time >= music_cue.cue_start) {
-            music_started = true;
-            printf("[%.2fs] Music cue active\n", time);
-        }
         
         // Image activation/deactivation logging
         static bool image_was_active = false;
@@ -1337,7 +1422,16 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    // Cleanup
+    // Cleanup audio
+    if (audio_state) {
+        audio_state->stop = true;
+        if (audio_thread) {
+            WaitForSingleObject(audio_thread, 2000);
+            CloseHandle(audio_thread);
+        }
+        waveOutClose(audio_state->wave_out);
+        delete audio_state;
+    }
     if (xm_player) {
         rev::xm::DestroyPlayer(xm_player);
     }
