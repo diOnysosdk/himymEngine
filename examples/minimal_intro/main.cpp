@@ -864,7 +864,7 @@ int main() {
     
     // Load image cue
     ImageCue image_cue = {};
-    bool has_image = LoadImageCue("../../../assets/cues.txt", &image_cue);
+    bool has_image = LoadImageCue("assets/cues.txt", &image_cue);
     ImageTexture image_tex = {};
     bool image_loaded = false;
     
@@ -887,7 +887,7 @@ int main() {
     
     // Load text cue
     TextCue text_cue = {};
-    bool has_text = LoadTextCue("../../../assets/cues.txt", &text_cue);
+    bool has_text = LoadTextCue("assets/cues.txt", &text_cue);
     TextTexture text_tex = {};
     bool text_loaded = false;
     
@@ -990,22 +990,21 @@ int main() {
         }
     }
     
-    // Load image texture (fix path to be relative from exe location)
+    // Load image texture
     if (has_image && image_cue.asset_path[0] != '\0') {
-        // Convert project-relative path to exe-relative path
-        // Path from cues.txt is like "project_assets/logo.png"
-        // Exe is at build/bin/Release/, so need ../../../
-        char exe_relative_path[512];
-        snprintf(exe_relative_path, sizeof(exe_relative_path), "../../../%s", image_cue.asset_path);
+        // asset_path is workspace-root-relative (e.g. "project_assets/logo.png")
+        // Working directory is always workspace root (whether launched from editor or start script)
+        char image_path[512];
+        strncpy_s(image_path, image_cue.asset_path, _TRUNCATE);
         
         // Convert forward slashes to backslashes for Windows GDI+
-        for (char* p = exe_relative_path; *p; ++p) {
-            if (*p == '/') *p = '\\\\';
+        for (char* p = image_path; *p; ++p) {
+            if (*p == '/') *p = '\\';
         }
         
-        printf("\nLoading image texture: %s\n", exe_relative_path);
-        if (g_logfile) fprintf(g_logfile, "\nLoading image texture: %s\n", exe_relative_path);
-        if (LoadImageTexture(exe_relative_path, &image_tex)) {
+        printf("\nLoading image texture: %s\n", image_path);
+        if (g_logfile) fprintf(g_logfile, "\nLoading image texture: %s\n", image_path);
+        if (LoadImageTexture(image_path, &image_tex)) {
             image_loaded = true;
             printf("Image loaded: %dx%d, will show at %.1f-%.1fs\n",
                    image_tex.width, image_tex.height,
@@ -1015,7 +1014,7 @@ int main() {
                    image_cue.cue_start, image_cue.cue_end);
         } else {
             printf("FAILED to load image\n");
-            if (g_logfile) fprintf(g_logfile, "FAILED to load image from: %s\n", exe_relative_path);
+            if (g_logfile) fprintf(g_logfile, "FAILED to load image from: %s\n", image_path);
         }
     }
     
