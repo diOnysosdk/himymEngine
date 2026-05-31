@@ -14,6 +14,7 @@ thelogo2mini.png|intros/4test/project_assets/thelogo2mini.png|0.500|0.500|1.000|
 
 [mesh_cues]
 # asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness
+mesh_0|intros/4test/project_assets/logo.glb|4|0.000|0.000|0.000|0.000|0.000|0.000|1.000|1.000|1.000|1.000|1.000|1.000|1.000|1.000|16.000|0.000|10.000|0|0|0.000|0.000|0.000|0.000|0.000|0.500
 
 [curves]
 # target|param|point_count

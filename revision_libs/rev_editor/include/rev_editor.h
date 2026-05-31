@@ -174,6 +174,16 @@ struct EditorContext {
     bool mesh_modal_open;
     bool mesh_modal_request_open;
 
+    // Preview mesh cache — avoids reloading glTF every frame.
+    // Keyed by asset_path; evicted when the path changes or project reloads.
+    static const int kMeshCacheSize = 16;
+    struct MeshCacheEntry {
+        char  path[512];
+        void* mesh;  // rev::mesh::Mesh*
+    };
+    MeshCacheEntry mesh_cache[kMeshCacheSize];
+    int mesh_cache_count;
+
     // Curve editor state
     int selected_curve_index;
     int dragging_point_index;

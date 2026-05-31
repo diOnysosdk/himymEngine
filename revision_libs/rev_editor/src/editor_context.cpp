@@ -97,6 +97,8 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->mesh_modal_request_open = false;
     memset(&editor->editing_mesh, 0, sizeof(editor->editing_mesh));
     editor->editing_mesh.scale[0] = editor->editing_mesh.scale[1] = editor->editing_mesh.scale[2] = 1.0f;
+    editor->mesh_cache_count = 0;
+    memset(editor->mesh_cache, 0, sizeof(editor->mesh_cache));
     editor->mesh_shader = nullptr;
     editor->selected_curve_index = -1;
     editor->dragging_point_index = -1;
@@ -817,7 +819,16 @@ bool NewProject(EditorContext* editor) {
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
     editor->project->modified = false;
-    
+
+    // Clear mesh cache — meshes belong to the old project's GPU context
+    for (int i = 0; i < editor->mesh_cache_count; ++i) {
+        if (editor->mesh_cache[i].mesh) {
+            rev::mesh::DestroyMesh((rev::mesh::Mesh*)editor->mesh_cache[i].mesh);
+            editor->mesh_cache[i].mesh = nullptr;
+        }
+    }
+    editor->mesh_cache_count = 0;
+
     return true;
 }
 
@@ -1178,7 +1189,8 @@ void RenderTimeline(EditorContext* editor) {
             
             // Show cue counts
             if (scene->shader_cue_count > 0 || scene->image_cue_count > 0 || 
-                scene->text_cue_count > 0 || scene->music_cue_count > 0) {
+                scene->text_cue_count > 0 || scene->music_cue_count > 0 ||
+                scene->mesh_cue_count > 0) {
                 ImGui::Indent();
                 if (scene->shader_cue_count > 0) {
                     ImGui::Text("  Shaders: %d", scene->shader_cue_count);
@@ -1191,6 +1203,9 @@ void RenderTimeline(EditorContext* editor) {
                 }
                 if (scene->music_cue_count > 0) {
                     ImGui::Text("  Music: %d", scene->music_cue_count);
+                }
+                if (scene->mesh_cue_count > 0) {
+                    ImGui::Text("  Meshes: %d", scene->mesh_cue_count);
                 }
                 ImGui::Unindent();
             }
@@ -4296,16 +4311,39 @@ void RenderPreviewFrame(EditorContext* editor) {
                     case 2: mesh = rev::mesh::CreatePlane(size, param > 0.0f ? param : size); break;
                     case 3: mesh = rev::mesh::CreateTorus(size, param > 0.0f ? param : 0.3f, 32, 16); break;
                     case 4: {
-                        // External glTF/GLB
+                        // External glTF/GLB — look up cache first to avoid per-frame reload
                         if (cue->asset_path[0]) {
+                            rev::mesh::Mesh* cached = nullptr;
+                            for (int c = 0; c < editor->mesh_cache_count; ++c) {
+                                if (strcmp(editor->mesh_cache[c].path, cue->asset_path) == 0) {
+                                    cached = (rev::mesh::Mesh*)editor->mesh_cache[c].mesh;
+                                    break;
+                                }
+                            }
+                            if (cached) {
+                                // Use cached mesh — already uploaded
+                                rev::mesh::Render(cached, -1);
+                                continue;
+                            }
+                            // Not cached — load and store
                             rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(cue->asset_path);
                             if (ir && ir->ok) {
                                 mesh = ir->mesh;
                                 ir->mesh = nullptr;
                             }
                             if (ir) rev::gltf::FreeImportResult(ir);
+                            if (mesh) {
+                                rev::mesh::UploadToGPU(mesh);
+                                if (editor->mesh_cache_count < EditorContext::kMeshCacheSize) {
+                                    auto& entry = editor->mesh_cache[editor->mesh_cache_count++];
+                                    strncpy_s(entry.path, cue->asset_path, _TRUNCATE);
+                                    entry.mesh = mesh;
+                                }
+                                rev::mesh::Render(mesh, -1);
+                                continue;
+                            }
                         }
-                        if (!mesh) mesh = rev::mesh::CreateCube(1.0f); // fallback if path empty or failed
+                        mesh = rev::mesh::CreateCube(1.0f); // fallback
                         break;
                     }
                     default: mesh = rev::mesh::CreateCube(1.0f); break;
