@@ -929,16 +929,28 @@ int main(int argc, char* argv[]) {
     printf("=== HiMYM Minimal Intro ===\n\n");
     if (g_logfile) fprintf(g_logfile, "=== HiMYM Minimal Intro Debug Log ===\n\n");
 
-    // Cues file path: argv[1] takes priority.
-    // Packed build falls back to the path baked in at pack time (PACKED_CUES_PATH).
-    // Non-packed build falls back to assets/cues.txt for backwards compat.
+    // Cues file path: argv[1] takes priority (editor always passes it).
+    // Packed standalone build: extract embedded kPackedCuesContent to a temp file —
+    // zero disk dependency, works from any launch location.
 #ifdef HIMYM_PACKED_ASSETS
-    // PACKED_CUES_PATH is generated into packed_assets.h by rev_pack.
-    // Provide a compile-time fallback in case of a stale / pre-update header.
-#   ifndef PACKED_CUES_PATH
-#       define PACKED_CUES_PATH "assets/cues.txt"
-#   endif
-    const char* cues_path = (argc > 1 && argv[1] && argv[1][0]) ? argv[1] : PACKED_CUES_PATH;
+    char packed_cues_tmp[MAX_PATH] = {};
+#ifdef HIMYM_HAS_PACKED_CUES
+    {
+        char tmpdir[MAX_PATH] = {};
+        GetTempPathA(sizeof(tmpdir), tmpdir);
+        GetTempFileNameA(tmpdir, "cues", 0, packed_cues_tmp);
+        FILE* tf = nullptr;
+        fopen_s(&tf, packed_cues_tmp, "wb");
+        if (tf) { fwrite(kPackedCuesContent, 1, kPackedCuesSize, tf); fclose(tf); }
+        if (g_logfile) {
+            fprintf(g_logfile, "[Packed] Wrote embedded cues (%zu bytes) to: %s\n",
+                    kPackedCuesSize, packed_cues_tmp);
+            fflush(g_logfile);
+        }
+    }
+#endif
+    const char* cues_path = (argc > 1 && argv[1] && argv[1][0]) ? argv[1]
+                          : (packed_cues_tmp[0] ? packed_cues_tmp : "assets/cues.txt");
 #else
     const char* cues_path = (argc > 1 && argv[1] && argv[1][0]) ? argv[1] : "assets/cues.txt";
 #endif

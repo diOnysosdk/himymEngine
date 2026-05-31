@@ -191,6 +191,24 @@ PackResult PackAssets(const char* cues_path,
             fprintf(hdr, "static const char* PACKED_CUES_PATH = \"%s\";\n\n", cues_fwd);
             fprintf(hdr, "static const rev::pack::PackedAsset kPackedAssets[] = { { nullptr, nullptr, 0, 0 } };\n");
             fprintf(hdr, "static const int kPackedAssetCount = 0;\n");
+            // Embed cues.txt content so the packed exe needs no disk access.
+            {
+                char full_cues[640] = {};
+                if (workspace_root && workspace_root[0])
+                    snprintf(full_cues, sizeof(full_cues), "%s\\%s", workspace_root, cues_path);
+                else
+                    strncpy_s(full_cues, cues_path, sizeof(full_cues) - 1);
+                size_t csz = 0;
+                unsigned char* cdata = ReadFile(full_cues, &csz);
+                if (cdata && csz > 0) {
+                    fprintf(hdr, "#define HIMYM_HAS_PACKED_CUES\n");
+                    fprintf(hdr, "static const unsigned char kPackedCuesContent[] = {\n");
+                    WriteHexArray(hdr, cdata, csz);
+                    fprintf(hdr, "};\n");
+                    fprintf(hdr, "static const size_t kPackedCuesSize = %zu;\n", csz);
+                    free(cdata);
+                }
+            }
             fclose(hdr);
         }
         result.ok = true;
@@ -260,13 +278,31 @@ PackResult PackAssets(const char* cues_path,
     fprintf(hdr, "#pragma once\n");
     fprintf(hdr, "#include \"rev_pack.h\"\n\n");
 
-    // Embed the cues path (normalised to forward slashes) so the packed exe
-    // knows where to find its cues.txt when launched without argv[1].
+    // Embed the cues path (kept for backward compat) and the full cues.txt content.
     {
         char cues_fwd[512] = {};
         strncpy_s(cues_fwd, cues_path, sizeof(cues_fwd) - 1);
         for (char* p = cues_fwd; *p; ++p) if (*p == '\\') *p = '/';
         fprintf(hdr, "static const char* PACKED_CUES_PATH = \"%s\";\n\n", cues_fwd);
+    }
+
+    // Embed cues.txt content so the packed exe is fully standalone (no disk access needed).
+    {
+        char full_cues[640] = {};
+        if (workspace_root && workspace_root[0])
+            snprintf(full_cues, sizeof(full_cues), "%s\\%s", workspace_root, cues_path);
+        else
+            strncpy_s(full_cues, cues_path, sizeof(full_cues) - 1);
+        size_t csz = 0;
+        unsigned char* cdata = ReadFile(full_cues, &csz);
+        if (cdata && csz > 0) {
+            fprintf(hdr, "#define HIMYM_HAS_PACKED_CUES\n");
+            fprintf(hdr, "static const unsigned char kPackedCuesContent[] = {\n");
+            WriteHexArray(hdr, cdata, csz);
+            fprintf(hdr, "};\n");
+            fprintf(hdr, "static const size_t kPackedCuesSize = %zu;\n\n", csz);
+            free(cdata);
+        }
     }
 
     for (int i = 0; i < ref_count; ++i) {
