@@ -371,7 +371,25 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 memset(&current_image_cue, 0, sizeof(current_image_cue));
             }
         }
-        
+
+        // Parse music cue fields
+        if (in_music_cues && current_scene) {
+            if (strstr(start, "\"asset_key\":")) {
+                sscanf_s(start, "\"asset_key\": \"%63[^\"]\"", current_music_cue.asset_key, (unsigned)sizeof(current_music_cue.asset_key));
+            } else if (strstr(start, "\"asset_path\":")) {
+                sscanf_s(start, "\"asset_path\": \"%511[^\"]\"", current_music_cue.asset_path, (unsigned)sizeof(current_music_cue.asset_path));
+            } else if (strstr(start, "\"cue_start\":")) {
+                sscanf_s(start, "\"cue_start\": %f", &current_music_cue.cue_start);
+            } else if (strstr(start, "\"cue_end\":")) {
+                sscanf_s(start, "\"cue_end\": %f", &current_music_cue.cue_end);
+            } else if (start[0] == '}' && current_music_cue.asset_key[0] != '\0') {
+                printf("[LoadProject] Loaded music cue: %s path=%s\n",
+                       current_music_cue.asset_key, current_music_cue.asset_path);
+                AddMusicCue(current_scene, current_music_cue);
+                memset(&current_music_cue, 0, sizeof(current_music_cue));
+            }
+        }
+
         // Parse curve points
         if (in_curves && strstr(start, "\"points\":")) {
             in_curve_points = true;
@@ -1749,13 +1767,35 @@ void RenderMusicModal(EditorContext* editor) {
             ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
             
             if (GetOpenFileNameA(&ofn)) {
-                // Extract just filename
                 const char* filename = strrchr(filepath, '\\');
                 if (!filename) filename = strrchr(filepath, '/');
                 if (filename) filename++; else filename = filepath;
-                
+
                 strncpy_s(cue->asset_key, filename, _TRUNCATE);
-                strncpy_s(cue->asset_path, filepath, _TRUNCATE);
+
+                // Copy XM file into project assets folder (same pattern as image cues)
+                if (editor->project->assets_path[0]) {
+                    char dest_path[512] = {};
+                    snprintf(dest_path, sizeof(dest_path), "%s\\%s",
+                             editor->project->assets_path, filename);
+                    if (!CopyFileA(filepath, dest_path, FALSE)) {
+                        printf("[MUSIC] Warning: could not copy asset to %s (err=%lu)\n",
+                               dest_path, GetLastError());
+                    }
+                    // Store workspace-relative path with forward slashes
+                    size_t cwd_len = strlen(editor->startup_dir);
+                    if (cwd_len > 0 &&
+                        _strnicmp(dest_path, editor->startup_dir, cwd_len) == 0 &&
+                        (dest_path[cwd_len] == '\\' || dest_path[cwd_len] == '/')) {
+                        strncpy_s(cue->asset_path, dest_path + cwd_len + 1, _TRUNCATE);
+                    } else {
+                        strncpy_s(cue->asset_path, dest_path, _TRUNCATE);
+                    }
+                    for (char* p = cue->asset_path; *p; ++p) if (*p == '\\') *p = '/';
+                } else {
+                    printf("[MUSIC] Warning: project not saved yet, asset not copied.\n");
+                    strncpy_s(cue->asset_path, filepath, _TRUNCATE);
+                }
             }
         }
         
@@ -2117,8 +2157,33 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             }
             continue;
         }
+
+        // Parse music cues: asset_key|asset_path|cue_start|cue_end
+        if (current_section == MUSIC_CUES) {
+            MusicCue cue = {};
+            char* p1 = strchr(start, '|');
+            if (p1) {
+                size_t key_len = (size_t)(p1 - start);
+                if (key_len >= sizeof(cue.asset_key)) key_len = sizeof(cue.asset_key) - 1;
+                strncpy_s(cue.asset_key, start, key_len);
+                char* p2 = strchr(p1 + 1, '|');
+                if (p2) {
+                    size_t path_len = (size_t)(p2 - (p1 + 1));
+                    if (path_len >= sizeof(cue.asset_path)) path_len = sizeof(cue.asset_path) - 1;
+                    strncpy_s(cue.asset_path, p1 + 1, path_len);
+                    if (sscanf_s(p2 + 1, "%f|%f", &cue.cue_start, &cue.cue_end) >= 1) {
+                        if (editor->project->scene_count == 0)
+                            AddScene(editor, "Imported Scene", total_duration);
+                        AddMusicCue(&editor->project->scenes[0], cue);
+                        printf("[ImportFromCues] Imported music cue: %s path=%s\n",
+                               cue.asset_key, cue.asset_path);
+                    }
+                }
+            }
+            continue;
+        }
     }
-    
+
     fclose(f);
     
     // Update project metadata
