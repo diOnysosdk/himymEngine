@@ -165,6 +165,21 @@ struct EditorContext {
     bool shader_modal_open;
     bool shader_modal_request_open;  // Set to true to request opening the modal
     
+    // Music modal state
+    MusicCue editing_music;
+    bool music_modal_open;
+    bool music_modal_request_open;
+    
+    // Image modal state
+    ImageCue editing_image;
+    bool image_modal_open;
+    bool image_modal_request_open;
+    
+    // Text modal state
+    TextCue editing_text;
+    bool text_modal_open;
+    bool text_modal_request_open;
+    
     // Curve editor state
     int selected_curve_index;
     int dragging_point_index;
@@ -194,6 +209,9 @@ void RenderMenuBar(EditorContext* editor);
 void RenderTimeline(EditorContext* editor);
 void RenderCurveEditor(EditorContext* editor);
 void RenderShaderModal(EditorContext* editor);
+void RenderMusicModal(EditorContext* editor);
+void RenderImageModal(EditorContext* editor);
+void RenderTextModal(EditorContext* editor);
 void RenderProperties(EditorContext* editor);
 void RenderAssetBrowser(EditorContext* editor);
 

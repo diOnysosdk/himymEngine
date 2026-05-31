@@ -1,10 +1,13 @@
 #include <windows.h>
 #include <gl/gl.h>
+#include <gdiplus.h>
 #include "rev_platform.h"
 #include "rev_shader.h"
 #include "rev_xm.h"
 #include <cstdio>
 #include <cstring>
+
+#pragma comment(lib, "gdiplus.lib")
 
 // Define missing GL constants
 #ifndef GL_COLOR_BUFFER_BIT
@@ -13,13 +16,21 @@
 #ifndef GL_TRIANGLE_STRIP
 #define GL_TRIANGLE_STRIP 0x0005
 #endif
+#ifndef GL_CLAMP
+#define GL_CLAMP 0x2900
+#endif
+#ifndef GL_TEXTURE0
+#define GL_TEXTURE0 0x84C0
+#endif
 
 // GL 3.3 function pointers (VAO support required for core profile)
 typedef void (APIENTRY *PFNGLGENVERTEXARRAYSPROC)(GLsizei n, GLuint* arrays);
 typedef void (APIENTRY *PFNGLBINDVERTEXARRAYPROC)(GLuint array);
+typedef void (APIENTRY *PFNGLACTIVETEXTUREPROC)(GLenum texture);
 
 static PFNGLGENVERTEXARRAYSPROC glGenVertexArrays = nullptr;
 static PFNGLBINDVERTEXARRAYPROC glBindVertexArray = nullptr;
+static PFNGLACTIVETEXTUREPROC glActiveTexture = nullptr;
 
 // Shader cue data structure
 struct ShaderCue {
@@ -34,6 +45,53 @@ struct ShaderCue {
     float cue_start;
     float cue_end;
 };
+
+// Music cue data structure
+struct MusicCue {
+    char asset_key[64];
+    char asset_path[512];
+    float cue_start;
+    float cue_end;
+};
+
+// Image cue data structure
+struct ImageCue {
+    char asset_key[64];
+    char asset_path[512];
+    float x;
+    float y;
+    float scale;
+    float opacity;
+    float cue_start;
+    float cue_end;
+};
+
+// Image texture data
+struct ImageTexture {
+    GLuint texture_id;
+    int width;
+    int height;
+};
+
+// Text cue data structure
+struct TextCue {
+    char text[256];
+    char font_name[64];
+    float x;
+    float y;
+    int size;
+    float color_r;
+    float color_g;
+    float color_b;
+    int effect_type;  // 0=None, 1=Fade In Out, 2=Scroll
+    float cue_start;
+    float cue_end;
+    float effect_start;
+    float effect_end;
+};
+
+// Text texture data (same as ImageTexture)
+typedef ImageTexture TextTexture;
 
 // Parse cues.txt and extract first shader cue
 bool LoadShaderCue(const char* path, ShaderCue* cue) {
@@ -77,6 +135,303 @@ bool LoadShaderCue(const char* path, ShaderCue* cue) {
     return found;
 }
 
+// Parse cues.txt and extract first music cue
+bool LoadMusicCue(const char* path, MusicCue* cue) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return false;
+    
+    char line[1024];
+    bool in_music_cues = false;
+    bool found = false;
+    
+    while (fgets(line, sizeof(line), f)) {
+        // Trim whitespace
+        char* start = line;
+        while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') start++;
+        
+        if (strstr(start, "[music_cues]")) {
+            in_music_cues = true;
+            continue;
+        }
+        
+        if (start[0] == '[' && in_music_cues) {
+            break;  // End of music_cues section
+        }
+        
+        if (in_music_cues && start[0] != '#' && start[0] != '\0' && start[0] != '\n') {
+            // Parse music cue line: asset_key|asset_path|cue_start|cue_end
+            char asset_key[64] = {};
+            char asset_path[512] = {};
+            float cue_start = 0.0f;
+            float cue_end = 0.0f;
+            
+            // Use strchr to split by pipes
+            char* token1 = strchr(start, '|');
+            if (!token1) continue;
+            
+            // Extract asset_key
+            size_t key_len = token1 - start;
+            if (key_len >= sizeof(asset_key)) key_len = sizeof(asset_key) - 1;
+            strncpy_s(cue->asset_key, start, key_len);
+            cue->asset_key[key_len] = '\0';
+            
+            // Move past first pipe
+            start = token1 + 1;
+            token1 = strchr(start, '|');
+            if (!token1) continue;
+            
+            // Extract asset_path
+            size_t path_len = token1 - start;
+            if (path_len >= sizeof(asset_path)) path_len = sizeof(asset_path) - 1;
+            strncpy_s(cue->asset_path, start, path_len);
+            cue->asset_path[path_len] = '\0';
+            
+            // Parse floats
+            start = token1 + 1;
+            if (sscanf_s(start, "%f|%f", &cue->cue_start, &cue->cue_end) == 2) {
+                found = true;
+                break;
+            }
+        }
+    }
+    
+    fclose(f);
+    return found;
+}
+
+// Parse cues.txt and extract first image cue
+bool LoadImageCue(const char* path, ImageCue* cue) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return false;
+    
+    char line[1024];
+    bool in_image_cues = false;
+    bool found = false;
+    
+    while (fgets(line, sizeof(line), f)) {
+        char* start = line;
+        while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') start++;
+        
+        if (strstr(start, "[image_cues]")) {
+            in_image_cues = true;
+            continue;
+        }
+        
+        if (start[0] == '[' && in_image_cues) {
+            break;
+        }
+        
+        if (in_image_cues && start[0] != '#' && start[0] != '\0' && start[0] != '\n') {
+            // Parse: asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end
+            char* pipe1 = strchr(start, '|');
+            if (!pipe1) continue;
+            *pipe1 = '\0';
+            strncpy_s(cue->asset_key, start, _TRUNCATE);
+            
+            char* pipe2 = strchr(pipe1 + 1, '|');
+            if (!pipe2) continue;
+            *pipe2 = '\0';
+            strncpy_s(cue->asset_path, pipe1 + 1, _TRUNCATE);
+            
+            if (sscanf_s(pipe2 + 1, "%f|%f|%f|%f|%f|%f",
+                &cue->x, &cue->y, &cue->scale, &cue->opacity,
+                &cue->cue_start, &cue->cue_end) == 6) {
+                found = true;
+                break;
+            }
+        }
+    }
+    
+    fclose(f);
+    return found;
+}
+
+// Load image file using GDI+ and create OpenGL texture
+bool LoadImageTexture(const char* path, ImageTexture* tex) {
+    // Convert path to wide string
+    wchar_t wpath[512];
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, 512);
+    
+    // Load image with GDI+
+    Gdiplus::Bitmap* bitmap = new Gdiplus::Bitmap(wpath);
+    if (bitmap->GetLastStatus() != Gdiplus::Ok) {
+        delete bitmap;
+        return false;
+    }
+    
+    tex->width = bitmap->GetWidth();
+    tex->height = bitmap->GetHeight();
+    
+    // Lock bitmap data
+    Gdiplus::Rect rect(0, 0, tex->width, tex->height);
+    Gdiplus::BitmapData bitmapData;
+    if (bitmap->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &bitmapData) != Gdiplus::Ok) {
+        delete bitmap;
+        return false;
+    }
+    
+    // Create OpenGL texture
+    glGenTextures(1, &tex->texture_id);
+    glBindTexture(GL_TEXTURE_2D, tex->texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+    
+    // Upload BGRA data (GDI+ format) - need to swap to RGBA
+    unsigned char* pixels = new unsigned char[tex->width * tex->height * 4];
+    unsigned char* src = (unsigned char*)bitmapData.Scan0;
+    for (int i = 0; i < tex->width * tex->height; i++) {
+        pixels[i*4 + 0] = src[i*4 + 2]; // R
+        pixels[i*4 + 1] = src[i*4 + 1]; // G
+        pixels[i*4 + 2] = src[i*4 + 0]; // B
+        pixels[i*4 + 3] = src[i*4 + 3]; // A
+    }
+    
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex->width, tex->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    
+    delete[] pixels;
+    bitmap->UnlockBits(&bitmapData);
+    delete bitmap;
+    
+    return true;
+}
+
+// Parse cues.txt and extract first text cue
+bool LoadTextCue(const char* path, TextCue* cue) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return false;
+    
+    char line[2048];
+    bool in_text_cues = false;
+    bool found = false;
+    
+    while (fgets(line, sizeof(line), f)) {
+        char* start = line;
+        while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') start++;
+        
+        if (strstr(start, "[text_cues]")) {
+            in_text_cues = true;
+            continue;
+        }
+        
+        if (start[0] == '[' && in_text_cues) {
+            break;
+        }
+        
+        if (in_text_cues && start[0] != '#' && start[0] != '\0' && start[0] != '\n') {
+            // Parse: text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|effect_start|effect_end
+            char* pipe1 = strchr(start, '|');
+            if (!pipe1) continue;
+            *pipe1 = '\0';
+            strncpy_s(cue->text, start, _TRUNCATE);
+            
+            char* pipe2 = strchr(pipe1 + 1, '|');
+            if (!pipe2) continue;
+            *pipe2 = '\0';
+            strncpy_s(cue->font_name, pipe1 + 1, _TRUNCATE);
+            
+            if (sscanf_s(pipe2 + 1, "%f|%f|%d|%f|%f|%f|%d|%f|%f|%f|%f",
+                &cue->x, &cue->y, &cue->size,
+                &cue->color_r, &cue->color_g, &cue->color_b,
+                &cue->effect_type,
+                &cue->cue_start, &cue->cue_end,
+                &cue->effect_start, &cue->effect_end) == 11) {
+                found = true;
+                break;
+            }
+        }
+    }
+    
+    fclose(f);
+    return found;
+}
+
+// Render text to texture using GDI+
+bool RenderTextToTexture(const char* text, const char* font_name, int font_size, float r, float g, float b, TextTexture* tex) {
+    // Convert text to wide string
+    wchar_t wtext[256];
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, 256);
+    
+    wchar_t wfont[64];
+    MultiByteToWideChar(CP_UTF8, 0, font_name, -1, wfont, 64);
+    
+    // Create temporary bitmap to measure text
+    Gdiplus::Bitmap temp_bitmap(1, 1, PixelFormat32bppARGB);
+    Gdiplus::Graphics temp_graphics(&temp_bitmap);
+    
+    // Create font
+    Gdiplus::Font font(wfont, (Gdiplus::REAL)font_size, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    
+    // Measure text size
+    Gdiplus::RectF layoutRect(0.0f, 0.0f, 2048.0f, 2048.0f);
+    Gdiplus::RectF boundingBox;
+    temp_graphics.MeasureString(wtext, -1, &font, layoutRect, &boundingBox);
+    
+    int width = (int)(boundingBox.Width) + 8;
+    int height = (int)(boundingBox.Height) + 8;
+    
+    if (width <= 0 || height <= 0) return false;
+    
+    // Create bitmap for text rendering
+    Gdiplus::Bitmap* bitmap = new Gdiplus::Bitmap(width, height, PixelFormat32bppARGB);
+    Gdiplus::Graphics* graphics = new Gdiplus::Graphics(bitmap);
+    
+    // Clear with transparent
+    graphics->Clear(Gdiplus::Color(0, 0, 0, 0));
+    
+    // Enable antialiasing
+    graphics->SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
+    
+    // Create brush with color
+    Gdiplus::SolidBrush brush(Gdiplus::Color(255, (BYTE)(r * 255), (BYTE)(g * 255), (BYTE)(b * 255)));
+    
+    // Draw text
+    Gdiplus::PointF origin(4.0f, 4.0f);
+    graphics->DrawString(wtext, -1, &font, origin, &brush);
+    
+    delete graphics;
+    
+    // Lock bitmap and create OpenGL texture
+    tex->width = width;
+    tex->height = height;
+    
+    Gdiplus::Rect rect(0, 0, width, height);
+    Gdiplus::BitmapData bitmapData;
+    if (bitmap->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &bitmapData) != Gdiplus::Ok) {
+        delete bitmap;
+        return false;
+    }
+    
+    glGenTextures(1, &tex->texture_id);
+    glBindTexture(GL_TEXTURE_2D, tex->texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+    
+    // Upload BGRA → RGBA
+    unsigned char* pixels = new unsigned char[width * height * 4];
+    unsigned char* src = (unsigned char*)bitmapData.Scan0;
+    for (int i = 0; i < width * height; i++) {
+        pixels[i*4 + 0] = src[i*4 + 2]; // R
+        pixels[i*4 + 1] = src[i*4 + 1]; // G
+        pixels[i*4 + 2] = src[i*4 + 0]; // B
+        pixels[i*4 + 3] = src[i*4 + 3]; // A
+    }
+    
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    
+    delete[] pixels;
+    bitmap->UnlockBits(&bitmapData);
+    delete bitmap;
+    
+    return true;
+}
+
 // Minimal vertex shader - fullscreen quad
 const char* vertex_shader = R"(
 #version 330 core
@@ -88,7 +443,32 @@ void main() {
     gl_Position = vec4(x, y, 0.0, 1.0);
 }
 )";
+// Sprite vertex shader - textured quad with position/scale
+const char* sprite_vertex_shader = R"(
+#version 330 core
+out vec2 uv;
+uniform vec2 u_position;  // -1 to 1
+uniform vec2 u_size;      // width, height in normalized coords
+void main() {
+    float x = -1.0 + float((gl_VertexID & 1) << 2);
+    float y = -1.0 + float((gl_VertexID & 2) << 1);
+    uv = vec2((x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5);  // Flip V coordinate
+    gl_Position = vec4(u_position.x + x * u_size.x, u_position.y + y * u_size.y, 0.0, 1.0);
+}
+)";
 
+// Sprite fragment shader - textured with opacity
+const char* sprite_fragment_shader = R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform sampler2D u_texture;
+uniform float u_opacity;
+void main() {
+    vec4 texColor = texture(u_texture, uv);
+    fragColor = vec4(texColor.rgb, texColor.a * u_opacity);
+}
+)";
 // Fragment shaders - 10 presets
 const char* fragment_shaders[] = {
     // 0: Plasma Vibrant
@@ -432,6 +812,14 @@ void main() {
 };
 
 int main() {
+    // Allocate console for debug output
+    AllocConsole();
+    FILE* fp;
+    freopen_s(&fp, "CONOUT$", "w", stdout);
+    freopen_s(&fp, "CONOUT$", "w", stderr);
+    
+    printf("=== HiMYM Minimal Intro ===\n\n");
+    
     // Load shader cue from assets/cues.txt
     ShaderCue cue = {};
     if (!LoadShaderCue("assets/cues.txt", &cue)) {
@@ -444,6 +832,36 @@ int main() {
         cue.intensity = 1.0f;
         cue.warp = 0.5f;
         cue.exposure_base = 0.76f;
+    }
+    
+    // Load music cue
+    MusicCue music_cue = {};
+    bool has_music = LoadMusicCue("assets/cues.txt", &music_cue);
+    
+    // Load image cue
+    ImageCue image_cue = {};
+    bool has_image = LoadImageCue("../../../assets/cues.txt", &image_cue);
+    ImageTexture image_tex = {};
+    bool image_loaded = false;
+    
+    printf("Image cue loaded: %s\n", has_image ? "YES" : "NO");
+    if (has_image) {
+        printf("  Key: %s, Path: %s\n", image_cue.asset_key, image_cue.asset_path);
+        printf("  Pos: (%.2f,%.2f), Scale: %.2f, Time: %.1f-%.1fs\n",
+               image_cue.x, image_cue.y, image_cue.scale, 
+               image_cue.cue_start, image_cue.cue_end);
+    }
+    
+    // Load text cue
+    TextCue text_cue = {};
+    bool has_text = LoadTextCue("../../../assets/cues.txt", &text_cue);
+    TextTexture text_tex = {};
+    bool text_loaded = false;
+    
+    printf("Text cue loaded: %s\n", has_text ? "YES" : "NO");
+    if (has_text) {
+        printf("  Text: \"%s\", Font: %s, Size: %d\n", text_cue.text, text_cue.font_name, text_cue.size);
+        printf("  Time: %.1f-%.1fs\n", text_cue.cue_start, text_cue.cue_end);
     }
     
     // Clamp shader_scene_id to valid range
@@ -466,9 +884,15 @@ int main() {
     // Load OpenGL functions
     rev::platform::LoadGLFunctions();
     
-    // Load GL 3.3 VAO functions (required for core profile)
+    // Initialize GDI+
+    Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+    ULONG_PTR gdiplusToken;
+    Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr);
+    
+    // Load GL 3.3+ function pointers
     glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)rev::platform::GetProcAddress("glGenVertexArrays");
     glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)rev::platform::GetProcAddress("glBindVertexArray");
+    glActiveTexture = (PFNGLACTIVETEXTUREPROC)rev::platform::GetProcAddress("glActiveTexture");
     
     // Create and bind VAO (required for OpenGL 3.3 core)
     GLuint vao;
@@ -483,6 +907,14 @@ int main() {
         return -1;
     }
     
+    // Compile sprite shader
+    rev::shader::Program* sprite_shader = rev::shader::CompileFromSource(sprite_vertex_shader, sprite_fragment_shader);
+    if (!sprite_shader) {
+        printf("ERROR: Sprite shader failed to compile\n");
+    } else {
+        printf("Sprite shader OK\n");
+    }
+    
     // Get uniform locations
     int u_time_loc = rev::shader::GetUniformLocation(shader, "u_time");
     int u_resolution_loc = rev::shader::GetUniformLocation(shader, "u_resolution");
@@ -493,12 +925,97 @@ int main() {
     int u_intensity_loc = rev::shader::GetUniformLocation(shader, "u_intensity");
     int u_warp_loc = rev::shader::GetUniformLocation(shader, "u_warp");
     
+    // Load XM music if available
+    rev::xm::Player* xm_player = nullptr;
+    if (has_music && music_cue.asset_path[0] != '\0') {
+        // Convert project-relative path to exe-relative path
+        char music_path[512];
+        if (strncmp(music_cue.asset_path, "assets/", 7) == 0) {
+            snprintf(music_path, sizeof(music_path), "../../../%s", music_cue.asset_path);
+        } else {
+            strncpy_s(music_path, music_cue.asset_path, _TRUNCATE);
+        }
+        
+        FILE* xm_file = nullptr;
+        fopen_s(&xm_file, music_path, "rb");
+        if (xm_file) {
+            fseek(xm_file, 0, SEEK_END);
+            long xm_size = ftell(xm_file);
+            fseek(xm_file, 0, SEEK_SET);
+            
+            unsigned char* xm_data = new unsigned char[xm_size];
+            fread(xm_data, 1, xm_size, xm_file);
+            fclose(xm_file);
+            
+            xm_player = rev::xm::CreatePlayer(xm_data, xm_size);
+            delete[] xm_data;
+            
+            if (xm_player) {
+                printf("Loaded music: %s (start: %.2f, end: %.2f)\n", 
+                       music_cue.asset_key, music_cue.cue_start, music_cue.cue_end);
+            }
+        }
+    }
+    
+    // Load image texture (fix path to be relative from exe location)
+    if (has_image && image_cue.asset_path[0] != '\0') {
+        // Convert project-relative path to exe-relative path
+        char exe_relative_path[512];
+        if (strncmp(image_cue.asset_path, "assets/", 7) == 0) {
+            snprintf(exe_relative_path, sizeof(exe_relative_path), "../../../%s", image_cue.asset_path);
+        } else {
+            strncpy_s(exe_relative_path, image_cue.asset_path, _TRUNCATE);
+        }
+        
+        printf("\nLoading image texture: %s\n", exe_relative_path);
+        if (LoadImageTexture(exe_relative_path, &image_tex)) {
+            image_loaded = true;
+            printf("Image loaded: %dx%d, will show at %.1f-%.1fs\n",
+                   image_tex.width, image_tex.height,
+                   image_cue.cue_start, image_cue.cue_end);
+        } else {
+            printf("FAILED to load image\n");
+        }
+    }
+    
+    // Render text to texture
+    if (has_text && text_cue.text[0] != '\0') {
+        printf("\nRendering text: \"%s\"\n", text_cue.text);
+        if (RenderTextToTexture(text_cue.text, text_cue.font_name, text_cue.size,
+                                text_cue.color_r, text_cue.color_g, text_cue.color_b, &text_tex)) {
+            text_loaded = true;
+            printf("Text rendered: %dx%d, will show at %.1f-%.1fs\n",
+                   text_tex.width, text_tex.height,
+                   text_cue.cue_start, text_cue.cue_end);
+        } else {
+            printf("FAILED to render text\n");
+        }
+    }
+    
     // Main loop
     double start_time = rev::platform::GetTime();
+    bool music_started = false;
     
     while (rev::platform::PollEvents(window) && !window->should_close) {
         double current_time = rev::platform::GetTime();
         float time = static_cast<float>(current_time - start_time);
+        
+        // Music acknowledgment (audio playback requires audio device setup)
+        if (xm_player && !music_started && time >= music_cue.cue_start) {
+            music_started = true;
+            printf("[%.2fs] Music cue active\n", time);
+        }
+        
+        // Image activation/deactivation logging
+        static bool image_was_active = false;
+        bool image_active_now = (image_loaded && time >= image_cue.cue_start && time <= image_cue.cue_end);
+        if (image_active_now && !image_was_active) {
+            printf("[%.1fs] IMAGE ON (sprite_shader=%p)\n", time, sprite_shader);
+            image_was_active = true;
+        } else if (!image_active_now && image_was_active) {
+            printf("[%.1fs] IMAGE OFF\n", time);
+            image_was_active = false;
+        }
         
         // Clear screen
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -525,8 +1042,109 @@ int main() {
         if (u_warp_loc >= 0)
             rev::shader::SetFloat(shader, u_warp_loc, cue.warp);
         
-        // Draw fullscreen quad (3 vertices for triangle strip)
+        // Draw fullscreen quad (shader background)
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        
+        // Draw image sprite if active
+        if (sprite_shader && image_loaded && time >= image_cue.cue_start && time <= image_cue.cue_end) {
+            // Use sprite shader
+            rev::shader::Use(sprite_shader);
+            
+            // Ensure proper GL state for sprite rendering
+            glDisable(GL_DEPTH_TEST);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            
+            // Calculate sprite quad position/size (normalized coordinates)
+            float aspect = (float)image_tex.width / (float)image_tex.height;
+            float w = image_cue.scale * aspect;
+            float h = image_cue.scale;
+            float x = (image_cue.x * 2.0f - 1.0f);
+            float y = (image_cue.y * 2.0f - 1.0f);
+            
+            // Set sprite uniforms
+            int u_position_loc = rev::shader::GetUniformLocation(sprite_shader, "u_position");
+            int u_size_loc = rev::shader::GetUniformLocation(sprite_shader, "u_size");
+            int u_texture_loc = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
+            int u_opacity_loc = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
+            
+            if (u_position_loc >= 0)
+                rev::shader::SetVec2(sprite_shader, u_position_loc, x, y);
+            if (u_size_loc >= 0)
+                rev::shader::SetVec2(sprite_shader, u_size_loc, w, h);
+            if (u_texture_loc >= 0)
+                rev::shader::SetInt(sprite_shader, u_texture_loc, 0);
+            if (u_opacity_loc >= 0)
+                rev::shader::SetFloat(sprite_shader, u_opacity_loc, image_cue.opacity);
+            
+            // Bind texture to unit 0
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, image_tex.texture_id);
+            
+            // Draw sprite quad (4 vertices, triangle strip)
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            
+            glDisable(GL_BLEND);
+        }
+        
+        // Draw text sprite if active
+        if (sprite_shader && text_loaded && time >= text_cue.cue_start && time <= text_cue.cue_end) {
+            // Use sprite shader
+            rev::shader::Use(sprite_shader);
+            
+            // Ensure proper GL state
+            glDisable(GL_DEPTH_TEST);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            
+            // Calculate text position/size
+            // Text uses pixel size, convert to normalized coordinates
+            float text_scale = 0.3f;  // Base scale
+            float aspect = (float)text_tex.width / (float)text_tex.height;
+            float w = text_scale * aspect;
+            float h = text_scale;
+            float x = (text_cue.x * 2.0f - 1.0f);
+            float y = (text_cue.y * 2.0f - 1.0f);
+            
+            // Calculate opacity based on effect
+            float opacity = 1.0f;
+            if (text_cue.effect_type == 1) {  // Fade In Out
+                float fade_duration = text_cue.effect_end - text_cue.effect_start;
+                if (time < text_cue.effect_start) {
+                    opacity = 0.0f;
+                } else if (time < text_cue.effect_start + fade_duration * 0.5f) {
+                    // Fade in
+                    opacity = (time - text_cue.effect_start) / (fade_duration * 0.5f);
+                } else if (time > text_cue.effect_end - fade_duration * 0.5f) {
+                    // Fade out
+                    opacity = (text_cue.effect_end - time) / (fade_duration * 0.5f);
+                }
+            }
+            
+            // Set uniforms
+            int u_position_loc = rev::shader::GetUniformLocation(sprite_shader, "u_position");
+            int u_size_loc = rev::shader::GetUniformLocation(sprite_shader, "u_size");
+            int u_texture_loc = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
+            int u_opacity_loc = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
+            
+            if (u_position_loc >= 0)
+                rev::shader::SetVec2(sprite_shader, u_position_loc, x, y);
+            if (u_size_loc >= 0)
+                rev::shader::SetVec2(sprite_shader, u_size_loc, w, h);
+            if (u_texture_loc >= 0)
+                rev::shader::SetInt(sprite_shader, u_texture_loc, 0);
+            if (u_opacity_loc >= 0)
+                rev::shader::SetFloat(sprite_shader, u_opacity_loc, opacity);
+            
+            // Bind text texture
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, text_tex.texture_id);
+            
+            // Draw text quad
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            
+            glDisable(GL_BLEND);
+        }
         
         // Swap buffers
         rev::platform::SwapBuffers(window);
@@ -538,8 +1156,16 @@ int main() {
     }
     
     // Cleanup
+    if (xm_player) {
+        rev::xm::DestroyPlayer(xm_player);
+    }
+    if (sprite_shader) {
+        rev::shader::DestroyProgram(sprite_shader);
+    }
     rev::shader::DestroyProgram(shader);
     rev::platform::DestroyIntroWindow(window);
+    
+    Gdiplus::GdiplusShutdown(gdiplusToken);
     
     return 0;
 }

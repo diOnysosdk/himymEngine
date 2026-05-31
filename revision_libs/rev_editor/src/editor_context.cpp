@@ -62,6 +62,12 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->playing = false;
     editor->shader_modal_open = false;
     editor->shader_modal_request_open = false;
+    editor->music_modal_open = false;
+    editor->music_modal_request_open = false;
+    editor->image_modal_open = false;
+    editor->image_modal_request_open = false;
+    editor->text_modal_open = false;
+    editor->text_modal_request_open = false;
     editor->selected_curve_index = -1;
     editor->dragging_point_index = -1;
     editor->show_curve_grid = true;
@@ -628,6 +634,18 @@ void RenderUI(EditorContext* editor) {
         RenderShaderModal(editor);
     }
     
+    if (editor->music_modal_open || editor->music_modal_request_open) {
+        RenderMusicModal(editor);
+    }
+    
+    if (editor->image_modal_open || editor->image_modal_request_open) {
+        RenderImageModal(editor);
+    }
+    
+    if (editor->text_modal_open || editor->text_modal_request_open) {
+        RenderTextModal(editor);
+    }
+    
     if (editor->show_demo) {
         // ImGui::ShowDemoWindow(&editor->show_demo);  // Requires imgui_demo.cpp
     }
@@ -902,20 +920,29 @@ void RenderProperties(EditorContext* editor) {
                 cue.opacity = 1.0f;
                 cue.cue_start = 0.0f;
                 cue.cue_end = scene->duration;
-                AddImageCue(scene, cue);
+                int new_index = AddImageCue(scene, cue);
+                editor->editing_image = scene->image_cues[new_index];
+                editor->selected_cue_index = new_index;
+                editor->selected_cue_type = 1;  // image
+                editor->image_modal_request_open = true;
                 editor->project->modified = true;
             }
             
             if (ImGui::Button("+ Text Cue")) {
                 TextCue cue = {};
                 strncpy_s(cue.text, sizeof(cue.text), "New Text", _TRUNCATE);
+                strncpy_s(cue.font_name, sizeof(cue.font_name), "Arial", _TRUNCATE);
                 cue.x = 0.5f;
                 cue.y = 0.5f;
                 cue.size = 48.0f;
                 cue.color = {1.0f, 1.0f, 1.0f};
                 cue.cue_start = 0.0f;
                 cue.cue_end = scene->duration;
-                AddTextCue(scene, cue);
+                int new_index = AddTextCue(scene, cue);
+                editor->editing_text = scene->text_cues[new_index];
+                editor->selected_cue_index = new_index;
+                editor->selected_cue_type = 2;  // text
+                editor->text_modal_request_open = true;
                 editor->project->modified = true;
             }
             
@@ -923,8 +950,83 @@ void RenderProperties(EditorContext* editor) {
                 MusicCue cue = {};
                 cue.cue_start = 0.0f;
                 cue.cue_end = scene->duration;
-                AddMusicCue(scene, cue);
+                int new_index = AddMusicCue(scene, cue);
+                editor->editing_music = scene->music_cues[new_index];
+                editor->selected_cue_index = new_index;
+                editor->selected_cue_type = 3;  // music
+                editor->music_modal_request_open = true;
                 editor->project->modified = true;
+            }
+            
+            ImGui::Separator();
+            
+            // Display existing image cues
+            if (scene->image_cue_count > 0) {
+                ImGui::Text("Image Cues:");
+                for (int i = 0; i < scene->image_cue_count; ++i) {
+                    ImGui::PushID(2000 + i);  // unique ID offset
+                    const char* display_name = scene->image_cues[i].asset_key[0] != '\0' 
+                        ? scene->image_cues[i].asset_key 
+                        : "(no image)";
+                    if (ImGui::Button(display_name)) {
+                        editor->editing_image = scene->image_cues[i];
+                        editor->selected_cue_index = i;
+                        editor->selected_cue_type = 1;
+                        editor->image_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X")) {
+                        DeleteImageCue(scene, i);
+                        editor->project->modified = true;
+                    }
+                    ImGui::PopID();
+                }
+            }
+            
+            // Display existing text cues
+            if (scene->text_cue_count > 0) {
+                ImGui::Text("Text Cues:");
+                for (int i = 0; i < scene->text_cue_count; ++i) {
+                    ImGui::PushID(3000 + i);  // unique ID offset
+                    const char* display_text = scene->text_cues[i].text[0] != '\0' 
+                        ? scene->text_cues[i].text 
+                        : "(no text)";
+                    if (ImGui::Button(display_text)) {
+                        editor->editing_text = scene->text_cues[i];
+                        editor->selected_cue_index = i;
+                        editor->selected_cue_type = 2;
+                        editor->text_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X")) {
+                        DeleteTextCue(scene, i);
+                        editor->project->modified = true;
+                    }
+                    ImGui::PopID();
+                }
+            }
+            
+            // Display existing music cues
+            if (scene->music_cue_count > 0) {
+                ImGui::Text("Music Cues:");
+                for (int i = 0; i < scene->music_cue_count; ++i) {
+                    ImGui::PushID(1000 + i);  // unique ID offset
+                    const char* display_name = scene->music_cues[i].asset_key[0] != '\0' 
+                        ? scene->music_cues[i].asset_key 
+                        : "(no file)";
+                    if (ImGui::Button(display_name)) {
+                        editor->editing_music = scene->music_cues[i];
+                        editor->selected_cue_index = i;
+                        editor->selected_cue_type = 3;
+                        editor->music_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X")) {
+                        DeleteMusicCue(scene, i);
+                        editor->project->modified = true;
+                    }
+                    ImGui::PopID();
+                }
             }
         } else {
             ImGui::Text("No scene selected");
@@ -1424,6 +1526,264 @@ void RenderShaderModal(EditorContext* editor) {
         // If popup was closed, reset the flag
         if (editor->shader_modal_open) {
             editor->shader_modal_open = false;
+        }
+    }
+}
+
+void RenderMusicModal(EditorContext* editor) {
+    if (!editor) return;
+    
+    // Open popup if requested
+    if (editor->music_modal_request_open) {
+        ImGui::OpenPopup("Music Settings");
+        editor->music_modal_open = true;
+        editor->music_modal_request_open = false;
+    }
+    
+    // Music modal
+    if (ImGui::BeginPopupModal("Music Settings", &editor->music_modal_open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        MusicCue* cue = &editor->editing_music;
+        
+        ImGui::Text("XM Music File:");
+        ImGui::InputText("##musicfile", cue->asset_key, sizeof(cue->asset_key));
+        ImGui::SameLine();
+        if (ImGui::Button("Browse")) {
+            // Win32 file dialog
+            OPENFILENAMEA ofn = {};
+            char filepath[260] = {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = (HWND)editor->window->hwnd;
+            ofn.lpstrFile = filepath;
+            ofn.nMaxFile = sizeof(filepath);
+            ofn.lpstrFilter = "XM Modules\0*.xm\0All Files\0*.*\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrInitialDir = "assets";
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+            
+            if (GetOpenFileNameA(&ofn)) {
+                // Extract just filename
+                const char* filename = strrchr(filepath, '\\');
+                if (!filename) filename = strrchr(filepath, '/');
+                if (filename) filename++; else filename = filepath;
+                
+                strncpy_s(cue->asset_key, filename, _TRUNCATE);
+                strncpy_s(cue->asset_path, filepath, _TRUNCATE);
+            }
+        }
+        
+        ImGui::Separator();
+        
+        // Timing
+        ImGui::Text("Timing (seconds):");
+        ImGui::InputFloat("Start", &cue->cue_start, 0.1f, 1.0f);
+        ImGui::InputFloat("End", &cue->cue_end, 0.1f, 1.0f);
+        
+        ImGui::Separator();
+        
+        // Apply/Cancel
+        if (ImGui::Button("Apply", ImVec2(120, 0))) {
+            // Apply changes
+            if (editor->selected_scene_index >= 0 && 
+                editor->selected_cue_index >= 0 && 
+                editor->selected_cue_type == 3) {
+                SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+                if (scene && editor->selected_cue_index < scene->music_cue_count) {
+                    scene->music_cues[editor->selected_cue_index] = *cue;
+                    editor->project->modified = true;
+                }
+            }
+            editor->music_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            editor->music_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::EndPopup();
+    } else {
+        if (editor->music_modal_open) {
+            editor->music_modal_open = false;
+        }
+    }
+}
+
+void RenderImageModal(EditorContext* editor) {
+    if (!editor) return;
+    
+    // Open popup if requested
+    if (editor->image_modal_request_open) {
+        ImGui::OpenPopup("Image Settings");
+        editor->image_modal_open = true;
+        editor->image_modal_request_open = false;
+    }
+    
+    // Image modal
+    if (ImGui::BeginPopupModal("Image Settings", &editor->image_modal_open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImageCue* cue = &editor->editing_image;
+        
+        ImGui::Text("Image File:");
+        ImGui::InputText("##imagefile", cue->asset_key, sizeof(cue->asset_key));
+        ImGui::SameLine();
+        if (ImGui::Button("Browse")) {
+            // Win32 file dialog
+            OPENFILENAMEA ofn = {};
+            char filepath[260] = {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = (HWND)editor->window->hwnd;
+            ofn.lpstrFile = filepath;
+            ofn.nMaxFile = sizeof(filepath);
+            ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0All Files\0*.*\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrInitialDir = "assets";
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+            
+            if (GetOpenFileNameA(&ofn)) {
+                // Extract just filename
+                const char* filename = strrchr(filepath, '\\\\');
+                if (!filename) filename = strrchr(filepath, '/');
+                if (filename) filename++; else filename = filepath;
+                
+                strncpy_s(cue->asset_key, filename, _TRUNCATE);
+            }
+        }
+        
+        ImGui::Separator();
+        
+        // Position
+        ImGui::Text("Position (0.0-1.0):");
+        ImGui::SliderFloat("X", &cue->x, 0.0f, 1.0f);
+        ImGui::SliderFloat("Y", &cue->y, 0.0f, 1.0f);
+        
+        ImGui::Separator();
+        
+        // Transform
+        ImGui::Text("Transform:");
+        ImGui::SliderFloat("Scale", &cue->scale, 0.1f, 5.0f);
+        ImGui::SliderFloat("Opacity", &cue->opacity, 0.0f, 1.0f);
+        
+        ImGui::Separator();
+        
+        // Timing
+        ImGui::Text("Timing (seconds):");
+        ImGui::InputFloat("Start", &cue->cue_start, 0.1f, 1.0f);
+        ImGui::InputFloat("End", &cue->cue_end, 0.1f, 1.0f);
+        
+        ImGui::Separator();
+        
+        // Apply/Cancel
+        if (ImGui::Button("Apply", ImVec2(120, 0))) {
+            // Apply changes
+            if (editor->selected_scene_index >= 0 && 
+                editor->selected_cue_index >= 0 && 
+                editor->selected_cue_type == 1) {
+                SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+                if (scene && editor->selected_cue_index < scene->image_cue_count) {
+                    scene->image_cues[editor->selected_cue_index] = *cue;
+                    editor->project->modified = true;
+                }
+            }
+            editor->image_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            editor->image_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::EndPopup();
+    } else {
+        if (editor->image_modal_open) {
+            editor->image_modal_open = false;
+        }
+    }
+}
+
+void RenderTextModal(EditorContext* editor) {
+    if (!editor) return;
+    
+    // Open popup if requested
+    if (editor->text_modal_request_open) {
+        ImGui::OpenPopup("Text Settings");
+        editor->text_modal_open = true;
+        editor->text_modal_request_open = false;
+    }
+    
+    // Text modal
+    if (ImGui::BeginPopupModal("Text Settings", &editor->text_modal_open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        TextCue* cue = &editor->editing_text;
+        
+        ImGui::Text("Text Content:");
+        ImGui::InputTextMultiline("##text", cue->text, sizeof(cue->text), ImVec2(400, 100));
+        
+        ImGui::Separator();
+        
+        // Font
+        ImGui::Text("Font:");
+        ImGui::InputText("Font Name", cue->font_name, sizeof(cue->font_name));
+        ImGui::SliderFloat("Size", &cue->size, 8.0f, 128.0f);
+        
+        ImGui::Separator();
+        
+        // Color
+        ImGui::Text("Color:");
+        ImGui::ColorEdit3("##textcolor", &cue->color.r);
+        
+        ImGui::Separator();
+        
+        // Position
+        ImGui::Text("Position (0.0-1.0):");
+        ImGui::SliderFloat("X", &cue->x, 0.0f, 1.0f);
+        ImGui::SliderFloat("Y", &cue->y, 0.0f, 1.0f);
+        
+        ImGui::Separator();
+        
+        // Effect
+        ImGui::Text("Effect:");
+        const char* effects[] = {"None", "Fade In/Out", "Scroll"};
+        ImGui::Combo("Type", &cue->effect_type, effects, 3);
+        
+        if (cue->effect_type > 0) {
+            ImGui::InputFloat("Effect Start", &cue->effect_start, 0.1f, 1.0f);
+            ImGui::InputFloat("Effect End", &cue->effect_end, 0.1f, 1.0f);
+        }
+        
+        ImGui::Separator();
+        
+        // Timing
+        ImGui::Text("Timing (seconds):");
+        ImGui::InputFloat("Start", &cue->cue_start, 0.1f, 1.0f);
+        ImGui::InputFloat("End", &cue->cue_end, 0.1f, 1.0f);
+        
+        ImGui::Separator();
+        
+        // Apply/Cancel
+        if (ImGui::Button("Apply", ImVec2(120, 0))) {
+            // Apply changes
+            if (editor->selected_scene_index >= 0 && 
+                editor->selected_cue_index >= 0 && 
+                editor->selected_cue_type == 2) {
+                SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+                if (scene && editor->selected_cue_index < scene->text_cue_count) {
+                    scene->text_cues[editor->selected_cue_index] = *cue;
+                    editor->project->modified = true;
+                }
+            }
+            editor->text_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            editor->text_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::EndPopup();
+    } else {
+        if (editor->text_modal_open) {
+            editor->text_modal_open = false;
         }
     }
 }

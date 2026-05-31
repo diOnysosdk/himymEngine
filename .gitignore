@@ -38,3 +38,30 @@ cmake_install.cmake
 # Temporary files
 *.tmp
 *.log
+*.txt.backup
+text_debug.txt
+text_render.txt
+text_texture.txt
+text_render_loop.txt
+intro_output.txt
+
+# ImGui layout
+imgui.ini
+
+# Editor temp/test files
+assets/*test*.json
+assets/*Test*.json
+assets/*mono*.json
+assets/*scene_blocks.json
+assets/*Kopi*.png
+assets/_runtime*.png
+assets/*_cues.txt
+assets/*_curves.txt
+assets/font_config.txt
+assets/text_config.txt
+assets/scene_data.txt
+assets/scene3d.txt
+assets/imgui.ini
+
+# Keep main cues.txt
+!assets/cues.txt
