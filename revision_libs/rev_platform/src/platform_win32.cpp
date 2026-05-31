@@ -55,7 +55,9 @@ Window* CreateIntroWindow(const WindowConfig& config) {
     RegisterClassEx(&wc);
     
     // Window style — fullscreen uses WS_POPUP (no border/titlebar), windowed uses WS_OVERLAPPEDWINDOW.
-    // Always use config.width/height so the GL viewport matches the configured render resolution.
+    // Window size matches config.width/height; glViewport in the render loop explicitly sets the
+    // GL viewport to config.width x config.height each frame so render proportions always match
+    // the preview FBO (also 1920×1080).
     DWORD style = config.fullscreen ? WS_POPUP : WS_OVERLAPPEDWINDOW;
     int x = config.fullscreen ? 0 : CW_USEDEFAULT;
     int y = config.fullscreen ? 0 : CW_USEDEFAULT;

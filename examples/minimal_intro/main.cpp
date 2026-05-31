@@ -998,6 +998,10 @@ int main(int argc, char* argv[]) {
         }
         
         // Clear screen
+        // Always set viewport to the configured resolution so sprite/mesh formulas
+        // that use config.width/config.height produce the correct NDC proportions,
+        // regardless of the physical window size on the current monitor.
+        glViewport(0, 0, config.width, config.height);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
