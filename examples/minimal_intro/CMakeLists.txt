@@ -12,7 +12,10 @@ target_link_libraries(minimal_intro PRIVATE
     rev_shader
     rev_xm
     rev_mesh
+    rev_gltf
 )
+
+target_compile_definitions(minimal_intro PRIVATE REV_GLTF_AVAILABLE)
 
 if(MSVC)
     set_target_properties(minimal_intro PROPERTIES

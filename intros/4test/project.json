@@ -8,8 +8,8 @@
       "duration": 10.000,
       "shader_cues": [
         {
-          "shader_name": "Plasma Vibrant",
-          "shader_scene_id": 0,
+          "shader_name": "Glow Orbs",
+          "shader_scene_id": 8,
           "palette_low": [0.100, 0.300, 0.800],
           "palette_mid": [0.450, 0.250, 0.700],
           "palette_high": [0.800, 0.200, 0.600],
@@ -37,7 +37,7 @@
       ],
       "image_cues": [
         {
-          "asset_key": "thelogo2mini.png",
+          "asset_key": "hoflogo.png",
           "x": 0.500,
           "y": 0.500,
           "scale": 1.000,
@@ -56,27 +56,6 @@
       "music_cues": [
       ],
       "mesh_cues": [
-        {
-          "asset_key": "mesh_0",
-          "asset_path": "intros/4test/project_assets/logo.glb",
-          "mesh_type": 4,
-          "pos": [0.000, 0.000, 0.000],
-          "rot": [0.000, 0.000, 0.000],
-          "scale": [1.000, 1.000, 1.000],
-          "color": [1.000, 1.000, 1.000, 1.000],
-          "mesh_size": 1.000,
-          "mesh_param": 16.000,
-          "metallic": 0.000,
-          "roughness": 0.500,
-          "effect_type": 0,
-          "cue_start": 0.000,
-          "cue_end": 10.000,
-          "fade_in_start": 0.000,
-          "fade_in_end": 0.000,
-          "fade_out_start": 0.000,
-          "fade_out_end": 0.000,
-          "layer_order": 0
-        }
       ]
     }
   ],

@@ -1,1 +1,1 @@
-thelogo2mini.png|intros/4test/project_assets/thelogo2mini.png|F2313569
+hoflogo.png|intros/4test/project_assets/hoflogo.png|D5403A7A
