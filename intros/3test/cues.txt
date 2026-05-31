@@ -3,15 +3,15 @@
 2|0.100|0.300|0.800|0.450|0.250|0.700|0.800|0.200|0.600|1.000|1.000|0.500|0.760|0.020|0.040|-0.040|0.000|10.000|0.500|0.500|0|1.000|0|0
 
 [image_cues]
-# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order
-thelogo2mini.png|intros/3test/test3_assets/thelogo2mini.png|0.500|0.500|2.276|1.000|0.000|10.000|0
+# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end
+thelogo2mini.png|intros/3test/test3_assets/thelogo2mini.png|0.500|0.500|1.000|1.000|0.000|10.000|0|1|0.000|2.000|0.000|0.000
 
 [text_cues]
-# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|effect_start|effect_end|layer_order
+# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order
+New Text|Arial|0.500|0.766|48.000|1.000|1.000|1.000|1|0.000|10.000|0.000|1.000|5.000|6.000|0
 
 [music_cues]
 # asset_key|asset_path|cue_start|cue_end
-track01.xm|intros/3test/test3_assets/track01.xm|0.000|10.000
 
 [curves]
 # target|param|point_count

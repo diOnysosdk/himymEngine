@@ -139,6 +139,11 @@ struct ImageCue {
     float opacity;
     float cue_start;
     float cue_end;
+    int effect_type;  // 0=None, 1=Fade In Out
+    float fade_in_start;
+    float fade_in_end;
+    float fade_out_start;
+    float fade_out_end;
 };
 
 // Image texture data
@@ -161,8 +166,10 @@ struct TextCue {
     int effect_type;  // 0=None, 1=Fade In Out, 2=Scroll
     float cue_start;
     float cue_end;
-    float effect_start;
-    float effect_end;
+    float fade_in_start;
+    float fade_in_end;
+    float fade_out_start;
+    float fade_out_end;
 };
 
 // Text texture data (same as ImageTexture)
@@ -275,6 +282,19 @@ bool LoadMusicCue(const char* path, MusicCue* cue) {
     return found;
 }
 
+static float ComputeEffectOpacity(int effect_type, float fade_in_start, float fade_in_end, float fade_out_start, float fade_out_end, float time) {
+    if (effect_type == 1) { // fade_in_out
+        if (time < fade_in_start) return 0.0f;
+        float in_dur = fade_in_end - fade_in_start;
+        if (in_dur > 0.0f && time < fade_in_end)
+            return (time - fade_in_start) / in_dur;
+        float out_dur = fade_out_end - fade_out_start;
+        if (out_dur > 0.0f && time >= fade_out_start)
+            return (time > fade_out_end) ? 0.0f : 1.0f - (time - fade_out_start) / out_dur;
+    }
+    return 1.0f;
+}
+
 // Parse cues.txt and extract first image cue
 bool LoadImageCue(const char* path, ImageCue* cue) {
     FILE* f = nullptr;
@@ -322,9 +342,10 @@ bool LoadImageCue(const char* path, ImageCue* cue) {
             strncpy_s(cue->asset_path, pipe1 + 1, _TRUNCATE);
             
             int layer_order = 0;
-            if (sscanf_s(pipe2 + 1, "%f|%f|%f|%f|%f|%f|%d",
+            if (sscanf_s(pipe2 + 1, "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f",
                 &cue->x, &cue->y, &cue->scale, &cue->opacity,
-                &cue->cue_start, &cue->cue_end, &layer_order) >= 6) {
+                &cue->cue_start, &cue->cue_end, &layer_order,
+                &cue->effect_type, &cue->fade_in_start, &cue->fade_in_end, &cue->fade_out_start, &cue->fade_out_end) >= 6) {
                 found = true;
                 if (g_logfile) fprintf(g_logfile, "[LoadImageCue] Successfully parsed image cue\n");
                 break;
@@ -490,12 +511,15 @@ bool LoadTextCue(const char* path, TextCue* cue) {
             *pipe2 = '\0';
             strncpy_s(cue->font_name, pipe1 + 1, _TRUNCATE);
             
-            if (sscanf_s(pipe2 + 1, "%f|%f|%d|%f|%f|%f|%d|%f|%f|%f|%f",
-                &cue->x, &cue->y, &cue->size,
+            // size is exported as %.3f (float) — read into float then cast to int
+            float size_f = 0.0f;
+            if (sscanf_s(pipe2 + 1, "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f",
+                &cue->x, &cue->y, &size_f,
                 &cue->color_r, &cue->color_g, &cue->color_b,
                 &cue->effect_type,
                 &cue->cue_start, &cue->cue_end,
-                &cue->effect_start, &cue->effect_end) == 11) {
+                &cue->fade_in_start, &cue->fade_in_end, &cue->fade_out_start, &cue->fade_out_end) == 13) {
+                cue->size = (int)size_f;
                 found = true;
                 break;
             }
@@ -1326,8 +1350,8 @@ int main(int argc, char* argv[]) {
             //   norm = (tex_pixels * scale) / window_pixels * 2.0
             float w = (image_tex.width  * image_cue.scale) / (float)config.width  * 2.0f;
             float h = (image_tex.height * image_cue.scale) / (float)config.height * 2.0f;
-            float x = (image_cue.x * 2.0f - 1.0f);
-            float y = (image_cue.y * 2.0f - 1.0f);
+            float x =  (image_cue.x * 2.0f - 1.0f);
+            float y = -((image_cue.y * 2.0f) - 1.0f); // screen-space: y=0=top, y=1=bottom
             
             // Set sprite uniforms
             int u_position_loc = rev::shader::GetUniformLocation(sprite_shader, "u_position");
@@ -1342,7 +1366,7 @@ int main(int argc, char* argv[]) {
             if (u_texture_loc >= 0)
                 rev::shader::SetInt(sprite_shader, u_texture_loc, 0);
             if (u_opacity_loc >= 0)
-                rev::shader::SetFloat(sprite_shader, u_opacity_loc, image_cue.opacity);
+                rev::shader::SetFloat(sprite_shader, u_opacity_loc, image_cue.opacity * ComputeEffectOpacity(image_cue.effect_type, image_cue.fade_in_start, image_cue.fade_in_end, image_cue.fade_out_start, image_cue.fade_out_end, time));
             
             // Bind texture to unit 0
             glActiveTexture(GL_TEXTURE0);
@@ -1364,29 +1388,14 @@ int main(int argc, char* argv[]) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             
-            // Calculate text position/size
-            // Text uses pixel size, convert to normalized coordinates
-            float text_scale = 0.3f;  // Base scale
-            float aspect = (float)text_tex.width / (float)text_tex.height;
-            float w = text_scale * aspect;
-            float h = text_scale;
-            float x = (text_cue.x * 2.0f - 1.0f);
-            float y = (text_cue.y * 2.0f - 1.0f);
+            // Calculate text position/size — same pixel-based formula as image cues
+            float w = (float)text_tex.width  / (float)config.width  * 2.0f;
+            float h = (float)text_tex.height / (float)config.height * 2.0f;
+            float x =  (text_cue.x * 2.0f - 1.0f);
+            float y = -((text_cue.y * 2.0f) - 1.0f); // screen-space: y=0=top, y=1=bottom
             
             // Calculate opacity based on effect
-            float opacity = 1.0f;
-            if (text_cue.effect_type == 1) {  // Fade In Out
-                float fade_duration = text_cue.effect_end - text_cue.effect_start;
-                if (time < text_cue.effect_start) {
-                    opacity = 0.0f;
-                } else if (time < text_cue.effect_start + fade_duration * 0.5f) {
-                    // Fade in
-                    opacity = (time - text_cue.effect_start) / (fade_duration * 0.5f);
-                } else if (time > text_cue.effect_end - fade_duration * 0.5f) {
-                    // Fade out
-                    opacity = (text_cue.effect_end - time) / (fade_duration * 0.5f);
-                }
-            }
+            float opacity = ComputeEffectOpacity(text_cue.effect_type, text_cue.fade_in_start, text_cue.fade_in_end, text_cue.fade_out_start, text_cue.fade_out_end, time);
             
             // Set uniforms
             int u_position_loc = rev::shader::GetUniformLocation(sprite_shader, "u_position");

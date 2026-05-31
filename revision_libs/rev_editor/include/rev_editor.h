@@ -67,8 +67,13 @@ struct ImageCue {
     float x, y;                 // Position (0.0-1.0, center)
     float scale;
     float opacity;
+    int effect_type;            // 0=none, 1=fade_in_out
     float cue_start;
     float cue_end;
+    float fade_in_start;
+    float fade_in_end;
+    float fade_out_start;
+    float fade_out_end;
     int layer_order;            // Draw order (lower first, 0=default)
 };
 
@@ -82,8 +87,10 @@ struct TextCue {
     int effect_type;            // 0=none, 1=fade_in_out, 2=scroll
     float cue_start;
     float cue_end;
-    float effect_start;
-    float effect_end;
+    float fade_in_start;
+    float fade_in_end;
+    float fade_out_start;
+    float fade_out_end;
     int layer_order;            // Draw order (lower first, 0=default)
 };
 

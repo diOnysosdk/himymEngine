@@ -357,10 +357,24 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"scale\": %f", &current_image_cue.scale);
             } else if (strstr(start, "\"opacity\":")) {
                 sscanf_s(start, "\"opacity\": %f", &current_image_cue.opacity);
+            } else if (strstr(start, "\"effect_type\":")) {
+                sscanf_s(start, "\"effect_type\": %d", &current_image_cue.effect_type);
             } else if (strstr(start, "\"cue_start\":")) {
                 sscanf_s(start, "\"cue_start\": %f", &current_image_cue.cue_start);
             } else if (strstr(start, "\"cue_end\":")) {
                 sscanf_s(start, "\"cue_end\": %f", &current_image_cue.cue_end);
+            } else if (strstr(start, "\"effect_start\":")) {
+                sscanf_s(start, "\"effect_start\": %f", &current_image_cue.fade_in_start);
+            } else if (strstr(start, "\"effect_end\":")) {
+                sscanf_s(start, "\"effect_end\": %f", &current_image_cue.fade_in_end);
+            } else if (strstr(start, "\"fade_in_start\":")) {
+                sscanf_s(start, "\"fade_in_start\": %f", &current_image_cue.fade_in_start);
+            } else if (strstr(start, "\"fade_in_end\":")) {
+                sscanf_s(start, "\"fade_in_end\": %f", &current_image_cue.fade_in_end);
+            } else if (strstr(start, "\"fade_out_start\":")) {
+                sscanf_s(start, "\"fade_out_start\": %f", &current_image_cue.fade_out_start);
+            } else if (strstr(start, "\"fade_out_end\":")) {
+                sscanf_s(start, "\"fade_out_end\": %f", &current_image_cue.fade_out_end);
             } else if (strstr(start, "\"layer_order\":")) {
                 sscanf_s(start, "\"layer_order\": %d", &current_image_cue.layer_order);
             } else if (start[0] == '}' && current_image_cue.asset_key[0] != '\0') {
@@ -369,6 +383,45 @@ bool LoadProject(EditorContext* editor, const char* path) {
                        current_image_cue.asset_key, current_image_cue.x, current_image_cue.y, current_image_cue.scale);
                 AddImageCue(current_scene, current_image_cue);
                 memset(&current_image_cue, 0, sizeof(current_image_cue));
+            }
+        }
+
+        // Parse text cue fields
+        if (in_text_cues && current_scene) {
+            if (strstr(start, "\"text\":")) {
+                sscanf_s(start, "\"text\": \"%255[^\"]\"", current_text_cue.text, (unsigned)sizeof(current_text_cue.text));
+            } else if (strstr(start, "\"font_name\":")) {
+                sscanf_s(start, "\"font_name\": \"%63[^\"]\"", current_text_cue.font_name, (unsigned)sizeof(current_text_cue.font_name));
+            } else if (strstr(start, "\"x\":")) {
+                sscanf_s(start, "\"x\": %f", &current_text_cue.x);
+            } else if (strstr(start, "\"y\":")) {
+                sscanf_s(start, "\"y\": %f", &current_text_cue.y);
+            } else if (strstr(start, "\"size\":")) {
+                sscanf_s(start, "\"size\": %f", &current_text_cue.size);
+            } else if (strstr(start, "\"color\":")) {
+                sscanf_s(start, "\"color\": [%f, %f, %f]",
+                    &current_text_cue.color.r, &current_text_cue.color.g, &current_text_cue.color.b);
+            } else if (strstr(start, "\"effect_type\":")) {
+                sscanf_s(start, "\"effect_type\": %d", &current_text_cue.effect_type);
+            } else if (strstr(start, "\"cue_start\":")) {
+                sscanf_s(start, "\"cue_start\": %f", &current_text_cue.cue_start);
+            } else if (strstr(start, "\"cue_end\":")) {
+                sscanf_s(start, "\"cue_end\": %f", &current_text_cue.cue_end);
+            } else if (strstr(start, "\"effect_start\":")) {
+                sscanf_s(start, "\"effect_start\": %f", &current_text_cue.fade_in_start);
+            } else if (strstr(start, "\"effect_end\":")) {
+                sscanf_s(start, "\"effect_end\": %f", &current_text_cue.fade_in_end);
+            } else if (strstr(start, "\"fade_in_start\":")) {
+                sscanf_s(start, "\"fade_in_start\": %f", &current_text_cue.fade_in_start);
+            } else if (strstr(start, "\"fade_in_end\":")) {
+                sscanf_s(start, "\"fade_in_end\": %f", &current_text_cue.fade_in_end);
+            } else if (strstr(start, "\"fade_out_start\":")) {
+                sscanf_s(start, "\"fade_out_start\": %f", &current_text_cue.fade_out_start);
+            } else if (strstr(start, "\"fade_out_end\":")) {
+                sscanf_s(start, "\"fade_out_end\": %f", &current_text_cue.fade_out_end);
+            } else if (start[0] == '}' && current_text_cue.text[0] != '\0') {
+                AddTextCue(current_scene, current_text_cue);
+                memset(&current_text_cue, 0, sizeof(current_text_cue));
             }
         }
 
@@ -526,8 +579,13 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"y\": %.3f,\n", cue->y);
             fprintf(f, "          \"scale\": %.3f,\n", cue->scale);
             fprintf(f, "          \"opacity\": %.3f,\n", cue->opacity);
+            fprintf(f, "          \"effect_type\": %d,\n", cue->effect_type);
             fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
-            fprintf(f, "          \"cue_end\": %.3f\n", cue->cue_end);
+            fprintf(f, "          \"cue_end\": %.3f,\n", cue->cue_end);
+            fprintf(f, "          \"fade_in_start\": %.3f,\n", cue->fade_in_start);
+            fprintf(f, "          \"fade_in_end\": %.3f,\n", cue->fade_in_end);
+            fprintf(f, "          \"fade_out_start\": %.3f,\n", cue->fade_out_start);
+            fprintf(f, "          \"fade_out_end\": %.3f\n", cue->fade_out_end);
             fprintf(f, "        }%s\n", (i < scene->image_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
@@ -547,8 +605,10 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"effect_type\": %d,\n", cue->effect_type);
             fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
             fprintf(f, "          \"cue_end\": %.3f,\n", cue->cue_end);
-            fprintf(f, "          \"effect_start\": %.3f,\n", cue->effect_start);
-            fprintf(f, "          \"effect_end\": %.3f\n", cue->effect_end);
+            fprintf(f, "          \"fade_in_start\": %.3f,\n", cue->fade_in_start);
+            fprintf(f, "          \"fade_in_end\": %.3f,\n", cue->fade_in_end);
+            fprintf(f, "          \"fade_out_start\": %.3f,\n", cue->fade_out_start);
+            fprintf(f, "          \"fade_out_end\": %.3f\n", cue->fade_out_end);
             fprintf(f, "        }%s\n", (i < scene->text_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
@@ -1913,6 +1973,19 @@ void RenderImageModal(EditorContext* editor) {
         
         ImGui::Separator();
         
+        // Effect
+        ImGui::Text("Effect:");
+        const char* img_effects[] = {"None", "Fade In/Out"};
+        ImGui::Combo("Type##img", &cue->effect_type, img_effects, 2);
+        if (cue->effect_type > 0) {
+            ImGui::InputFloat("Fade In Start##img",  &cue->fade_in_start,  0.1f, 1.0f);
+            ImGui::InputFloat("Fade In End##img",    &cue->fade_in_end,    0.1f, 1.0f);
+            ImGui::InputFloat("Fade Out Start##img", &cue->fade_out_start, 0.1f, 1.0f);
+            ImGui::InputFloat("Fade Out End##img",   &cue->fade_out_end,   0.1f, 1.0f);
+        }
+        
+        ImGui::Separator();
+        
         // Timing
         ImGui::Text("Timing (seconds):");
         ImGui::InputFloat("Start", &cue->cue_start, 0.1f, 1.0f);
@@ -1994,8 +2067,10 @@ void RenderTextModal(EditorContext* editor) {
         ImGui::Combo("Type", &cue->effect_type, effects, 3);
         
         if (cue->effect_type > 0) {
-            ImGui::InputFloat("Effect Start", &cue->effect_start, 0.1f, 1.0f);
-            ImGui::InputFloat("Effect End", &cue->effect_end, 0.1f, 1.0f);
+            ImGui::InputFloat("Fade In Start",  &cue->fade_in_start,  0.1f, 1.0f);
+            ImGui::InputFloat("Fade In End",    &cue->fade_in_end,    0.1f, 1.0f);
+            ImGui::InputFloat("Fade Out Start", &cue->fade_out_start, 0.1f, 1.0f);
+            ImGui::InputFloat("Fade Out End",   &cue->fade_out_end,   0.1f, 1.0f);
         }
         
         ImGui::Separator();
@@ -2129,31 +2204,60 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             continue;
         }
         
-        // Parse image cues
+        // Parse image cues: asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end
         if (current_section == IMAGE_CUES) {
+            char* p1 = strchr(start, '|');
+            if (!p1) continue;
             ImageCue cue = {};
-            char asset_key[128];
-            float abs_start, abs_end;
-            
-            int parsed = sscanf_s(start, "%127[^|]|%f|%f|%f|%f|%f|%f|%d",
-                asset_key, (unsigned)sizeof(asset_key),
+            size_t key_len = (size_t)(p1 - start);
+            if (key_len >= sizeof(cue.asset_key)) key_len = sizeof(cue.asset_key) - 1;
+            strncpy_s(cue.asset_key, start, key_len);
+            char* p2 = strchr(p1 + 1, '|'); // skip asset_path field
+            if (!p2) continue;
+            float abs_start = 0.0f, abs_end = 0.0f;
+            int parsed = sscanf_s(p2 + 1, "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f",
                 &cue.x, &cue.y, &cue.scale, &cue.opacity,
-                &abs_start, &abs_end, &cue.layer_order
+                &abs_start, &abs_end, &cue.layer_order,
+                &cue.effect_type, &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end
             );
-            
             if (parsed >= 7) {
-                strncpy_s(cue.asset_key, sizeof(cue.asset_key), asset_key, _TRUNCATE);
                 cue.cue_start = abs_start;
                 cue.cue_end = abs_end;
-                
-                if (editor->project->scene_count == 0) {
+                if (editor->project->scene_count == 0)
                     AddScene(editor, "Imported Scene", total_duration);
-                }
-                
                 SceneBlock* scene = &editor->project->scenes[0];
                 AddImageCue(scene, cue);
-                
-                printf("[ImportFromCues] Imported image cue: %s\n", asset_key);
+                printf("[ImportFromCues] Imported image cue: %s\n", cue.asset_key);
+            }
+            continue;
+        }
+
+        // Parse text cues: text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order
+        if (current_section == TEXT_CUES) {
+            char* p1 = strchr(start, '|');
+            if (!p1) continue;
+            TextCue cue = {};
+            size_t text_len = (size_t)(p1 - start);
+            if (text_len >= sizeof(cue.text)) text_len = sizeof(cue.text) - 1;
+            strncpy_s(cue.text, start, text_len);
+            char* p2 = strchr(p1 + 1, '|');
+            if (!p2) continue;
+            size_t font_len = (size_t)(p2 - (p1 + 1));
+            if (font_len >= sizeof(cue.font_name)) font_len = sizeof(cue.font_name) - 1;
+            strncpy_s(cue.font_name, p1 + 1, font_len);
+            float size_f = 0.0f;
+            int parsed = sscanf_s(p2 + 1, "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d",
+                &cue.x, &cue.y, &size_f,
+                &cue.color.r, &cue.color.g, &cue.color.b,
+                &cue.effect_type, &cue.cue_start, &cue.cue_end,
+                &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end,
+                &cue.layer_order);
+            if (parsed >= 9) {
+                cue.size = size_f;
+                if (editor->project->scene_count == 0)
+                    AddScene(editor, "Imported Scene", total_duration);
+                AddTextCue(&editor->project->scenes[0], cue);
+                printf("[ImportFromCues] Imported text cue: %s\n", cue.text);
             }
             continue;
         }
@@ -2244,7 +2348,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     
     // [image_cues] section
     fprintf(f, "[image_cues]\n");
-    fprintf(f, "# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order\n");
+    fprintf(f, "# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end\n");
     
     // Compute workspace-root-relative prefix for asset paths once.
     // assets_path is absolute (e.g. E:\himym\intros\test\test_assets).
@@ -2290,9 +2394,10 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             char full_path[640];
             snprintf(full_path, sizeof(full_path), "%s/%s", rel_assets_prefix, cue->asset_key);
             
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d\n",
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f\n",
                 cue->asset_key, full_path, cue->x, cue->y, cue->scale, cue->opacity,
-                abs_start, abs_end, cue->layer_order
+                abs_start, abs_end, cue->layer_order,
+                cue->effect_type, cue->fade_in_start, cue->fade_in_end, cue->fade_out_start, cue->fade_out_end
             );
         }
     }
@@ -2301,7 +2406,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     
     // [text_cues] section
     fprintf(f, "[text_cues]\n");
-    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|effect_start|effect_end|layer_order\n");
+    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order\n");
     
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
@@ -2315,13 +2420,16 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             TextCue* cue = &scene->text_cues[cue_idx];
             float abs_start = scene_start + cue->cue_start;
             float abs_end = scene_start + cue->cue_end;
-            float abs_effect_start = scene_start + cue->effect_start;
-            float abs_effect_end = scene_start + cue->effect_end;
+            float abs_fade_in_start  = scene_start + cue->fade_in_start;
+            float abs_fade_in_end    = scene_start + cue->fade_in_end;
+            float abs_fade_out_start = scene_start + cue->fade_out_start;
+            float abs_fade_out_end   = scene_start + cue->fade_out_end;
             
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%d\n",
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d\n",
                 cue->text, cue->font_name, cue->x, cue->y, cue->size,
                 cue->color.r, cue->color.g, cue->color.b,
-                cue->effect_type, abs_start, abs_end, abs_effect_start, abs_effect_end,
+                cue->effect_type, abs_start, abs_end,
+                abs_fade_in_start, abs_fade_in_end, abs_fade_out_start, abs_fade_out_end,
                 cue->layer_order
             );
         }
@@ -3428,11 +3536,77 @@ void ResizePreview(EditorContext* editor, int width, int height) {
     }
 }
 
+static float ComputeEffectOpacity(int effect_type, float fade_in_start, float fade_in_end, float fade_out_start, float fade_out_end, float time) {
+    if (effect_type == 1) { // fade_in_out
+        if (time < fade_in_start) return 0.0f;
+        float in_dur = fade_in_end - fade_in_start;
+        if (in_dur > 0.0f && time < fade_in_end)
+            return (time - fade_in_start) / in_dur;
+        float out_dur = fade_out_end - fade_out_start;
+        if (out_dur > 0.0f && time >= fade_out_start)
+            return (time > fade_out_end) ? 0.0f : 1.0f - (time - fade_out_start) / out_dur;
+    }
+    return 1.0f;
+}
+
+static unsigned int RenderTextToTexture(const char* text, const char* font_name, float size, float r, float g, float b, int* out_width, int* out_height) {
+    wchar_t wtext[256];
+    wchar_t wfont[64];
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, 256);
+    MultiByteToWideChar(CP_UTF8, 0, font_name, -1, wfont, 64);
+
+    Gdiplus::Bitmap temp_bitmap(1, 1, PixelFormat32bppARGB);
+    Gdiplus::Graphics temp_g(&temp_bitmap);
+    Gdiplus::Font font(wfont, (Gdiplus::REAL)size, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::RectF layout(0.0f, 0.0f, 2048.0f, 2048.0f);
+    Gdiplus::RectF bounds;
+    temp_g.MeasureString(wtext, -1, &font, layout, &bounds);
+
+    int width  = (int)(bounds.Width)  + 8;
+    int height = (int)(bounds.Height) + 8;
+    if (width <= 0 || height <= 0) return 0;
+
+    Gdiplus::Bitmap* bitmap = new Gdiplus::Bitmap(width, height, PixelFormat32bppARGB);
+    Gdiplus::Graphics* gfx = new Gdiplus::Graphics(bitmap);
+    gfx->Clear(Gdiplus::Color(0, 0, 0, 0));
+    gfx->SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
+    Gdiplus::SolidBrush brush(Gdiplus::Color(255, (BYTE)(r * 255), (BYTE)(g * 255), (BYTE)(b * 255)));
+    gfx->DrawString(wtext, -1, &font, Gdiplus::PointF(4.0f, 4.0f), &brush);
+    delete gfx;
+
+    Gdiplus::Rect rect(0, 0, width, height);
+    Gdiplus::BitmapData data;
+    if (bitmap->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &data) != Gdiplus::Ok) {
+        delete bitmap;
+        return 0;
+    }
+
+    unsigned char* pixels = new unsigned char[width * height * 4];
+    unsigned char* src = (unsigned char*)data.Scan0;
+    for (int i = 0; i < width * height * 4; i += 4) {
+        pixels[i+0] = src[i+2]; pixels[i+1] = src[i+1];
+        pixels[i+2] = src[i+0]; pixels[i+3] = src[i+3];
+    }
+    bitmap->UnlockBits(&data);
+    delete bitmap;
+
+    unsigned int tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    delete[] pixels;
+
+    if (out_width)  *out_width  = width;
+    if (out_height) *out_height = height;
+    return tex;
+}
+
 void RenderPreviewFrame(EditorContext* editor) {
     if (!editor || !editor->preview_initialized) return;
-    
-    // TODO: Implement actual rendering of shader/image/text cues
-    // For now, just clear to a test color
     
     typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int target, unsigned int framebuffer);
     auto glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)wglGetProcAddress("glBindFramebuffer");
@@ -3647,7 +3821,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                         rev::shader::SetVec2(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_size"), 
                                            norm_w, norm_h);
                         rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_opacity"), 
-                                            cue->opacity);
+                                            cue->opacity * ComputeEffectOpacity(cue->effect_type, cue->fade_in_start, cue->fade_in_end, cue->fade_out_start, cue->fade_out_end, editor->current_time));
                         
                         // Draw sprite
                         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -3659,7 +3833,49 @@ void RenderPreviewFrame(EditorContext* editor) {
         
         glDisable(GL_BLEND);
     }
-    
+
+    // Render text cues
+    if (editor->sprite_shader && editor->project) {
+        auto* sprite_prog = (rev::shader::Program*)editor->sprite_shader;
+        rev::shader::Use(sprite_prog);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        for (int s = 0; s < editor->project->scene_count; s++) {
+            SceneBlock* scene = &editor->project->scenes[s];
+            for (int i = 0; i < scene->text_cue_count; i++) {
+                TextCue* cue = &scene->text_cues[i];
+                float actual_end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                if (editor->current_time < cue->cue_start || editor->current_time > actual_end) continue;
+                if (cue->text[0] == '\0') continue;
+
+                int tw = 0, th = 0;
+                unsigned int tex = RenderTextToTexture(
+                    cue->text, cue->font_name, cue->size,
+                    cue->color.r, cue->color.g, cue->color.b,
+                    &tw, &th);
+                if (!tex) continue;
+
+                float norm_w = (float)tw / (float)editor->preview_width  * 2.0f;
+                float norm_h = (float)th / (float)editor->preview_height * 2.0f;
+                float pos_x  =  (cue->x * 2.0f) - 1.0f;
+                float pos_y  = -((cue->y * 2.0f) - 1.0f); // flip Y
+
+                glBindTexture(GL_TEXTURE_2D, tex);
+                rev::shader::SetInt(sprite_prog,   rev::shader::GetUniformLocation(sprite_prog, "u_texture"),  0);
+                rev::shader::SetVec2(sprite_prog,  rev::shader::GetUniformLocation(sprite_prog, "u_position"), pos_x, pos_y);
+                rev::shader::SetVec2(sprite_prog,  rev::shader::GetUniformLocation(sprite_prog, "u_size"),     norm_w, norm_h);
+                rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_opacity"),
+                    ComputeEffectOpacity(cue->effect_type, cue->fade_in_start, cue->fade_in_end, cue->fade_out_start, cue->fade_out_end, editor->current_time));
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+
+                glDeleteTextures(1, &tex);
+            }
+        }
+
+        glDisable(GL_BLEND);
+    }
+
     // Unbind framebuffer (restore default)
     glBindFramebuffer(0x8D40, 0);
 }
