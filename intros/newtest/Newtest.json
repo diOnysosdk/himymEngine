@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "workspace_path": "",
+  "workspace_path": "E:\code\cpp\mono\himym\intros\newtest",
   "total_duration": 10.000,
   "scenes": [
     {
@@ -36,6 +36,15 @@
         }
       ],
       "image_cues": [
+        {
+          "asset_key": "hoflogo.png",
+          "x": 0.500,
+          "y": 0.500,
+          "scale": 1.000,
+          "opacity": 1.000,
+          "cue_start": 0.000,
+          "cue_end": 10.000
+        }
       ],
       "text_cues": [
       ],

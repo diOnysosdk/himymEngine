@@ -4,6 +4,7 @@
 
 [image_cues]
 # asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order
+hoflogo.png|intros/newtest/Newtest_assets/hoflogo.png|0.500|0.500|1.000|1.000|0.000|10.000|0
 
 [text_cues]
 # text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|effect_start|effect_end|layer_order

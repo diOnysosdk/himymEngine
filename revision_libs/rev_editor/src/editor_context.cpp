@@ -1832,8 +1832,22 @@ void RenderImageModal(EditorContext* editor) {
                 const char* filename = strrchr(filepath, '\\\\');
                 if (!filename) filename = strrchr(filepath, '/');
                 if (filename) filename++; else filename = filepath;
-                
+
                 strncpy_s(cue->asset_key, filename, _TRUNCATE);
+
+                // Copy file into the project's assets folder so the preview
+                // and packer can find it at assets_path\asset_key.
+                if (editor->project->assets_path[0]) {
+                    char dest_path[512] = {};
+                    snprintf(dest_path, sizeof(dest_path), "%s\\%s",
+                             editor->project->assets_path, filename);
+                    if (!CopyFileA(filepath, dest_path, FALSE)) {
+                        printf("[IMAGE] Warning: could not copy asset to %s (err=%lu)\n",
+                               dest_path, GetLastError());
+                    }
+                } else {
+                    printf("[IMAGE] Warning: project not saved yet, asset not copied.\n");
+                }
             }
         }
         
@@ -2173,11 +2187,9 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     // We need the forward-slash relative form: intros/test/test_assets
     char rel_assets_prefix[512] = {};
     {
-        char cwd[512] = {};
-        GetCurrentDirectoryA(sizeof(cwd), cwd);
-        size_t cwd_len = strlen(cwd);
+        size_t cwd_len = strlen(editor->startup_dir);
         const char* ap = editor->project->assets_path;
-        if (cwd_len > 0 && _strnicmp(ap, cwd, cwd_len) == 0 &&
+        if (cwd_len > 0 && _strnicmp(ap, editor->startup_dir, cwd_len) == 0 &&
             (ap[cwd_len] == '\\' || ap[cwd_len] == '/')) {
             strncpy_s(rel_assets_prefix, ap + cwd_len + 1, sizeof(rel_assets_prefix) - 1);
         } else {
