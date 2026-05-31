@@ -898,22 +898,27 @@ void main() {
 )"
 };
 
-int main() {
+int main(int argc, char* argv[]) {
     // Allocate console for debug output
     AllocConsole();
     FILE* fp;
     freopen_s(&fp, "CONOUT$", "w", stdout);
     freopen_s(&fp, "CONOUT$", "w", stderr);
-    
+
     // Also log to file for debugging
     fopen_s(&g_logfile, "intro_debug.log", "w");
-    
+
     printf("=== HiMYM Minimal Intro ===\n\n");
     if (g_logfile) fprintf(g_logfile, "=== HiMYM Minimal Intro Debug Log ===\n\n");
-    
-    // Load shader cue from assets/cues.txt
+
+    // Cues file path: passed as argv[1], or fall back to assets/cues.txt
+    const char* cues_path = (argc > 1 && argv[1] && argv[1][0]) ? argv[1] : "assets/cues.txt";
+    printf("Cues file: %s\n", cues_path);
+    if (g_logfile) fprintf(g_logfile, "Cues file: %s\n", cues_path);
+
+    // Load shader cue
     ShaderCue cue = {};
-    if (!LoadShaderCue("assets/cues.txt", &cue)) {
+    if (!LoadShaderCue(cues_path, &cue)) {
         // Default fallback
         cue.shader_scene_id = 0;
         cue.palette_low[0] = 0.1f; cue.palette_low[1] = 0.3f; cue.palette_low[2] = 0.8f;
@@ -927,11 +932,11 @@ int main() {
     
     // Load music cue
     MusicCue music_cue = {};
-    bool has_music = LoadMusicCue("assets/cues.txt", &music_cue);
+    bool has_music = LoadMusicCue(cues_path, &music_cue);
     
     // Load image cue
     ImageCue image_cue = {};
-    bool has_image = LoadImageCue("assets/cues.txt", &image_cue);
+    bool has_image = LoadImageCue(cues_path, &image_cue);
     ImageTexture image_tex = {};
     bool image_loaded = false;
     
@@ -954,7 +959,7 @@ int main() {
     
     // Load text cue
     TextCue text_cue = {};
-    bool has_text = LoadTextCue("assets/cues.txt", &text_cue);
+    bool has_text = LoadTextCue(cues_path, &text_cue);
     TextTexture text_tex = {};
     bool text_loaded = false;
     

@@ -586,6 +586,25 @@ bool SaveProject(EditorContext* editor, const char* path) {
     fclose(f);
     
     strncpy_s(editor->project->project_path, path, sizeof(editor->project->project_path) - 1);
+
+    // Derive workspace_path (directory of the project file)
+    strncpy_s(editor->project->workspace_path, path, sizeof(editor->project->workspace_path) - 1);
+    char* last_slash = strrchr(editor->project->workspace_path, '\\');
+    if (!last_slash) last_slash = strrchr(editor->project->workspace_path, '/');
+    if (last_slash) *last_slash = '\0';
+
+    // Derive assets_path: {workspace}\{project_name}_assets
+    char project_name[256] = {};
+    const char* fn = strrchr(path, '\\');
+    if (!fn) fn = strrchr(path, '/');
+    fn = fn ? fn + 1 : path;
+    strncpy_s(project_name, fn, sizeof(project_name) - 1);
+    char* dot = strrchr(project_name, '.');
+    if (dot) *dot = '\0';
+    snprintf(editor->project->assets_path, sizeof(editor->project->assets_path),
+             "%s\\%s_assets", editor->project->workspace_path, project_name);
+    CreateDirectoryA(editor->project->assets_path, NULL);
+
     editor->project->modified = false;
     
     return true;
@@ -778,6 +797,31 @@ void EndFrame(EditorContext* editor) {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
+// Returns the workspace-root-relative path for the cues file next to the project:
+//   intros/testintro/cues.txt
+// Returns false if the project hasn't been saved yet (no workspace_path).
+static bool GetProjectCuesPath(EditorContext* editor, char* out, size_t out_size) {
+    if (!editor->project->workspace_path[0] || !editor->project->project_path[0])
+        return false;
+    char cwd[512] = {};
+    GetCurrentDirectoryA(sizeof(cwd), cwd);
+    size_t cwd_len = strlen(cwd);
+    const char* wp = editor->project->workspace_path;
+    char rel_dir[512] = {};
+    if (cwd_len > 0 && _strnicmp(wp, cwd, cwd_len) == 0 &&
+        (wp[cwd_len] == '\\' || wp[cwd_len] == '/' || wp[cwd_len] == '\0')) {
+        if (wp[cwd_len] == '\0')
+            strncpy_s(rel_dir, ".", sizeof(rel_dir) - 1);
+        else
+            strncpy_s(rel_dir, wp + cwd_len + 1, sizeof(rel_dir) - 1);
+    } else {
+        strncpy_s(rel_dir, wp, sizeof(rel_dir) - 1);
+    }
+    for (char* p = rel_dir; *p; ++p) if (*p == '\\') *p = '/';
+    snprintf(out, out_size, "%s/cues.txt", rel_dir);
+    return true;
+}
+
 void RenderMenuBar(EditorContext* editor) {
     if (!editor) return;
     
@@ -892,8 +936,15 @@ void RenderMenuBar(EditorContext* editor) {
         }
         
         if (ImGui::BeginMenu("Build")) {
-            if (ImGui::MenuItem("Export Project")) { 
-                ExportProject(editor, "assets/cues.txt"); 
+            if (ImGui::MenuItem("Export Project")) {
+                char cues_path[512] = {};
+                if (GetProjectCuesPath(editor, cues_path, sizeof(cues_path)))
+                    ExportProject(editor, cues_path);
+                else {
+                    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                             "Save the project first!", _TRUNCATE);
+                    editor->build_status_timer = 4.0f;
+                }
             }
             if (ImGui::MenuItem("Build and Run", "F5")) { 
                 BuildAndRun(editor); 
@@ -2063,11 +2114,11 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
 
 bool ExportProject(EditorContext* editor, const char* output_path) {
     if (!editor || !output_path) return false;
-    
+
     FILE* f = nullptr;
     fopen_s(&f, output_path, "w");
     if (!f) return false;
-    
+
     // [shader_cues] section
     fprintf(f, "[shader_cues]\n");
     fprintf(f, "# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order\n");
@@ -2265,31 +2316,32 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 
 bool BuildAndRun(EditorContext* editor) {
     if (!editor) return false;
-    
+
     printf("\n=== Build and Run ===\n");
-    
-    // Show status
-    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Exporting project...", _TRUNCATE);
-    editor->build_status_timer = 5.0f;
-    
-    // Step 1: Export to cues.txt
-    printf("Step 1: Exporting to assets/cues.txt...\n");
-    if (!ExportProject(editor, "assets/cues.txt")) {
+
+    // Step 1: compute project-relative cues path
+    char cues_path[512] = {};
+    if (!GetProjectCuesPath(editor, cues_path, sizeof(cues_path))) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Save the project first!", _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+        return false;
+    }
+
+    // Step 2: Export to {project_dir}/cues.txt
+    printf("Step 1: Exporting to %s...\n", cues_path);
+    if (!ExportProject(editor, cues_path)) {
         printf("ERROR: Export failed!\n");
         strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Export failed!", _TRUNCATE);
         editor->build_status_timer = 5.0f;
         return false;
     }
     printf("Export complete.\n");
-    
-    // Step 2: Build the project using CMake
+
+    // Step 3: Build
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Building intro...", _TRUNCATE);
     editor->build_status_timer = 5.0f;
-    
     printf("Step 2: Building minimal_intro...\n");
-    const char* build_command = "cmake --build build --config Release --target minimal_intro";
-    int build_result = system(build_command);
-    
+    int build_result = system("cmake --build build --config Release --target minimal_intro");
     if (build_result != 0) {
         printf("ERROR: Build failed with exit code %d\n", build_result);
         strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Build failed! Check console for errors.", _TRUNCATE);
@@ -2297,13 +2349,13 @@ bool BuildAndRun(EditorContext* editor) {
         return false;
     }
     printf("Build complete.\n");
-    
-    // Step 3: Launch the executable
+
+    // Step 4: Launch — pass cues_path as argv[1] so the intro finds the right file
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Launching intro...", _TRUNCATE);
     editor->build_status_timer = 3.0f;
-    
-    printf("Step 3: Launching intro...\n");
-    const char* run_command = "start build\\bin\\Release\\minimal_intro.exe";
+    printf("Step 3: Launching intro (%s)...\n", cues_path);
+    char run_command[640];
+    snprintf(run_command, sizeof(run_command), "start build\\bin\\Release\\minimal_intro.exe %s", cues_path);
     int run_result = system(run_command);
     
     if (run_result == 0) {
@@ -2324,30 +2376,43 @@ bool PackBuildAndRun(EditorContext* editor) {
 
     printf("\n=== Pack, Build and Run ===\n");
 
-    // Step 1: Export cues.txt
+    // Step 1: compute project-relative cues path
+    char cues_path[512] = {};
+    if (!GetProjectCuesPath(editor, cues_path, sizeof(cues_path))) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Save the project first!", _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+        return false;
+    }
+
+    // Step 2: Export cues.txt to project directory
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Exporting project...", _TRUNCATE);
     editor->build_status_timer = 5.0f;
-    printf("Step 1: Exporting to assets/cues.txt...\n");
-    if (!ExportProject(editor, "assets/cues.txt")) {
+    printf("Step 1: Exporting to %s...\n", cues_path);
+    if (!ExportProject(editor, cues_path)) {
         strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Export failed!", _TRUNCATE);
         editor->build_status_timer = 5.0f;
         return false;
     }
     printf("Export complete.\n");
 
-    // Step 2: Pack assets into build/packed_assets.h
+    // Step 3: Pack assets into build/packed_assets.h
+    // Pack cache lives next to the project so each project tracks its own checksums.
+    char pack_cache_path[512] = {};
+    snprintf(pack_cache_path, sizeof(pack_cache_path), "%s/pack_cache.txt",
+             editor->project->workspace_path[0] ? editor->project->workspace_path : "assets");
+    for (char* p = pack_cache_path; *p; ++p) if (*p == '\\') *p = '/';
+
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Packing assets...", _TRUNCATE);
     editor->build_status_timer = 5.0f;
-    printf("Step 2: Packing assets...\n");
+    printf("Step 2: Packing assets (cache: %s)...\n", pack_cache_path);
 
-    // Ensure build/ directory exists
     CreateDirectoryA("build", NULL);
 
     rev::pack::PackResult pack_result = rev::pack::PackAssets(
-        "assets/cues.txt",       // cues source
-        "build/packed_assets.h", // output header
-        "build/pack_cache.txt",  // checksum cache
-        ""                       // workspace_root — empty means paths relative to cwd
+        cues_path,               // cues source (project-relative)
+        "build/packed_assets.h", // output header (cmake build dir)
+        pack_cache_path,         // checksum cache next to project
+        ""                       // workspace_root — paths in cues.txt are already relative to cwd
     );
 
     if (!pack_result.ok) {
@@ -2378,8 +2443,10 @@ bool PackBuildAndRun(EditorContext* editor) {
     // Step 4: Launch
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Launching packed intro...", _TRUNCATE);
     editor->build_status_timer = 3.0f;
-    printf("Step 4: Launching packed intro...\n");
-    const char* run_command = "start build\\bin\\Release\\minimal_intro_packed.exe";
+    printf("Step 4: Launching packed intro (%s)...\n", cues_path);
+    char run_command[640];
+    snprintf(run_command, sizeof(run_command),
+             "start build\\bin\\Release\\minimal_intro_packed.exe %s", cues_path);
     int run_result = system(run_command);
     if (run_result == 0) {
         char msg[128];
