@@ -899,6 +899,20 @@ void main() {
 };
 
 int main(int argc, char* argv[]) {
+    // Normalise CWD to workspace root regardless of launch location.
+    // The exe lives at build/bin/Release/ — walk up 3 levels.
+    {
+        char exe_path[MAX_PATH] = {};
+        GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
+        char* p = strrchr(exe_path, '\\');
+        if (p) *p = '\0';
+        for (int i = 0; i < 3; ++i) {
+            p = strrchr(exe_path, '\\');
+            if (p) *p = '\0';
+        }
+        if (exe_path[0]) SetCurrentDirectoryA(exe_path);
+    }
+
     // Allocate console for debug output
     AllocConsole();
     FILE* fp;
@@ -911,8 +925,19 @@ int main(int argc, char* argv[]) {
     printf("=== HiMYM Minimal Intro ===\n\n");
     if (g_logfile) fprintf(g_logfile, "=== HiMYM Minimal Intro Debug Log ===\n\n");
 
-    // Cues file path: passed as argv[1], or fall back to assets/cues.txt
+    // Cues file path: argv[1] takes priority.
+    // Packed build falls back to the path baked in at pack time (PACKED_CUES_PATH).
+    // Non-packed build falls back to assets/cues.txt for backwards compat.
+#ifdef HIMYM_PACKED_ASSETS
+    // PACKED_CUES_PATH is generated into packed_assets.h by rev_pack.
+    // Provide a compile-time fallback in case of a stale / pre-update header.
+#   ifndef PACKED_CUES_PATH
+#       define PACKED_CUES_PATH "assets/cues.txt"
+#   endif
+    const char* cues_path = (argc > 1 && argv[1] && argv[1][0]) ? argv[1] : PACKED_CUES_PATH;
+#else
     const char* cues_path = (argc > 1 && argv[1] && argv[1][0]) ? argv[1] : "assets/cues.txt";
+#endif
     printf("Cues file: %s\n", cues_path);
     if (g_logfile) fprintf(g_logfile, "Cues file: %s\n", cues_path);
 
