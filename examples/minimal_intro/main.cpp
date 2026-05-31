@@ -813,18 +813,42 @@ int main(int argc, char* argv[]) {
             case 2: mesh_obj = rev::mesh::CreatePlane(size, param > 0.0f ? param : size); break;
             case 3: mesh_obj = rev::mesh::CreateTorus(size, param > 0.0f ? param : 0.3f, 32, 16); break;
             case 4: {
-                // External glTF/GLB — loaded via rev_gltf (editor/dev builds only)
+                // External glTF/GLB — loaded via rev_gltf
 #if defined(REV_GLTF_AVAILABLE)
-                rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(mesh_cue.asset_path);
-                if (ir && ir->ok) {
-                    mesh_obj = ir->mesh;
-                    ir->mesh = nullptr; // take ownership
-                    printf("glTF loaded: %s\n", mesh_cue.asset_path);
-                } else {
-                    printf("glTF load failed: %s\n", (ir ? ir->error : "null result"));
-                    mesh_obj = rev::mesh::CreateCube(1.0f); // fallback
+#ifdef HIMYM_PACKED_ASSETS
+                {
+                    const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(
+                        mesh_cue.asset_key, kPackedAssets, kPackedAssetCount);
+                    if (pa) {
+                        rev::gltf::ImportResult* ir = rev::gltf::LoadMeshFromMemory(pa->data, pa->size);
+                        if (ir && ir->ok) {
+                            mesh_obj = ir->mesh;
+                            ir->mesh = nullptr;
+                            printf("glTF loaded (packed): %s\n", mesh_cue.asset_key);
+                        } else {
+                            printf("glTF load failed (packed): %s\n", (ir ? ir->error : "null result"));
+                            mesh_obj = rev::mesh::CreateCube(1.0f);
+                        }
+                        if (ir) rev::gltf::FreeImportResult(ir);
+                    } else {
+                        printf("Packed mesh asset not found: %s — using cube fallback\n", mesh_cue.asset_key);
+                        mesh_obj = rev::mesh::CreateCube(1.0f);
+                    }
                 }
-                if (ir) rev::gltf::FreeImportResult(ir);
+#else
+                {
+                    rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(mesh_cue.asset_path);
+                    if (ir && ir->ok) {
+                        mesh_obj = ir->mesh;
+                        ir->mesh = nullptr;
+                        printf("glTF loaded: %s\n", mesh_cue.asset_path);
+                    } else {
+                        printf("glTF load failed: %s\n", (ir ? ir->error : "null result"));
+                        mesh_obj = rev::mesh::CreateCube(1.0f);
+                    }
+                    if (ir) rev::gltf::FreeImportResult(ir);
+                }
+#endif
 #else
                 printf("mesh_type=4 (glTF) not available in this build — using cube fallback\n");
                 mesh_obj = rev::mesh::CreateCube(1.0f);

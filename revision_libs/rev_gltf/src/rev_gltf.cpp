@@ -214,35 +214,14 @@ static void ReadVec2(const cgltf_accessor* acc, cgltf_size elem, float dest[2]) 
 // Public API implementation
 // ---------------------------------------------------------------------------
 
-ImportResult* LoadMesh(const char* gltf_path, const char* texture_output_dir) {
-    ImportResult* result = new ImportResult{};
-    result->ok = false;
-    SetMaterialDefaults(&result->material);
-
-    if (!gltf_path || !gltf_path[0]) {
-        strncpy_s(result->error, "null or empty gltf_path", _TRUNCATE);
-        return result;
-    }
-
-    // Parse the glTF file
-    cgltf_options opts = {};
-    cgltf_data*   data = nullptr;
-    cgltf_result  res  = cgltf_parse_file(&opts, gltf_path, &data);
-    if (res != cgltf_result_success) {
-        snprintf(result->error, sizeof(result->error),
-                 "cgltf_parse_file failed: %d", (int)res);
-        return result;
-    }
-
-    // Load external buffers (also decodes base64 data URIs in the JSON)
-    res = cgltf_load_buffers(&opts, data, gltf_path);
-    if (res != cgltf_result_success) {
-        snprintf(result->error, sizeof(result->error),
-                 "cgltf_load_buffers failed: %d", (int)res);
-        cgltf_free(data);
-        return result;
-    }
-
+// ---------------------------------------------------------------------------
+// Internal: build ImportResult from an already-parsed cgltf_data.
+// Takes ownership of data (calls cgltf_free).
+// gltf_path and texture_output_dir may be null (disables material texture extraction).
+// ---------------------------------------------------------------------------
+static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
+                                    const char* gltf_path,
+                                    const char* texture_output_dir) {
     // Find the first mesh (from the default scene or the first mesh in data)
     cgltf_mesh* src_mesh = nullptr;
     if (data->scene && data->scene->nodes_count > 0) {
@@ -377,6 +356,73 @@ ImportResult* LoadMesh(const char* gltf_path, const char* texture_output_dir) {
 
     cgltf_free(data);
     return result;
+}
+
+// ---------------------------------------------------------------------------
+
+ImportResult* LoadMesh(const char* gltf_path, const char* texture_output_dir) {
+    ImportResult* result = new ImportResult{};
+    result->ok = false;
+    SetMaterialDefaults(&result->material);
+
+    if (!gltf_path || !gltf_path[0]) {
+        strncpy_s(result->error, "null or empty gltf_path", _TRUNCATE);
+        return result;
+    }
+
+    cgltf_options opts = {};
+    cgltf_data*   data = nullptr;
+    cgltf_result  res  = cgltf_parse_file(&opts, gltf_path, &data);
+    if (res != cgltf_result_success) {
+        snprintf(result->error, sizeof(result->error),
+                 "cgltf_parse_file failed: %d", (int)res);
+        return result;
+    }
+
+    res = cgltf_load_buffers(&opts, data, gltf_path);
+    if (res != cgltf_result_success) {
+        snprintf(result->error, sizeof(result->error),
+                 "cgltf_load_buffers failed: %d", (int)res);
+        cgltf_free(data);
+        return result;
+    }
+
+    return BuildFromData(result, data, gltf_path, texture_output_dir);
+}
+
+// ---------------------------------------------------------------------------
+
+ImportResult* LoadMeshFromMemory(const void* buf, size_t size) {
+    ImportResult* result = new ImportResult{};
+    result->ok = false;
+    SetMaterialDefaults(&result->material);
+
+    if (!buf || size == 0) {
+        strncpy_s(result->error, "null or empty buffer", _TRUNCATE);
+        return result;
+    }
+
+    cgltf_options opts = {};
+    cgltf_data*   data = nullptr;
+    cgltf_result  res  = cgltf_parse(&opts, buf, size, &data);
+    if (res != cgltf_result_success) {
+        snprintf(result->error, sizeof(result->error),
+                 "cgltf_parse failed: %d", (int)res);
+        return result;
+    }
+
+    // For self-contained GLB all buffers are embedded — pass "" so cgltf
+    // does not attempt to resolve external file paths.
+    res = cgltf_load_buffers(&opts, data, "");
+    if (res != cgltf_result_success) {
+        snprintf(result->error, sizeof(result->error),
+                 "cgltf_load_buffers failed: %d", (int)res);
+        cgltf_free(data);
+        return result;
+    }
+
+    // Texture extraction not possible without a file path; pass nullptr.
+    return BuildFromData(result, data, nullptr, nullptr);
 }
 
 // ---------------------------------------------------------------------------

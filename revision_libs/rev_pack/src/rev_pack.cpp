@@ -141,6 +141,42 @@ static bool ParseAssetLine(const char* line, char* key_out, char* path_out) {
     return key_out[0] != '\0' && path_out[0] != '\0';
 }
 
+// Parse a [mesh_cues] line: asset_key|asset_path|mesh_type|...
+// Returns true only for mesh_type == 4 (external glTF/GLB).
+static bool ParseMeshAssetLine(const char* line, char* key_out, char* path_out) {
+    char tmp[1024];
+    strncpy_s(tmp, line, sizeof(tmp) - 1);
+
+    char* p1 = strchr(tmp, '|');          // end of asset_key
+    if (!p1) return false;
+    *p1 = '\0';
+
+    char* p2 = strchr(p1 + 1, '|');       // end of asset_path
+    if (!p2) return false;
+    *p2 = '\0';
+
+    char* p3 = strchr(p2 + 1, '|');       // end of mesh_type
+    char mesh_type_str[8] = {};
+    if (p3) {
+        size_t len = (size_t)(p3 - (p2 + 1));
+        if (len > 7) len = 7;
+        memcpy(mesh_type_str, p2 + 1, len);
+    } else {
+        strncpy_s(mesh_type_str, p2 + 1, sizeof(mesh_type_str) - 1);
+    }
+    if (atoi(mesh_type_str) != 4) return false;  // only pack external glTF/GLB
+
+    // Trim path
+    char* path_start = p1 + 1;
+    size_t plen = strlen(path_start);
+    while (plen > 0 && (path_start[plen-1] == '\r' || path_start[plen-1] == '\n' || path_start[plen-1] == ' '))
+        path_start[--plen] = '\0';
+
+    strncpy_s(key_out,  128, tmp,        _TRUNCATE);
+    strncpy_s(path_out, 512, path_start, _TRUNCATE);
+    return key_out[0] != '\0' && path_out[0] != '\0';
+}
+
 PackResult PackAssets(const char* cues_path,
                       const char* output_header,
                       const char* cache_path,
@@ -157,19 +193,23 @@ PackResult PackAssets(const char* cues_path,
 
     AssetRef refs[kMaxAssets];
     int ref_count = 0;
-    bool in_image = false, in_music = false;
+    bool in_image = false, in_music = false, in_mesh = false;
     char line[1024];
 
     while (fgets(line, sizeof(line), cues)) {
         char* s = line;
         while (*s == ' ' || *s == '\t') s++;
-        if (strstr(s, "[image_cues]")) { in_image = true; in_music = false; continue; }
-        if (strstr(s, "[music_cues]")) { in_image = false; in_music = true; continue; }
-        if (s[0] == '[') { in_image = false; in_music = false; continue; }
+        if (strstr(s, "[image_cues]")) { in_image = true; in_music = false; in_mesh = false; continue; }
+        if (strstr(s, "[music_cues]")) { in_image = false; in_music = true; in_mesh = false; continue; }
+        if (strstr(s, "[mesh_cues]"))  { in_image = false; in_music = false; in_mesh = true;  continue; }
+        if (s[0] == '[') { in_image = false; in_music = false; in_mesh = false; continue; }
         if (s[0] == '#' || s[0] == '\r' || s[0] == '\n' || s[0] == '\0') continue;
 
         if ((in_image || in_music) && ref_count < kMaxAssets) {
             if (ParseAssetLine(s, refs[ref_count].key, refs[ref_count].path))
+                ref_count++;
+        } else if (in_mesh && ref_count < kMaxAssets) {
+            if (ParseMeshAssetLine(s, refs[ref_count].key, refs[ref_count].path))
                 ref_count++;
         }
     }
