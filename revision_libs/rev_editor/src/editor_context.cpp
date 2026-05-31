@@ -1,5 +1,6 @@
 #include "rev_editor.h"
 #include "rev_shader.h"
+#include "rev_pack.h"
 #include <cstring>
 #include <cstdio>
 #include <cmath>
@@ -896,6 +897,10 @@ void RenderMenuBar(EditorContext* editor) {
             }
             if (ImGui::MenuItem("Build and Run", "F5")) { 
                 BuildAndRun(editor); 
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Pack, Build and Run")) {
+                PackBuildAndRun(editor);
             }
             ImGui::EndMenu();
         }
@@ -2292,6 +2297,84 @@ bool BuildAndRun(EditorContext* editor) {
         editor->build_status_timer = 5.0f;
     }
     
+    return (run_result == 0);
+}
+
+bool PackBuildAndRun(EditorContext* editor) {
+    if (!editor) return false;
+
+    printf("\n=== Pack, Build and Run ===\n");
+
+    // Step 1: Export cues.txt
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Exporting project...", _TRUNCATE);
+    editor->build_status_timer = 5.0f;
+    printf("Step 1: Exporting to assets/cues.txt...\n");
+    if (!ExportProject(editor, "assets/cues.txt")) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Export failed!", _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+        return false;
+    }
+    printf("Export complete.\n");
+
+    // Step 2: Pack assets into build/packed_assets.h
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Packing assets...", _TRUNCATE);
+    editor->build_status_timer = 5.0f;
+    printf("Step 2: Packing assets...\n");
+
+    // Ensure build/ directory exists
+    CreateDirectoryA("build", NULL);
+
+    rev::pack::PackResult pack_result = rev::pack::PackAssets(
+        "assets/cues.txt",       // cues source
+        "build/packed_assets.h", // output header
+        "build/pack_cache.txt",  // checksum cache
+        ""                       // workspace_root — empty means paths relative to cwd
+    );
+
+    if (!pack_result.ok) {
+        printf("ERROR: Packing failed: %s\n", pack_result.error);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Pack failed: %s", pack_result.error);
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), msg, _TRUNCATE);
+        editor->build_status_timer = 10.0f;
+        return false;
+    }
+    printf("Pack complete: %d total, %d packed, %d skipped.\n",
+           pack_result.total, pack_result.packed, pack_result.skipped);
+
+    // Step 3: Build the packed target
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Building packed intro...", _TRUNCATE);
+    editor->build_status_timer = 5.0f;
+    printf("Step 3: Building minimal_intro_packed...\n");
+    const char* build_command = "cmake --build build --config Release --target minimal_intro_packed";
+    int build_result = system(build_command);
+    if (build_result != 0) {
+        printf("ERROR: Build failed with exit code %d\n", build_result);
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Build failed! Check console for errors.", _TRUNCATE);
+        editor->build_status_timer = 10.0f;
+        return false;
+    }
+    printf("Build complete.\n");
+
+    // Step 4: Launch
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Launching packed intro...", _TRUNCATE);
+    editor->build_status_timer = 3.0f;
+    printf("Step 4: Launching packed intro...\n");
+    const char* run_command = "start build\\bin\\Release\\minimal_intro_packed.exe";
+    int run_result = system(run_command);
+    if (run_result == 0) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Packed intro launched! (%d assets, %d skipped)",
+                 pack_result.total, pack_result.skipped);
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), msg, _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+        printf("Packed intro launched successfully!\n");
+    } else {
+        printf("ERROR: Failed to launch (exit code %d)\n", run_result);
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Failed to launch packed intro.", _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+    }
+
     return (run_result == 0);
 }
 

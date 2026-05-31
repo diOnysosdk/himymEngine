@@ -265,6 +265,8 @@ void ResetShaderValues(ShaderCue* cue);
 // Build integration
 bool ExportProject(EditorContext* editor, const char* output_path);
 bool BuildAndRun(EditorContext* editor);
+// Pack assets into the exe (checksum-based, only re-packs changed files), then build and run.
+bool PackBuildAndRun(EditorContext* editor);
 
 }  // namespace editor
 }  // namespace rev
