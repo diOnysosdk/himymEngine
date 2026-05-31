@@ -18,6 +18,23 @@ static PFNGLGENVERTEXARRAYSPROC glGenVertexArrays = nullptr;
 static PFNGLBINDVERTEXARRAYPROC glBindVertexArray = nullptr;
 
 int main() {
+    // Ensure the working directory is the workspace root regardless of how the
+    // exe was launched. The exe lives at build/bin/Release/ — go up 3 levels.
+    {
+        char exe_path[MAX_PATH] = {};
+        GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
+        // Strip filename to get the directory
+        char* p = strrchr(exe_path, '\\');
+        if (p) *p = '\0';
+        // Walk up 3 directories: Release -> bin -> build -> workspace root
+        for (int i = 0; i < 3; ++i) {
+            p = strrchr(exe_path, '\\');
+            if (p) *p = '\0';
+        }
+        // Only change if the result looks sane (non-empty)
+        if (exe_path[0]) SetCurrentDirectoryA(exe_path);
+    }
+
     // Create window and OpenGL context
     rev::platform::WindowConfig config;
     config.width = 1600;
