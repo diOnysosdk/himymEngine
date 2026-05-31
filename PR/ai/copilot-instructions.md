@@ -4,7 +4,7 @@
 - Use them for repeatable tasks before falling back to prompts:
   - `Revision Codebase Map` for C++ subsystem orientation and ownership
   - `Revision Runtime Core` for `src/app`, `src/platform`, `src/audio`, `src/sequence`, `src/content`, and `src/renderer`
-  - `Scene Block Editor` for `tools/scene_block_editor.py` and export flow work
+  - `Scene Block Editor` for `revision_libs/rev_editor/**`, `examples/editor_app/**`, music/image cue workflows, export (cues.txt), and pack-build-run flow
   - `Python Editor Tooling Map` for Python-side authoring helpers and script ownership
   - `Python Editor Utilities` for importer/baker helpers like `obj_to_meshbin.py`, `shader_scene_importer.py`, and `bake_text_to_png.py`
   - `Shader Authoring` for split GLSL and shader plumbing work
@@ -14,7 +14,7 @@
 
 - Use the workspace specialists deliberately:
   - `Intro Runtime` for Win32/WGL runtime code, sequence/timeline flow, cue runtime semantics, cursor runtime behavior, optional 3D stage timing/material-slot/normal-map behavior, size-sensitive renderer ownership regressions, and loaders.
-  - `Scene Block Editor` for `tools/scene_block_editor.py`, modal flows, OBJ/MTL import + normal-map sidecar linking, authoring UX, export formats, and editor-to-runtime timing semantics.
+  - `Scene Block Editor` for `revision_libs/rev_editor/**`, `examples/editor_app/**`, modal flows, image/music cue Browse + copy behavior, export (cues.txt), pack-build-run workflow, and editor-to-runtime timing semantics.
   - `Shader Author` for `assets/shader/scenes/*.glsl` plus `assets/shader/shader_common.glsl`/`shader_footer.glsl`, shader-id dispatch, dyn controls, grading, and shader plumbing.
   - `Revision Director` for mixed tasks that span runtime, editor, shader, or customization work and need routing/integration.
 

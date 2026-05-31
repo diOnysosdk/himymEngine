@@ -18,6 +18,7 @@ Expert in XM/MOD music playback using libxm-windows and music-to-visual synchron
 - **libxm-windows**: C89-compatible XM/MOD/S3M player
 - **rev_xm library**: HiMYM music player wrapper
 - **Synchronization**: Music cues to visual events
+- **WinMM audio output**: waveOut with dedicated thread
 - **Formats**: XM (FastTracker II), MOD (ProTracker), S3M (ScreamTracker 3)
 
 ## rev_xm API
@@ -26,187 +27,157 @@ Expert in XM/MOD music playback using libxm-windows and music-to-visual synchron
 ```cpp
 #include "rev_xm.h"
 
-// Load XM module
-extern const unsigned char music_xm[];  // Embedded XM data
-extern const size_t music_xm_len;
-
-auto* player = rev::xm::CreatePlayer(music_xm, music_xm_len, 48000);
+// Load XM module (from file data or packed asset)
+auto* player = rev::xm::CreatePlayer(music_data, music_size);
 if (!player) {
     // Error: failed to load module
 }
 
-// In audio callback or update loop
-float audio_buffer[1024];  // 512 frames * 2 channels
-rev::xm::Update(player, audio_buffer, 512);
+// Drive audio — call from audio thread with float stereo interleaved buffer
+float audio_buffer[2048 * 2];  // 2048 frames * 2 channels
+rev::xm::Update(player, audio_buffer, 2048);
 
 // Cleanup
 rev::xm::DestroyPlayer(player);
 ```
 
-### Playback Control
+> **Important**: `CreatePlayer` alone produces no sound. A WinMM `waveOut` thread must call `Update` continuously.
+
+## WinMM Audio Thread (actual implementation pattern)
+
 ```cpp
-// Seek to specific pattern/row
-rev::xm::SetPosition(player, pattern_index, row_index);
+#pragma comment(lib, "winmm.lib")
+#include <mmsystem.h>
 
-// Get current position (loop count)
-int position = rev::xm::GetPosition(player);
+static const int kSampleRate  = 48000;
+static const int kChannels    = 2;
+static const int kFrames      = 2048;
+static const int kBufCount    = 4;
 
-// Check if finished
-if (rev::xm::IsFinished(player)) {
-    // Module has finished playing
+struct AudioState {
+    rev::xm::Player* player;
+    HWAVEOUT         wave_out;
+    WAVEHDR          headers[kBufCount];
+    int16_t*         pcm[kBufCount];
+    float            fbuf[kFrames * kChannels];
+    volatile bool    stop;
+};
+
+static DWORD WINAPI AudioThreadProc(LPVOID param) {
+    AudioState* s = (AudioState*)param;
+
+    // Open waveOut: PCM 16-bit 48kHz stereo
+    WAVEFORMATEX fmt = {};
+    fmt.wFormatTag      = WAVE_FORMAT_PCM;
+    fmt.nChannels       = kChannels;
+    fmt.nSamplesPerSec  = kSampleRate;
+    fmt.wBitsPerSample  = 16;
+    fmt.nBlockAlign     = kChannels * 2;
+    fmt.nAvgBytesPerSec = kSampleRate * fmt.nBlockAlign;
+    waveOutOpen(&s->wave_out, WAVE_MAPPER, &fmt, 0, 0, CALLBACK_NULL);
+
+    // Prepare and pre-fill all buffers
+    for (int i = 0; i < kBufCount; i++) {
+        s->pcm[i] = new int16_t[kFrames * kChannels];
+        rev::xm::Update(s->player, s->fbuf, kFrames);
+        for (int j = 0; j < kFrames * kChannels; j++) {
+            float v = s->fbuf[j];
+            if (v >  1.0f) v =  1.0f;
+            if (v < -1.0f) v = -1.0f;
+            s->pcm[i][j] = (int16_t)(v * 32767.0f);
+        }
+        s->headers[i] = {};
+        s->headers[i].lpData        = (LPSTR)s->pcm[i];
+        s->headers[i].dwBufferLength = kFrames * kChannels * 2;
+        waveOutPrepareHeader(s->wave_out, &s->headers[i], sizeof(WAVEHDR));
+        waveOutWrite(s->wave_out, &s->headers[i], sizeof(WAVEHDR));
+    }
+
+    // Refill loop
+    while (!s->stop) {
+        for (int i = 0; i < kBufCount; i++) {
+            if (s->headers[i].dwFlags & WHDR_DONE) {
+                rev::xm::Update(s->player, s->fbuf, kFrames);
+                for (int j = 0; j < kFrames * kChannels; j++) {
+                    float v = s->fbuf[j];
+                    if (v >  1.0f) v =  1.0f;
+                    if (v < -1.0f) v = -1.0f;
+                    s->pcm[i][j] = (int16_t)(v * 32767.0f);
+                }
+                s->headers[i].dwFlags = 0;
+                waveOutWrite(s->wave_out, &s->headers[i], sizeof(WAVEHDR));
+            }
+        }
+        Sleep(1);
+    }
+
+    // Shutdown
+    waveOutReset(s->wave_out);
+    for (int i = 0; i < kBufCount; i++) {
+        waveOutUnprepareHeader(s->wave_out, &s->headers[i], sizeof(WAVEHDR));
+        delete[] s->pcm[i];
+    }
+    return 0;
 }
-
-// Get module info
-int pattern_count = rev::xm::GetPatternCount(player);
-int channel_count = rev::xm::GetChannelCount(player);
-float duration = rev::xm::GetDuration(player);  // seconds
 ```
 
-## libxm-windows Integration
-
-### Under the Hood
+### Startup/Shutdown in main()
 ```cpp
-// rev_xm uses libxm-windows internally
-#include <xm.h>
+// After CreatePlayer:
+AudioState* audio = new AudioState{};
+audio->player = xm_player;
+HANDLE thread = CreateThread(nullptr, 0, AudioThreadProc, audio, 0, nullptr);
 
-// Prescan module
-xm_prescan_data_t* prescan = (xm_prescan_data_t*)alloca(XM_PRESCAN_DATA_SIZE);
-if (!xm_prescan_module(xm_data, xm_size, prescan)) {
-    return nullptr;
-}
+// ... render loop ...
 
-// Allocate context
-uint32_t ctx_size = xm_size_for_context(prescan);
-char* ctx_memory = new char[ctx_size];
-
-// Create context
-xm_context_t* ctx = xm_create_context(ctx_memory, prescan, xm_data, xm_size);
-xm_set_sample_rate(ctx, 48000);
-
-// Generate audio
-float output[1024];
-xm_generate_samples(ctx, output, 512);  // 512 frames, stereo interleaved
+// Cleanup:
+audio->stop = true;
+WaitForSingleObject(thread, INFINITE);
+CloseHandle(thread);
+waveOutClose(audio->wave_out);
+delete audio;
+rev::xm::DestroyPlayer(xm_player);
 ```
-
-### Sample Rate
-Supported sample rates: 8000, 11025, 22050, 44100, 48000, 96000 Hz
-Recommended: **48000 Hz** (modern standard)
 
 ## Music Synchronization
 
-### Time-Based Sync
+### Time-Based Sync via MusicCue
 ```cpp
+// MusicCue from editor (cues.txt music_cues section)
+// asset_key|asset_path|cue_start|cue_end
 struct MusicCue {
-    float time;           // Time in seconds
-    const char* name;     // Cue identifier
-    bool triggered;       // Has event been triggered?
+    char  asset_key[64];
+    char  asset_path[512];
+    float cue_start;
+    float cue_end;
 };
 
-std::vector<MusicCue> cues = {
-    {0.0f, "intro", false},
-    {8.5f, "build_up", false},
-    {16.0f, "drop", false},
-    {32.5f, "breakdown", false},
-    {48.0f, "finale", false}
-};
-
-void UpdateMusicSync(rev::xm::Player* player, float dt) {
-    static float music_time = 0.0f;
-    music_time += dt;
-    
-    for (auto& cue : cues) {
-        if (!cue.triggered && music_time >= cue.time) {
-            TriggerVisualEvent(cue.name);
-            cue.triggered = true;
-        }
-    }
+// Trigger check in render loop:
+if (current_time >= cue.cue_start && current_time < cue.cue_end) {
+    // Music cue is active
 }
 ```
 
-### Pattern-Based Sync
+### Pattern-Based Sync (advanced)
 ```cpp
-// Get current pattern/row from XM module
-struct PatternCue {
-    int pattern;
-    int row;
-    const char* name;
-    bool triggered;
-};
-
-void UpdatePatternSync(xm_context_t* ctx) {
-    uint8_t pattern = xm_get_pattern_position(ctx);
-    uint8_t row = xm_get_row(ctx);
-    
-    for (auto& cue : pattern_cues) {
-        if (!cue.triggered && pattern == cue.pattern && row == cue.row) {
-            TriggerVisualEvent(cue.name);
-            cue.triggered = true;
-        }
-    }
-}
+// Get current pattern/row from XM context if needed
+uint8_t pattern = xm_get_pattern_position(ctx);
+uint8_t row     = xm_get_row(ctx);
 ```
 
-### Beat Detection (Manual)
+## Packed Build Music Loading
 ```cpp
-// For 4/4 time signature at 125 BPM
-float bpm = 125.0f;
-float beat_duration = 60.0f / bpm;  // 0.48 seconds
-
-int current_beat = (int)(music_time / beat_duration);
-if (current_beat != last_beat) {
-    OnBeat(current_beat);
-    last_beat = current_beat;
+#ifdef HIMYM_PACKED_ASSETS
+// Look up music asset from embedded array
+const rev::pack::PackedAsset* asset = rev::pack::GetPackedAsset(
+    music_cue.asset_key, kPackedAssets, kPackedAssetCount);
+if (asset) {
+    xm_player = rev::xm::CreatePlayer(asset->data, asset->size);
 }
-```
-
-## Audio Output Integration
-
-### Windows Audio (WinMM)
-```cpp
-#include <windows.h>
-#include <mmsystem.h>
-#pragma comment(lib, "winmm.lib")
-
-#define BUFFER_SIZE 4096
-#define BUFFER_COUNT 2
-
-WAVEFORMATEX format = {};
-format.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
-format.nChannels = 2;
-format.nSamplesPerSec = 48000;
-format.wBitsPerSample = 32;
-format.nBlockAlign = format.nChannels * format.wBitsPerSample / 8;
-format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
-
-HWAVEOUT hWaveOut;
-waveOutOpen(&hWaveOut, WAVE_MAPPER, &format, (DWORD_PTR)WaveCallback, 0, CALLBACK_FUNCTION);
-
-// Fill and submit buffers
-for (int i = 0; i < BUFFER_COUNT; i++) {
-    float* buffer = new float[BUFFER_SIZE];
-    rev::xm::Update(player, buffer, BUFFER_SIZE / 2);
-    
-    WAVEHDR header = {};
-    header.lpData = (LPSTR)buffer;
-    header.dwBufferLength = BUFFER_SIZE * sizeof(float);
-    
-    waveOutPrepareHeader(hWaveOut, &header, sizeof(WAVEHDR));
-    waveOutWrite(hWaveOut, &header, sizeof(WAVEHDR));
-}
-```
-
-### Direct Audio Callback (For Intros)
-```cpp
-// Simpler approach: generate audio in main loop
-void UpdateAudio(rev::xm::Player* player) {
-    const int frames_per_update = 512;  // ~10ms at 48kHz
-    float buffer[frames_per_update * 2];
-    
-    rev::xm::Update(player, buffer, frames_per_update);
-    
-    // Submit to audio hardware
-    SubmitAudioBuffer(buffer, frames_per_update * 2 * sizeof(float));
-}
+#else
+// Load from workspace-relative path
+xm_player = rev::xm::CreatePlayerFromFile(music_cue.asset_path);
+#endif
 ```
 
 ## XM Module Creation
@@ -220,86 +191,42 @@ void UpdateAudio(rev::xm::Player* player) {
 ```bash
 # Use libxmize to analyze module
 libxmize analyze music.xm
-
-# Output suggests disabled features:
-# -DXM_DISABLED_EFFECTS=0xFFFFD9FBFFDE68E1
-# -DXM_DISABLED_VOLUME_EFFECTS=0x0CC0
 ```
 
 ### Best Practices
 - **Sample rate**: 16-bit, 22050 Hz or lower
 - **Channels**: 4-8 channels typical for intros
 - **Patterns**: Reuse patterns for size
-- **Instruments**: Share samples when possible
 - **Length**: 30-120 seconds for intros
-
-## Embedding Music Data
-
-### Binary Embedding (CMake)
-```cmake
-# Convert XM to C array
-function(embed_binary target input_file var_name)
-    file(READ ${input_file} hex_content HEX)
-    string(REGEX MATCHALL "([0-9a-f][0-9a-f])" bytes "${hex_content}")
-    
-    set(output "const unsigned char ${var_name}[] = {\n")
-    list(LENGTH bytes len)
-    math(EXPR len "${len} - 1")
-    
-    foreach(i RANGE ${len})
-        list(GET bytes ${i} byte)
-        string(APPEND output "0x${byte},")
-    endforeach()
-    
-    string(APPEND output "\n};\nconst size_t ${var_name}_len = sizeof(${var_name});\n")
-    
-    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/${var_name}.h" "${output}")
-    target_sources(${target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/${var_name}.h")
-endfunction()
-
-embed_binary(demo_intro "${CMAKE_CURRENT_SOURCE_DIR}/music.xm" music_xm)
-```
-
-### Usage
-```cpp
-#include "music_xm.h"  // Generated header
-
-auto* player = rev::xm::CreatePlayer(music_xm, music_xm_len, 48000);
-```
 
 ## Debugging Music Issues
 
 ### Issue: No sound
 **Check:**
-1. Audio device initialized?
-2. Buffer size and format correct?
-3. Module loaded successfully?
-4. Sample rate matches audio output?
+1. Is `AudioThreadProc` started and running?
+2. Did `rev::xm::CreatePlayer` succeed (non-null)?
+3. Is `waveOutOpen` returning `MMSYSERR_NOERROR`?
+4. Are all 4 buffers pre-filled and submitted before the loop?
 
 ### Issue: Crackling/popping
 **Solutions:**
-- Increase buffer size (reduce latency vs. smoothness trade-off)
-- Check for buffer underruns
-- Verify update frequency (60 FPS minimum)
+- Check that `WHDR_DONE` flag is cleared (`header.dwFlags = 0`) before resubmitting
+- Increase `kBufCount` or `kFrames` if underruns occur
+
+### Issue: Music loaded in editor but not in packed exe
+**Check:**
+1. Does `packed_assets.h` contain `HIMYM_HAS_PACKED_CUES`?  
+   `Select-String "HIMYM_HAS_PACKED_CUES" build/packed_assets.h`
+2. If not, rebuild `editor_app` (rev_pack may have been stale) then re-run Pack.
 
 ### Issue: Wrong playback speed
-**Solution:** Verify sample rate matches:
-```cpp
-xm_set_sample_rate(ctx, 48000);  // Must match audio output
-```
-
-### Issue: Module loops unexpectedly
-**Solution:** Set loop count:
-```cpp
-xm_set_max_loop_count(ctx, 1);  // Play once and stop
-// or 0 for infinite loop
-```
+**Solution:** `CreatePlayer` uses 48000 Hz sample rate. Ensure `waveOutOpen` is also configured for 48000 Hz.
 
 ## Performance Considerations
 
 - **CPU usage**: ~1-2% on modern CPU for typical module
 - **Memory**: ~100 KB - 500 KB for context (depends on module complexity)
-- **Latency**: 10-20 ms typical (512 frames at 48 kHz)
+- **Latency**: ~42 ms at 2048 frames / 48 kHz per buffer
 
 ## Response Format
 

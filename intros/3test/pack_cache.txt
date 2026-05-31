@@ -1,2 +1,2 @@
 thelogo2mini.png|intros/3test/test3_assets/thelogo2mini.png|F2313569
-book_of_memories2.xm|E:\code\cpp\mono\himym\assets\music\book_of_memories2.xm|964B22BD
+track01.xm|intros/3test/test3_assets/track01.xm|3A27699E

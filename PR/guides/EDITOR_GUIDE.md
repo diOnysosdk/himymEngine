@@ -108,11 +108,11 @@ The Scene Block Editor is a monolithic Python/tkinter application (8000+ lines) 
 1. **Click "+ Music"** button
 2. In music modal:
    - **Asset Key**: Give it a name (e.g., `main_track`)
-   - **Path**: Select XM file from workspace
+   - **Browse**: Opens file picker — selected XM file is **copied into `{project}_assets/`** and stored as a workspace-relative path
    - **Start/End**: Music cue timing (usually 0.0 to scene end)
 3. **Apply & Close**
 
-**Result**: XM module plays during intro, timeline syncs to music.
+**Result**: XM module plays during intro. The asset copy ensures the file is available for both regular and packed builds.
 
 ---
 
@@ -269,13 +269,21 @@ order|shader_scene_id|start|end|fade_in|fade_out|implicit_end|layer_role|opacity
 
 ## Build Integration
 
-### "Do It All" Button
+### "Build and Run" / "Pack, Build and Run"
 
-**Steps** (automated):
+**Build and Run** — standard development workflow:
 1. **Save**: Write project JSON to disk
-2. **Export**: Generate `assets/cues.txt`
-3. **Build**: Run `cmake --build build --config Release`
-4. **Run**: Launch `build\Release\intro.exe`
+2. **Export**: Generate `{project}_cues.txt`
+3. **Build**: Run `cmake --build build --config Release --target minimal_intro`
+4. **Run**: Launch `build\bin\Release\minimal_intro.exe`
+
+**Pack, Build and Run** — creates the standalone redistributable exe:
+1. **Save + Export** (same as above)
+2. **Pack**: Rev_pack embeds all assets + cues into `build/packed_assets.h`
+3. **Build**: Compiles `minimal_intro_packed` (PRE_BUILD touches `main.cpp` to force fresh include)
+4. **Run**: Launch `build\bin\Release\minimal_intro_packed.exe`
+
+> **Note**: If `minimal_intro_packed.exe` shows stale content, rebuild `editor_app` first — it may be using an outdated packer.
 
 **Result**: Full workflow in one click!
 
@@ -283,13 +291,16 @@ order|shader_scene_id|start|end|fade_in|fade_out|implicit_end|layer_role|opacity
 
 ```powershell
 # Reconfigure (if CMakeLists.txt changed)
-cmake -S . -B build
+cmake -B build -S .
 
 # Build only
 cmake --build build --config Release
 
-# Run
-.\build\Release\intro.exe
+# Run standard intro
+.\build\bin\Release\minimal_intro.exe
+
+# Run packed (standalone) intro
+.\build\bin\Release\minimal_intro_packed.exe
 ```
 
 ### Build Diagnostics
@@ -427,10 +438,12 @@ type build_diagnostics\runtime_startup.log
 - Ensure Effect Start/End defines animation window
 
 ### "Music not playing"
-- Check music cue Start > 0.0 (not negative)
-- Verify XM file is in `assets/music/` folder
-- Ensure music cue End > Start
-- Look for XM decoder errors in `runtime_startup.log`
+- Verify the XM file was copied to `{project}_assets/` via Browse (not just referenced by path)
+- Check `cues.txt` contains a `[music_cues]` section with the correct `asset_key|asset_path|cue_start|cue_end` line
+- Ensure `cue_end > cue_start` and both are within the scene duration
+- For the packed exe: check that `build/packed_assets.h` contains `HIMYM_HAS_PACKED_CUES`  
+  (`Select-String "HIMYM_HAS_PACKED_CUES" build/packed_assets.h`)
+- If not present, rebuild `editor_app` and re-run Pack, Build and Run
 
 ### "Editor crashes on startup"
 - Check Python version: `python --version` (need 3.11+)

@@ -50,8 +50,8 @@
       ],
       "music_cues": [
         {
-          "asset_key": "book_of_memories2.xm",
-          "asset_path": "E:\code\cpp\mono\himym\assets\music\book_of_memories2.xm",
+          "asset_key": "track01.xm",
+          "asset_path": "intros/3test/test3_assets/track01.xm",
           "cue_start": 0.000,
           "cue_end": 10.000
         }
