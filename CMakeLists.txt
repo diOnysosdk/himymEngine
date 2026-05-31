@@ -21,6 +21,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # Add library subdirectories
 add_subdirectory(revision_libs/rev_platform)
+add_subdirectory(revision_libs/rev_runtime)
 add_subdirectory(revision_libs/rev_shader)
 add_subdirectory(revision_libs/rev_xm)
 add_subdirectory(revision_libs/rev_curve)

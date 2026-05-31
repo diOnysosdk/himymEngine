@@ -2930,62 +2930,6 @@ void RandomizeShaderColors(ShaderCue* cue) {
 
 // ===== PREVIEW VIEWPORT =====
 
-// Helper: Load image texture from file using GDI+
-static unsigned int LoadImageTexture(const char* path, int* out_width, int* out_height) {
-    // Convert to wide string
-    wchar_t wpath[512];
-    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, 512);
-    
-    // Load image with GDI+
-    Gdiplus::Bitmap* bitmap = new Gdiplus::Bitmap(wpath);
-    if (!bitmap || bitmap->GetLastStatus() != Gdiplus::Ok) {
-        Gdiplus::Status status = bitmap ? bitmap->GetLastStatus() : Gdiplus::OutOfMemory;
-        printf("[LoadImageTexture] FAILED: GDI+ error %d for path: %s\n", status, path);
-        delete bitmap;
-        return 0;
-    }
-    
-    int width = bitmap->GetWidth();
-    int height = bitmap->GetHeight();
-    if (out_width) *out_width = width;
-    if (out_height) *out_height = height;
-    
-    // Lock bitmap data
-    Gdiplus::BitmapData bitmapData;
-    Gdiplus::Rect rect(0, 0, width, height);
-    if (bitmap->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &bitmapData) != Gdiplus::Ok) {
-        delete bitmap;
-        return 0;
-    }
-    
-    // Convert BGRA to RGBA
-    unsigned char* pixels = new unsigned char[width * height * 4];
-    unsigned char* src = (unsigned char*)bitmapData.Scan0;
-    for (int i = 0; i < width * height * 4; i += 4) {
-        pixels[i + 0] = src[i + 2];  // R
-        pixels[i + 1] = src[i + 1];  // G
-        pixels[i + 2] = src[i + 0];  // B
-        pixels[i + 3] = src[i + 3];  // A
-    }
-    
-    bitmap->UnlockBits(&bitmapData);
-    
-    // Create OpenGL texture
-    unsigned int texture = 0;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    
-    delete[] pixels;
-    delete bitmap;
-    
-    return texture;
-}
-
 // Simple vertex shader for fullscreen quad
 static const char* preview_vertex_shader = R"(
 #version 330 core
@@ -3536,75 +3480,6 @@ void ResizePreview(EditorContext* editor, int width, int height) {
     }
 }
 
-static float ComputeEffectOpacity(int effect_type, float fade_in_start, float fade_in_end, float fade_out_start, float fade_out_end, float time) {
-    if (effect_type == 1) { // fade_in_out
-        if (time < fade_in_start) return 0.0f;
-        float in_dur = fade_in_end - fade_in_start;
-        if (in_dur > 0.0f && time < fade_in_end)
-            return (time - fade_in_start) / in_dur;
-        float out_dur = fade_out_end - fade_out_start;
-        if (out_dur > 0.0f && time >= fade_out_start)
-            return (time > fade_out_end) ? 0.0f : 1.0f - (time - fade_out_start) / out_dur;
-    }
-    return 1.0f;
-}
-
-static unsigned int RenderTextToTexture(const char* text, const char* font_name, float size, float r, float g, float b, int* out_width, int* out_height) {
-    wchar_t wtext[256];
-    wchar_t wfont[64];
-    MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, 256);
-    MultiByteToWideChar(CP_UTF8, 0, font_name, -1, wfont, 64);
-
-    Gdiplus::Bitmap temp_bitmap(1, 1, PixelFormat32bppARGB);
-    Gdiplus::Graphics temp_g(&temp_bitmap);
-    Gdiplus::Font font(wfont, (Gdiplus::REAL)size, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-    Gdiplus::RectF layout(0.0f, 0.0f, 2048.0f, 2048.0f);
-    Gdiplus::RectF bounds;
-    temp_g.MeasureString(wtext, -1, &font, layout, &bounds);
-
-    int width  = (int)(bounds.Width)  + 8;
-    int height = (int)(bounds.Height) + 8;
-    if (width <= 0 || height <= 0) return 0;
-
-    Gdiplus::Bitmap* bitmap = new Gdiplus::Bitmap(width, height, PixelFormat32bppARGB);
-    Gdiplus::Graphics* gfx = new Gdiplus::Graphics(bitmap);
-    gfx->Clear(Gdiplus::Color(0, 0, 0, 0));
-    gfx->SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
-    Gdiplus::SolidBrush brush(Gdiplus::Color(255, (BYTE)(r * 255), (BYTE)(g * 255), (BYTE)(b * 255)));
-    gfx->DrawString(wtext, -1, &font, Gdiplus::PointF(4.0f, 4.0f), &brush);
-    delete gfx;
-
-    Gdiplus::Rect rect(0, 0, width, height);
-    Gdiplus::BitmapData data;
-    if (bitmap->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &data) != Gdiplus::Ok) {
-        delete bitmap;
-        return 0;
-    }
-
-    unsigned char* pixels = new unsigned char[width * height * 4];
-    unsigned char* src = (unsigned char*)data.Scan0;
-    for (int i = 0; i < width * height * 4; i += 4) {
-        pixels[i+0] = src[i+2]; pixels[i+1] = src[i+1];
-        pixels[i+2] = src[i+0]; pixels[i+3] = src[i+3];
-    }
-    bitmap->UnlockBits(&data);
-    delete bitmap;
-
-    unsigned int tex = 0;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    delete[] pixels;
-
-    if (out_width)  *out_width  = width;
-    if (out_height) *out_height = height;
-    return tex;
-}
-
 void RenderPreviewFrame(EditorContext* editor) {
     if (!editor || !editor->preview_initialized) return;
     
@@ -3785,8 +3660,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                         logged_path = true;
                     }
                     
-                    int tex_width, tex_height;
-                    unsigned int tex = LoadImageTexture(full_path, &tex_width, &tex_height);
+                    rev::runtime::ImageTexture rt_img{};
+                    bool img_ok = rev::runtime::LoadImageTexture(full_path, &rt_img);
+                    unsigned int tex = img_ok ? rt_img.texture_id : 0u;
+                    int tex_width = rt_img.width, tex_height = rt_img.height;
                     
                     static bool logged_result = false;
                     if (!logged_result) {
@@ -3798,12 +3675,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                         logged_result = true;
                     }
                     
-                    if (tex) {
-                        static bool logged_image = false;
-                        if (!logged_image) {
-                            printf("[PREVIEW] Loaded image: %s (size: %dx%d)\n", full_path, tex_width, tex_height);
-                            logged_image = true;
-                        }
+                        if (img_ok) {
                         
                         // Calculate normalized size (screen space -1 to 1)
                         float norm_w = (tex_width * cue->scale) / editor->preview_width * 2.0f;
@@ -3821,7 +3693,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                         rev::shader::SetVec2(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_size"), 
                                            norm_w, norm_h);
                         rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_opacity"), 
-                                            cue->opacity * ComputeEffectOpacity(cue->effect_type, cue->fade_in_start, cue->fade_in_end, cue->fade_out_start, cue->fade_out_end, editor->current_time));
+                                            cue->opacity * rev::runtime::ComputeEffectOpacity(cue->effect_type, cue->fade_in_start, cue->fade_in_end, cue->fade_out_start, cue->fade_out_end, editor->current_time));
                         
                         // Draw sprite
                         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -3850,11 +3722,13 @@ void RenderPreviewFrame(EditorContext* editor) {
                 if (cue->text[0] == '\0') continue;
 
                 int tw = 0, th = 0;
-                unsigned int tex = RenderTextToTexture(
+                rev::runtime::TextTexture rt_txt{};
+                bool txt_ok = rev::runtime::RenderTextToTexture(
                     cue->text, cue->font_name, cue->size,
-                    cue->color.r, cue->color.g, cue->color.b,
-                    &tw, &th);
-                if (!tex) continue;
+                    cue->color.r, cue->color.g, cue->color.b, &rt_txt);
+                if (!txt_ok) continue;
+                unsigned int tex = rt_txt.texture_id;
+                tw = rt_txt.width; th = rt_txt.height;
 
                 float norm_w = (float)tw / (float)editor->preview_width  * 2.0f;
                 float norm_h = (float)th / (float)editor->preview_height * 2.0f;
@@ -3866,7 +3740,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                 rev::shader::SetVec2(sprite_prog,  rev::shader::GetUniformLocation(sprite_prog, "u_position"), pos_x, pos_y);
                 rev::shader::SetVec2(sprite_prog,  rev::shader::GetUniformLocation(sprite_prog, "u_size"),     norm_w, norm_h);
                 rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_opacity"),
-                    ComputeEffectOpacity(cue->effect_type, cue->fade_in_start, cue->fade_in_end, cue->fade_out_start, cue->fade_out_end, editor->current_time));
+                    rev::runtime::ComputeEffectOpacity(cue->effect_type, cue->fade_in_start, cue->fade_in_end, cue->fade_out_start, cue->fade_out_end, editor->current_time));
                 glDrawArrays(GL_TRIANGLES, 0, 3);
 
                 glDeleteTextures(1, &tex);

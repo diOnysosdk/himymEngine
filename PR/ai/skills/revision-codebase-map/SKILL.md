@@ -9,8 +9,12 @@ Use this skill to map the project surface before making changes.
 ## Directory layout
 ```
 revision_libs/
+  rev_runtime/       Shared runtime lib (namespace rev::runtime) — single source of truth for cue structs + rendering helpers
+    include/         rev_runtime.h — ColorRGB, ImageCue, TextCue, MusicCue, ImageTexture, TextTexture structs + function declarations
+    src/             rev_runtime.cpp — ComputeEffectOpacity, LoadImageTexture, LoadImageTextureFromMemory,
+                                       RenderTextToTexture, LoadImageCue, LoadTextCue, LoadMusicCue
   rev_editor/        C++ editor library (scene blocks, image cues, music cues, shader cues, export, pack)
-    include/         rev_editor.h — ProjectData, SceneBlock, ImageCue, ShaderCue, MusicCue, TextCue structs
+    include/         rev_editor.h — ProjectData, SceneBlock, ShaderCue structs; ImageCue/TextCue/MusicCue via `using rev::runtime::*`
     src/             editor_context.cpp — LoadProject, SaveProject, ExportProject, PackBuildAndRun, ImportFromCues
   rev_platform/      Win32 windowing, OpenGL context
   rev_shader/        Shader compilation, uniform binding
@@ -38,19 +42,28 @@ PR/
 
 ## Key struct relationships
 - `ProjectData` owns `scenes[]` (SceneBlock), each scene has `image_cues[]` (ImageCue), `shader_cues[]` (ShaderCue), `music_cues[]` (MusicCue)
+- **Shared structs live in `rev_runtime.h`** (namespace `rev::runtime`): `ColorRGB`, `ImageCue`, `TextCue`, `MusicCue`, `ImageTexture`, `TextTexture`
+- **Editor-only struct**: `ShaderCue` (defined only in `rev_editor.h`; has more fields than the runtime version)
+- `rev_editor.h` pulls shared structs in via `using rev::runtime::ImageCue;` etc. — do NOT re-define them there
 - `MusicCue`: `asset_key[64]`, `asset_path[512]`, `cue_start`, `cue_end`
+- `ImageCue`: `asset_key`, `asset_path`, `x`, `y`, `scale`, `opacity`, `effect_type`, `cue_start`, `cue_end`, `fade_in_start`, `fade_in_end`, `fade_out_start`, `fade_out_end`, `layer_order`
+- `TextCue`: `text`, `font_name`, `x`, `y`, `size` (float), `color` (ColorRGB), `effect_type`, `cue_start`, `cue_end`, `fade_in_start`, `fade_in_end`, `fade_out_start`, `fade_out_end`, `layer_order`
 - `ProjectData.assets_path` = `{workspace}\{project_name}_assets` — set on LoadProject, folder auto-created
 
 ## cues.txt format
 ```
 [image_cues]
-asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order
+asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end
+
+[text_cues]
+text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order
 
 [music_cues]
 asset_key|asset_path|cue_start|cue_end
 ```
 - All `asset_path` values are workspace-relative with forward slashes (`{project_name}_assets/{key}`)
 - CWD is always workspace root (runtime walks up 3 dirs from exe at `build/bin/Release/`)
+- Parser implementations live in `rev_runtime.cpp` (`LoadImageCue`, `LoadTextCue`, `LoadMusicCue`)
 
 ## Packed build defines
 - `HIMYM_PACKED_ASSETS` — enables packed mode; assets come from `kPackedAssets[]` in packed_assets.h
@@ -68,16 +81,20 @@ asset_key|asset_path|cue_start|cue_end
 - GDI+ requires backslash path separators on Windows
 - IStream must NOT be released until after `UnlockBits` + `delete bitmap` (GDI+ decodes PNG lazily at LockBits)
 - editor_app and minimal_intro both init GDI+ in their respective `main()`
+- `LoadImageTexture` and `LoadImageTextureFromMemory` are in `rev_runtime.cpp` — do NOT duplicate them in main.cpp or editor_context.cpp
+- `GL_CLAMP_TO_EDGE` is defined as `0x812F` in rev_runtime.cpp (Windows `<gl/gl.h>` only covers GL 1.1)
 
 ## Stable invariants
 - Keep the frame loop deterministic and explicit.
 - Keep authoring/export semantics aligned with runtime loaders.
-- Keep `LoadImageCue` parser field count matching the export format (currently 9 fields with `layer_order`).
+- Keep `LoadImageCue` parser field count matching the export format (currently 14 fields).
+- Keep `LoadTextCue` parser field count matching the export format (currently 16 fields).
+- When adding fields to `ImageCue`/`TextCue`/`MusicCue`, update `rev_runtime.h` and `rev_runtime.cpp` — NOT main.cpp or editor_context.cpp.
 - Treat build validation as part of the change, not a separate optional step.
 - If rev_pack.cpp changes, rebuild `editor_app` before running Pack.
 
 ## Pair with
-- `Revision Runtime Core` for `examples/minimal_intro/` runtime changes.
+- `Revision Runtime Core` for `examples/minimal_intro/` runtime changes and `rev_runtime` lib changes.
 - `Scene Block Editor` for `revision_libs/rev_editor/` and export semantics.
 - `Shader Authoring` for GLSL and shader plumbing.
 - `Revision Build Validation` for verification.

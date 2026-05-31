@@ -11,7 +11,8 @@ Use this skill for editor-side authoring work.
 
 ## Scope
 - `revision_libs/rev_editor/src/editor_context.cpp` — core editor logic: `LoadProject`, `SaveProject`, `ExportProject`, `BuildAndRun`, `PackBuildAndRun`, `RenderPreviewFrame`
-- `revision_libs/rev_editor/include/rev_editor.h` — `ProjectData`, `SceneBlock`, `ImageCue`, `ShaderCue`, `MusicCue`, `TextCue` structs
+- `revision_libs/rev_editor/include/rev_editor.h` — `ProjectData`, `SceneBlock`, `ShaderCue` structs; `ImageCue`/`TextCue`/`MusicCue` via `using rev::runtime::*` declarations
+- `revision_libs/rev_runtime/include/rev_runtime.h` — source of truth for `ImageCue`, `TextCue`, `MusicCue`, `ColorRGB`, `ImageTexture`
 - `examples/editor_app/main.cpp` — editor entry point, GDI+ init, ImGui integration
 
 ## Non-negotiables
@@ -20,9 +21,12 @@ Use this skill for editor-side authoring work.
 - Keep `ExportProject` image path format as `{rel_assets_prefix}/{asset_key}` (workspace-relative forward slashes).
 - Keep `LoadImageTexture` called only after `GdiplusStartup` has been called in `main()`.
 - GDI+ must use backslash separators in all paths.
-- Keep the cues.txt image_cues format: `asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order` (9 fields).
+- Keep the cues.txt image_cues format: `asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end` (14 fields).
+- Keep the cues.txt text_cues format: `text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order` (16 fields).
 - Keep `ProjectData.assets_path` memset-cleared in `CreateEditor`, `NewProject`, and `LoadProject`.
 - Keep editor preview frame rendering: shader cue composited first, image cue overlaid on top.
+- Do NOT define `ImageCue`, `TextCue`, `MusicCue` in `rev_editor.h` — they are imported from `rev_runtime.h` via `using` declarations.
+- When adding fields to shared cue structs, update `rev_runtime.h` and `rev_runtime.cpp` first, then update `ExportProject` and parser in rev_runtime.
 
 ## Music cue behavior
 - `MusicCue` fields: `asset_key[64]`, `asset_path[512]`, `cue_start`, `cue_end`.
@@ -49,9 +53,10 @@ The PRE_BUILD touch on `main.cpp` ensures MSBuild always recompiles main.cpp aga
 5. `ExportProject` builds workspace-relative paths for the runtime
 
 ## Read-before-edit targets
-- `revision_libs/rev_editor/include/rev_editor.h` for struct layout
+- `revision_libs/rev_runtime/include/rev_runtime.h` — struct layout (source of truth for ImageCue, TextCue, MusicCue)
+- `revision_libs/rev_editor/include/rev_editor.h` — editor-specific struct layout (ShaderCue, ProjectData)
 - `revision_libs/rev_editor/src/editor_context.cpp` — `LoadProject`, `ExportProject`, `PackBuildAndRun`
-- `examples/minimal_intro/main.cpp` — `LoadMusicCue`, `LoadImageCue` parsers must stay aligned with export format
+- `revision_libs/rev_runtime/src/rev_runtime.cpp` — `LoadImageCue`, `LoadTextCue` parsers must stay aligned with export format
 
 ## Pair with
 - `Revision Runtime Core` when export semantics affect runtime behavior.

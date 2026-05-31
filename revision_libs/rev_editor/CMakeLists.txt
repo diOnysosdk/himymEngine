@@ -47,6 +47,7 @@ target_include_directories(rev_editor PUBLIC
 
 target_link_libraries(rev_editor PUBLIC
     rev_platform
+    rev_runtime
     rev_sequence
     rev_curve
     rev_shader

@@ -16,6 +16,7 @@ cmake --build build --config Release
 cmake --build build --config Release --target editor_app
 cmake --build build --config Release --target minimal_intro
 cmake --build build --config Release --target minimal_intro_packed
+cmake --build build --config Release --target rev_runtime
 cmake --build build --config Release --target editor_app minimal_intro
 ```
 
@@ -51,5 +52,6 @@ If this returns nothing, the editor binary is stale — rebuild `editor_app` and
 - Prefer the narrowest command that can falsify the current hypothesis.
 - Do not widen the validation scope before the first focused check.
 - Treat build results as part of the implementation, not a postscript.
-- After changing cues.txt export format, always verify `LoadImageCue` parser field count matches.
+- After changing cues.txt export format, always verify `LoadImageCue` and `LoadTextCue` parser field counts in `rev_runtime.cpp` match.
 - After changing `rev_pack.cpp`, rebuild `editor_app` before re-packing.
+- After changing `rev_runtime.h` or `rev_runtime.cpp`, rebuild both `editor_app` and `minimal_intro` (both link rev_runtime).

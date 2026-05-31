@@ -3,24 +3,23 @@
 #include "rev_platform.h"
 #include "rev_sequence.h"
 #include "rev_curve.h"
+#include "rev_runtime.h"
 #include <cstddef>
 
 namespace rev {
 namespace editor {
+
+// Types shared with the runtime (single source of truth in rev_runtime)
+using rev::runtime::ColorRGB;
+using rev::runtime::ImageCue;
+using rev::runtime::TextCue;
+using rev::runtime::MusicCue;
 
 // Forward declarations
 struct EditorContext;
 struct ProjectData;
 struct SceneBlock;
 struct ShaderCue;
-struct ImageCue;
-struct TextCue;
-struct MusicCue;
-
-// RGB color triplet
-struct ColorRGB {
-    float r, g, b;
-};
 
 // Shader cue data (per shader instance)
 struct ShaderCue {
@@ -61,46 +60,7 @@ struct ShaderCue {
     int curve_fade;
 };
 
-// Image overlay cue
-struct ImageCue {
-    char asset_key[64];         // Image filename
-    float x, y;                 // Position (0.0-1.0, center)
-    float scale;
-    float opacity;
-    int effect_type;            // 0=none, 1=fade_in_out
-    float cue_start;
-    float cue_end;
-    float fade_in_start;
-    float fade_in_end;
-    float fade_out_start;
-    float fade_out_end;
-    int layer_order;            // Draw order (lower first, 0=default)
-};
-
-// Text cue
-struct TextCue {
-    char text[256];
-    char font_name[64];
-    float x, y;                 // Position (0.0-1.0, center)
-    float size;
-    ColorRGB color;
-    int effect_type;            // 0=none, 1=fade_in_out, 2=scroll
-    float cue_start;
-    float cue_end;
-    float fade_in_start;
-    float fade_in_end;
-    float fade_out_start;
-    float fade_out_end;
-    int layer_order;            // Draw order (lower first, 0=default)
-};
-
-// Music cue
-struct MusicCue {
-    char asset_key[64];         // XM filename
-    char asset_path[512];       // Full path
-    float cue_start;
-    float cue_end;
-};
+// (ImageCue, TextCue, MusicCue come from rev_runtime — see using declarations above)
 
 // Scene block (timeline segment)
 struct SceneBlock {

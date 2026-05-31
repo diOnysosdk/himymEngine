@@ -8,6 +8,7 @@ add_executable(minimal_intro
 
 target_link_libraries(minimal_intro PRIVATE
     rev_platform
+    rev_runtime
     rev_shader
     rev_xm
 )
@@ -26,6 +27,7 @@ add_executable(minimal_intro_packed
 
 target_link_libraries(minimal_intro_packed PRIVATE
     rev_platform
+    rev_runtime
     rev_shader
     rev_xm
 )

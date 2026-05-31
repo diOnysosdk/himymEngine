@@ -3,7 +3,7 @@
 - Skills are the primary reusable capability layer for this workspace.
 - Use them for repeatable tasks before falling back to prompts:
   - `Revision Codebase Map` for C++ subsystem orientation and ownership
-  - `Revision Runtime Core` for `src/app`, `src/platform`, `src/audio`, `src/sequence`, `src/content`, and `src/renderer`
+  - `Revision Runtime Core` for `examples/minimal_intro/main.cpp`, `revision_libs/rev_runtime/` (shared cue structs, loaders, texture helpers)
   - `Scene Block Editor` for `revision_libs/rev_editor/**`, `examples/editor_app/**`, music/image cue workflows, export (cues.txt), and pack-build-run flow
   - `Python Editor Tooling Map` for Python-side authoring helpers and script ownership
   - `Python Editor Utilities` for importer/baker helpers like `obj_to_meshbin.py`, `shader_scene_importer.py`, and `bake_text_to_png.py`

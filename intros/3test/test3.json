@@ -69,6 +69,12 @@
         }
       ],
       "music_cues": [
+        {
+          "asset_key": "track01.xm",
+          "asset_path": "intros/3test/test3_assets/track01.xm",
+          "cue_start": 0.000,
+          "cue_end": 10.000
+        }
       ]
     }
   ],

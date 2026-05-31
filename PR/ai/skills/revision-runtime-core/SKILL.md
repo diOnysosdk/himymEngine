@@ -7,7 +7,8 @@ description: "Use for C++ runtime work in examples/minimal_intro/ that changes f
 Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 
 ## Scope
-- `examples/minimal_intro/main.cpp` — standalone intro, loads cues from file or embedded data
+- `examples/minimal_intro/main.cpp` — standalone intro, loads cues from file or embedded data; does NOT define cue structs or loader functions (those live in rev_runtime)
+- `revision_libs/rev_runtime/` — shared static lib: cue structs, `ComputeEffectOpacity`, `LoadImageTexture`, `LoadImageTextureFromMemory`, `RenderTextToTexture`, `LoadImageCue`, `LoadTextCue`, `LoadMusicCue`
 - `revision_libs/rev_platform/` — Win32 windowing, OpenGL context
 - `revision_libs/rev_shader/` — shader compilation and dispatch
 - `revision_libs/rev_xm/` — XM music player (wraps libxm-windows)
@@ -15,10 +16,15 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 ## Non-negotiables
 - Keep the main loop deterministic: pump messages, get time, update cues, render.
 - Keep GDI+ initialized (`GdiplusStartup`) before any `LoadImageTexture` call.
-- Keep `LoadImageCue` parser field count aligned with the export format: currently 9 fields — `asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order`.
+- Keep `LoadImageCue` parser field count aligned with the export format: currently 14 fields — `asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end`.
+- Keep `LoadTextCue` parser field count aligned with the export format: currently 16 fields.
+- Do NOT redefine `ImageCue`, `TextCue`, `MusicCue`, `ImageTexture`, `TextTexture` in `main.cpp` — they come from `rev_runtime.h` via `using` declarations.
+- Do NOT redefine `ComputeEffectOpacity`, `LoadImageTexture`, `LoadImageTextureFromMemory`, `RenderTextToTexture`, `LoadImageCue`, `LoadTextCue`, `LoadMusicCue` in `main.cpp` — they are implemented in `rev_runtime.cpp`.
 - Asset paths in `cues.txt` are workspace-relative (`{project_name}_assets/{key}`). CWD is always workspace root (walk-up-3 from exe at startup).
 - Convert forward slashes to backslashes before passing paths to GDI+.
 - Keep the global `g_logfile` (when present for debug) flushed and closed before exit.
+- `TextCue.size` is `float` — do not cast to `int` at call sites; `RenderTextToTexture` takes `float size`.
+- `TextCue.color` is `ColorRGB color` — access as `cue.color.r/g/b`, not `cue.color_r/g/b`.
 
 ## CWD walk-up invariant
 `main()` walks up 3 dirs from the exe location (`build/bin/Release/ → workspace root`) via `GetModuleFileNameA` + `SetCurrentDirectoryA`. All relative paths are then workspace-relative. Do not change or remove this.
@@ -47,7 +53,9 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 - **IStream lifetime**: GDI+ decodes PNG lazily at `LockBits`, not at `Bitmap` ctor. Do NOT `stream->Release()` until after `UnlockBits` + `delete bitmap`.
 
 ## Read-before-edit targets
-- A project's `cues.txt` — verify field layout before changing any `sscanf_s` patterns
+- A project's `cues.txt` — verify field layout before changing any sscanf patterns
+- `revision_libs/rev_runtime/include/rev_runtime.h` — struct definitions and function signatures (source of truth)
+- `revision_libs/rev_runtime/src/rev_runtime.cpp` — parser implementations (`LoadImageCue`, `LoadTextCue`, `LoadMusicCue`)
 - `revision_libs/rev_editor/src/editor_context.cpp` — `ExportProject()` for export format source of truth
 - `revision_libs/rev_pack/include/rev_pack.h` — `PackedAsset` struct
 

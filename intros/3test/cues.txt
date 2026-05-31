@@ -12,6 +12,7 @@ New Text|Arial|0.500|0.766|48.000|1.000|1.000|1.000|1|0.000|10.000|0.000|1.000|5
 
 [music_cues]
 # asset_key|asset_path|cue_start|cue_end
+track01.xm|intros/3test/test3_assets/track01.xm|0.000|10.000
 
 [curves]
 # target|param|point_count
