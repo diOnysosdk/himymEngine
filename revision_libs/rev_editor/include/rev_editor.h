@@ -203,6 +203,11 @@ struct EditorContext {
     // Build status
     char build_status_message[512];
     float build_status_timer;
+
+    // Startup working directory — captured at CreateEditor time.
+    // Used for all path computations so Windows file-dialog CWD mutations
+    // (OFN_NOCHANGEDIR-less dialogs) cannot corrupt relative paths.
+    char startup_dir[512];
 };
 
 // Lifecycle

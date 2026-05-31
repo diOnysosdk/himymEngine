@@ -95,7 +95,10 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->show_curve_grid = true;
     editor->build_status_message[0] = '\0';
     editor->build_status_timer = 0.0f;
-    
+
+    // Capture startup working directory before any file dialog can mutate it
+    GetCurrentDirectoryA(sizeof(editor->startup_dir), editor->startup_dir);
+
     // Initialize ImGui
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -712,7 +715,7 @@ void RenderUI(EditorContext* editor) {
         ofn.nMaxFile = sizeof(filepath);
         ofn.lpstrFilter = "JSON Files\0*.json\0All Files\0*.*\0";
         ofn.nFilterIndex = 1;
-        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
         
         if (GetOpenFileNameA(&ofn)) {
             if (LoadProject(editor, filepath)) {
@@ -803,8 +806,9 @@ void EndFrame(EditorContext* editor) {
 static bool GetProjectCuesPath(EditorContext* editor, char* out, size_t out_size) {
     if (!editor->project->workspace_path[0] || !editor->project->project_path[0])
         return false;
-    char cwd[512] = {};
-    GetCurrentDirectoryA(sizeof(cwd), cwd);
+    // Use startup_dir (not GetCurrentDirectoryA) so Windows file-dialog CWD
+    // mutations cannot corrupt the result.
+    const char* cwd = editor->startup_dir;
     size_t cwd_len = strlen(cwd);
     const char* wp = editor->project->workspace_path;
     char rel_dir[512] = {};
@@ -841,7 +845,7 @@ void RenderMenuBar(EditorContext* editor) {
                 ofn.nMaxFile = sizeof(filepath);
                 ofn.lpstrFilter = "JSON Files\0*.json\0All Files\0*.*\0";
                 ofn.nFilterIndex = 1;
-                ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+                ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
                 
                 if (GetOpenFileNameA(&ofn)) {
                     if (LoadProject(editor, filepath)) {
@@ -865,7 +869,7 @@ void RenderMenuBar(EditorContext* editor) {
                 ofn.nMaxFile = sizeof(filepath);
                 ofn.lpstrFilter = "Cues Files\0*.txt\0All Files\0*.*\0";
                 ofn.nFilterIndex = 1;
-                ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+                ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
                 
                 if (GetOpenFileNameA(&ofn)) {
                     if (ImportFromCues(editor, filepath)) {
@@ -905,7 +909,7 @@ void RenderMenuBar(EditorContext* editor) {
                 ofn.lpstrFilter = "JSON Files\0*.json\0All Files\0*.*\0";
                 ofn.nFilterIndex = 1;
                 ofn.lpstrDefExt = "json";
-                ofn.Flags = OFN_OVERWRITEPROMPT;
+                ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
                 
                 if (GetSaveFileNameA(&ofn)) {
                     if (SaveProject(editor, filepath)) {
@@ -1742,7 +1746,7 @@ void RenderMusicModal(EditorContext* editor) {
             ofn.lpstrFilter = "XM Modules\0*.xm\0All Files\0*.*\0";
             ofn.nFilterIndex = 1;
             ofn.lpstrInitialDir = "assets";
-            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
             
             if (GetOpenFileNameA(&ofn)) {
                 // Extract just filename
@@ -1821,7 +1825,7 @@ void RenderImageModal(EditorContext* editor) {
             ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0All Files\0*.*\0";
             ofn.nFilterIndex = 1;
             ofn.lpstrInitialDir = "assets";
-            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
             
             if (GetOpenFileNameA(&ofn)) {
                 // Extract just filename
@@ -2337,11 +2341,15 @@ bool BuildAndRun(EditorContext* editor) {
     }
     printf("Export complete.\n");
 
-    // Step 3: Build
+    // Step 3: Build — use absolute build dir so CWD mutations don't matter
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Building intro...", _TRUNCATE);
     editor->build_status_timer = 5.0f;
     printf("Step 2: Building minimal_intro...\n");
-    int build_result = system("cmake --build build --config Release --target minimal_intro");
+    char build_cmd[768];
+    snprintf(build_cmd, sizeof(build_cmd),
+             "cmake --build \"%s\\build\" --config Release --target minimal_intro",
+             editor->startup_dir);
+    int build_result = system(build_cmd);
     if (build_result != 0) {
         printf("ERROR: Build failed with exit code %d\n", build_result);
         strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Build failed! Check console for errors.", _TRUNCATE);
@@ -2350,12 +2358,14 @@ bool BuildAndRun(EditorContext* editor) {
     }
     printf("Build complete.\n");
 
-    // Step 4: Launch — pass cues_path as argv[1] so the intro finds the right file
+    // Step 4: Launch — absolute exe path + cues_path as argv[1]
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Launching intro...", _TRUNCATE);
     editor->build_status_timer = 3.0f;
     printf("Step 3: Launching intro (%s)...\n", cues_path);
-    char run_command[640];
-    snprintf(run_command, sizeof(run_command), "start build\\bin\\Release\\minimal_intro.exe %s", cues_path);
+    char run_command[768];
+    snprintf(run_command, sizeof(run_command),
+             "start \"\" \"%s\\build\\bin\\Release\\minimal_intro.exe\" %s",
+             editor->startup_dir, cues_path);
     int run_result = system(run_command);
     
     if (run_result == 0) {
@@ -2395,24 +2405,29 @@ bool PackBuildAndRun(EditorContext* editor) {
     }
     printf("Export complete.\n");
 
-    // Step 3: Pack assets into build/packed_assets.h
+    // Step 3: Pack assets into {startup_dir}\build\packed_assets.h
     // Pack cache lives next to the project so each project tracks its own checksums.
     char pack_cache_path[512] = {};
     snprintf(pack_cache_path, sizeof(pack_cache_path), "%s/pack_cache.txt",
-             editor->project->workspace_path[0] ? editor->project->workspace_path : "assets");
+             editor->project->workspace_path[0] ? editor->project->workspace_path
+                                                 : editor->startup_dir);
     for (char* p = pack_cache_path; *p; ++p) if (*p == '\\') *p = '/';
+
+    char packed_header_path[512] = {};
+    char build_dir[512] = {};
+    snprintf(build_dir, sizeof(build_dir), "%s\\build", editor->startup_dir);
+    CreateDirectoryA(build_dir, NULL);
+    snprintf(packed_header_path, sizeof(packed_header_path), "%s\\packed_assets.h", build_dir);
 
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Packing assets...", _TRUNCATE);
     editor->build_status_timer = 5.0f;
     printf("Step 2: Packing assets (cache: %s)...\n", pack_cache_path);
 
-    CreateDirectoryA("build", NULL);
-
     rev::pack::PackResult pack_result = rev::pack::PackAssets(
-        cues_path,               // cues source (project-relative)
-        "build/packed_assets.h", // output header (cmake build dir)
-        pack_cache_path,         // checksum cache next to project
-        ""                       // workspace_root — paths in cues.txt are already relative to cwd
+        cues_path,              // cues source (project-relative)
+        packed_header_path,     // output header (absolute path to build dir)
+        pack_cache_path,        // checksum cache next to project
+        ""                      // workspace_root — paths in cues.txt are already relative to cwd
     );
 
     if (!pack_result.ok) {
@@ -2426,12 +2441,15 @@ bool PackBuildAndRun(EditorContext* editor) {
     printf("Pack complete: %d total, %d packed, %d skipped.\n",
            pack_result.total, pack_result.packed, pack_result.skipped);
 
-    // Step 3: Build the packed target
+    // Step 3: Build the packed target — absolute build dir
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Building packed intro...", _TRUNCATE);
     editor->build_status_timer = 5.0f;
     printf("Step 3: Building minimal_intro_packed...\n");
-    const char* build_command = "cmake --build build --config Release --target minimal_intro_packed";
-    int build_result = system(build_command);
+    char build_cmd[768];
+    snprintf(build_cmd, sizeof(build_cmd),
+             "cmake --build \"%s\\build\" --config Release --target minimal_intro_packed",
+             editor->startup_dir);
+    int build_result = system(build_cmd);
     if (build_result != 0) {
         printf("ERROR: Build failed with exit code %d\n", build_result);
         strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Build failed! Check console for errors.", _TRUNCATE);
@@ -2440,13 +2458,14 @@ bool PackBuildAndRun(EditorContext* editor) {
     }
     printf("Build complete.\n");
 
-    // Step 4: Launch
+    // Step 4: Launch — absolute exe path + cues_path as argv[1]
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Launching packed intro...", _TRUNCATE);
     editor->build_status_timer = 3.0f;
     printf("Step 4: Launching packed intro (%s)...\n", cues_path);
-    char run_command[640];
+    char run_command[768];
     snprintf(run_command, sizeof(run_command),
-             "start build\\bin\\Release\\minimal_intro_packed.exe %s", cues_path);
+             "start \"\" \"%s\\build\\bin\\Release\\minimal_intro_packed.exe\" %s",
+             editor->startup_dir, cues_path);
     int run_result = system(run_command);
     if (run_result == 0) {
         char msg[128];
