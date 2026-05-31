@@ -7,16 +7,27 @@ description: "Use for the build and compile checks that verify C++ runtime, edit
 Use this skill to validate changes with the smallest useful command set.
 
 ## Default checks
-- `cmake -S . -B build`
-- `cmake --build build --config Release`
+```powershell
+cmake --build build --config Release
+```
 
-## Add when relevant
-- `cmake -S . -B build -DREV_ENABLE_3D=ON ; cmake --build build --config Release` when optional 3D or mesh renderer code changed.
-- `python -m py_compile tools/scene_block_editor.py` when editor code changed.
-- Use the editor `Do It All` path when workflow behavior changes (save/export/configure/build/run), and inspect `build/scene_block_editor_workflow.log` for per-step failures.
-- If `intro.exe` exits immediately after a successful build, inspect `build/runtime_startup.log` before broadening investigation.
+## Targeted rebuilds (faster)
+```powershell
+cmake --build build --config Release --target editor_app
+cmake --build build --config Release --target minimal_intro
+cmake --build build --config Release --target editor_app minimal_intro
+```
+
+## IMPORTANT: run cmake from workspace root
+Always run cmake from `E:\code\cpp\mono\himym` — do NOT cd into build/bin/Release first, or cmake will fail with "not a directory" error.
+
+## Debug image loading
+- Check `build/bin/Release/intro_debug.log` after running `minimal_intro.exe`
+- GDI+ error 3 = FileNotFound OR GDI+ not initialized (check both)
+- `LoadImageCue` returns false = cues.txt parser field mismatch (check field count)
 
 ## Validation rules
 - Prefer the narrowest command that can falsify the current hypothesis.
 - Do not widen the validation scope before the first focused check.
 - Treat build results as part of the implementation, not a postscript.
+- After changing cues.txt export format, always verify `LoadImageCue` parser field count matches.

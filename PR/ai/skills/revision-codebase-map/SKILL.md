@@ -1,33 +1,59 @@
 ---
 name: revision-codebase-map
-description: "Use when orienting on the C++ runtime layout, file ownership, and cross-module invariants before editing."
+description: "Use when orienting on the himym project layout, file ownership, and cross-module invariants before editing."
 ---
 # Revision Codebase Map
 
-Use this skill to map the C++ surface before making changes.
+Use this skill to map the project surface before making changes.
 
-## Main C++ ownership
-- `src/app`: entry point, startup gating, frame loop orchestration.
-- `src/platform`: Win32 windowing, message pump, timing, cursor lifecycle.
-- `src/audio`: XM decode, WinMM streaming, cue-driven music startup.
-- `src/sequence`: phase graph, scene-cycle timing, exposure/fade, scene look config.
-- `src/content`: authored-data loaders and embedded asset glue.
-- `src/renderer`: WGL/OpenGL init, shader plumbing, optional 3D, overlays.
+## Directory layout
+```
+revision_libs/
+  rev_editor/        C++ editor library (scene blocks, image cues, shader cues, export)
+    include/         rev_editor.h — ProjectData, SceneBlock, ImageCue, ShaderCue structs
+    src/             editor_context.cpp — core editor logic, preview, image loading
+  rev_platform/      Win32 windowing, OpenGL context, GLFW/Win32 backend
+  rev_shader/        Shader compilation, uniform binding
+  rev_curve/         Curve/animation system
+  rev_sequence/      Timeline sequencing
+examples/
+  editor_app/        main.cpp — editor entry point; GDI+ init, ImGui loop
+  minimal_intro/     main.cpp — standalone compiled intro; reads assets/cues.txt
+assets/
+  cues.txt           Exported runtime data (shader_cues, image_cues, text_cues, etc.)
+{project_name}_assets/
+                     Per-project image/asset folder (created on LoadProject)
+PR/
+  ai/                Agent definitions, skills, instructions
+  architecture/      ARCHITECTURE.md, API-REFERENCE.md
+```
 
-## Startup diagnostics ownership
-- `src/app/main_win32.cc`: strict startup guard outcomes and top-level startup failure logging.
-- `src/content/shader_pipeline_loader.cc`: `[shader_pipeline]` parsing/validation (dependency graph, optional-empty field handling, load rejection reasons).
-- `tools/scene_block_editor.py`: pre-export validation that should reject malformed pipeline dependency chains before runtime launch.
+## Key struct relationships
+- `ProjectData` owns `scenes[]` (SceneBlock), each scene has `image_cues[]` (ImageCue) and `shader_cues[]` (ShaderCue)
+- `ProjectData.assets_path` = `{workspace}\{project_name}_assets` — set on LoadProject, folder auto-created
+- `ProjectData.project_path` and `.workspace_path` — set from the .himym/.json file path
+
+## cues.txt format
+```
+[image_cues]
+asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order
+```
+- `asset_path` = `{project_name}_assets/{asset_key}` (relative from workspace root)
+- Runtime (minimal_intro) resolves to `../../../{asset_path}` from `build/bin/Release/`
+
+## Image loading invariants
+- GDI+ must be initialized (`GdiplusStartup`) before any `LoadImageTexture` call
+- GDI+ requires backslash path separators on Windows
+- editor_app and minimal_intro both init GDI+ in their respective `main()`
 
 ## Stable invariants
 - Keep the frame loop deterministic and explicit.
-- Keep authored runtime assets embedded-first in release behavior.
 - Keep authoring/export semantics aligned with runtime loaders.
-- Keep heavyweight 3D state runtime-owned instead of parked on the stack.
+- Keep `LoadImageCue` parser field count matching the export format (currently 9 fields with `layer_order`).
 - Treat build validation as part of the change, not a separate optional step.
 
 ## Pair with
-- `Revision Runtime Core` for `src/...` runtime work.
-- `Scene Block Editor` for `tools/scene_block_editor.py` and export semantics.
+- `Revision Runtime Core` for `examples/minimal_intro/` runtime changes.
+- `Scene Block Editor` for `revision_libs/rev_editor/` and export semantics.
 - `Shader Authoring` for GLSL and shader plumbing.
 - `Revision Build Validation` for verification.

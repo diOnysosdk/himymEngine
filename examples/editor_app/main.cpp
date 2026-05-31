@@ -1,5 +1,7 @@
 #include <windows.h>
 #include <gl/gl.h>
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
 #include "rev_platform.h"
 #include "rev_editor.h"
 
@@ -30,6 +32,12 @@ int main() {
     
     // Load OpenGL functions
     rev::platform::LoadGLFunctions();
+    
+    // Initialize GDI+ for image loading
+    Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+    ULONG_PTR gdiplusToken;
+    Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr);
+    
     glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)rev::platform::GetProcAddress("glGenVertexArrays");
     glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)rev::platform::GetProcAddress("glBindVertexArray");
     
@@ -70,6 +78,7 @@ int main() {
     
     // Cleanup
     rev::editor::DestroyEditor(editor);
+    Gdiplus::GdiplusShutdown(gdiplusToken);
     rev::platform::DestroyIntroWindow(window);
     
     return 0;

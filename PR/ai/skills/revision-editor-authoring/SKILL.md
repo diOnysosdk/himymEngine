@@ -1,31 +1,40 @@
 ---
 name: Scene Block Editor
-description: "Use for tools/scene_block_editor.py and related authoring/export flow changes that touch scene settings, OBJ/MTL import, text/image cues, shader curves, or Do It All build/run behavior."
+description: "Use for revision_libs/rev_editor/ and editor_app changes: scene blocks, image cues, shader cues, project assets, export (cues.txt), and preview rendering."
 ---
 # Scene Block Editor
 
 Use this skill for editor-side authoring work.
 
 ## Scope
-- `tools/scene_block_editor.py`
-- `tools/scene_block_editor_*.py`
-- exported authored files such as `assets/scene_data.txt`, `assets/scene3d.txt`, `assets/image_cues.txt`, `assets/text_cues.txt`, `assets/shader_curves.txt`
+- `revision_libs/rev_editor/src/editor_context.cpp` — core editor logic, LoadProject, ExportCues, RenderPreviewFrame
+- `revision_libs/rev_editor/include/rev_editor.h` — ProjectData, SceneBlock, ImageCue, ShaderCue structs
+- `examples/editor_app/main.cpp` — editor entry point, GDI+ init, ImGui integration
+- `assets/cues.txt` — exported runtime data
 
 ## Non-negotiables
-- Keep Active timing and Effect timing separate in the UI and export.
-- Keep text kinds explicit: `title_main`, `credits_main`, `scroll_text`, `multiline_text`.
-- Keep non-scroll text anchor semantics explicit: `x=0.5`, `y=0.5` means center.
-- Keep 3D row export deterministic, objectized, and aligned with runtime consumption.
-- Keep OBJ/MTL import and normal-map linking deterministic and lightweight.
-- Keep `Do It All` as a direct save -> export -> configure -> build -> run workflow.
-- Keep shader pipeline export dependency fields explicit: only the root scene pass may have a blank `dependencies` field; all other passes must name at least one dependency.
-- Fail export/validation in the editor when pipeline dependency chains are malformed instead of deferring the failure to runtime startup.
+- Keep `assets_path` set on every `LoadProject` call: `{workspace}\{project_name}_assets`.
+- Auto-create the assets folder via `CreateDirectoryA` when loading a project.
+- Keep `ExportCues` image path format as `{project_name}_assets/{asset_key}` (workspace-relative).
+- Keep `LoadImageTexture` called only after `GdiplusStartup` has been called in `main()`.
+- GDI+ must use backslash separators in all paths.
+- Keep the cues.txt image_cues format: `asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order` (9 fields).
+- Keep `ProjectData.assets_path` memset-cleared in `CreateEditor`, `NewProject`, and `LoadProject`.
+- Keep editor preview frame rendering: shader cue composited first, image cue overlaid on top.
+
+## Project-specific assets workflow
+1. User opens/creates `{name}.himym` or `{name}.json`
+2. `LoadProject` extracts project name → creates `{workspace}\{name}_assets\` folder
+3. User copies images into `{name}_assets/` folder
+4. Image cues reference images by filename (`asset_key`) only
+5. Editor builds full path as `{assets_path}\{asset_key}` for preview loading
+6. Export writes `{name}_assets/{asset_key}` as `asset_path` in cues.txt
 
 ## Read-before-edit targets
-- `tools/scene_block_editor.py`
-- `src/content/shader_pipeline_loader.cc` when changing `[shader_pipeline]` row format or dependency semantics
-- the matching runtime loader or renderer for the exported data
-- `docs/API-REFERENCE.md` when timing/export semantics are in play
+- `revision_libs/rev_editor/include/rev_editor.h` for struct layout
+- `revision_libs/rev_editor/src/editor_context.cpp` — LoadProject, ExportCues, RenderPreviewFrame
+- `examples/minimal_intro/main.cpp` — `LoadImageCue` parser, must stay aligned with export format
+- `PR/architecture/API-REFERENCE.md` when struct/API contracts change
 
 ## Pair with
 - `Revision Runtime Core` when export semantics affect runtime behavior.

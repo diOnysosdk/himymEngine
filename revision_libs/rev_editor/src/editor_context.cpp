@@ -1,7 +1,18 @@
 #include "rev_editor.h"
+#include "rev_shader.h"
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 #include <windows.h>
+#include <gl/gl.h>
+#include <gdiplus.h>
+
+#pragma comment(lib, "gdiplus.lib")
+
+// OpenGL constants not in gl.h
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
 
 // NOTE: This file requires Dear ImGui to be fully functional
 // See revision_libs/rev_editor/README.md for setup instructions
@@ -60,6 +71,16 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->selected_cue_type = 0;
     editor->current_time = 0.0f;
     editor->playing = false;
+    editor->show_preview = true;
+    editor->preview_fbo = 0;
+    editor->preview_texture = 0;
+    editor->preview_depth = 0;
+    editor->preview_width = 1920;
+    editor->preview_height = 1080;
+    editor->preview_initialized = false;
+    editor->preview_shader = nullptr;
+    editor->sprite_shader = nullptr;
+    editor->preview_current_shader_id = -1;
     editor->shader_modal_open = false;
     editor->shader_modal_request_open = false;
     editor->music_modal_open = false;
@@ -110,6 +131,7 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->project->total_duration = 0.0f;
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
+    memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
     
     return editor;
 }
@@ -140,6 +162,9 @@ void DestroyEditor(EditorContext* editor) {
         
         delete editor->project;
     }
+    
+    // Cleanup preview
+    CleanupPreview(editor);
     
     // Cleanup ImGui
     ImGui_ImplOpenGL3_Shutdown();
@@ -308,8 +333,38 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_fade\": %d", &current_shader_cue.curve_fade);
             } else if (start[0] == '}' && current_shader_cue.shader_name[0] != '\0') {
                 // End of shader cue object - add it
+                printf("[LoadProject] Loaded shader cue: name='%s' id=%d start=%.2f end=%.2f\n",
+                       current_shader_cue.shader_name, current_shader_cue.shader_scene_id,
+                       current_shader_cue.cue_start, current_shader_cue.cue_end);
                 AddShaderCue(current_scene, current_shader_cue);
                 memset(&current_shader_cue, 0, sizeof(current_shader_cue));
+            }
+        }
+        
+        // Parse image cue fields
+        if (in_image_cues && current_scene) {
+            if (strstr(start, "\"asset_key\":")) {
+                sscanf_s(start, "\"asset_key\": \"%127[^\"]\"", current_image_cue.asset_key, (unsigned)sizeof(current_image_cue.asset_key));
+            } else if (strstr(start, "\"x\":")) {
+                sscanf_s(start, "\"x\": %f", &current_image_cue.x);
+            } else if (strstr(start, "\"y\":")) {
+                sscanf_s(start, "\"y\": %f", &current_image_cue.y);
+            } else if (strstr(start, "\"scale\":")) {
+                sscanf_s(start, "\"scale\": %f", &current_image_cue.scale);
+            } else if (strstr(start, "\"opacity\":")) {
+                sscanf_s(start, "\"opacity\": %f", &current_image_cue.opacity);
+            } else if (strstr(start, "\"cue_start\":")) {
+                sscanf_s(start, "\"cue_start\": %f", &current_image_cue.cue_start);
+            } else if (strstr(start, "\"cue_end\":")) {
+                sscanf_s(start, "\"cue_end\": %f", &current_image_cue.cue_end);
+            } else if (strstr(start, "\"layer_order\":")) {
+                sscanf_s(start, "\"layer_order\": %d", &current_image_cue.layer_order);
+            } else if (start[0] == '}' && current_image_cue.asset_key[0] != '\0') {
+                // End of image cue object - add it
+                printf("[LoadProject] Loaded image cue: %s pos=(%.2f,%.2f) scale=%.2f\n",
+                       current_image_cue.asset_key, current_image_cue.x, current_image_cue.y, current_image_cue.scale);
+                AddImageCue(current_scene, current_image_cue);
+                memset(&current_image_cue, 0, sizeof(current_image_cue));
             }
         }
         
@@ -346,6 +401,37 @@ bool LoadProject(EditorContext* editor, const char* path) {
     fclose(f);
     
     strncpy_s(editor->project->project_path, path, sizeof(editor->project->project_path) - 1);
+    
+    // Set workspace_path to the directory containing the project file
+    strncpy_s(editor->project->workspace_path, path, sizeof(editor->project->workspace_path) - 1);
+    // Find last slash/backslash and truncate to get directory
+    char* last_slash = strrchr(editor->project->workspace_path, '\\');
+    if (!last_slash) last_slash = strrchr(editor->project->workspace_path, '/');
+    if (last_slash) *last_slash = '\0';
+    
+    printf("[LoadProject] Workspace path set to: %s\n", editor->project->workspace_path);
+    
+    // Create project-specific assets folder path
+    // Extract project name from path (filename without extension)
+    char project_name[256] = {0};
+    const char* filename_start = strrchr(path, '\\');
+    if (!filename_start) filename_start = strrchr(path, '/');
+    filename_start = filename_start ? filename_start + 1 : path;
+    
+    // Copy filename and remove extension
+    strncpy_s(project_name, filename_start, sizeof(project_name) - 1);
+    char* dot = strrchr(project_name, '.');
+    if (dot) *dot = '\0';
+    
+    // Create assets folder path: workspace_path\{project_name}_assets
+    snprintf(editor->project->assets_path, sizeof(editor->project->assets_path),
+             "%s\\%s_assets", editor->project->workspace_path, project_name);
+    
+    // Create the directory if it doesn't exist
+    CreateDirectoryA(editor->project->assets_path, NULL);
+    
+    printf("[LoadProject] Assets path set to: %s\n", editor->project->assets_path);
+    
     editor->project->modified = false;
     
     return true;
@@ -531,6 +617,7 @@ bool NewProject(EditorContext* editor) {
     editor->project->total_duration = 0.0f;
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
+    memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
     editor->project->modified = false;
     
     return true;
@@ -543,6 +630,15 @@ void BeginFrame(EditorContext* editor) {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
+    
+    // Update playback
+    ImGuiIO& io = ImGui::GetIO();
+    UpdatePlayback(editor, io.DeltaTime);
+    
+    // Render preview frame
+    if (editor->show_preview && editor->preview_initialized) {
+        RenderPreviewFrame(editor);
+    }
 }
 
 void RenderUI(EditorContext* editor) {
@@ -646,6 +742,10 @@ void RenderUI(EditorContext* editor) {
         RenderTextModal(editor);
     }
     
+    if (editor->show_preview) {
+        RenderPreviewPanel(editor);
+    }
+    
     if (editor->show_demo) {
         // ImGui::ShowDemoWindow(&editor->show_demo);  // Requires imgui_demo.cpp
     }
@@ -710,6 +810,31 @@ void RenderMenuBar(EditorContext* editor) {
                     }
                 }
             }
+            if (ImGui::MenuItem("Import from cues.txt")) {
+                // Win32 file dialog for cues.txt
+                OPENFILENAMEA ofn = {};
+                char filepath[260] = {};
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = (HWND)editor->window->hwnd;
+                ofn.lpstrFile = filepath;
+                ofn.nMaxFile = sizeof(filepath);
+                ofn.lpstrFilter = "Cues Files\0*.txt\0All Files\0*.*\0";
+                ofn.nFilterIndex = 1;
+                ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+                
+                if (GetOpenFileNameA(&ofn)) {
+                    if (ImportFromCues(editor, filepath)) {
+                        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), 
+                                 "Imported from cues.txt!", _TRUNCATE);
+                        editor->build_status_timer = 3.0f;
+                    } else {
+                        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), 
+                                 "Import failed!", _TRUNCATE);
+                        editor->build_status_timer = 5.0f;
+                    }
+                }
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Save", "Ctrl+S")) { 
                 const char* path = (editor->project->project_path[0] != '\0') 
                     ? editor->project->project_path 
@@ -759,6 +884,7 @@ void RenderMenuBar(EditorContext* editor) {
             ImGui::MenuItem("Properties", nullptr, &editor->show_properties);
             ImGui::MenuItem("Curve Editor", nullptr, &editor->show_curve_editor);
             ImGui::MenuItem("Asset Browser", nullptr, &editor->show_asset_browser);
+            ImGui::MenuItem("Preview", nullptr, &editor->show_preview);
             ImGui::Separator();
             ImGui::MenuItem("ImGui Demo", nullptr, &editor->show_demo);
             ImGui::EndMenu();
@@ -920,6 +1046,7 @@ void RenderProperties(EditorContext* editor) {
                 cue.opacity = 1.0f;
                 cue.cue_start = 0.0f;
                 cue.cue_end = scene->duration;
+                cue.layer_order = 0;
                 int new_index = AddImageCue(scene, cue);
                 editor->editing_image = scene->image_cues[new_index];
                 editor->selected_cue_index = new_index;
@@ -938,6 +1065,7 @@ void RenderProperties(EditorContext* editor) {
                 cue.color = {1.0f, 1.0f, 1.0f};
                 cue.cue_start = 0.0f;
                 cue.cue_end = scene->duration;
+                cue.layer_order = 0;
                 int new_index = AddTextCue(scene, cue);
                 editor->editing_text = scene->text_cues[new_index];
                 editor->selected_cue_index = new_index;
@@ -1665,6 +1793,12 @@ void RenderImageModal(EditorContext* editor) {
         
         ImGui::Separator();
         
+        // Layer
+        ImGui::Text("Layer Order (lower draws first):");
+        ImGui::SliderInt("Layer", &cue->layer_order, -10, 10);
+        
+        ImGui::Separator();
+        
         // Timing
         ImGui::Text("Timing (seconds):");
         ImGui::InputFloat("Start", &cue->cue_start, 0.1f, 1.0f);
@@ -1759,6 +1893,12 @@ void RenderTextModal(EditorContext* editor) {
         
         ImGui::Separator();
         
+        // Layer
+        ImGui::Text("Layer Order (lower draws first):");
+        ImGui::SliderInt("Layer", &cue->layer_order, -10, 10);
+        
+        ImGui::Separator();
+        
         // Apply/Cancel
         if (ImGui::Button("Apply", ImVec2(120, 0))) {
             // Apply changes
@@ -1786,6 +1926,134 @@ void RenderTextModal(EditorContext* editor) {
             editor->text_modal_open = false;
         }
     }
+}
+
+bool ImportFromCues(EditorContext* editor, const char* cues_path) {
+    if (!editor || !cues_path) return false;
+    
+    FILE* f = nullptr;
+    fopen_s(&f, cues_path, "r");
+    if (!f) return false;
+    
+    printf("[ImportFromCues] Reading %s\n", cues_path);
+    
+    // Clear existing project and create a default scene
+    NewProject(editor);
+    
+    char line[1024];
+    enum Section { NONE, SHADER_CUES, IMAGE_CUES, TEXT_CUES, MUSIC_CUES, CURVES, METADATA };
+    Section current_section = NONE;
+    
+    float total_duration = 10.0f; // Default
+    
+    while (fgets(line, sizeof(line), f)) {
+        // Trim whitespace
+        char* start = line;
+        while (*start == ' ' || *start == '\t') start++;
+        if (*start == '\n' || *start == '\r' || *start == '\0' || *start == '#') continue;
+        
+        // Section detection
+        if (strstr(start, "[shader_cues]")) { current_section = SHADER_CUES; continue; }
+        if (strstr(start, "[image_cues]")) { current_section = IMAGE_CUES; continue; }
+        if (strstr(start, "[text_cues]")) { current_section = TEXT_CUES; continue; }
+        if (strstr(start, "[music_cues]")) { current_section = MUSIC_CUES; continue; }
+        if (strstr(start, "[curves]")) { current_section = CURVES; continue; }
+        if (strstr(start, "[metadata]")) { current_section = METADATA; continue; }
+        
+        // Parse metadata
+        if (current_section == METADATA) {
+            if (sscanf_s(start, "total_duration=%f", &total_duration) == 1) {
+                printf("[ImportFromCues] Total duration: %.2f\n", total_duration);
+            }
+            continue;
+        }
+        
+        // Parse shader cues
+        if (current_section == SHADER_CUES) {
+            ShaderCue cue = {};
+            int shader_id;
+            float abs_start, abs_end;
+            
+            int parsed = sscanf_s(start, "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d",
+                &shader_id,
+                &cue.palette_low.r, &cue.palette_low.g, &cue.palette_low.b,
+                &cue.palette_mid.r, &cue.palette_mid.g, &cue.palette_mid.b,
+                &cue.palette_high.r, &cue.palette_high.g, &cue.palette_high.b,
+                &cue.speed, &cue.intensity, &cue.warp,
+                &cue.exposure_base, &cue.exposure_ramp,
+                &cue.fade_base, &cue.fade_ramp,
+                &abs_start, &abs_end, &cue.fade_in, &cue.fade_out,
+                &cue.layer_role, &cue.opacity, &cue.blend_mode, &cue.layer_order
+            );
+            
+            if (parsed >= 18) { // At least basic params
+                cue.shader_scene_id = shader_id;
+                cue.cue_start = abs_start;
+                cue.cue_end = abs_end;
+                
+                // Set shader name based on ID
+                const char* preset_name = "Unknown";
+                for (int i = 0; i < 10; i++) {
+                    if (g_shader_presets[i].id == shader_id) {
+                        preset_name = g_shader_presets[i].name;
+                        break;
+                    }
+                }
+                strncpy_s(cue.shader_name, sizeof(cue.shader_name), preset_name, _TRUNCATE);
+                
+                // Create scene if needed (use total duration)
+                if (editor->project->scene_count == 0) {
+                    AddScene(editor, "Imported Scene", total_duration);
+                }
+                
+                SceneBlock* scene = &editor->project->scenes[0];
+                AddShaderCue(scene, cue);
+                
+                printf("[ImportFromCues] Imported shader cue: id=%d name='%s' %.2f-%.2f\n",
+                       shader_id, cue.shader_name, abs_start, abs_end);
+            }
+            continue;
+        }
+        
+        // Parse image cues
+        if (current_section == IMAGE_CUES) {
+            ImageCue cue = {};
+            char asset_key[128];
+            float abs_start, abs_end;
+            
+            int parsed = sscanf_s(start, "%127[^|]|%f|%f|%f|%f|%f|%f|%d",
+                asset_key, (unsigned)sizeof(asset_key),
+                &cue.x, &cue.y, &cue.scale, &cue.opacity,
+                &abs_start, &abs_end, &cue.layer_order
+            );
+            
+            if (parsed >= 7) {
+                strncpy_s(cue.asset_key, sizeof(cue.asset_key), asset_key, _TRUNCATE);
+                cue.cue_start = abs_start;
+                cue.cue_end = abs_end;
+                
+                if (editor->project->scene_count == 0) {
+                    AddScene(editor, "Imported Scene", total_duration);
+                }
+                
+                SceneBlock* scene = &editor->project->scenes[0];
+                AddImageCue(scene, cue);
+                
+                printf("[ImportFromCues] Imported image cue: %s\n", asset_key);
+            }
+            continue;
+        }
+    }
+    
+    fclose(f);
+    
+    // Update project metadata
+    if (editor->project) {
+        editor->project->total_duration = total_duration;
+    }
+    
+    printf("[ImportFromCues] Import complete!\n");
+    return true;
 }
 
 bool ExportProject(EditorContext* editor, const char* output_path) {
@@ -1837,7 +2105,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     
     // [image_cues] section
     fprintf(f, "[image_cues]\n");
-    fprintf(f, "# asset_key|x|y|scale|opacity|cue_start|cue_end\n");
+    fprintf(f, "# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order\n");
     
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
@@ -1850,11 +2118,25 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
         for (int cue_idx = 0; cue_idx < scene->image_cue_count; ++cue_idx) {
             ImageCue* cue = &scene->image_cues[cue_idx];
             float abs_start = scene_start + cue->cue_start;
-            float abs_end = scene_start + cue->cue_end;
+            float abs_end = (cue->cue_end < 0.0f) ? (scene_start + scene->duration) : (scene_start + cue->cue_end);
             
-            fprintf(f, "%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f\n",
-                cue->asset_key, cue->x, cue->y, cue->scale, cue->opacity,
-                abs_start, abs_end
+            // Extract project name from workspace path to construct assets folder name
+            char project_name[256] = {0};
+            const char* proj_path = editor->project->project_path;
+            const char* filename_start = strrchr(proj_path, '\\');
+            if (!filename_start) filename_start = strrchr(proj_path, '/');
+            filename_start = filename_start ? filename_start + 1 : proj_path;
+            strncpy_s(project_name, filename_start, sizeof(project_name) - 1);
+            char* dot = strrchr(project_name, '.');
+            if (dot) *dot = '\0';
+            
+            // Construct full path: {project_name}_assets/{asset_key}
+            char full_path[256];
+            snprintf(full_path, sizeof(full_path), "%s_assets/%s", project_name, cue->asset_key);
+            
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d\n",
+                cue->asset_key, full_path, cue->x, cue->y, cue->scale, cue->opacity,
+                abs_start, abs_end, cue->layer_order
             );
         }
     }
@@ -1863,7 +2145,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     
     // [text_cues] section
     fprintf(f, "[text_cues]\n");
-    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|effect_start|effect_end\n");
+    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|effect_start|effect_end|layer_order\n");
     
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
@@ -1880,10 +2162,11 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             float abs_effect_start = scene_start + cue->effect_start;
             float abs_effect_end = scene_start + cue->effect_end;
             
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f\n",
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%d\n",
                 cue->text, cue->font_name, cue->x, cue->y, cue->size,
                 cue->color.r, cue->color.g, cue->color.b,
-                cue->effect_type, abs_start, abs_end, abs_effect_start, abs_effect_end
+                cue->effect_type, abs_start, abs_end, abs_effect_start, abs_effect_end,
+                cue->layer_order
             );
         }
     }
@@ -2271,6 +2554,946 @@ void RandomizeShaderColors(ShaderCue* cue) {
     cue->palette_high.g = (float)rand() / RAND_MAX;
     cue->palette_high.b = (float)rand() / RAND_MAX;
 }
+
+// ===== PREVIEW VIEWPORT =====
+
+// Helper: Load image texture from file using GDI+
+static unsigned int LoadImageTexture(const char* path, int* out_width, int* out_height) {
+    // Convert to wide string
+    wchar_t wpath[512];
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, 512);
+    
+    // Load image with GDI+
+    Gdiplus::Bitmap* bitmap = new Gdiplus::Bitmap(wpath);
+    if (!bitmap || bitmap->GetLastStatus() != Gdiplus::Ok) {
+        Gdiplus::Status status = bitmap ? bitmap->GetLastStatus() : Gdiplus::OutOfMemory;
+        printf("[LoadImageTexture] FAILED: GDI+ error %d for path: %s\n", status, path);
+        delete bitmap;
+        return 0;
+    }
+    
+    int width = bitmap->GetWidth();
+    int height = bitmap->GetHeight();
+    if (out_width) *out_width = width;
+    if (out_height) *out_height = height;
+    
+    // Lock bitmap data
+    Gdiplus::BitmapData bitmapData;
+    Gdiplus::Rect rect(0, 0, width, height);
+    if (bitmap->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &bitmapData) != Gdiplus::Ok) {
+        delete bitmap;
+        return 0;
+    }
+    
+    // Convert BGRA to RGBA
+    unsigned char* pixels = new unsigned char[width * height * 4];
+    unsigned char* src = (unsigned char*)bitmapData.Scan0;
+    for (int i = 0; i < width * height * 4; i += 4) {
+        pixels[i + 0] = src[i + 2];  // R
+        pixels[i + 1] = src[i + 1];  // G
+        pixels[i + 2] = src[i + 0];  // B
+        pixels[i + 3] = src[i + 3];  // A
+    }
+    
+    bitmap->UnlockBits(&bitmapData);
+    
+    // Create OpenGL texture
+    unsigned int texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    
+    delete[] pixels;
+    delete bitmap;
+    
+    return texture;
+}
+
+// Simple vertex shader for fullscreen quad
+static const char* preview_vertex_shader = R"(
+#version 330 core
+out vec2 uv;
+void main() {
+    float x = -1.0 + float((gl_VertexID & 1) << 2);
+    float y = -1.0 + float((gl_VertexID & 2) << 1);
+    uv = vec2((x + 1.0) * 0.5, (y + 1.0) * 0.5);
+    gl_Position = vec4(x, y, 0.0, 1.0);
+}
+)";
+
+// Test fragment shader - Plasma effect
+static const char* preview_fragment_shader = R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    float v = sin(p.x * 10.0 + t) + sin(p.y * 10.0 + t * 0.5) + sin((p.x + p.y) * 5.0 + t * 0.8);
+    v = v / 3.0 * u_intensity;
+    
+    vec3 col = mix(mix(u_palette_low, u_palette_mid, smoothstep(-1.0, 0.0, v)), 
+                   u_palette_high, smoothstep(0.0, 1.0, v));
+    
+    fragColor = vec4(col, 1.0);
+}
+)";
+
+// Sprite vertex shader for image/text rendering
+static const char* sprite_vertex_shader = R"(
+#version 330 core
+out vec2 uv;
+uniform vec2 u_position;  // -1 to 1
+uniform vec2 u_size;      // width, height in normalized coords
+void main() {
+    float x = -1.0 + float((gl_VertexID & 1) << 2);
+    float y = -1.0 + float((gl_VertexID & 2) << 1);
+    uv = vec2((x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5);  // Flip V coordinate
+    gl_Position = vec4(u_position.x + x * u_size.x, u_position.y + y * u_size.y, 0.0, 1.0);
+}
+)";
+
+// Sprite fragment shader - textured with opacity
+static const char* sprite_fragment_shader = R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform sampler2D u_texture;
+uniform float u_opacity;
+void main() {
+    vec4 texColor = texture(u_texture, uv);
+    fragColor = vec4(texColor.rgb, texColor.a * u_opacity);
+}
+)";
+
+// All 10 shader presets fragment shaders
+static const char* g_preview_fragment_shaders[] = {
+    // 0: Plasma Vibrant
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    float v = sin(p.x * 10.0 + t) + sin(p.y * 10.0 + t * 0.5) + sin((p.x + p.y) * 5.0 + t * 0.8);
+    v = v / 3.0 * u_intensity;
+    
+    vec3 col = mix(mix(u_palette_low, u_palette_mid, smoothstep(-1.0, 0.0, v)), 
+                   u_palette_high, smoothstep(0.0, 1.0, v));
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+    
+    // 1: Tunnel Neon
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    float r = length(p);
+    float a = atan(p.y, p.x);
+    float d = 1.0 / (r + 0.1);
+    
+    float tunnel = fract(d - t * 0.5);
+    float rings = abs(sin(tunnel * 20.0));
+    
+    vec3 col = mix(u_palette_low, u_palette_high, rings);
+    col = mix(col, u_palette_mid, smoothstep(0.3, 0.7, tunnel));
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+    
+    // 2: Raymarcher SDF
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+
+float sdSphere(vec3 p, float r) { return length(p) - r; }
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    vec3 ro = vec3(0, 0, -3);
+    vec3 rd = normalize(vec3(p, 1.0));
+    
+    float dist = 0.0;
+    for (int i = 0; i < 32; i++) {
+        vec3 pos = ro + rd * dist;
+        float d = sdSphere(pos - vec3(sin(t) * 0.5, cos(t * 0.7) * 0.5, 0), 0.5);
+        if (d < 0.001) break;
+        dist += d;
+    }
+    
+    vec3 col = mix(u_palette_low, u_palette_high, smoothstep(2.0, 5.0, dist));
+    fragColor = vec4(col, 1.0);
+}
+)",
+    
+    // 3: Fractal Mandelbrot
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0) * 2.0;
+    float t = u_time * u_speed * 0.2;
+    p += vec2(sin(t) * 0.3, cos(t * 0.7) * 0.3);
+    
+    vec2 c = p;
+    vec2 z = vec2(0.0);
+    float iter = 0.0;
+    
+    for (int i = 0; i < 64; i++) {
+        z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+        if (length(z) > 4.0) break;
+        iter += 1.0;
+    }
+    
+    float v = iter / 64.0;
+    vec3 col = mix(mix(u_palette_low, u_palette_mid, v), u_palette_high, smoothstep(0.7, 1.0, v));
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+    
+    // 4: Voronoi Cells
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+
+vec2 hash2(vec2 p) {
+    p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+    return fract(sin(p) * 43758.5453);
+}
+
+void main() {
+    vec2 p = uv * 8.0 * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    vec2 ip = floor(p);
+    vec2 fp = fract(p);
+    
+    float minDist = 1.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 offset = vec2(x, y);
+            vec2 h = hash2(ip + offset);
+            vec2 pt = offset + sin(h * 6.28 + t) * 0.5 + 0.5;
+            float d = length(pt - fp);
+            minDist = min(minDist, d);
+        }
+    }
+    
+    vec3 col = mix(mix(u_palette_low, u_palette_mid, minDist), u_palette_high, smoothstep(0.5, 1.0, minDist));
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+    
+    // 5: Wave Distortion
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_warp;
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    p.x += sin(p.y * 5.0 + t) * u_warp;
+    p.y += cos(p.x * 5.0 + t * 0.7) * u_warp;
+    
+    float d = length(p);
+    float wave = sin(d * 10.0 - t * 2.0) * 0.5 + 0.5;
+    
+    vec3 col = mix(u_palette_low, u_palette_high, wave);
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+    
+    // 6: Particle System
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    vec3 col = vec3(0.0);
+    
+    for (int i = 0; i < 32; i++) {
+        float fi = float(i);
+        float h = hash(vec2(fi, fi * 0.5));
+        float angle = h * 6.28;
+        float radius = fract(h * 7.13 + t * 0.3) * 2.0;
+        
+        vec2 pos = vec2(cos(angle), sin(angle)) * radius;
+        float d = length(p - pos);
+        float particle = smoothstep(0.05, 0.0, d);
+        
+        vec3 pcol = mix(u_palette_low, mix(u_palette_mid, u_palette_high, h), fract(radius));
+        col += pcol * particle;
+    }
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+    
+    // 7: Starfield
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+
+float hash(vec3 p) {
+    return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    vec3 rd = normalize(vec3(p, 1.0));
+    vec3 col = vec3(0.0);
+    
+    for (int i = 0; i < 64; i++) {
+        float fi = float(i);
+        vec3 star_pos = vec3(hash(vec3(fi, fi * 0.1, 0)) * 2.0 - 1.0,
+                             hash(vec3(fi * 0.5, fi, 0)) * 2.0 - 1.0,
+                             hash(vec3(fi, 0, fi * 0.7)) * 5.0 + 1.0);
+        
+        star_pos.z = fract(star_pos.z - t * 0.5) * 10.0;
+        vec3 proj = star_pos / star_pos.z;
+        
+        float d = length(proj.xy - p);
+        float star = smoothstep(0.02, 0.0, d) / star_pos.z;
+        col += u_palette_high * star;
+    }
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+    
+    // 8: Glow Orbs
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    vec3 col = vec3(0.0);
+    
+    for (int i = 0; i < 5; i++) {
+        float fi = float(i);
+        vec2 orb_pos = vec2(sin(t * 0.5 + fi * 1.2) * 0.6, cos(t * 0.7 + fi * 0.8) * 0.6);
+        float d = length(p - orb_pos);
+        float glow = 0.02 / d;
+        
+        vec3 orb_col = mix(mix(u_palette_low, u_palette_mid, fi / 5.0), u_palette_high, smoothstep(0.3, 0.8, fi / 5.0));
+        col += orb_col * glow;
+    }
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+    
+    // 9: Matrix Rain
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+void main() {
+    vec2 p = uv * vec2(40.0, 30.0);
+    vec2 ip = floor(p);
+    vec2 fp = fract(p);
+    float t = u_time * u_speed;
+    
+    float h = hash(ip);
+    float drop = fract(h * 7.13 - t * 0.5);
+    
+    float char_y = fract((ip.y + drop * 30.0) / 30.0);
+    float char_brightness = smoothstep(0.0, 0.05, drop) * smoothstep(1.0, 0.8, drop);
+    
+    float char = step(0.3, hash(ip + floor(t * 10.0)));
+    float glyph = char * char_brightness;
+    
+    vec3 col = u_palette_high * glyph;
+    
+    fragColor = vec4(col, 1.0);
+}
+)"
+};
+
+static void CompilePreviewShader(EditorContext* editor, int shader_id) {
+    if (!editor) return;
+    if (shader_id < 0 || shader_id >= 10) shader_id = 0;
+    
+    printf("[CompilePreviewShader] Compiling shader ID: %d\n", shader_id);
+    
+    // Destroy old shader if exists
+    if (editor->preview_shader) {
+        rev::shader::DestroyProgram((rev::shader::Program*)editor->preview_shader);
+        editor->preview_shader = nullptr;
+        printf("[CompilePreviewShader] Destroyed old shader\n");
+    }
+    
+    // Compile new shader with correct source
+    editor->preview_shader = rev::shader::CompileFromSource(preview_vertex_shader, g_preview_fragment_shaders[shader_id]);
+    editor->preview_current_shader_id = shader_id;
+    
+    if (editor->preview_shader) {
+        printf("[CompilePreviewShader] SUCCESS: Shader %d compiled\n", shader_id);
+    } else {
+        printf("[CompilePreviewShader] FAILED: Shader %d compilation returned null\n", shader_id);
+    }
+}
+
+void InitializePreview(EditorContext* editor, int width, int height) {
+    if (!editor || editor->preview_initialized) return;
+    
+    // Load OpenGL functions
+    typedef void (*PFNGLGENFRAMEBUFFERSPROC)(int n, unsigned int* framebuffers);
+    typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int target, unsigned int framebuffer);
+    typedef void (*PFNGLFRAMEBUFFERTEXTURE2DPROC)(unsigned int target, unsigned int attachment, unsigned int textarget, unsigned int texture, int level);
+    typedef void (*PFNGLGENRENDERBUFFERSPROC)(int n, unsigned int* renderbuffers);
+    typedef void (*PFNGLBINDRENDERBUFFERPROC)(unsigned int target, unsigned int renderbuffer);
+    typedef void (*PFNGLRENDERBUFFERSTORAGEPROC)(unsigned int target, unsigned int internalformat, int width, int height);
+    typedef void (*PFNGLFRAMEBUFFERRENDERBUFFERPROC)(unsigned int target, unsigned int attachment, unsigned int renderbuffertarget, unsigned int renderbuffer);
+    typedef unsigned int (*PFNGLCHECKFRAMEBUFFERSTATUSPROC)(unsigned int target);
+    
+    auto glGenFramebuffers = (PFNGLGENFRAMEBUFFERSPROC)wglGetProcAddress("glGenFramebuffers");
+    auto glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)wglGetProcAddress("glBindFramebuffer");
+    auto glFramebufferTexture2D = (PFNGLFRAMEBUFFERTEXTURE2DPROC)wglGetProcAddress("glFramebufferTexture2D");
+    auto glGenRenderbuffers = (PFNGLGENRENDERBUFFERSPROC)wglGetProcAddress("glGenRenderbuffers");
+    auto glBindRenderbuffer = (PFNGLBINDRENDERBUFFERPROC)wglGetProcAddress("glBindRenderbuffer");
+    auto glRenderbufferStorage = (PFNGLRENDERBUFFERSTORAGEPROC)wglGetProcAddress("glRenderbufferStorage");
+    auto glFramebufferRenderbuffer = (PFNGLFRAMEBUFFERRENDERBUFFERPROC)wglGetProcAddress("glFramebufferRenderbuffer");
+    auto glCheckFramebufferStatus = (PFNGLCHECKFRAMEBUFFERSTATUSPROC)wglGetProcAddress("glCheckFramebufferStatus");
+    
+    if (!glGenFramebuffers || !glBindFramebuffer || !glFramebufferTexture2D || 
+        !glGenRenderbuffers || !glBindRenderbuffer || !glRenderbufferStorage ||
+        !glFramebufferRenderbuffer || !glCheckFramebufferStatus) {
+        return; // OpenGL functions not available
+    }
+    
+    editor->preview_width = width;
+    editor->preview_height = height;
+    
+    // Create framebuffer
+    glGenFramebuffers(1, &editor->preview_fbo);
+    glBindFramebuffer(0x8D40, editor->preview_fbo); // GL_FRAMEBUFFER
+    
+    // Create color texture
+    glGenTextures(1, &editor->preview_texture);
+    glBindTexture(GL_TEXTURE_2D, editor->preview_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(0x8D40, 0x8CE0, GL_TEXTURE_2D, editor->preview_texture, 0); // GL_COLOR_ATTACHMENT0
+    
+    // Create depth renderbuffer
+    glGenRenderbuffers(1, &editor->preview_depth);
+    glBindRenderbuffer(0x8D41, editor->preview_depth); // GL_RENDERBUFFER
+    glRenderbufferStorage(0x8D41, 0x81A5, width, height); // GL_DEPTH_COMPONENT24
+    glFramebufferRenderbuffer(0x8D40, 0x8D00, 0x8D41, editor->preview_depth); // GL_DEPTH_ATTACHMENT
+    
+    // Check framebuffer completeness
+    if (glCheckFramebufferStatus(0x8D40) != 0x8CD5) { // GL_FRAMEBUFFER_COMPLETE
+        CleanupPreview(editor);
+        return;
+    }
+    
+    // Unbind framebuffer
+    glBindFramebuffer(0x8D40, 0);
+    
+    // Don't compile any shader yet - wait for first render with actual cue
+    // (preview_current_shader_id is -1, so first cue will trigger compile)
+    
+    // Compile sprite shader for image/text
+    editor->sprite_shader = rev::shader::CompileFromSource(sprite_vertex_shader, sprite_fragment_shader);
+    if (!editor->sprite_shader) {
+        CleanupPreview(editor);
+        return;
+    }
+    
+    editor->preview_initialized = true;
+}
+
+void CleanupPreview(EditorContext* editor) {
+    if (!editor || !editor->preview_initialized) return;
+    
+    typedef void (*PFNGLDELETEFRAMEBUFFERSPROC)(int n, const unsigned int* framebuffers);
+    typedef void (*PFNGLDELETERENDERBUFFERSPROC)(int n, const unsigned int* renderbuffers);
+    
+    auto glDeleteFramebuffers = (PFNGLDELETEFRAMEBUFFERSPROC)wglGetProcAddress("glDeleteFramebuffers");
+    auto glDeleteRenderbuffers = (PFNGLDELETERENDERBUFFERSPROC)wglGetProcAddress("glDeleteRenderbuffers");
+    
+    // Destroy shader programs
+    if (editor->preview_shader) {
+        rev::shader::DestroyProgram((rev::shader::Program*)editor->preview_shader);
+        editor->preview_shader = nullptr;
+    }
+    if (editor->sprite_shader) {
+        rev::shader::DestroyProgram((rev::shader::Program*)editor->sprite_shader);
+        editor->sprite_shader = nullptr;
+    }
+    editor->preview_current_shader_id = -1;
+    
+    if (editor->preview_texture) {
+        glDeleteTextures(1, &editor->preview_texture);
+        editor->preview_texture = 0;
+    }
+    
+    if (editor->preview_depth && glDeleteRenderbuffers) {
+        glDeleteRenderbuffers(1, &editor->preview_depth);
+        editor->preview_depth = 0;
+    }
+    
+    if (editor->preview_fbo && glDeleteFramebuffers) {
+        glDeleteFramebuffers(1, &editor->preview_fbo);
+        editor->preview_fbo = 0;
+    }
+    
+    editor->preview_initialized = false;
+}
+
+void ResizePreview(EditorContext* editor, int width, int height) {
+    if (!editor) return;
+    
+    if (editor->preview_width != width || editor->preview_height != height) {
+        CleanupPreview(editor);
+        InitializePreview(editor, width, height);
+    }
+}
+
+void RenderPreviewFrame(EditorContext* editor) {
+    if (!editor || !editor->preview_initialized) return;
+    
+    // TODO: Implement actual rendering of shader/image/text cues
+    // For now, just clear to a test color
+    
+    typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int target, unsigned int framebuffer);
+    auto glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)wglGetProcAddress("glBindFramebuffer");
+    
+    if (!glBindFramebuffer) return;
+    
+    // Bind preview framebuffer
+    glBindFramebuffer(0x8D40, editor->preview_fbo); // GL_FRAMEBUFFER
+    
+    // Set viewport
+    glViewport(0, 0, editor->preview_width, editor->preview_height);
+    
+    // Clear
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    
+    // Only render shader if we have a project with active shader cues
+    if (editor->project) {
+        // Find active shader cue in any scene
+        int active_shader_id = -1;  // -1 means no active cue
+        float speed = 1.0f;
+        float intensity = 1.0f;
+        float warp = 0.5f;
+        float palette_low[3] = {0.2f, 0.0f, 0.4f};
+        float palette_mid[3] = {0.8f, 0.2f, 0.6f};
+        float palette_high[3] = {1.0f, 0.8f, 0.2f};
+        bool found_active_cue = false;
+        
+        for (int s = 0; s < editor->project->scene_count; s++) {
+            SceneBlock* scene = &editor->project->scenes[s];
+            for (int i = 0; i < scene->shader_cue_count; i++) {
+                ShaderCue* cue = &scene->shader_cues[i];
+                // Handle cue_end = -1 (means until end of scene)
+                float actual_end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                
+                // Debug: log cue check
+                static int debug_frame_count = 0;
+                if (debug_frame_count % 60 == 0) { // Log every 60 frames to avoid spam
+                    printf("[PREVIEW] Checking cue: id=%d time=%.2f range=[%.2f, %.2f] (actual_end=%.2f)\n",
+                           cue->shader_scene_id, editor->current_time, cue->cue_start, cue->cue_end, actual_end);
+                }
+                debug_frame_count++;
+                
+                if (editor->current_time >= cue->cue_start && editor->current_time <= actual_end) {
+                    active_shader_id = cue->shader_scene_id;
+                    speed = cue->speed;
+                    intensity = cue->intensity;
+                    warp = cue->warp;
+                    palette_low[0] = cue->palette_low.r;
+                    palette_low[1] = cue->palette_low.g;
+                    palette_low[2] = cue->palette_low.b;
+                    palette_mid[0] = cue->palette_mid.r;
+                    palette_mid[1] = cue->palette_mid.g;
+                    palette_mid[2] = cue->palette_mid.b;
+                    palette_high[0] = cue->palette_high.r;
+                    palette_high[1] = cue->palette_high.g;
+                    palette_high[2] = cue->palette_high.b;
+                    found_active_cue = true;
+                    goto found_shader;
+                }
+            }
+        }
+        found_shader:
+        
+        // Only render if we found an active shader cue
+        if (found_active_cue && active_shader_id >= 0) {
+            // Debug output
+            static int last_logged_shader = -2;
+            if (active_shader_id != last_logged_shader) {
+                printf("[PREVIEW] Active shader ID: %d | Current compiled: %d\n", active_shader_id, editor->preview_current_shader_id);
+                last_logged_shader = active_shader_id;
+            }
+            
+            // Check if shader has changed and recompile if needed
+            if (editor->preview_current_shader_id != active_shader_id) {
+                printf("[PREVIEW] Recompiling shader from %d to %d\n", editor->preview_current_shader_id, active_shader_id);
+                CompilePreviewShader(editor, active_shader_id);
+                if (editor->preview_shader) {
+                    printf("[PREVIEW] Shader %d compiled successfully!\n", active_shader_id);
+                } else {
+                    printf("[PREVIEW] ERROR: Shader %d compilation failed!\n", active_shader_id);
+                }
+            }
+            
+            // Use the current shader program
+            auto* prog = (rev::shader::Program*)editor->preview_shader;
+            if (prog) {
+                rev::shader::Use(prog);
+                
+                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_time"), editor->current_time);
+                rev::shader::SetVec2(prog, rev::shader::GetUniformLocation(prog, "u_resolution"), 
+                                    (float)editor->preview_width, (float)editor->preview_height);
+                rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_low"), 
+                                    palette_low[0], palette_low[1], palette_low[2]);
+                rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_mid"), 
+                                    palette_mid[0], palette_mid[1], palette_mid[2]);
+                rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_high"), 
+                                    palette_high[0], palette_high[1], palette_high[2]);
+                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_speed"), speed);
+                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_intensity"), intensity);
+                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_warp"), warp);
+                
+                // Draw fullscreen quad
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+            }
+        }
+    }
+    
+    // Render image/text cues as sprites (sorted by layer order)
+    if (editor->sprite_shader && editor->project) {
+        auto* sprite_prog = (rev::shader::Program*)editor->sprite_shader;
+        rev::shader::Use(sprite_prog);
+        
+        // Enable blending for sprites
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        
+        // Collect all active image cues with their layer order
+        struct LayeredImageCue {
+            ImageCue* cue;
+            int layer_order;
+        };
+        LayeredImageCue layered_images[256]; // Max 256 images
+        int image_count = 0;
+        
+        for (int s = 0; s < editor->project->scene_count; s++) {
+            SceneBlock* scene = &editor->project->scenes[s];
+            for (int i = 0; i < scene->image_cue_count && image_count < 256; i++) {
+                ImageCue* cue = &scene->image_cues[i];
+                // Handle cue_end = -1 (means until end of scene)
+                float actual_end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                
+                static int debug_frame = 0;
+                if (debug_frame++ % 120 == 0) {
+                    printf("[IMAGE] Checking cue: %s time=%.2f range=[%.2f, %.2f] (actual_end=%.2f) scene_count=%d\n",
+                           cue->asset_key, editor->current_time, cue->cue_start, cue->cue_end, actual_end, scene->image_cue_count);
+                }
+                
+                if (editor->current_time >= cue->cue_start && editor->current_time <= actual_end) {
+                    layered_images[image_count].cue = cue;
+                    layered_images[image_count].layer_order = cue->layer_order;
+                    image_count++;
+                    
+                    static bool logged_active = false;
+                    if (!logged_active) {
+                        printf("[IMAGE] Found active image cue: %s\n", cue->asset_key);
+                        logged_active = true;
+                    }
+                }
+            }
+        }
+        
+        // Simple bubble sort by layer_order (lower first)
+        for (int i = 0; i < image_count - 1; i++) {
+            for (int j = 0; j < image_count - i - 1; j++) {
+                if (layered_images[j].layer_order > layered_images[j + 1].layer_order) {
+                    LayeredImageCue temp = layered_images[j];
+                    layered_images[j] = layered_images[j + 1];
+                    layered_images[j + 1] = temp;
+                }
+            }
+        }
+        
+        // Render active image cues in layer order
+        for (int idx = 0; idx < image_count; idx++) {
+            ImageCue* cue = layered_images[idx].cue;
+                    // Construct full path - use project-specific assets folder
+                    char full_path[512];
+                    snprintf(full_path, sizeof(full_path), "%s\\%s", 
+                            editor->project->assets_path, cue->asset_key);
+                    
+                    // Load texture (temporary - should be cached)
+                    static bool logged_path = false;
+                    if (!logged_path) {
+                        printf("[IMAGE] Attempting to load: %s\n", full_path);
+                        logged_path = true;
+                    }
+                    
+                    int tex_width, tex_height;
+                    unsigned int tex = LoadImageTexture(full_path, &tex_width, &tex_height);
+                    
+                    static bool logged_result = false;
+                    if (!logged_result) {
+                        if (tex) {
+                            printf("[IMAGE] LoadImageTexture SUCCESS: tex=%u\n", tex);
+                        } else {
+                            printf("[IMAGE] LoadImageTexture FAILED for: %s\n", full_path);
+                        }
+                        logged_result = true;
+                    }
+                    
+                    if (tex) {
+                        static bool logged_image = false;
+                        if (!logged_image) {
+                            printf("[PREVIEW] Loaded image: %s (size: %dx%d)\n", full_path, tex_width, tex_height);
+                            logged_image = true;
+                        }
+                        
+                        // Calculate normalized size (screen space -1 to 1)
+                        float norm_w = (tex_width * cue->scale) / editor->preview_width * 2.0f;
+                        float norm_h = (tex_height * cue->scale) / editor->preview_height * 2.0f;
+                        
+                        // Convert 0-1 coords to -1 to 1
+                        float pos_x = (cue->x * 2.0f) - 1.0f;
+                        float pos_y = -((cue->y * 2.0f) - 1.0f);  // Flip Y
+                        
+                        // Set uniforms
+                        glBindTexture(GL_TEXTURE_2D, tex);
+                        rev::shader::SetInt(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_texture"), 0);
+                        rev::shader::SetVec2(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_position"), 
+                                           pos_x, pos_y);
+                        rev::shader::SetVec2(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_size"), 
+                                           norm_w, norm_h);
+                        rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_opacity"), 
+                                            cue->opacity);
+                        
+                        // Draw sprite
+                        glDrawArrays(GL_TRIANGLES, 0, 3);
+                        
+                        // Cleanup texture (temporary - should cache)
+                        glDeleteTextures(1, &tex);
+                    }
+        }
+        
+        glDisable(GL_BLEND);
+    }
+    
+    // Unbind framebuffer (restore default)
+    glBindFramebuffer(0x8D40, 0);
+}
+
+void UpdatePlayback(EditorContext* editor, float delta_time) {
+    if (!editor || !editor->playing) return;
+    
+    editor->current_time += delta_time;
+    
+    // Clamp to project duration (use 10s default if duration is 0)
+    if (editor->project) {
+        float max_duration = editor->project->total_duration;
+        if (max_duration <= 0.0f) max_duration = 10.0f; // Default playback duration
+        
+        if (editor->current_time >= max_duration) {
+            editor->current_time = max_duration;
+            editor->playing = false; // Stop at end
+        }
+    }
+}
+
+void RenderPreviewPanel(EditorContext* editor) {
+    if (!editor || !editor->show_preview) return;
+    
+    ImGui::Begin("Preview", &editor->show_preview);
+    
+    // Initialize preview on first show
+    if (!editor->preview_initialized) {
+        InitializePreview(editor, 1920, 1080);
+    }
+    
+    // Check if project is loaded
+    if (!editor->project) {
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "No project loaded");
+        ImGui::Text("Create or open a project to use the preview.");
+        ImGui::End();
+        return;
+    }
+    
+    // Playback controls
+    if (ImGui::Button(editor->playing ? "Pause" : "Play")) {
+        editor->playing = !editor->playing;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Stop")) {
+        editor->playing = false;
+        editor->current_time = 0.0f;
+    }
+    ImGui::SameLine();
+    
+    // Show duration info
+    float display_duration = editor->project->total_duration;
+    if (display_duration <= 0.0f) {
+        ImGui::Text("Time: %.2fs / %.2fs (no scenes, using default)", editor->current_time, 10.0f);
+    } else {
+        ImGui::Text("Time: %.2fs / %.2fs", editor->current_time, display_duration);
+    }
+    
+    // Time slider
+    float max_time = editor->project->total_duration;
+    if (max_time <= 0.0f) max_time = 10.0f; // Default if no duration
+    
+    if (ImGui::SliderFloat("##timeline_scrub", &editor->current_time, 0.0f, max_time, "%.2fs")) {
+        // Pause when manually scrubbing
+        if (editor->playing) {
+            editor->playing = false;
+        }
+    }
+    
+    ImGui::Separator();
+    
+    // Display preview texture
+    if (editor->preview_texture) {
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        
+        // Calculate size maintaining 16:9 aspect ratio
+        float aspect = 16.0f / 9.0f;
+        float w = avail.x;
+        float h = w / aspect;
+        
+        if (h > avail.y) {
+            h = avail.y;
+            w = h * aspect;
+        }
+        
+        // Center the preview
+        float offset_x = (avail.x - w) * 0.5f;
+        if (offset_x > 0.0f) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset_x);
+        }
+        
+        ImGui::Image((ImTextureID)(intptr_t)editor->preview_texture, ImVec2(w, h), ImVec2(0, 1), ImVec2(1, 0));
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Preview not initialized");
+    }
+    
+    ImGui::End();
+}
+
 
 void RandomizeShaderValues(ShaderCue* cue) {
     if (!cue) return;

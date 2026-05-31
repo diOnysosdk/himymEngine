@@ -69,6 +69,7 @@ struct ImageCue {
     float opacity;
     float cue_start;
     float cue_end;
+    int layer_order;            // Draw order (lower first, 0=default)
 };
 
 // Text cue
@@ -83,6 +84,7 @@ struct TextCue {
     float cue_end;
     float effect_start;
     float effect_end;
+    int layer_order;            // Draw order (lower first, 0=default)
 };
 
 // Music cue
@@ -130,6 +132,7 @@ struct ProjectData {
     // Project metadata
     char project_path[512];
     char workspace_path[512];
+    char assets_path[512];      // Project-specific assets folder
     bool modified;
     
     // Timing
@@ -159,6 +162,18 @@ struct EditorContext {
     // Playback
     float current_time;
     bool playing;
+    
+    // Preview viewport
+    bool show_preview;
+    unsigned int preview_fbo;        // Framebuffer object
+    unsigned int preview_texture;    // Color attachment
+    unsigned int preview_depth;      // Depth attachment
+    int preview_width;
+    int preview_height;
+    bool preview_initialized;
+    void* preview_shader;            // rev::shader::Program* for fullscreen shader
+    void* sprite_shader;             // rev::shader::Program* for sprite rendering
+    int preview_current_shader_id;   // Currently compiled shader preset ID (-1 = none)
     
     // Shader modal state
     ShaderCue editing_shader;
@@ -198,6 +213,7 @@ void DestroyEditor(EditorContext* editor);
 bool LoadProject(EditorContext* editor, const char* path);
 bool SaveProject(EditorContext* editor, const char* path);
 bool NewProject(EditorContext* editor);
+bool ImportFromCues(EditorContext* editor, const char* cues_path);  // Import from cues.txt export format
 
 // Frame lifecycle
 void BeginFrame(EditorContext* editor);
@@ -214,6 +230,14 @@ void RenderImageModal(EditorContext* editor);
 void RenderTextModal(EditorContext* editor);
 void RenderProperties(EditorContext* editor);
 void RenderAssetBrowser(EditorContext* editor);
+void RenderPreviewPanel(EditorContext* editor);
+
+// Preview viewport
+void InitializePreview(EditorContext* editor, int width, int height);
+void CleanupPreview(EditorContext* editor);
+void ResizePreview(EditorContext* editor, int width, int height);
+void RenderPreviewFrame(EditorContext* editor);
+void UpdatePlayback(EditorContext* editor, float delta_time);
 
 // Scene management
 int AddScene(EditorContext* editor, const char* name, float duration);

@@ -9,6 +9,9 @@
 
 #pragma comment(lib, "gdiplus.lib")
 
+// Global debug log file
+static FILE* g_logfile = nullptr;
+
 // Define missing GL constants
 #ifndef GL_COLOR_BUFFER_BIT
 #define GL_COLOR_BUFFER_BIT 0x00004000
@@ -204,7 +207,15 @@ bool LoadMusicCue(const char* path, MusicCue* cue) {
 bool LoadImageCue(const char* path, ImageCue* cue) {
     FILE* f = nullptr;
     fopen_s(&f, path, "r");
-    if (!f) return false;
+    if (!f) {
+        if (g_logfile) {
+            fprintf(g_logfile, "[LoadImageCue] FAILED to open file: %s\n", path);
+            fflush(g_logfile);
+        }
+        return false;
+    }
+    
+    if (g_logfile) fprintf(g_logfile, "[LoadImageCue] File opened: %s\n", path);
     
     char line[1024];
     bool in_image_cues = false;
@@ -216,15 +227,18 @@ bool LoadImageCue(const char* path, ImageCue* cue) {
         
         if (strstr(start, "[image_cues]")) {
             in_image_cues = true;
+            if (g_logfile) fprintf(g_logfile, "[LoadImageCue] Found [image_cues] section\n");
             continue;
         }
         
         if (start[0] == '[' && in_image_cues) {
+            if (g_logfile) fprintf(g_logfile, "[LoadImageCue] Left [image_cues] section\n");
             break;
         }
         
         if (in_image_cues && start[0] != '#' && start[0] != '\0' && start[0] != '\n') {
-            // Parse: asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end
+            if (g_logfile) fprintf(g_logfile, "[LoadImageCue] Parsing line: %s", line);
+            // Parse: asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order
             char* pipe1 = strchr(start, '|');
             if (!pipe1) continue;
             *pipe1 = '\0';
@@ -235,15 +249,21 @@ bool LoadImageCue(const char* path, ImageCue* cue) {
             *pipe2 = '\0';
             strncpy_s(cue->asset_path, pipe1 + 1, _TRUNCATE);
             
-            if (sscanf_s(pipe2 + 1, "%f|%f|%f|%f|%f|%f",
+            int layer_order = 0;
+            if (sscanf_s(pipe2 + 1, "%f|%f|%f|%f|%f|%f|%d",
                 &cue->x, &cue->y, &cue->scale, &cue->opacity,
-                &cue->cue_start, &cue->cue_end) == 6) {
+                &cue->cue_start, &cue->cue_end, &layer_order) >= 6) {
                 found = true;
+                if (g_logfile) fprintf(g_logfile, "[LoadImageCue] Successfully parsed image cue\n");
                 break;
             }
         }
     }
     
+    if (g_logfile) {
+        fprintf(g_logfile, "[LoadImageCue] Result: %s\n", found ? "SUCCESS" : "FAILED");
+        fflush(g_logfile);
+    }
     fclose(f);
     return found;
 }
@@ -818,7 +838,11 @@ int main() {
     freopen_s(&fp, "CONOUT$", "w", stdout);
     freopen_s(&fp, "CONOUT$", "w", stderr);
     
+    // Also log to file for debugging
+    fopen_s(&g_logfile, "intro_debug.log", "w");
+    
     printf("=== HiMYM Minimal Intro ===\n\n");
+    if (g_logfile) fprintf(g_logfile, "=== HiMYM Minimal Intro Debug Log ===\n\n");
     
     // Load shader cue from assets/cues.txt
     ShaderCue cue = {};
@@ -845,9 +869,18 @@ int main() {
     bool image_loaded = false;
     
     printf("Image cue loaded: %s\n", has_image ? "YES" : "NO");
+    if (g_logfile) {
+        fprintf(g_logfile, "Image cue loaded: %s\n", has_image ? "YES" : "NO");
+        fprintf(g_logfile, "Tried to load from: ../../../assets/cues.txt\n");
+        fflush(g_logfile);
+    }
     if (has_image) {
         printf("  Key: %s, Path: %s\n", image_cue.asset_key, image_cue.asset_path);
+        if (g_logfile) fprintf(g_logfile, "  Key: %s, Path: %s\n", image_cue.asset_key, image_cue.asset_path);
         printf("  Pos: (%.2f,%.2f), Scale: %.2f, Time: %.1f-%.1fs\n",
+               image_cue.x, image_cue.y, image_cue.scale, 
+               image_cue.cue_start, image_cue.cue_end);
+        if (g_logfile) fprintf(g_logfile, "  Pos: (%.2f,%.2f), Scale: %.2f, Time: %.1f-%.1fs\n",
                image_cue.x, image_cue.y, image_cue.scale, 
                image_cue.cue_start, image_cue.cue_end);
     }
@@ -960,21 +993,29 @@ int main() {
     // Load image texture (fix path to be relative from exe location)
     if (has_image && image_cue.asset_path[0] != '\0') {
         // Convert project-relative path to exe-relative path
+        // Path from cues.txt is like "project_assets/logo.png"
+        // Exe is at build/bin/Release/, so need ../../../
         char exe_relative_path[512];
-        if (strncmp(image_cue.asset_path, "assets/", 7) == 0) {
-            snprintf(exe_relative_path, sizeof(exe_relative_path), "../../../%s", image_cue.asset_path);
-        } else {
-            strncpy_s(exe_relative_path, image_cue.asset_path, _TRUNCATE);
+        snprintf(exe_relative_path, sizeof(exe_relative_path), "../../../%s", image_cue.asset_path);
+        
+        // Convert forward slashes to backslashes for Windows GDI+
+        for (char* p = exe_relative_path; *p; ++p) {
+            if (*p == '/') *p = '\\\\';
         }
         
         printf("\nLoading image texture: %s\n", exe_relative_path);
+        if (g_logfile) fprintf(g_logfile, "\nLoading image texture: %s\n", exe_relative_path);
         if (LoadImageTexture(exe_relative_path, &image_tex)) {
             image_loaded = true;
             printf("Image loaded: %dx%d, will show at %.1f-%.1fs\n",
                    image_tex.width, image_tex.height,
                    image_cue.cue_start, image_cue.cue_end);
+            if (g_logfile) fprintf(g_logfile, "Image loaded: %dx%d, will show at %.1f-%.1fs\n",
+                   image_tex.width, image_tex.height,
+                   image_cue.cue_start, image_cue.cue_end);
         } else {
             printf("FAILED to load image\n");
+            if (g_logfile) fprintf(g_logfile, "FAILED to load image from: %s\n", exe_relative_path);
         }
     }
     
@@ -1167,5 +1208,11 @@ int main() {
     
     Gdiplus::GdiplusShutdown(gdiplusToken);
     
+    if (g_logfile) {
+        fflush(g_logfile);
+        fclose(g_logfile);
+    }
+    
     return 0;
 }
+
