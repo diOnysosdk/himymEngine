@@ -1185,10 +1185,10 @@ int main(int argc, char* argv[]) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             
-            // Calculate sprite quad position/size (normalized coordinates)
-            float aspect = (float)image_tex.width / (float)image_tex.height;
-            float w = image_cue.scale * aspect;
-            float h = image_cue.scale;
+            // Calculate sprite quad position/size in NDC — match editor preview formula:
+            //   norm = (tex_pixels * scale) / window_pixels * 2.0
+            float w = (image_tex.width  * image_cue.scale) / (float)config.width  * 2.0f;
+            float h = (image_tex.height * image_cue.scale) / (float)config.height * 2.0f;
             float x = (image_cue.x * 2.0f - 1.0f);
             float y = (image_cue.y * 2.0f - 1.0f);
             
