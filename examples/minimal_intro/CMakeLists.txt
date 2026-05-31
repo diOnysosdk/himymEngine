@@ -35,9 +35,10 @@ target_link_libraries(minimal_intro_packed PRIVATE
     rev_shader
     rev_xm
     rev_mesh
+    rev_gltf
 )
 
-target_compile_definitions(minimal_intro_packed PRIVATE HIMYM_PACKED_ASSETS)
+target_compile_definitions(minimal_intro_packed PRIVATE HIMYM_PACKED_ASSETS REV_GLTF_AVAILABLE)
 
 # Include CMAKE_BINARY_DIR so packed_assets.h and rev_pack.h can be found
 target_include_directories(minimal_intro_packed PRIVATE
