@@ -34,24 +34,40 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 - All return `float[16]` column-major (OpenGL convention).
 - Use `using rev::runtime::Mat4Perspective;` etc. in main.cpp — do NOT copy implementations.
 
-## 3D mesh render pattern (minimal_intro/main.cpp)
+## DPI awareness + letterbox viewport
+- `rev_platform` calls `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)` inside `CreateIntroWindow` (covers both editor and runtime — do NOT add a second call elsewhere).
+- For fullscreen, `platform_win32.cpp` uses `GetSystemMetrics(SM_CXSCREEN/SM_CYSCREEN)` as the physical window size and stores it in `window->win_width` / `window->win_height`.
+- The render loop clears the full physical window first, then computes a centered letterbox viewport that fits the configured render resolution (1920×1080) into the actual window:
 ```cpp
-// After text/image rendering:
-if (has_mesh && elapsed >= mesh_cue.cue_start && elapsed < mesh_cue.cue_end) {
-    glEnable(0x0B71); // GL_DEPTH_TEST
-    auto mesh_obj = rev::mesh::CreateCube(mesh_cue.mesh_size);  // or Sphere/Plane/Torus
-    rev::mesh::UploadToGPU(mesh_obj);
-    float model[16], view[16], proj[16], mvp[16];
-    Mat4Model(mesh_cue.pos, mesh_cue.rot, mesh_cue.scale, model);
-    Mat4LookAt({0,0,5}, {0,0,0}, {0,1,0}, view);
-    Mat4Perspective(45.0f, aspect, 0.1f, 100.0f, proj);
-    Mat4Multiply(proj, view, mvp); Mat4Multiply(mvp, model, mvp);
-    // bind mesh_shader, set u_model/u_view/u_projection/u_color/u_light_pos/u_view_pos
-    rev::mesh::Render(mesh_obj, -1);
-    rev::mesh::DestroyMesh(mesh_obj);
-    glDisable(0x0B71);
+int ww = window->win_width  > 0 ? window->win_width  : config.width;
+int wh = window->win_height > 0 ? window->win_height : config.height;
+glViewport(0, 0, ww, wh);
+glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT);
+// Letterbox: fit config resolution centered in physical window
+{
+    float ta = (float)config.width / (float)config.height;
+    float wa = (float)ww / (float)wh;
+    int vx=0,vy=0,vw=ww,vh=wh;
+    if (wa > ta) { vw=(int)(vh*ta+0.5f); vx=(ww-vw)/2; }
+    else         { vh=(int)(vw/ta+0.5f); vy=(wh-vh)/2; }
+    glViewport(vx,vy,vw,vh);
 }
 ```
+- All NDC calculations still use `config.width` / `config.height` (unchanged).
+
+## Unified sorted draw pass (minimal_intro/main.cpp)
+- Image, text, and mesh cues are **not drawn in fixed order**. They are collected into a `DrawEntry[3]` array, bubble-sorted by `layer_order` ascending (lower = drawn first = further back), then rendered in one loop.
+- Blend/depth state is switched lazily: sprites enable blend + disable depth; mesh enables depth + clears depth buffer once, disables blend.
+- The pattern (pseudocode):
+```cpp
+DrawEntry entries[3]; int ne = 0;
+if (img_active) entries[ne++] = {0, image_cue.layer_order};
+if (txt_active) entries[ne++] = {1, text_cue.layer_order};
+if (msh_active) entries[ne++] = {2, mesh_cue.layer_order};
+// bubble sort by layer
+for each sorted entry: switch on type, set GL state, draw
+```
+- Depth buffer is cleared with `glClear(0x00000100)` (GL_DEPTH_BUFFER_BIT) once on the **first** mesh item, not unconditionally.
 
 `main()` walks up 3 dirs from the exe location (`build/bin/Release/ → workspace root`) via `GetModuleFileNameA` + `SetCurrentDirectoryA`. All relative paths are then workspace-relative. Do not change or remove this.
 

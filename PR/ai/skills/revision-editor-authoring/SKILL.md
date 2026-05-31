@@ -25,7 +25,7 @@ Use this skill for editor-side authoring work.
 - Keep the cues.txt text_cues format: `text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order` (16 fields).
 - Keep the cues.txt mesh_cues format: `asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order` (25 fields).
 - Keep `ProjectData.assets_path` memset-cleared in `CreateEditor`, `NewProject`, and `LoadProject`.
-- Keep editor preview frame rendering: shader cue composited first, image cue overlaid on top, text cue after image, mesh cue last (with depth test).
+- Keep editor preview frame rendering: shader cue composited first; then image/text/mesh cues rendered via a **unified sorted draw pass** (sorted by `layer_order` ascending — lower = further back). Do NOT restore the old three-block fixed order.
 - Do NOT define `ImageCue`, `TextCue`, `MusicCue`, `MeshCue` in `rev_editor.h` — they are imported from `rev_runtime.h` via `using` declarations.
 - When adding fields to shared cue structs, update `rev_runtime.h` and `rev_runtime.cpp` first, then update `ExportProject` and parser in rev_runtime.
 
@@ -43,7 +43,7 @@ Use this skill for editor-side authoring work.
 - `AddMeshCue(SceneBlock*, const MeshCue&)` / `DeleteMeshCue(SceneBlock*, int)` manage the array.
 - `EditorContext` has `mesh_shader` (Phong shader compiled at `InitializePreview`), `mesh_modal_open`, `mesh_modal_request_open`, `editing_mesh`.
 - `RenderMeshModal(EditorContext*)` is the ImGui modal for editing a MeshCue.
-- `RenderPreviewFrame` renders mesh cues last (after text), with depth test enabled (`glEnable(0x0B71)` / `glDisable(0x0B71)`).
+- `RenderPreviewFrame` renders image/text/mesh cues in a single loop sorted by `layer_order`. Blend and depth state are toggled lazily between sprite and mesh items. Depth test (`glEnable(0x0B71)`) is enabled only when a mesh item is about to draw; blend (`glEnable(GL_BLEND)`) is enabled only for sprite items.
 - Phong shader vertex attribs: `a_pos` (loc 0), `a_normal` (loc 1), `a_uv` (loc 2); uniforms: `u_model`, `u_view`, `u_projection`, `u_light_pos`, `u_view_pos`, `u_color`.
 - `glUniformMatrix4fv` must be loaded via `wglGetProcAddress` (not in Windows `<gl/gl.h>`).
 - `ExportProject` writes `[mesh_cues]` section after `[music_cues]` with 25-field pipe format.

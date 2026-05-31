@@ -1,7 +1,7 @@
 {
   "version": "1.0",
-  "workspace_path": "E:\code\cpp\mono\himym\intros\4test",
-  "total_duration": 10.000,
+  "workspace_path": "E:\code\cpp\mono\himym\intros\1",
+  "total_duration": 20.000,
   "scenes": [
     {
       "name": "New Scene",
@@ -37,7 +37,7 @@
       ],
       "image_cues": [
         {
-          "asset_key": "logo - Kopi.png",
+          "asset_key": "logo - Kopi_1.png",
           "x": 0.500,
           "y": 0.500,
           "scale": 1.000,
@@ -58,12 +58,12 @@
       "mesh_cues": [
         {
           "asset_key": "mesh_0",
-          "asset_path": "intros/4test/project_assets/newbox.glb",
+          "asset_path": "intros/1/project_assets/logo.glb",
           "mesh_type": 4,
           "pos": [0.000, 0.000, 0.000],
-          "rot": [36.000, 32.000, 51.000],
-          "scale": [0.500, 0.500, 0.500],
-          "color": [0.800, 0.017, 0.408, 1.000],
+          "rot": [-33.000, 32.000, 38.000],
+          "scale": [1.000, 1.000, 1.000],
+          "color": [0.052, 0.057, 0.800, 1.000],
           "mesh_size": 1.000,
           "mesh_param": 16.000,
           "metallic": 0.000,

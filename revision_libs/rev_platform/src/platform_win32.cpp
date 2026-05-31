@@ -43,7 +43,14 @@ Window* CreateIntroWindow(const WindowConfig& config) {
     Window* window = new Window();
     window->should_close = false;
     window->message_callback = nullptr;
-    
+    window->win_width  = 0;
+    window->win_height = 0;
+
+    // Declare per-monitor DPI awareness so Windows does not virtualize pixel
+    // sizes on high-DPI displays (125%, 150%, etc.).  Must be set before any
+    // window or message-loop interaction.  The call is benign if already set.
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
     // Register window class
     WNDCLASSEX wc = {};
     wc.cbSize = sizeof(WNDCLASSEX);
@@ -63,6 +70,16 @@ Window* CreateIntroWindow(const WindowConfig& config) {
     int y = config.fullscreen ? 0 : CW_USEDEFAULT;
     int width  = config.width;
     int height = config.height;
+
+    if (config.fullscreen) {
+        // Use the actual physical screen dimensions so the window fills the
+        // display regardless of the configured render resolution.
+        width  = GetSystemMetrics(SM_CXSCREEN);
+        height = GetSystemMetrics(SM_CYSCREEN);
+    }
+
+    window->win_width  = width;
+    window->win_height = height;
     
     // Create window
     HWND hwnd = CreateWindowEx(

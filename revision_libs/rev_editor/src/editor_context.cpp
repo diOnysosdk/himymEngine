@@ -814,11 +814,18 @@ bool NewProject(EditorContext* editor) {
         editor->project->curve_count = 0;
     }
     
-    editor->project->total_duration = 0.0f;
+    editor->project->total_duration = 10.0f;  // Default 10 seconds
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
     editor->project->modified = false;
+
+    // Create a default scene so cues have somewhere to live
+    SceneBlock* default_scene = GetScene(editor, 0);
+    if (default_scene) {
+        strncpy_s(default_scene->name, "Main Scene", _TRUNCATE);
+        default_scene->duration = 10.0f;
+    }
 
     // Clear mesh cache — meshes belong to the old project's GPU context
     for (int i = 0; i < editor->mesh_cache_count; ++i) {
@@ -1292,6 +1299,12 @@ void RenderProperties(EditorContext* editor) {
                 editor->project->modified = true;
             }
             
+            // Disable image/mesh cue buttons if project not saved (no assets folder yet)
+            bool project_saved = editor->project->workspace_path[0] != '\0';
+            if (!project_saved) {
+                ImGui::BeginDisabled();
+            }
+            
             if (ImGui::Button("+ Image Cue")) {
                 ImageCue cue = {};
                 cue.x = 0.5f;
@@ -1307,6 +1320,9 @@ void RenderProperties(EditorContext* editor) {
                 editor->selected_cue_type = 1;  // image
                 editor->image_modal_request_open = true;
                 editor->project->modified = true;
+            }
+            if (!project_saved && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Save the project first to set up the assets folder");
             }
             
             if (ImGui::Button("+ Text Cue")) {
@@ -1359,6 +1375,13 @@ void RenderProperties(EditorContext* editor) {
                 editor->selected_cue_type = 4;
                 editor->mesh_modal_request_open = true;
                 editor->project->modified = true;
+            }
+            if (!project_saved && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Save the project first to set up the assets folder");
+            }
+            
+            if (!project_saved) {
+                ImGui::EndDisabled();
             }
             
             ImGui::Separator();
@@ -4069,249 +4092,199 @@ void RenderPreviewFrame(EditorContext* editor) {
             }
         }
     }
-    
-    // Render image/text cues as sprites (sorted by layer order)
-    if (editor->sprite_shader && editor->project) {
-        auto* sprite_prog = (rev::shader::Program*)editor->sprite_shader;
-        rev::shader::Use(sprite_prog);
-        
-        // Enable blending for sprites
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        
-        // Collect all active image cues with their layer order
-        struct LayeredImageCue {
-            ImageCue* cue;
-            int layer_order;
-        };
-        LayeredImageCue layered_images[256]; // Max 256 images
-        int image_count = 0;
-        
-        for (int s = 0; s < editor->project->scene_count; s++) {
-            SceneBlock* scene = &editor->project->scenes[s];
-            for (int i = 0; i < scene->image_cue_count && image_count < 256; i++) {
-                ImageCue* cue = &scene->image_cues[i];
-                // Handle cue_end = -1 (means until end of scene)
-                float actual_end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
-                
-                static int debug_frame = 0;
-                if (debug_frame++ % 120 == 0) {
-                    printf("[IMAGE] Checking cue: %s time=%.2f range=[%.2f, %.2f] (actual_end=%.2f) scene_count=%d\n",
-                           cue->asset_key, editor->current_time, cue->cue_start, cue->cue_end, actual_end, scene->image_cue_count);
-                }
-                
-                if (editor->current_time >= cue->cue_start && editor->current_time <= actual_end) {
-                    layered_images[image_count].cue = cue;
-                    layered_images[image_count].layer_order = cue->layer_order;
-                    image_count++;
-                    
-                    static bool logged_active = false;
-                    if (!logged_active) {
-                        printf("[IMAGE] Found active image cue: %s\n", cue->asset_key);
-                        logged_active = true;
-                    }
-                }
-            }
-        }
-        
-        // Simple bubble sort by layer_order (lower first)
-        for (int i = 0; i < image_count - 1; i++) {
-            for (int j = 0; j < image_count - i - 1; j++) {
-                if (layered_images[j].layer_order > layered_images[j + 1].layer_order) {
-                    LayeredImageCue temp = layered_images[j];
-                    layered_images[j] = layered_images[j + 1];
-                    layered_images[j + 1] = temp;
-                }
-            }
-        }
-        
-        // Render active image cues in layer order
-        for (int idx = 0; idx < image_count; idx++) {
-            ImageCue* cue = layered_images[idx].cue;
-                    // Construct full path - use project-specific assets folder
-                    char full_path[512];
-                    snprintf(full_path, sizeof(full_path), "%s\\%s", 
-                            editor->project->assets_path, cue->asset_key);
-                    
-                    // Load texture (temporary - should be cached)
-                    static bool logged_path = false;
-                    if (!logged_path) {
-                        printf("[IMAGE] Attempting to load: %s\n", full_path);
-                        logged_path = true;
-                    }
-                    
-                    rev::runtime::ImageTexture rt_img{};
-                    bool img_ok = rev::runtime::LoadImageTexture(full_path, &rt_img);
-                    unsigned int tex = img_ok ? rt_img.texture_id : 0u;
-                    int tex_width = rt_img.width, tex_height = rt_img.height;
-                    
-                    static bool logged_result = false;
-                    if (!logged_result) {
-                        if (tex) {
-                            printf("[IMAGE] LoadImageTexture SUCCESS: tex=%u\n", tex);
-                        } else {
-                            printf("[IMAGE] LoadImageTexture FAILED for: %s\n", full_path);
-                        }
-                        logged_result = true;
-                    }
-                    
-                        if (img_ok) {
-                        
-                        // Calculate normalized size (screen space -1 to 1)
-                        float norm_w = (tex_width * cue->scale) / editor->preview_width * 2.0f;
-                        float norm_h = (tex_height * cue->scale) / editor->preview_height * 2.0f;
-                        
-                        // Convert 0-1 coords to -1 to 1
-                        float pos_x = (cue->x * 2.0f) - 1.0f;
-                        float pos_y = -((cue->y * 2.0f) - 1.0f);  // Flip Y
-                        
-                        // Set uniforms
-                        glBindTexture(GL_TEXTURE_2D, tex);
-                        rev::shader::SetInt(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_texture"), 0);
-                        rev::shader::SetVec2(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_position"), 
-                                           pos_x, pos_y);
-                        rev::shader::SetVec2(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_size"), 
-                                           norm_w, norm_h);
-                        rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_opacity"), 
-                                            cue->opacity * rev::runtime::ComputeEffectOpacity(cue->effect_type, cue->fade_in_start, cue->fade_in_end, cue->fade_out_start, cue->fade_out_end, editor->current_time));
-                        
-                        // Draw sprite
-                        glDrawArrays(GL_TRIANGLES, 0, 3);
-                        
-                        // Cleanup texture (temporary - should cache)
-                        glDeleteTextures(1, &tex);
-                    }
-        }
-        
-        glDisable(GL_BLEND);
-    }
 
-    // Render text cues
-    if (editor->sprite_shader && editor->project) {
-        auto* sprite_prog = (rev::shader::Program*)editor->sprite_shader;
-        rev::shader::Use(sprite_prog);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // --- Unified layered draw pass ---
+    // Collect all active image/text/mesh cues across all scenes, sort by
+    // layer_order (ascending = drawn first = further back), draw in order.
+    if (editor->project && (editor->sprite_shader || editor->mesh_shader)) {
+        auto* sprite_prog = editor->sprite_shader ? (rev::shader::Program*)editor->sprite_shader : nullptr;
+        auto* mesh_prog   = editor->mesh_shader   ? (rev::shader::Program*)editor->mesh_shader   : nullptr;
 
-        for (int s = 0; s < editor->project->scene_count; s++) {
-            SceneBlock* scene = &editor->project->scenes[s];
-            for (int i = 0; i < scene->text_cue_count; i++) {
-                TextCue* cue = &scene->text_cues[i];
-                float actual_end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
-                if (editor->current_time < cue->cue_start || editor->current_time > actual_end) continue;
-                if (cue->text[0] == '\0') continue;
-
-                int tw = 0, th = 0;
-                rev::runtime::TextTexture rt_txt{};
-                bool txt_ok = rev::runtime::RenderTextToTexture(
-                    cue->text, cue->font_name, cue->size,
-                    cue->color.r, cue->color.g, cue->color.b, &rt_txt);
-                if (!txt_ok) continue;
-                unsigned int tex = rt_txt.texture_id;
-                tw = rt_txt.width; th = rt_txt.height;
-
-                float norm_w = (float)tw / (float)editor->preview_width  * 2.0f;
-                float norm_h = (float)th / (float)editor->preview_height * 2.0f;
-                float pos_x  =  (cue->x * 2.0f) - 1.0f;
-                float pos_y  = -((cue->y * 2.0f) - 1.0f); // flip Y
-
-                glBindTexture(GL_TEXTURE_2D, tex);
-                rev::shader::SetInt(sprite_prog,   rev::shader::GetUniformLocation(sprite_prog, "u_texture"),  0);
-                rev::shader::SetVec2(sprite_prog,  rev::shader::GetUniformLocation(sprite_prog, "u_position"), pos_x, pos_y);
-                rev::shader::SetVec2(sprite_prog,  rev::shader::GetUniformLocation(sprite_prog, "u_size"),     norm_w, norm_h);
-                rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_opacity"),
-                    rev::runtime::ComputeEffectOpacity(cue->effect_type, cue->fade_in_start, cue->fade_in_end, cue->fade_out_start, cue->fade_out_end, editor->current_time));
-                glDrawArrays(GL_TRIANGLES, 0, 3);
-
-                glDeleteTextures(1, &tex);
-            }
-        }
-
-        glDisable(GL_BLEND);
-    }
-
-    // Render mesh cues (3D Phong)
-    if (editor->mesh_shader && editor->project) {
-        typedef void (*PFNGLENABLEPROC)(unsigned int cap);
-        typedef void (*PFNGLDISABLEPROC)(unsigned int cap);
+        // Pre-load GL extension procs
+        typedef void (*PFNGLACTIVETEXTUREPROC)(unsigned int texture);
+        auto glActiveTexture_fn = (PFNGLACTIVETEXTUREPROC)wglGetProcAddress("glActiveTexture");
+        auto glUniformMatrix4fv = (void(*)(int,int,unsigned char,const float*))wglGetProcAddress("glUniformMatrix4fv");
         typedef void (*PFNGLDEPTHFUNCPROC)(unsigned int func);
         auto glDepthFunc_fn = (PFNGLDEPTHFUNCPROC)wglGetProcAddress("glDepthFunc");
+        typedef void (*PFNGLUNIFORM4FVPROC)(int, int, const float*);
+        auto glUniform4fv_fn = (PFNGLUNIFORM4FVPROC)wglGetProcAddress("glUniform4fv");
+        typedef void (*PFNGLDEPTHMASKPROC)(unsigned char flag);
+        auto glDepthMask_fn = (PFNGLDEPTHMASKPROC)wglGetProcAddress("glDepthMask");
 
-        glEnable(0x0B71);           // GL_DEPTH_TEST
-        if (glDepthFunc_fn) glDepthFunc_fn(0x0201);  // GL_LESS
-
-        auto* mesh_prog = (rev::shader::Program*)editor->mesh_shader;
-        rev::shader::Use(mesh_prog);
-
-        float aspect = (editor->preview_height > 0)
+        // Pre-compute 3D camera (reused for every mesh item)
+        float mesh_aspect = (editor->preview_height > 0)
             ? (float)editor->preview_width / (float)editor->preview_height : 1.0f;
-
-        // Camera
-        float eye[3]    = {0.0f, 0.0f, 5.0f};
-        float center[3] = {0.0f, 0.0f, 0.0f};
-        float up[3]     = {0.0f, 1.0f, 0.0f};
-
+        float eye[3]       = {0.0f, 0.0f, 5.0f};
+        float center3[3]   = {0.0f, 0.0f, 0.0f};
+        float up3[3]       = {0.0f, 1.0f, 0.0f};
+        float light_pos[3] = {3.0f, 5.0f, 4.0f};
         float view_mat[16], proj_mat[16];
-        rev::runtime::Mat4Perspective(proj_mat, 3.14159265f * 0.25f, aspect, 0.1f, 100.0f);
-        rev::runtime::Mat4LookAt(view_mat, eye, center, up);
+        rev::runtime::Mat4Perspective(proj_mat, 3.14159265f * 0.25f, mesh_aspect, 0.1f, 100.0f);
+        rev::runtime::Mat4LookAt(view_mat, eye, center3, up3);
 
-        auto glUniformMatrix4fv = (void(*)(int,int,unsigned char,const float*))wglGetProcAddress("glUniformMatrix4fv");
-
-        int loc_model = rev::shader::GetUniformLocation(mesh_prog, "u_model");
-        int loc_view  = rev::shader::GetUniformLocation(mesh_prog, "u_view");
-        int loc_proj  = rev::shader::GetUniformLocation(mesh_prog, "u_projection");
-        int loc_light = rev::shader::GetUniformLocation(mesh_prog, "u_light_pos");
-        int loc_vpos  = rev::shader::GetUniformLocation(mesh_prog, "u_view_pos");
-        int loc_color = rev::shader::GetUniformLocation(mesh_prog, "u_color");
-        int loc_metal = rev::shader::GetUniformLocation(mesh_prog, "u_metallic");
-        int loc_rough = rev::shader::GetUniformLocation(mesh_prog, "u_roughness");
-
-        if (glUniformMatrix4fv) {
-            glUniformMatrix4fv(loc_view, 1, 0, view_mat);
-            glUniformMatrix4fv(loc_proj, 1, 0, proj_mat);
+        // Upload view/proj/lighting once if we have a mesh shader
+        int mp_model = -1, mp_view = -1, mp_proj = -1, mp_light = -1,
+            mp_vpos  = -1, mp_col  = -1, mp_metal = -1, mp_rough = -1;
+        if (mesh_prog) {
+            mp_model = rev::shader::GetUniformLocation(mesh_prog, "u_model");
+            mp_view  = rev::shader::GetUniformLocation(mesh_prog, "u_view");
+            mp_proj  = rev::shader::GetUniformLocation(mesh_prog, "u_projection");
+            mp_light = rev::shader::GetUniformLocation(mesh_prog, "u_light_pos");
+            mp_vpos  = rev::shader::GetUniformLocation(mesh_prog, "u_view_pos");
+            mp_col   = rev::shader::GetUniformLocation(mesh_prog, "u_color");
+            mp_metal = rev::shader::GetUniformLocation(mesh_prog, "u_metallic");
+            mp_rough = rev::shader::GetUniformLocation(mesh_prog, "u_roughness");
+            rev::shader::Use(mesh_prog);
+            if (glUniformMatrix4fv) {
+                glUniformMatrix4fv(mp_view, 1, 0, view_mat);
+                glUniformMatrix4fv(mp_proj, 1, 0, proj_mat);
+            }
+            rev::shader::SetVec3(mesh_prog, mp_light, light_pos[0], light_pos[1], light_pos[2]);
+            rev::shader::SetVec3(mesh_prog, mp_vpos, eye[0], eye[1], eye[2]);
         }
 
-        float light_pos[3] = {3.0f, 5.0f, 4.0f};
-        rev::shader::SetVec3(mesh_prog, loc_light, light_pos[0], light_pos[1], light_pos[2]);
-        rev::shader::SetVec3(mesh_prog, loc_vpos, eye[0], eye[1], eye[2]);
+        // Sprite shader uniform locations
+        int sp_tex = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_texture")  : -1;
+        int sp_pos = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_position") : -1;
+        int sp_sz  = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_size")     : -1;
+        int sp_opa = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_opacity")  : -1;
 
-        for (int s = 0; s < editor->project->scene_count; s++) {
+        // Build unified draw list: type 0=image 1=text 2=mesh
+        struct DrawItem { int type; void* cue; int layer_order; };
+        static const int kMaxItems = 512;
+        DrawItem items[kMaxItems];
+        int item_count = 0;
+
+        for (int s = 0; s < editor->project->scene_count && item_count < kMaxItems; s++) {
             SceneBlock* scene = &editor->project->scenes[s];
-            for (int i = 0; i < scene->mesh_cue_count; i++) {
+            for (int i = 0; i < scene->image_cue_count && item_count < kMaxItems; i++) {
+                ImageCue* cue = &scene->image_cues[i];
+                float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                if (editor->current_time >= cue->cue_start && editor->current_time <= end)
+                    items[item_count++] = { 0, cue, cue->layer_order };
+            }
+            for (int i = 0; i < scene->text_cue_count && item_count < kMaxItems; i++) {
+                TextCue* cue = &scene->text_cues[i];
+                float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                if (editor->current_time >= cue->cue_start && editor->current_time <= end
+                        && cue->text[0])
+                    items[item_count++] = { 1, cue, cue->layer_order };
+            }
+            for (int i = 0; i < scene->mesh_cue_count && item_count < kMaxItems; i++) {
                 MeshCue* cue = &scene->mesh_cues[i];
-                float actual_end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
-                if (editor->current_time < cue->cue_start || editor->current_time > actual_end) continue;
+                float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                if (editor->current_time >= cue->cue_start && editor->current_time <= end)
+                    items[item_count++] = { 2, cue, cue->layer_order };
+            }
+        }
 
+        // Stable bubble sort by layer_order ascending
+        for (int i = 0; i < item_count - 1; i++)
+            for (int j = 0; j < item_count - i - 1; j++)
+                if (items[j].layer_order > items[j+1].layer_order) {
+                    DrawItem tmp = items[j]; items[j] = items[j+1]; items[j+1] = tmp;
+                }
+
+        bool blend_on = false, depth_on = false;
+
+        for (int idx = 0; idx < item_count; idx++) {
+            DrawItem& item = items[idx];
+
+            if (item.type == 0 || item.type == 1) {
+                // Sprite (image or text)
+                if (!sprite_prog) continue;
+                if (depth_on) {
+                    glDisable(0x0B71);  // GL_DEPTH_TEST
+                    if (glDepthMask_fn) glDepthMask_fn(0);  // GL_FALSE - disable depth writes
+                    depth_on = false;
+                }
+                if (!blend_on) {
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    blend_on = true;
+                }
+                rev::shader::Use(sprite_prog);
+
+                unsigned int tex = 0;
+                float norm_w = 0, norm_h = 0, pos_x = 0, pos_y = 0, opacity = 1.0f;
+
+                if (item.type == 0) {
+                    ImageCue* cue = (ImageCue*)item.cue;
+                    char full_path[512];
+                    snprintf(full_path, sizeof(full_path), "%s\\%s",
+                             editor->project->assets_path, cue->asset_key);
+                    rev::runtime::ImageTexture rt_img{};
+                    if (!rev::runtime::LoadImageTexture(full_path, &rt_img)) continue;
+                    tex    = rt_img.texture_id;
+                    norm_w = (rt_img.width  * cue->scale) / editor->preview_width  * 2.0f;
+                    norm_h = (rt_img.height * cue->scale) / editor->preview_height * 2.0f;
+                    pos_x  =  (cue->x * 2.0f) - 1.0f;
+                    pos_y  = -((cue->y * 2.0f) - 1.0f);
+                    opacity = cue->opacity * rev::runtime::ComputeEffectOpacity(
+                        cue->effect_type, cue->fade_in_start, cue->fade_in_end,
+                        cue->fade_out_start, cue->fade_out_end, editor->current_time);
+                } else {
+                    TextCue* cue = (TextCue*)item.cue;
+                    rev::runtime::TextTexture rt_txt{};
+                    if (!rev::runtime::RenderTextToTexture(
+                            cue->text, cue->font_name, cue->size,
+                            cue->color.r, cue->color.g, cue->color.b, &rt_txt)) continue;
+                    tex    = rt_txt.texture_id;
+                    norm_w = (float)rt_txt.width  / editor->preview_width  * 2.0f;
+                    norm_h = (float)rt_txt.height / editor->preview_height * 2.0f;
+                    pos_x  =  (cue->x * 2.0f) - 1.0f;
+                    pos_y  = -((cue->y * 2.0f) - 1.0f);
+                    opacity = rev::runtime::ComputeEffectOpacity(
+                        cue->effect_type, cue->fade_in_start, cue->fade_in_end,
+                        cue->fade_out_start, cue->fade_out_end, editor->current_time);
+                }
+
+                if (glActiveTexture_fn) glActiveTexture_fn(0x84C0); // GL_TEXTURE0
+                glBindTexture(GL_TEXTURE_2D, tex);
+                if (sp_tex >= 0) rev::shader::SetInt(sprite_prog, sp_tex, 0);
+                if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, pos_x, pos_y);
+                if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
+                if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                glDeleteTextures(1, &tex);
+
+            } else {
+                // Mesh (type == 2)
+                if (!mesh_prog) continue;
+                if (blend_on) { glDisable(GL_BLEND); blend_on = false; }
+                if (!depth_on) {
+                    glEnable(0x0B71);                       // GL_DEPTH_TEST
+                    if (glDepthMask_fn) glDepthMask_fn(1);  // GL_TRUE - enable depth writes
+                    if (glDepthFunc_fn) glDepthFunc_fn(0x0201); // GL_LESS
+                    glClear(0x0100);                        // GL_DEPTH_BUFFER_BIT - clear depth once when enabling
+                    depth_on = true;
+                }
+                rev::shader::Use(mesh_prog);
+
+                MeshCue* cue = (MeshCue*)item.cue;
                 float opacity = rev::runtime::ComputeEffectOpacity(
                     cue->effect_type, cue->fade_in_start, cue->fade_in_end,
                     cue->fade_out_start, cue->fade_out_end, editor->current_time);
 
-                // Build model matrix
                 float model[16];
                 rev::runtime::Mat4Model(model, cue->pos, cue->rot, cue->scale);
-                if (glUniformMatrix4fv) glUniformMatrix4fv(loc_model, 1, 0, model);
-
-                // Set color with opacity
-                typedef void (*PFNGLUNIFORM4FVPROC)(int, int, const float*);
-                auto glUniform4fv_fn = (PFNGLUNIFORM4FVPROC)wglGetProcAddress("glUniform4fv");
+                if (glUniformMatrix4fv) glUniformMatrix4fv(mp_model, 1, 0, model);
                 if (glUniform4fv_fn) {
-                    float col[4] = { cue->color[0], cue->color[1], cue->color[2], cue->color[3] * opacity };
-                    glUniform4fv_fn(loc_color, 1, col);
+                    float col[4] = {cue->color[0], cue->color[1], cue->color[2], cue->color[3]*opacity};
+                    glUniform4fv_fn(mp_col, 1, col);
                 }
-                rev::shader::SetFloat(mesh_prog, loc_metal, cue->metallic);
-                rev::shader::SetFloat(mesh_prog, loc_rough, cue->roughness);
+                if (mp_metal >= 0) rev::shader::SetFloat(mesh_prog, mp_metal, cue->metallic);
+                if (mp_rough >= 0) rev::shader::SetFloat(mesh_prog, mp_rough, cue->roughness);
 
-                // Create procedural mesh based on type
                 float size  = cue->mesh_size  > 0.0f ? cue->mesh_size  : 1.0f;
                 float param = cue->mesh_param > 0.0f ? cue->mesh_param : 16.0f;
                 rev::mesh::Mesh* mesh = nullptr;
                 switch (cue->mesh_type) {
-                    case 0: mesh = rev::mesh::CreateCube(size);                         break;
-                    case 1: mesh = rev::mesh::CreateSphere(size, (int)param);           break;
+                    case 0: mesh = rev::mesh::CreateCube(size); break;
+                    case 1: mesh = rev::mesh::CreateSphere(size, (int)param); break;
                     case 2: mesh = rev::mesh::CreatePlane(size, param > 0.0f ? param : size); break;
                     case 3: mesh = rev::mesh::CreateTorus(size, param > 0.0f ? param : 0.3f, 32, 16); break;
                     case 4: {
-                        // External glTF/GLB — look up cache first to avoid per-frame reload
                         if (cue->asset_path[0]) {
                             rev::mesh::Mesh* cached = nullptr;
                             for (int c = 0; c < editor->mesh_cache_count; ++c) {
@@ -4320,17 +4293,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     break;
                                 }
                             }
-                            if (cached) {
-                                // Use cached mesh — already uploaded
-                                rev::mesh::Render(cached, -1);
-                                continue;
-                            }
-                            // Not cached — load and store
+                            if (cached) { rev::mesh::Render(cached, -1); continue; }
                             rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(cue->asset_path);
-                            if (ir && ir->ok) {
-                                mesh = ir->mesh;
-                                ir->mesh = nullptr;
-                            }
+                            if (ir && ir->ok) { mesh = ir->mesh; ir->mesh = nullptr; }
                             if (ir) rev::gltf::FreeImportResult(ir);
                             if (mesh) {
                                 rev::mesh::UploadToGPU(mesh);
@@ -4343,20 +4308,21 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 continue;
                             }
                         }
-                        mesh = rev::mesh::CreateCube(1.0f); // fallback
+                        mesh = rev::mesh::CreateCube(1.0f);
                         break;
                     }
                     default: mesh = rev::mesh::CreateCube(1.0f); break;
                 }
-                if (!mesh) continue;
-
-                rev::mesh::UploadToGPU(mesh);
-                rev::mesh::Render(mesh, -1);
-                rev::mesh::DestroyMesh(mesh);
+                if (mesh) {
+                    rev::mesh::UploadToGPU(mesh);
+                    rev::mesh::Render(mesh, -1);
+                    rev::mesh::DestroyMesh(mesh);
+                }
             }
         }
 
-        glDisable(0x0B71); // GL_DEPTH_TEST
+        if (blend_on) glDisable(GL_BLEND);
+        if (depth_on) glDisable(0x0B71); // GL_DEPTH_TEST
     }
 
     // Unbind framebuffer (restore default)

@@ -1021,13 +1021,23 @@ int main(int argc, char* argv[]) {
             image_was_active = false;
         }
         
-        // Clear screen
-        // Always set viewport to the configured resolution so sprite/mesh formulas
-        // that use config.width/config.height produce the correct NDC proportions,
-        // regardless of the physical window size on the current monitor.
-        glViewport(0, 0, config.width, config.height);
+        // Clear the full physical window (letterbox bars go black too)
+        int ww = window->win_width  > 0 ? window->win_width  : config.width;
+        int wh = window->win_height > 0 ? window->win_height : config.height;
+        glViewport(0, 0, ww, wh);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+
+        // Letterbox viewport: fit render resolution centered in the actual window.
+        // NDC calculations throughout still use config.width/height (1920×1080).
+        {
+            float ta = (float)config.width / (float)config.height;
+            float wa = (float)ww / (float)wh;
+            int vx = 0, vy = 0, vw = ww, vh = wh;
+            if (wa > ta) { vw = (int)((float)vh * ta + 0.5f); vx = (ww - vw) / 2; }
+            else         { vh = (int)((float)vw / ta + 0.5f); vy = (wh - vh) / 2; }
+            glViewport(vx, vy, vw, vh);
+        }
 
         // Rebind the global VAO: rev::mesh::UploadToGPU / Render leave the mesh VAO
         // (or VAO 0) current, but the background fullscreen quad requires a valid VAO
@@ -1058,147 +1068,143 @@ int main(int argc, char* argv[]) {
         // Draw fullscreen quad (shader background)
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         
-        // Draw image sprite if active
-        if (sprite_shader && image_loaded && time >= image_cue.cue_start && time <= image_cue.cue_end) {
-            // Use sprite shader
-            rev::shader::Use(sprite_shader);
-            
-            // Ensure proper GL state for sprite rendering
-            glDisable(GL_DEPTH_TEST);
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            
-            // Calculate sprite quad position/size in NDC — match editor preview formula:
-            //   norm = (tex_pixels * scale) / window_pixels * 2.0
-            float w = (image_tex.width  * image_cue.scale) / (float)config.width  * 2.0f;
-            float h = (image_tex.height * image_cue.scale) / (float)config.height * 2.0f;
-            float x =  (image_cue.x * 2.0f - 1.0f);
-            float y = -((image_cue.y * 2.0f) - 1.0f); // screen-space: y=0=top, y=1=bottom
-            
-            // Set sprite uniforms
-            int u_position_loc = rev::shader::GetUniformLocation(sprite_shader, "u_position");
-            int u_size_loc = rev::shader::GetUniformLocation(sprite_shader, "u_size");
-            int u_texture_loc = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
-            int u_opacity_loc = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
-            
-            if (u_position_loc >= 0)
-                rev::shader::SetVec2(sprite_shader, u_position_loc, x, y);
-            if (u_size_loc >= 0)
-                rev::shader::SetVec2(sprite_shader, u_size_loc, w, h);
-            if (u_texture_loc >= 0)
-                rev::shader::SetInt(sprite_shader, u_texture_loc, 0);
-            if (u_opacity_loc >= 0)
-                rev::shader::SetFloat(sprite_shader, u_opacity_loc, image_cue.opacity * ComputeEffectOpacity(image_cue.effect_type, image_cue.fade_in_start, image_cue.fade_in_end, image_cue.fade_out_start, image_cue.fade_out_end, time));
-            
-            // Bind texture to unit 0
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, image_tex.texture_id);
-            
-            // Draw sprite quad (4 vertices, triangle strip)
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            
-            glDisable(GL_BLEND);
-        }
-        
-        // Draw text sprite if active
-        if (sprite_shader && text_loaded && time >= text_cue.cue_start && time <= text_cue.cue_end) {
-            // Use sprite shader
-            rev::shader::Use(sprite_shader);
-            
-            // Ensure proper GL state
-            glDisable(GL_DEPTH_TEST);
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            
-            // Calculate text position/size — same pixel-based formula as image cues
-            float w = (float)text_tex.width  / (float)config.width  * 2.0f;
-            float h = (float)text_tex.height / (float)config.height * 2.0f;
-            float x =  (text_cue.x * 2.0f - 1.0f);
-            float y = -((text_cue.y * 2.0f) - 1.0f); // screen-space: y=0=top, y=1=bottom
-            
-            // Calculate opacity based on effect
-            float opacity = ComputeEffectOpacity(text_cue.effect_type, text_cue.fade_in_start, text_cue.fade_in_end, text_cue.fade_out_start, text_cue.fade_out_end, time);
-            
-            // Set uniforms
-            int u_position_loc = rev::shader::GetUniformLocation(sprite_shader, "u_position");
-            int u_size_loc = rev::shader::GetUniformLocation(sprite_shader, "u_size");
-            int u_texture_loc = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
-            int u_opacity_loc = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
-            
-            if (u_position_loc >= 0)
-                rev::shader::SetVec2(sprite_shader, u_position_loc, x, y);
-            if (u_size_loc >= 0)
-                rev::shader::SetVec2(sprite_shader, u_size_loc, w, h);
-            if (u_texture_loc >= 0)
-                rev::shader::SetInt(sprite_shader, u_texture_loc, 0);
-            if (u_opacity_loc >= 0)
-                rev::shader::SetFloat(sprite_shader, u_opacity_loc, opacity);
-            
-            // Bind text texture
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, text_tex.texture_id);
-            
-            // Draw text quad
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            
-            glDisable(GL_BLEND);
-        }
+        // --- Unified layered draw pass ---
+        // Collect active image/text/mesh cues, sort by layer_order, draw in order.
+        {
+            struct DrawEntry { int type; int layer; }; // 0=image 1=text 2=mesh
+            DrawEntry entries[3]; int ne = 0;
 
-        // Draw 3D mesh if active
-        if (mesh_shader && mesh_obj && has_mesh &&
-            time >= mesh_cue.cue_start && time <= mesh_cue.cue_end) {
+            bool img_active = sprite_shader && image_loaded
+                              && time >= image_cue.cue_start && time <= image_cue.cue_end;
+            bool txt_active = sprite_shader && text_loaded
+                              && time >= text_cue.cue_start  && time <= text_cue.cue_end;
+            bool msh_active = mesh_shader && mesh_obj && has_mesh
+                              && time >= mesh_cue.cue_start && time <= mesh_cue.cue_end;
 
-            glEnable(0x0B71);           // GL_DEPTH_TEST
-            glClear(0x00000100);        // GL_DEPTH_BUFFER_BIT
+            if (img_active) entries[ne++] = {0, image_cue.layer_order};
+            if (txt_active) entries[ne++] = {1, text_cue.layer_order};
+            if (msh_active) entries[ne++] = {2, mesh_cue.layer_order};
 
-            rev::shader::Use(mesh_shader);
+            // Bubble sort ascending (lower layer_order draws first = further back)
+            for (int i = 0; i < ne - 1; i++)
+                for (int j = 0; j < ne - i - 1; j++)
+                    if (entries[j].layer > entries[j+1].layer) {
+                        DrawEntry tmp = entries[j]; entries[j] = entries[j+1]; entries[j+1] = tmp;
+                    }
 
-            float aspect = (float)config.width / (float)config.height;
-            float eye[3]    = {0.0f, 0.0f, 5.0f};
-            float center[3] = {0.0f, 0.0f, 0.0f};
-            float up_vec[3] = {0.0f, 1.0f, 0.0f};
+            bool blend_on = false, depth_on = false;
 
-            float view_mat[16], proj_mat[16], model_mat[16];
-            Mat4Perspective(proj_mat, 3.14159265f * 0.25f, aspect, 0.1f, 100.0f);
-            Mat4LookAt(view_mat, eye, center, up_vec);
-            Mat4Model(model_mat, mesh_cue.pos, mesh_cue.rot, mesh_cue.scale);
+            for (int ei = 0; ei < ne; ei++) {
+                if (entries[ei].type == 0) {
+                    // Image sprite
+                    if (!blend_on) {
+                        glDisable(GL_DEPTH_TEST);
+                        glDepthMask(GL_FALSE);  // Disable depth writes for sprites
+                        glEnable(GL_BLEND);
+                        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                        blend_on = true; depth_on = false;
+                    }
+                    rev::shader::Use(sprite_shader);
+                    float w = (image_tex.width  * image_cue.scale) / (float)config.width  * 2.0f;
+                    float h = (image_tex.height * image_cue.scale) / (float)config.height * 2.0f;
+                    float x =  (image_cue.x * 2.0f - 1.0f);
+                    float y = -((image_cue.y * 2.0f) - 1.0f);
+                    int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
+                    int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
+                    int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
+                    int u_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
+                    if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
+                    if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
+                    if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
+                    if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa,
+                        image_cue.opacity * ComputeEffectOpacity(
+                            image_cue.effect_type, image_cue.fade_in_start, image_cue.fade_in_end,
+                            image_cue.fade_out_start, image_cue.fade_out_end, time));
+                    if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, image_tex.texture_id);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-            typedef void (*PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
-            auto glUniformMatrix4fv_fn = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
-            if (glUniformMatrix4fv_fn) {
-                int loc_model = rev::shader::GetUniformLocation(mesh_shader, "u_model");
-                int loc_view  = rev::shader::GetUniformLocation(mesh_shader, "u_view");
-                int loc_proj  = rev::shader::GetUniformLocation(mesh_shader, "u_projection");
-                glUniformMatrix4fv_fn(loc_model, 1, 0, model_mat);
-                glUniformMatrix4fv_fn(loc_view,  1, 0, view_mat);
-                glUniformMatrix4fv_fn(loc_proj,  1, 0, proj_mat);
-            }
+                } else if (entries[ei].type == 1) {
+                    // Text sprite
+                    if (!blend_on) {
+                        glDisable(GL_DEPTH_TEST);
+                        glDepthMask(GL_FALSE);  // Disable depth writes for sprites
+                        glEnable(GL_BLEND);
+                        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                        blend_on = true; depth_on = false;
+                    }
+                    rev::shader::Use(sprite_shader);
+                    float w = (float)text_tex.width  / (float)config.width  * 2.0f;
+                    float h = (float)text_tex.height / (float)config.height * 2.0f;
+                    float x =  (text_cue.x * 2.0f - 1.0f);
+                    float y = -((text_cue.y * 2.0f) - 1.0f);
+                    float opacity = ComputeEffectOpacity(text_cue.effect_type,
+                        text_cue.fade_in_start, text_cue.fade_in_end,
+                        text_cue.fade_out_start, text_cue.fade_out_end, time);
+                    int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
+                    int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
+                    int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
+                    int u_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
+                    if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
+                    if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
+                    if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
+                    if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa, opacity);
+                    if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, text_tex.texture_id);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-            float light_pos[3] = {3.0f, 5.0f, 4.0f};
-            int loc_light = rev::shader::GetUniformLocation(mesh_shader, "u_light_pos");
-            int loc_vpos  = rev::shader::GetUniformLocation(mesh_shader, "u_view_pos");
-            int loc_color = rev::shader::GetUniformLocation(mesh_shader, "u_color");
-            int loc_metal = rev::shader::GetUniformLocation(mesh_shader, "u_metallic");
-            int loc_rough = rev::shader::GetUniformLocation(mesh_shader, "u_roughness");
-            if (loc_light >= 0) rev::shader::SetVec3(mesh_shader, loc_light, light_pos[0], light_pos[1], light_pos[2]);
-            if (loc_vpos  >= 0) rev::shader::SetVec3(mesh_shader, loc_vpos,  eye[0], eye[1], eye[2]);
-            if (loc_color >= 0) {
-                typedef void (*PFNGLUNIFORM4FVPROC)(int, int, const float*);
-                auto glUniform4fv_fn = (PFNGLUNIFORM4FVPROC)wglGetProcAddress("glUniform4fv");
-                if (glUniform4fv_fn) {
-                    float opacity = ComputeEffectOpacity(mesh_cue.effect_type,
-                        mesh_cue.fade_in_start, mesh_cue.fade_in_end,
-                        mesh_cue.fade_out_start, mesh_cue.fade_out_end, time);
-                    float col[4] = { mesh_cue.color[0], mesh_cue.color[1], mesh_cue.color[2], mesh_cue.color[3] * opacity };
-                    glUniform4fv_fn(loc_color, 1, col);
+                } else {
+                    // 3D mesh
+                    if (blend_on) { glDisable(GL_BLEND); blend_on = false; }
+                    if (!depth_on) {
+                        glEnable(0x0B71);        // GL_DEPTH_TEST
+                        glDepthMask(GL_TRUE);    // Enable depth writes for meshes
+                        glClear(0x00000100);     // GL_DEPTH_BUFFER_BIT
+                        depth_on = true;
+                    }
+                    rev::shader::Use(mesh_shader);
+                    float aspect = (float)config.width / (float)config.height;
+                    float eye[3]    = {0.0f, 0.0f, 5.0f};
+                    float center[3] = {0.0f, 0.0f, 0.0f};
+                    float up_v[3]   = {0.0f, 1.0f, 0.0f};
+                    float view_mat[16], proj_mat[16], model_mat[16];
+                    Mat4Perspective(proj_mat, 3.14159265f * 0.25f, aspect, 0.1f, 100.0f);
+                    Mat4LookAt(view_mat, eye, center, up_v);
+                    Mat4Model(model_mat, mesh_cue.pos, mesh_cue.rot, mesh_cue.scale);
+                    typedef void (*PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
+                    auto glUniformMatrix4fv_fn = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
+                    if (glUniformMatrix4fv_fn) {
+                        glUniformMatrix4fv_fn(rev::shader::GetUniformLocation(mesh_shader,"u_model"), 1,0,model_mat);
+                        glUniformMatrix4fv_fn(rev::shader::GetUniformLocation(mesh_shader,"u_view"),  1,0,view_mat);
+                        glUniformMatrix4fv_fn(rev::shader::GetUniformLocation(mesh_shader,"u_projection"),1,0,proj_mat);
+                    }
+                    float light_pos[3] = {3.0f, 5.0f, 4.0f};
+                    int loc_light = rev::shader::GetUniformLocation(mesh_shader, "u_light_pos");
+                    int loc_vpos  = rev::shader::GetUniformLocation(mesh_shader, "u_view_pos");
+                    int loc_color = rev::shader::GetUniformLocation(mesh_shader, "u_color");
+                    int loc_metal = rev::shader::GetUniformLocation(mesh_shader, "u_metallic");
+                    int loc_rough = rev::shader::GetUniformLocation(mesh_shader, "u_roughness");
+                    if (loc_light >= 0) rev::shader::SetVec3(mesh_shader, loc_light, light_pos[0], light_pos[1], light_pos[2]);
+                    if (loc_vpos  >= 0) rev::shader::SetVec3(mesh_shader, loc_vpos, eye[0], eye[1], eye[2]);
+                    if (loc_color >= 0) {
+                        typedef void (*PFNGLUNIFORM4FVPROC)(int, int, const float*);
+                        auto glUniform4fv_fn = (PFNGLUNIFORM4FVPROC)wglGetProcAddress("glUniform4fv");
+                        if (glUniform4fv_fn) {
+                            float opa = ComputeEffectOpacity(mesh_cue.effect_type,
+                                mesh_cue.fade_in_start, mesh_cue.fade_in_end,
+                                mesh_cue.fade_out_start, mesh_cue.fade_out_end, time);
+                            float col[4] = {mesh_cue.color[0], mesh_cue.color[1], mesh_cue.color[2], mesh_cue.color[3]*opa};
+                            glUniform4fv_fn(loc_color, 1, col);
+                        }
+                    }
+                    if (loc_metal >= 0) rev::shader::SetFloat(mesh_shader, loc_metal, mesh_cue.metallic);
+                    if (loc_rough >= 0) rev::shader::SetFloat(mesh_shader, loc_rough, mesh_cue.roughness);
+                    rev::mesh::Render(mesh_obj, -1);
                 }
             }
-            if (loc_metal >= 0) rev::shader::SetFloat(mesh_shader, loc_metal, mesh_cue.metallic);
-            if (loc_rough >= 0) rev::shader::SetFloat(mesh_shader, loc_rough, mesh_cue.roughness);
 
-            rev::mesh::Render(mesh_obj, -1);
-
-            glDisable(0x0B71); // GL_DEPTH_TEST
+            if (blend_on) glDisable(GL_BLEND);
+            if (depth_on) glDisable(0x0B71); // GL_DEPTH_TEST
         }
 
         // Swap buffers

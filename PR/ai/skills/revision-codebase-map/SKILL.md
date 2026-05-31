@@ -16,7 +16,7 @@ revision_libs/
   rev_editor/        C++ editor library (scene blocks, image cues, music cues, shader cues, export, pack)
     include/         rev_editor.h — ProjectData, SceneBlock, ShaderCue structs; ImageCue/TextCue/MusicCue via `using rev::runtime::*`
     src/             editor_context.cpp — LoadProject, SaveProject, ExportProject, PackBuildAndRun, ImportFromCues
-  rev_platform/      Win32 windowing, OpenGL context
+  rev_platform/      Win32 windowing, OpenGL context; Window struct has win_width/win_height (physical pixels, set by CreateIntroWindow; fullscreen uses SM_CXSCREEN/SM_CYSCREEN); DPI awareness (PER_MONITOR_AWARE_V2) set in CreateIntroWindow
   rev_shader/        Shader compilation, uniform binding
   rev_curve/         Curve/animation system
   rev_sequence/      Timeline sequencing

@@ -1,1 +1,2 @@
-hoflogo.png|intros/4test/project_assets/hoflogo.png|D5403A7A
+logo - Kopi.png|intros/4test/project_assets/logo - Kopi.png|E785AA90
+mesh_0|intros/4test/project_assets/newbox.glb|E151F7DF
