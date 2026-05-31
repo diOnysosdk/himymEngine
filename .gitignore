@@ -63,5 +63,11 @@ assets/scene_data.txt
 assets/scene3d.txt
 assets/imgui.ini
 
+# Old/legacy assets
+assets/assets/
+assets/imported/
+assets/meshes/
+assets/project.json
+
 # Keep main cues.txt
 !assets/cues.txt
