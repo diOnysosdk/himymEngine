@@ -4406,21 +4406,15 @@ void RenderPreviewPanel(EditorContext* editor) {
             w = h * aspect;
         }
 
-        // Resize the FBO to match the panel's pixel dimensions so that all
-        // size formulas (tex_pixels / preview_width * 2) produce the same
-        // proportional result as in the final product.
-        int panel_w = (int)w;
-        int panel_h = (int)h;
-        if (panel_w > 0 && panel_h > 0) {
-            ResizePreview(editor, panel_w, panel_h);
-        }
-
         // Center the preview
         float offset_x = (avail.x - w) * 0.5f;
         if (offset_x > 0.0f) {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset_x);
         }
         
+        // FBO stays at 1920x1080 — ImGui scales the texture to fit the panel.
+        // All size formulas (tex_pixels / preview_width * 2) produce the same
+        // proportional result as the final product at every panel size.
         ImGui::Image((ImTextureID)(intptr_t)editor->preview_texture, ImVec2(w, h), ImVec2(0, 1), ImVec2(1, 0));
     } else {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Preview not initialized");
