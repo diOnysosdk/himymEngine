@@ -2112,6 +2112,35 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     fprintf(f, "[image_cues]\n");
     fprintf(f, "# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order\n");
     
+    // Compute workspace-root-relative prefix for asset paths once.
+    // assets_path is absolute (e.g. E:\himym\intros\test\test_assets).
+    // cwd is always the workspace root (e.g. E:\himym).
+    // We need the forward-slash relative form: intros/test/test_assets
+    char rel_assets_prefix[512] = {};
+    {
+        char cwd[512] = {};
+        GetCurrentDirectoryA(sizeof(cwd), cwd);
+        size_t cwd_len = strlen(cwd);
+        const char* ap = editor->project->assets_path;
+        if (cwd_len > 0 && _strnicmp(ap, cwd, cwd_len) == 0 &&
+            (ap[cwd_len] == '\\' || ap[cwd_len] == '/')) {
+            strncpy_s(rel_assets_prefix, ap + cwd_len + 1, sizeof(rel_assets_prefix) - 1);
+        } else {
+            // assets_path not under cwd — use just project_name_assets as fallback
+            const char* proj_path = editor->project->project_path;
+            const char* fn = strrchr(proj_path, '\\');
+            if (!fn) fn = strrchr(proj_path, '/');
+            fn = fn ? fn + 1 : proj_path;
+            char pname[256] = {};
+            strncpy_s(pname, fn, sizeof(pname) - 1);
+            char* dot = strrchr(pname, '.');
+            if (dot) *dot = '\0';
+            snprintf(rel_assets_prefix, sizeof(rel_assets_prefix), "%s_assets", pname);
+        }
+        // normalise to forward slashes
+        for (char* p = rel_assets_prefix; *p; ++p) if (*p == '\\') *p = '/';
+    }
+
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
         float scene_start = 0.0f;
@@ -2125,19 +2154,9 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             float abs_start = scene_start + cue->cue_start;
             float abs_end = (cue->cue_end < 0.0f) ? (scene_start + scene->duration) : (scene_start + cue->cue_end);
             
-            // Extract project name from workspace path to construct assets folder name
-            char project_name[256] = {0};
-            const char* proj_path = editor->project->project_path;
-            const char* filename_start = strrchr(proj_path, '\\');
-            if (!filename_start) filename_start = strrchr(proj_path, '/');
-            filename_start = filename_start ? filename_start + 1 : proj_path;
-            strncpy_s(project_name, filename_start, sizeof(project_name) - 1);
-            char* dot = strrchr(project_name, '.');
-            if (dot) *dot = '\0';
-            
-            // Construct full path: {project_name}_assets/{asset_key}
-            char full_path[256];
-            snprintf(full_path, sizeof(full_path), "%s_assets/%s", project_name, cue->asset_key);
+            // Construct workspace-root-relative path: rel_assets_prefix/asset_key
+            char full_path[640];
+            snprintf(full_path, sizeof(full_path), "%s/%s", rel_assets_prefix, cue->asset_key);
             
             fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d\n",
                 cue->asset_key, full_path, cue->x, cue->y, cue->scale, cue->opacity,
