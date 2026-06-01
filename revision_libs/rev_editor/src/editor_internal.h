@@ -1,12 +1,16 @@
 #pragma once
 
 #include "rev_editor.h"
+#include "shader_presets.h"
 
 // Internal declarations for editor UI modules
 // These functions are split across editor_modals.cpp and editor_panels.cpp
 
 namespace rev {
 namespace editor {
+
+// Helper functions (editor_context.cpp)
+uint64_t GetFileModificationTime(const char* path);
 
 // UI Panel Functions (editor_panels.cpp)
 void RenderTimeline(EditorContext* editor);
