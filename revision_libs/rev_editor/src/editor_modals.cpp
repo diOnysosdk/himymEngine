@@ -15,7 +15,6 @@ void RenderCurveEditorModal(EditorContext* editor) {
 
     // Handle open request
     if (editor->curve_editor_modal_request_open) {
-        printf("[RenderCurveEditorModal] Request received! Opening popup for curve %d\n", editor->editing_curve_index);
         ImGui::OpenPopup("Edit Curve");
         editor->curve_editor_modal_request_open = false;
         editor->curve_editor_modal_open = true;
@@ -493,12 +492,8 @@ void RenderShaderModal(EditorContext* editor) {
         
         // Helper lambda for curve buttons
         auto OpenShaderCurve = [&](int& curve_field, const char* label, float current_value) {
-            printf("[OpenShaderCurve] Called: curve_field=%d, label=%s, curve_count=%d\n", 
-                   curve_field, label, editor->project->curve_count);
-            
             if (curve_field < 0 && editor->project->curve_count < 32) {
                 // Create new curve
-                printf("[OpenShaderCurve] Creating new curve...\n");
                 rev::curve::Curve& curve = editor->project->curves[editor->project->curve_count];
                 curve = rev::curve::CreateCurve(16);
                 rev::curve::AddPoint(curve, 0.0f, current_value);
@@ -507,21 +502,15 @@ void RenderShaderModal(EditorContext* editor) {
                 editor->project->curve_count++;
                 editor->project->modified = true;
                 AutoSave(); // Save curve assignment immediately
-                printf("[OpenShaderCurve] New curve created at index %d\n", curve_field);
             }
             
             // Open curve editor modal (validate index first)
             if (curve_field >= 0 && curve_field < editor->project->curve_count) {
-                printf("[OpenShaderCurve] Opening curve editor: index=%d, label=%s\n", curve_field, label);
                 AutoSave(); // Save before opening curve editor
                 editor->editing_curve_index = curve_field;
                 editor->editing_curve_cue_type = 0; // Shader
                 snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", label);
                 editor->curve_editor_modal_request_open = true;
-                printf("[OpenShaderCurve] curve_editor_modal_request_open set to true\n");
-            } else {
-                printf("[OpenShaderCurve] ERROR: Cannot open curve editor - invalid index %d (count: %d)\n", 
-                       curve_field, editor->project->curve_count);
             }
         };
         

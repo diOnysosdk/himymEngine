@@ -1,28 +1,30 @@
 # Shader System - Modular Architecture
 
-The shader system uses a centralized registry in `shader_presets.cpp` to manage all available shaders. This makes it easy to add new shaders without modifying multiple files.
+The shader system maintains shader registries for both the editor and runtime. Shaders must be added to both locations to work correctly.
 
 ## Architecture
 
-**Single Source of Truth:**
-- **`shader_presets.h/cpp`** - Central registry of all shaders with embedded GLSL code
-- **`editor_modals.cpp`** - Shader selection UI (automatically reads from registry)
-- **`minimal_intro/main.cpp`** - Runtime can use `GetShaderSourceById()` to fetch shaders
+**Two Shader Registries (MUST be kept synchronized):**
+- **`shader_presets.h/cpp`** - Editor registry with GLSL code (used by editor UI)
+- **`editor_modals.cpp`** - Shader selection dropdown (reads from shader_presets)
+- **`examples/minimal_intro/main.cpp`** - Runtime shader array `fragment_shaders[]` (line 352)
+
+⚠️ **CRITICAL**: Both registries must have identical shader IDs and order, or the runtime will display the wrong shader.
 
 ## How to Add a New Shader
 
-Adding a new shader requires editing only **one file**: `shader_presets.cpp`
+Adding a new shader requires editing **TWO files** to keep editor and runtime synchronized.
 
-### Step 1: Add Entry to `g_shader_presets` Array
+### Step 1: Add Entry to Editor Registry (`shader_presets.cpp`)
 
-Open `revision_libs/rev_editor/src/shader_presets.cpp` and add a new entry:
+Open `revision_libs/rev_editor/src/shader_presets.cpp` and add a new entry to the `g_shader_presets[]` array:
 
 ```cpp
 const ShaderPreset g_shader_presets[] = {
     // ... existing shaders ...
     
     {
-        10,  // Unique ID (increment from last shader)
+        11,  // Unique ID (current range is 0-10, so next is 11)
         "Your Shader Name",
         "Brief description of what the shader does",
         R"(
@@ -53,15 +55,42 @@ void main() {
 };
 ```
 
-### Step 2: Rebuild
+### Step 2: Add Entry to Runtime Registry (`minimal_intro/main.cpp`)
+
+Open `examples/minimal_intro/main.cpp` and add the **SAME SHADER** to the `fragment_shaders[]` array at line 352:
+
+```cpp
+const char* fragment_shaders[] = {
+    // 0: Horizontal Gradient Bands
+    R"(...)",
+    // 1-10: Other shaders...
+    
+    // 11: Your Shader Name (MUST match shader_presets.cpp ID)
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+// ... rest of shader code (IDENTICAL to shader_presets.cpp)
+void main() {
+    // Your shader code here
+}
+)"
+};
+```
+
+⚠️ **IMPORTANT**: The array index in `fragment_shaders[]` must match the ID in `shader_presets.cpp`. If your shader has ID 11 in the editor, it must be at index 11 in the runtime array.
+
+### Step 3: Rebuild Both Editor and Runtime
 
 ```powershell
 cmake --build build --config Release -j 8
 ```
 
-That's it! The new shader will automatically appear in:
-- Editor's shader selection dropdown
-- Runtime's shader picker (if using `GetShaderSourceById()`)
+The new shader will now appear in:
+- ✅ Editor's shader selection dropdown
+- ✅ Runtime playback with correct ID mapping
 
 ## Available Uniforms
 
@@ -94,7 +123,7 @@ Your shader fragment code has access to these uniforms:
 
 ```cpp
 {
-    10,
+    11,
     "Spiral Vortex",
     "Rotating spiral pattern with smooth color transitions",
     R"(
@@ -133,19 +162,53 @@ void main() {
 }
 ```
 
+## Current Shader List (IDs 0-10)
+
+0. **Horizontal Gradient Bands** - Black default with three horizontal fade bands
+1. **Plasma Vibrant** - Classic plasma effect
+2. **Tunnel Neon** - 3D tunnel with rings
+3. **Raymarcher SDF** - Signed distance field raymarching
+4. **Fractal Mandelbrot** - Mandelbrot fractal zoom
+5. **Voronoi Cells** - Cellular voronoi patterns
+6. **Wave Distortion** - Sine wave distortion field
+7. **Particle System** - GPU particle simulation
+8. **Starfield** - 3D starfield with motion blur
+9. **Glow Orbs** - Glowing orb metaballs
+10. **Matrix Rain** - Matrix-style digital rain
+
+**Next available ID: 11**
+
 ## Benefits of This Architecture
 
-✅ **Single Point of Change** - Add shaders in one place  
+✅ **Structured Registry** - Shader metadata and code in one place  
 ✅ **Type Safety** - Shader structure enforced at compile time  
 ✅ **Editor Sync** - UI automatically reflects available shaders  
-✅ **Runtime Access** - `GetShaderSourceById()` for dynamic loading  
-✅ **Easy Testing** - Modify shaders and rebuild instantly  
+✅ **Compile-Time Validation** - Syntax errors caught during build  
+✅ **Easy Testing** - Modify shaders and rebuild instantly
+
+## Limitations
+
+⚠️ **Manual Synchronization Required** - Editor and runtime registries must be updated separately  
+⚠️ **ID Conflicts** - If IDs don't match, runtime displays wrong shader  
+⚠️ **Rebuild Required** - Changes require full recompilation  
 
 ## Future Enhancements
 
 Possible improvements to consider:
+- **Unified shader registry** - Single source of truth shared by editor and runtime
+- **Runtime uses `GetShaderSourceById()`** - Eliminate duplicate `fragment_shaders[]` array
 - Hot-reload shader source files from disk
 - Shader validation on load
 - Shader categories/tags for organization
 - Custom uniform parameters per shader
 - Shader thumbnails/previews in editor
+
+## Troubleshooting
+
+**Problem**: Runtime displays wrong shader (e.g., editor shows "Horizontal Gradient Bands" but runtime shows "Plasma Vibrant")  
+**Cause**: Shader IDs are out of sync between `shader_presets.cpp` and `minimal_intro/main.cpp`  
+**Solution**: Verify that the array index in `fragment_shaders[]` matches the ID in `g_shader_presets[]`
+
+**Problem**: New shader appears in editor but crashes at runtime  
+**Cause**: Forgot to add shader to `minimal_intro/main.cpp`  
+**Solution**: Add the shader to both files and rebuild

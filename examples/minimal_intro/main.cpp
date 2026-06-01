@@ -348,9 +348,46 @@ void main() {
 }
 )";
 
-// Fragment shaders - 10 presets
+// Fragment shaders - 11 presets (must match shader_presets.cpp order)
 const char* fragment_shaders[] = {
-    // 0: Plasma Vibrant
+    // 0: Horizontal Gradient Bands
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+
+void main() {
+    // Three horizontal bands with left-to-right color fades
+    // Bottom band: palette_low
+    // Middle band: palette_mid
+    // Top band: palette_high
+    
+    float y = uv.y;  // 0 at bottom, 1 at top
+    float x = uv.x;  // 0 at left, 1 at right (for horizontal fade)
+    
+    vec3 col;
+    
+    // Bottom third (0.0 - 0.33): palette_low fades from black to full color
+    if (y < 0.33) {
+        col = u_palette_low * x;
+    }
+    // Middle third (0.33 - 0.66): palette_mid fades from black to full color
+    else if (y < 0.66) {
+        col = u_palette_mid * x;
+    }
+    // Top third (0.66 - 1.0): palette_high fades from black to full color
+    else {
+        col = u_palette_high * x;
+    }
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+    
+    // 1: Plasma Vibrant
     R"(
 #version 330 core
 in vec2 uv;
@@ -377,7 +414,7 @@ void main() {
 }
 )",
     
-    // 1: Tunnel Neon
+    // 2: Tunnel Neon
     R"(
 #version 330 core
 in vec2 uv;
@@ -407,7 +444,7 @@ void main() {
 }
 )",
     
-    // 2: Raymarcher SDF
+    // 3: Raymarcher SDF
     R"(
 #version 330 core
 in vec2 uv;
@@ -440,7 +477,7 @@ void main() {
 }
 )",
     
-    // 3: Fractal Mandelbrot
+    // 4: Fractal Mandelbrot
     R"(
 #version 330 core
 in vec2 uv;
@@ -474,7 +511,7 @@ void main() {
 }
 )",
     
-    // 4: Voronoi Cells
+    // 5: Voronoi Cells
     R"(
 #version 330 core
 in vec2 uv;
@@ -515,7 +552,7 @@ void main() {
 }
 )",
     
-    // 5: Wave Distortion
+    // 6: Wave Distortion
     R"(
 #version 330 core
 in vec2 uv;
@@ -543,7 +580,7 @@ void main() {
 }
 )",
     
-    // 6: Particle System
+    // 7: Particle System
     R"(
 #version 330 core
 in vec2 uv;
@@ -583,7 +620,7 @@ void main() {
 }
 )",
     
-    // 7: Starfield
+    // 8: Starfield
     R"(
 #version 330 core
 in vec2 uv;
@@ -622,7 +659,7 @@ void main() {
 }
 )",
     
-    // 8: Glow Orbs
+    // 9: Glow Orbs
     R"(
 #version 330 core
 in vec2 uv;
@@ -654,7 +691,7 @@ void main() {
 }
 )",
     
-    // 9: Matrix Rain
+    // 10: Matrix Rain
     R"(
 #version 330 core
 in vec2 uv;
@@ -874,6 +911,11 @@ int main(int argc, char* argv[]) {
     glBindVertexArray(vao);
     
     // Compile shader with selected fragment shader
+    const int num_shaders = sizeof(fragment_shaders) / sizeof(fragment_shaders[0]);
+    if (cue.shader_scene_id < 0 || cue.shader_scene_id >= num_shaders) {
+        printf("ERROR: Invalid shader_scene_id %d (must be 0-%d)\n", cue.shader_scene_id, num_shaders - 1);
+        cue.shader_scene_id = 0;  // Fallback to first shader
+    }
     const char* selected_frag_shader = fragment_shaders[cue.shader_scene_id];
     rev::shader::Program* shader = rev::shader::CompileFromSource(vertex_shader, selected_frag_shader);
     if (!shader) {
