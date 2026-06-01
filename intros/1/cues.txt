@@ -1,23 +1,30 @@
 [shader_cues]
-# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order
-0|0.100|0.300|0.800|0.450|0.250|0.700|0.800|0.200|0.600|1.000|1.000|0.500|0.760|0.020|0.040|-0.040|0.000|10.000|0.500|0.500|0|1.000|0|0
+# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order|curve_speed|curve_intensity|curve_warp|curve_exposure|curve_fade|curve_palette_low_r|curve_palette_low_g|curve_palette_low_b|curve_palette_mid_r|curve_palette_mid_g|curve_palette_mid_b|curve_palette_high_r|curve_palette_high_g|curve_palette_high_b|curve_opacity|curve_exposure_ramp|curve_fade_ramp
+0|0.100|0.300|0.800|0.450|0.250|0.700|0.800|0.200|0.600|1.000|1.000|0.500|0.760|0.020|0.040|-0.040|0.000|10.000|0.500|0.500|0|1.000|0|0|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1
 
 [image_cues]
-# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end
+# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity
+hoflogo.png|intros/1/project_assets/hoflogo.png|0.500|0.500|1.000|1.000|0.000|10.000|0|0|0.000|0.000|0.000|0.000|0|-1|-1|-1
 
 [text_cues]
-# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order
+# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b
 
 [music_cues]
 # asset_key|asset_path|cue_start|cue_end
 
 [mesh_cues]
-# asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness
-mesh_0|intros/1/project_assets/boxie.glb|4|0.000|0.000|0.000|0.000|0.000|0.000|1.000|1.000|1.000|0.800|0.800|0.800|1.000|1.000|16.000|0.000|10.000|0|0|0.000|0.000|0.000|0.000|0.000|0.500
+# asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness|curve_pos_x|curve_pos_y|curve_pos_z|curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|curve_color_r|curve_color_g|curve_color_b|curve_color_a|curve_mesh_size|curve_metallic|curve_roughness
+mesh_0|intros/1/project_assets/winery_box.glb|4|0.000|0.000|0.000|0.000|0.000|0.000|1.000|1.000|1.000|1.000|1.000|1.000|1.000|1.000|16.000|0.000|10.000|0|0|0.000|0.000|0.000|0.000|0.000|0.500|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1
 
 [curves]
-# target|param|point_count
+# curve_id|wrap_mode|duration|point_count
+0|clamp|1.000|2
+  0.000|0.500|0.500|0.500|linear
+  1.000|0.500|0.500|0.500|linear
+1|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|0.000|0.500|0.500|linear
 
 [metadata]
-total_duration=20.000
+total_duration=10.000
 scene_count=1

@@ -56,6 +56,8 @@ Curve CreateCurve(int reserve_points) {
     curve.points = new Point[reserve_points];
     curve.point_count = 0;
     curve.capacity = reserve_points;
+    curve.wrap_mode = WrapMode::Clamp;  // Default to clamp
+    curve.duration = 1.0f;  // Default to 1 second
     return curve;
 }
 
@@ -113,6 +115,35 @@ float Evaluate(const Curve& curve, float t) {
     if (curve.point_count == 1) {
         return curve.points[0].v;
     }
+    
+    // Apply wrap mode for t outside [0, 1] range
+    float wrapped_t = t;
+    if (t < 0.0f || t > 1.0f) {
+        switch (curve.wrap_mode) {
+            case WrapMode::Clamp:
+                wrapped_t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
+                break;
+            case WrapMode::Loop:
+                wrapped_t = t - (int)t;
+                if (wrapped_t < 0.0f) wrapped_t += 1.0f;
+                break;
+            case WrapMode::PingPong: {
+                float cycle = t - (int)t;
+                if (cycle < 0.0f) cycle += 1.0f;
+                int ping = (int)t;
+                wrapped_t = (ping % 2 == 0) ? cycle : (1.0f - cycle);
+                break;
+            }
+            case WrapMode::Mirror: {
+                int cycle = (int)t;
+                float frac = t - cycle;
+                if (frac < 0.0f) frac += 1.0f;
+                wrapped_t = (cycle % 2 == 0) ? frac : (1.0f - frac);
+                break;
+            }
+        }
+    }
+    t = wrapped_t;
     
     // Before first point
     if (t <= curve.points[0].t) {

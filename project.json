@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "workspace_path": "",
-  "total_duration": 20.000,
+  "total_duration": 10.000,
   "scenes": [
     {
       "name": "New Scene",
@@ -32,24 +32,22 @@
           "curve_intensity": -1,
           "curve_warp": -1,
           "curve_exposure": -1,
-          "curve_fade": -1
+          "curve_fade": -1,
+          "curve_palette_low_r": -1,
+          "curve_palette_low_g": -1,
+          "curve_palette_low_b": -1,
+          "curve_palette_mid_r": -1,
+          "curve_palette_mid_g": -1,
+          "curve_palette_mid_b": -1,
+          "curve_palette_high_r": -1,
+          "curve_palette_high_g": -1,
+          "curve_palette_high_b": -1,
+          "curve_opacity": -1,
+          "curve_exposure_ramp": -1,
+          "curve_fade_ramp": -1
         }
       ],
       "image_cues": [
-        {
-          "asset_key": "logo - Kopi.png",
-          "x": 0.500,
-          "y": 0.500,
-          "scale": 1.000,
-          "opacity": 1.000,
-          "effect_type": 0,
-          "cue_start": 0.000,
-          "cue_end": 10.000,
-          "fade_in_start": 0.000,
-          "fade_in_end": 0.000,
-          "fade_out_start": 0.000,
-          "fade_out_end": 0.000
-        }
       ],
       "text_cues": [
       ],

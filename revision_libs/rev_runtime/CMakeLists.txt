@@ -7,9 +7,11 @@ add_library(rev_runtime STATIC
 
 target_include_directories(rev_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../rev_curve/include
 )
 
 target_link_libraries(rev_runtime PUBLIC
     opengl32
     gdiplus
+    rev_curve
 )

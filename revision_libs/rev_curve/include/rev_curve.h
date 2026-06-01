@@ -13,6 +13,14 @@ enum class EaseMode {
     Hold         // Hold previous value (step function)
 };
 
+// Wrap modes for curve behavior outside 0-1 range
+enum class WrapMode {
+    Clamp,       // Hold first/last value (default)
+    Loop,        // Repeat the curve (0-1, 0-1, ...)
+    PingPong,    // Bounce back and forth (0-1, 1-0, 0-1, ...)
+    Mirror       // Mirror the curve (0-1, 1-0 mirrored, 0-1, ...)
+};
+
 // A single point on a curve
 struct Point {
     float t;          // Time (normalized 0-1 or absolute)
@@ -27,6 +35,8 @@ struct Curve {
     Point* points;
     int point_count;
     int capacity;
+    WrapMode wrap_mode;  // How to handle t < 0 or t > 1
+    float duration;      // How long the curve takes to complete (in seconds)
 };
 
 // Curve creation and destruction

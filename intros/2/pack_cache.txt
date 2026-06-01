@@ -1,1 +1,0 @@
-mesh_0|intros/2/project_assets/pyramide.glb|C82BEBD5

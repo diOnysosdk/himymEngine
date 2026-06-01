@@ -1,1 +1,2 @@
-mesh_0|intros/1/project_assets/boxie.glb|AFD0DA7C
+hoflogo.png|intros/1/project_assets/hoflogo.png|D5403A7A
+mesh_0|intros/1/project_assets/winery_box.glb|7EDA26E1

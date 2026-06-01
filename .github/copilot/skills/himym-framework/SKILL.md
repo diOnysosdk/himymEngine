@@ -1,5 +1,5 @@
 ---
-name: HiMYM Framework
+name: himym-framework
 description: Knowledge base for the HiMYM (How I Met Your Mother) demoscene framework architecture, libraries, and integration
 ---
 
