@@ -178,8 +178,9 @@ struct EditorContext {
     // Keyed by asset_path; evicted when the path changes or project reloads.
     static const int kMeshCacheSize = 16;
     struct MeshCacheEntry {
-        char  path[512];
-        void* mesh;  // rev::mesh::Mesh*
+        char     path[512];
+        void*    mesh;            // rev::mesh::Mesh*
+        uint64_t last_write_time; // File modification timestamp (FILETIME as uint64)
     };
     MeshCacheEntry mesh_cache[kMeshCacheSize];
     int mesh_cache_count;

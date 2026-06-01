@@ -1,1 +1,0 @@
-mesh_0|intros/2/project_assets/boxie.glb|0884A22E

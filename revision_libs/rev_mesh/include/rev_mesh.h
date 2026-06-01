@@ -32,6 +32,14 @@ struct Mesh {
     uint32_t base_color_texture;
     uint32_t normal_texture;
     uint32_t metallic_roughness_texture;
+    
+    // Animation state (runtime only, not set by CreateMesh)
+    void*    animation_data;   // Opaque pointer to animation data (cast to rev::gltf::Animation*)
+    int      animation_count;
+    int      current_animation; // Index of currently playing animation (-1 = none)
+    float    animation_time;    // Current playback time in seconds
+    float    animation_speed;   // Playback speed multiplier (1.0 = normal)
+    bool     animation_loop;    // Loop animation when it reaches the end
 };
 
 // Lifecycle

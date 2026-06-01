@@ -85,6 +85,14 @@ Mesh* CreateMesh(uint32_t vertex_count, uint32_t index_count) {
     mesh->normal_texture = 0;
     mesh->metallic_roughness_texture = 0;
     
+    // Animation state
+    mesh->animation_data = nullptr;
+    mesh->animation_count = 0;
+    mesh->current_animation = -1;
+    mesh->animation_time = 0.0f;
+    mesh->animation_speed = 1.0f;
+    mesh->animation_loop = true;
+    
     memset(mesh->vertices, 0, vertex_count * sizeof(Vertex));
     memset(mesh->indices, 0, index_count * sizeof(uint32_t));
     

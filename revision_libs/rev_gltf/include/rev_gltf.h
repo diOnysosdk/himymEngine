@@ -19,6 +19,41 @@ namespace rev {
 namespace gltf {
 
 // ---------------------------------------------------------------------------
+// Animation data structures
+// ---------------------------------------------------------------------------
+
+enum AnimationPathType {
+    ANIM_PATH_TRANSLATION = 0,
+    ANIM_PATH_ROTATION    = 1,
+    ANIM_PATH_SCALE       = 2
+};
+
+enum AnimationInterpolation {
+    ANIM_INTERP_LINEAR = 0,
+    ANIM_INTERP_STEP   = 1,
+    ANIM_INTERP_CUBIC  = 2
+};
+
+// A single animation channel animates one property (translation/rotation/scale)
+struct AnimationChannel {
+    AnimationPathType     path;           // Which property to animate
+    AnimationInterpolation interpolation; // How to interpolate between keyframes
+    
+    float* times;           // Keyframe times (seconds)
+    float* values;          // Keyframe values (vec3 for trans/scale, vec4 quaternion for rotation)
+    int    keyframe_count;  // Number of keyframes
+    int    components;      // 3 for translation/scale, 4 for rotation
+};
+
+// An animation is a named collection of channels
+struct Animation {
+    char               name[128];
+    AnimationChannel*  channels;
+    int                channel_count;
+    float              duration;  // Total animation duration in seconds
+};
+
+// ---------------------------------------------------------------------------
 // Material data returned from an import
 // ---------------------------------------------------------------------------
 struct Material {
@@ -45,6 +80,8 @@ struct Material {
 struct ImportResult {
     rev::mesh::Mesh* mesh;          // Merged geometry (all primitives)
     Material         material;      // First (or primary) material
+    Animation*       animations;    // Array of animations (nullptr if none)
+    int              animation_count;
     bool             ok;
     char             error[256];
 };
@@ -72,6 +109,29 @@ ImportResult* LoadMeshFromMemory(const void* data, size_t size,
 
 // Free an ImportResult (and the mesh it owns).
 void FreeImportResult(ImportResult* result);
+
+// Evaluate an animation at the given time and output the transform.
+// time: animation time in seconds (wraps around animation duration for looping)
+// out_translation: output 3-component translation vector (can be nullptr)
+// out_rotation: output 4-component quaternion (xyzw) (can be nullptr)
+// out_scale: output 3-component scale vector (can be nullptr)
+void EvaluateAnimation(const Animation* anim, float time,
+                       float* out_translation,
+                       float* out_rotation,
+                       float* out_scale);
+
+// Convert a quaternion (xyzw) to Euler angles (xyz) in degrees
+void QuaternionToEuler(const float* quat, float* euler_degrees);
+
+// Update animation playback time for a mesh (convenience function)
+// dt: delta time in seconds
+// Returns true if animation is playing, false if no animation or ended (non-looping)
+bool UpdateMeshAnimation(rev::mesh::Mesh* mesh, float dt);
+
+// Apply animation transform to mesh cue position/rotation/scale
+// rotation_quat: 4-component quaternion (xyzw) from EvaluateAnimation
+void ApplyAnimationTransform(float* pos, float* rot_degrees, float* scale,
+                             const float* translation, const float* rotation_quat, const float* anim_scale);
 
 // Extract all textures from a glTF file to output_dir without loading geometry.
 // Returns the number of textures successfully extracted.

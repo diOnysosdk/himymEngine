@@ -91,17 +91,35 @@ for each sorted entry: switch on type, set GL state, draw
 - Packed path: look up music asset key in `kPackedAssets`; file path: read the `.xm` file from `music_cue.asset_path` (workspace-relative).
 
 ## Mesh texture loading (glTF/glb)
-- `rev::gltf::LoadMesh(path, texture_output_dir)` returns `ImportResult*` containing mesh geometry and material data (base color, metallic, roughness, texture paths).
+- `rev::gltf::LoadMesh(path, texture_output_dir)` returns `ImportResult*` containing mesh geometry, material data (base color, metallic, roughness, texture paths), and animations.
 - **Always pass `texture_output_dir`** to extract embedded textures from glTF/glb files. Without it, textures remain embedded and cannot be loaded.
 - For non-packed builds: pass the mesh's directory as texture output dir (extract textures alongside mesh file).
 - For packed builds: `rev::gltf::LoadMeshFromMemory(buf, size, texture_output_dir)` extracts embedded textures to the specified directory (typically `"."` for workspace root).
 - After loading, check `ir->material.base_color_texture[0]` for texture path. If present, call `rev::runtime::LoadImageTexture(path, &tex)` and assign `mesh->base_color_texture = tex.texture_id`.
+- **Animations**: Check `ir->animation_count > 0`. If present, transfer animations to mesh: `mesh->animation_data = ir->animations; mesh->animation_count = ir->animation_count; mesh->current_animation = 0; ir->animations = nullptr;` (transfers ownership).
 - Mesh shaders must:
   1. Pass UVs from vertex shader: `out vec2 v_uv;`
   2. Sample texture in fragment shader: `uniform sampler2D u_base_color_texture; uniform int u_has_texture;`
   3. Multiply base color by texture: `if (u_has_texture != 0) base *= texture(u_base_color_texture, v_uv).rgb;`
 - Before rendering, bind texture: `glBindTexture(0x0DE1, mesh->base_color_texture)` and set uniforms `u_base_color_texture=0, u_has_texture=1`.
-- Blender export requirements: Image Texture node must connect to Principled BSDF Base Color, export with **Images** checkbox enabled.
+- Blender export requirements: Image Texture node must connect to Principled BSDF Base Color, export with **Images** checkbox enabled. For animations, enable **Animations** checkbox in glTF export dialog.
+
+## Mesh animation playback (glTF skeletal animations)
+- **Timeline-driven**: Animations evaluate based on `(current_time - cue_start)`, NOT an independent animation timer.
+- In the main loop, calculate `float dt = current_time - prev_time;` for frame delta time.
+- **Before rendering each mesh cue**:
+  1. Check if animation is present: `if (mesh->current_animation >= 0 && mesh->animation_data)`
+  2. Calculate animation time relative to cue: `float anim_time = current_time - mesh_cue.cue_start;`
+  3. Handle looping: `if (mesh->animation_loop) anim_time = fmodf(anim_time, duration);` else clamp to [0, duration]
+  4. Evaluate animation: `rev::gltf::EvaluateAnimation(&anims[mesh->current_animation], anim_time, translation, rotation, scale);`
+  5. Apply to mesh transform: `rev::gltf::ApplyAnimationTransform(anim_pos, anim_rot, anim_scale, translation, rotation, scale);`
+  6. Build model matrix: `rev::runtime::Mat4Model(model, anim_pos, anim_rot, anim_scale);`
+- **Key insight**: Do NOT call `UpdateMeshAnimation(mesh, dt)` in runtime — that advances an independent timer. Instead, evaluate animation at scene-relative time directly.
+- Animation functions:
+  - `EvaluateAnimation(anim, time, out_translation, out_rotation, out_scale)` - Interpolates keyframes at specific time
+  - `ApplyAnimationTransform(pos, rot, scale, trans, rot_quat, anim_scale)` - Adds animation to cue transform
+  - `QuaternionToEuler(quat, euler_degrees)` - Converts rotation quaternion to Euler angles
+- Multiple animations: `mesh->current_animation` selects which animation to play (0-based index into `mesh->animation_data` array)
 
 ## Image loading notes (GDI+)
 - Error 3 from GDI+ = FileNotFound OR GDI+ not initialized — check both.

@@ -846,7 +846,19 @@ int main(int argc, char* argv[]) {
                                 }
                             }
                             
-                            printf("glTF loaded (packed): %s\n", mesh_cue.asset_key);
+                            // Transfer animations to mesh
+                            if (ir->animation_count > 0) {
+                                mesh_obj->animation_data = ir->animations;
+                                mesh_obj->animation_count = ir->animation_count;
+                                mesh_obj->current_animation = 0;  // Start first animation
+                                mesh_obj->animation_time = 0.0f;
+                                mesh_obj->animation_speed = 1.0f;
+                                mesh_obj->animation_loop = true;
+                                ir->animations = nullptr;  // Transfer ownership
+                                printf("glTF loaded (packed): %s with %d animations\n", mesh_cue.asset_key, ir->animation_count);
+                            } else {
+                                printf("glTF loaded (packed): %s\n", mesh_cue.asset_key);
+                            }
                         } else {
                             printf("glTF load failed (packed): %s\n", (ir ? ir->error : "null result"));
                             mesh_obj = rev::mesh::CreateCube(1.0f);
@@ -880,7 +892,19 @@ int main(int argc, char* argv[]) {
                             }
                         }
                         
-                        printf("glTF loaded: %s\n", mesh_cue.asset_path);
+                        // Transfer animations to mesh
+                        if (ir->animation_count > 0) {
+                            mesh_obj->animation_data = ir->animations;
+                            mesh_obj->animation_count = ir->animation_count;
+                            mesh_obj->current_animation = 0;  // Start first animation
+                            mesh_obj->animation_time = 0.0f;
+                            mesh_obj->animation_speed = 1.0f;
+                            mesh_obj->animation_loop = true;
+                            ir->animations = nullptr;  // Transfer ownership
+                            printf("glTF loaded: %s with %d animations\n", mesh_cue.asset_path, ir->animation_count);
+                        } else {
+                            printf("glTF loaded: %s\n", mesh_cue.asset_path);
+                        }
                     } else {
                         printf("glTF load failed: %s\n", (ir ? ir->error : "null result"));
                         mesh_obj = rev::mesh::CreateCube(1.0f);
@@ -1044,10 +1068,13 @@ int main(int argc, char* argv[]) {
 
     // Main loop
     double start_time = rev::platform::GetTime();
+    double prev_time = start_time;
 
     while (rev::platform::PollEvents(window) && !window->should_close) {
         double current_time = rev::platform::GetTime();
         float time = static_cast<float>(current_time - start_time);
+        float dt = static_cast<float>(current_time - prev_time);
+        prev_time = current_time;
         
         // Image activation/deactivation logging
         static bool image_was_active = false;
@@ -1202,6 +1229,32 @@ int main(int argc, char* argv[]) {
                         depth_on = true;
                     }
                     rev::shader::Use(mesh_shader);
+                    
+                    // Animated transform (start with cue values)
+                    float anim_pos[3] = {mesh_cue.pos[0], mesh_cue.pos[1], mesh_cue.pos[2]};
+                    float anim_rot[3] = {mesh_cue.rot[0], mesh_cue.rot[1], mesh_cue.rot[2]};
+                    float anim_scale[3] = {mesh_cue.scale[0], mesh_cue.scale[1], mesh_cue.scale[2]};
+                    
+                    // Update and apply animation if present
+#if defined(REV_GLTF_AVAILABLE)
+                    if (mesh_obj->current_animation >= 0) {
+                        // Update animation time
+                        rev::gltf::UpdateMeshAnimation(mesh_obj, dt);
+                        
+                        // Evaluate animation at current time
+                        rev::gltf::Animation* anims = (rev::gltf::Animation*)mesh_obj->animation_data;
+                        if (anims) {
+                            float translation[3], rotation[4], scale[3];
+                            rev::gltf::EvaluateAnimation(&anims[mesh_obj->current_animation],
+                                                        mesh_obj->animation_time,
+                                                        translation, rotation, scale);
+                            // Apply animation transform on top of cue transform
+                            rev::gltf::ApplyAnimationTransform(anim_pos, anim_rot, anim_scale,
+                                                              translation, rotation, scale);
+                        }
+                    }
+#endif
+                    
                     float aspect = (float)config.width / (float)config.height;
                     float eye[3]    = {0.0f, 0.0f, 5.0f};
                     float center[3] = {0.0f, 0.0f, 0.0f};
@@ -1209,7 +1262,7 @@ int main(int argc, char* argv[]) {
                     float view_mat[16], proj_mat[16], model_mat[16];
                     Mat4Perspective(proj_mat, 3.14159265f * 0.25f, aspect, 0.1f, 100.0f);
                     Mat4LookAt(view_mat, eye, center, up_v);
-                    Mat4Model(model_mat, mesh_cue.pos, mesh_cue.rot, mesh_cue.scale);
+                    Mat4Model(model_mat, anim_pos, anim_rot, anim_scale);  // Use animated transform
                     typedef void (*PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
                     auto glUniformMatrix4fv_fn = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
                     if (glUniformMatrix4fv_fn) {

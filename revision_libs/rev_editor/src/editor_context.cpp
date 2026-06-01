@@ -54,6 +54,18 @@ static const ShaderPreset g_shader_presets[] = {
 
 static const int g_shader_preset_count = sizeof(g_shader_presets) / sizeof(g_shader_presets[0]);
 
+// Helper: get file modification time as uint64 (Windows FILETIME)
+static uint64_t GetFileModificationTime(const char* path) {
+    WIN32_FILE_ATTRIBUTE_DATA fileInfo;
+    if (GetFileAttributesExA(path, GetFileExInfoStandard, &fileInfo)) {
+        ULARGE_INTEGER ull;
+        ull.LowPart = fileInfo.ftLastWriteTime.dwLowDateTime;
+        ull.HighPart = fileInfo.ftLastWriteTime.dwHighDateTime;
+        return ull.QuadPart;
+    }
+    return 0; // File doesn't exist or error
+}
+
 namespace rev {
 namespace editor {
 
@@ -2312,6 +2324,59 @@ void RenderMeshModal(EditorContext* editor) {
         ImGui::OpenPopup("Edit Mesh Cue");
         editor->mesh_modal_request_open = false;
         editor->mesh_modal_open = true;
+        
+        // Pre-load glTF mesh into cache if not already there
+        MeshCue* cue = &editor->editing_mesh;
+        if (cue->mesh_type == 4 && cue->asset_path[0]) {
+            bool already_cached = false;
+            for (int c = 0; c < editor->mesh_cache_count; ++c) {
+                if (strcmp(editor->mesh_cache[c].path, cue->asset_path) == 0) {
+                    already_cached = true;
+                    break;
+                }
+            }
+            
+            if (!already_cached && editor->project && editor->project->assets_path[0]) {
+                printf("[MeshModal] Pre-loading glTF mesh: %s\n", cue->asset_path);
+                rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(cue->asset_path, editor->project->assets_path);
+                if (ir && ir->ok) {
+                    rev::mesh::Mesh* mesh = ir->mesh;
+                    
+                    // Load texture if present
+                    if (mesh && ir->material.base_color_texture[0]) {
+                        rev::runtime::ImageTexture tex = {};
+                        if (rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)) {
+                            mesh->base_color_texture = tex.texture_id;
+                        }
+                    }
+                    
+                    // Transfer animations
+                    if (mesh && ir->animation_count > 0) {
+                        mesh->animation_data = ir->animations;
+                        mesh->animation_count = ir->animation_count;
+                        mesh->current_animation = 0;
+                        mesh->animation_time = 0.0f;
+                        mesh->animation_speed = 1.0f;
+                        mesh->animation_loop = true;
+                        ir->animations = nullptr;
+                    }
+                    
+                    if (mesh) {
+                        rev::mesh::UploadToGPU(mesh);
+                        
+                        // Add to cache
+                        if (editor->mesh_cache_count < EditorContext::kMeshCacheSize) {
+                            auto& entry = editor->mesh_cache[editor->mesh_cache_count++];
+                            strncpy_s(entry.path, cue->asset_path, _TRUNCATE);
+                            entry.mesh = mesh;
+                            entry.last_write_time = GetFileModificationTime(cue->asset_path);
+                            printf("[MeshModal] Cached mesh with %d animations\n", mesh->animation_count);
+                        }
+                    }
+                }
+                if (ir) rev::gltf::FreeImportResult(ir);
+            }
+        }
     }
 
     ImGui::SetNextWindowSize(ImVec2(480, 500), ImGuiCond_FirstUseEver);
@@ -2445,6 +2510,90 @@ void RenderMeshModal(EditorContext* editor) {
             ImGui::DragFloat("Fade Out End",   &cue->fade_out_end,   0.01f);
         }
 
+        // Animation controls (only for glTF meshes)
+        if (cue->mesh_type == 4 && cue->asset_path[0]) {
+            ImGui::Separator();
+            ImGui::Text("Animation Controls:");
+            
+            // Find cached mesh for this asset
+            rev::mesh::Mesh* cached_mesh = nullptr;
+            int cache_index = -1;
+            for (int c = 0; c < editor->mesh_cache_count; ++c) {
+                if (strcmp(editor->mesh_cache[c].path, cue->asset_path) == 0) {
+                    cached_mesh = (rev::mesh::Mesh*)editor->mesh_cache[c].mesh;
+                    cache_index = c;
+                    break;
+                }
+            }
+            
+            if (cached_mesh && cached_mesh->animation_count > 0) {
+                rev::gltf::Animation* anims = (rev::gltf::Animation*)cached_mesh->animation_data;
+                
+                ImGui::TextDisabled("Found: %d animation(s) in cache slot %d", cached_mesh->animation_count, cache_index);
+                
+                // Animation selection dropdown
+                if (cached_mesh->animation_count > 1) {
+                    char** anim_names = new char*[cached_mesh->animation_count];
+                    for (int i = 0; i < cached_mesh->animation_count; ++i) {
+                        anim_names[i] = anims[i].name[0] ? anims[i].name : "(unnamed)";
+                    }
+                    if (ImGui::Combo("Animation", &cached_mesh->current_animation, 
+                                 (const char**)anim_names, cached_mesh->animation_count)) {
+                        cached_mesh->animation_time = 0.0f;  // Reset time when changing animation
+                        printf("[AnimControl] Switched to animation %d\n", cached_mesh->current_animation);
+                    }
+                    delete[] anim_names;
+                } else {
+                    ImGui::Text("Animation: %s", anims[0].name[0] ? anims[0].name : "(unnamed)");
+                }
+                
+                // Current animation info
+                if (cached_mesh->current_animation >= 0 && 
+                    cached_mesh->current_animation < cached_mesh->animation_count) {
+                    float anim_duration = anims[cached_mesh->current_animation].duration;
+                    
+                    // Pause playback while scrubbing
+                    bool was_playing = editor->playing;
+                    
+                    // Time scrubber
+                    float old_time = cached_mesh->animation_time;
+                    if (ImGui::SliderFloat("Time", &cached_mesh->animation_time, 0.0f, anim_duration, "%.2fs")) {
+                        if (old_time != cached_mesh->animation_time) {
+                            printf("[AnimControl] Scrubbed to %.2fs\n", cached_mesh->animation_time);
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset##anim")) {
+                        cached_mesh->animation_time = 0.0f;
+                        printf("[AnimControl] Reset to 0.0s\n");
+                    }
+                    
+                    // Speed and loop controls
+                    if (ImGui::SliderFloat("Speed", &cached_mesh->animation_speed, 0.0f, 3.0f)) {
+                        printf("[AnimControl] Speed changed to %.2fx\n", cached_mesh->animation_speed);
+                    }
+                    if (ImGui::Checkbox("Loop", &cached_mesh->animation_loop)) {
+                        printf("[AnimControl] Loop %s\n", cached_mesh->animation_loop ? "enabled" : "disabled");
+                    }
+                    
+                    ImGui::TextDisabled("Duration: %.2fs", anim_duration);
+                    ImGui::TextDisabled("Current Time: %.2fs", cached_mesh->animation_time);
+                } else {
+                    ImGui::TextDisabled("No animation selected");
+                }
+            } else if (cached_mesh) {
+                ImGui::TextDisabled("No animations in this mesh");
+            } else {
+                ImGui::TextDisabled("Mesh not loaded yet - cache has %d entries", editor->mesh_cache_count);
+                if (editor->mesh_cache_count > 0) {
+                    ImGui::TextDisabled("Looking for: '%s'", cue->asset_path);
+                    for (int c = 0; c < editor->mesh_cache_count; ++c) {
+                        ImGui::TextDisabled("  [%d]: '%s'", c, editor->mesh_cache[c].path);
+                    }
+                }
+            }
+        }
+        
         ImGui::Separator();
         if (ImGui::Button("Apply")) {
             // Find this cue in the selected scene and update it
@@ -4281,8 +4430,13 @@ void RenderPreviewFrame(EditorContext* editor) {
                     cue->effect_type, cue->fade_in_start, cue->fade_in_end,
                     cue->fade_out_start, cue->fade_out_end, editor->current_time);
 
+                // Animated transform (start with cue values)
+                float anim_pos[3] = {cue->pos[0], cue->pos[1], cue->pos[2]};
+                float anim_rot[3] = {cue->rot[0], cue->rot[1], cue->rot[2]};
+                float anim_scale[3] = {cue->scale[0], cue->scale[1], cue->scale[2]};
+
                 float model[16];
-                rev::runtime::Mat4Model(model, cue->pos, cue->rot, cue->scale);
+                rev::runtime::Mat4Model(model, anim_pos, anim_rot, anim_scale);  // Use animated transform
                 if (glUniformMatrix4fv) glUniformMatrix4fv(mp_model, 1, 0, model);
                 if (glUniform4fv_fn) {
                     float col[4] = {cue->color[0], cue->color[1], cue->color[2], cue->color[3]*opacity};
@@ -4301,14 +4455,64 @@ void RenderPreviewFrame(EditorContext* editor) {
                     case 3: mesh = rev::mesh::CreateTorus(size, param > 0.0f ? param : 0.3f, 32, 16); break;
                     case 4: {
                         if (cue->asset_path[0]) {
+                            // Check cache for this mesh
+                            uint64_t current_file_time = GetFileModificationTime(cue->asset_path);
                             rev::mesh::Mesh* cached = nullptr;
+                            int cached_index = -1;
+                            
                             for (int c = 0; c < editor->mesh_cache_count; ++c) {
                                 if (strcmp(editor->mesh_cache[c].path, cue->asset_path) == 0) {
-                                    cached = (rev::mesh::Mesh*)editor->mesh_cache[c].mesh;
+                                    // Found in cache - check if file has been modified
+                                    if (editor->mesh_cache[c].last_write_time == current_file_time) {
+                                        cached = (rev::mesh::Mesh*)editor->mesh_cache[c].mesh;
+                                        cached_index = c;
+                                    } else {
+                                        // File modified - invalidate cache entry
+                                        printf("[Cache] File modified, reloading: %s\n", cue->asset_path);
+                                        if (editor->mesh_cache[c].mesh) {
+                                            rev::mesh::DestroyMesh((rev::mesh::Mesh*)editor->mesh_cache[c].mesh);
+                                            editor->mesh_cache[c].mesh = nullptr;
+                                        }
+                                    }
                                     break;
                                 }
                             }
+                            
                             if (cached) {
+                                // Evaluate and apply animation transform based on scene time
+                                if (cached->current_animation >= 0) {
+                                    rev::gltf::Animation* anims = (rev::gltf::Animation*)cached->animation_data;
+                                    if (anims) {
+                                        // Calculate animation time relative to cue start time
+                                        float anim_time = editor->current_time - cue->cue_start;
+                                        
+                                        // Handle looping
+                                        if (cached->animation_loop && anims[cached->current_animation].duration > 0.0f) {
+                                            float duration = anims[cached->current_animation].duration;
+                                            if (anim_time < 0.0f) {
+                                                anim_time = 0.0f;
+                                            } else if (anim_time > duration) {
+                                                anim_time = fmodf(anim_time, duration);
+                                            }
+                                        } else {
+                                            // Clamp to animation duration if not looping
+                                            if (anim_time < 0.0f) anim_time = 0.0f;
+                                            if (anim_time > anims[cached->current_animation].duration) {
+                                                anim_time = anims[cached->current_animation].duration;
+                                            }
+                                        }
+                                        
+                                        float translation[3], rotation[4], scale[3];
+                                        rev::gltf::EvaluateAnimation(&anims[cached->current_animation],
+                                                                    anim_time,
+                                                                    translation, rotation, scale);
+                                        rev::gltf::ApplyAnimationTransform(anim_pos, anim_rot, anim_scale,
+                                                                          translation, rotation, scale);
+                                        // Rebuild model matrix with animated transform
+                                        rev::runtime::Mat4Model(model, anim_pos, anim_rot, anim_scale);
+                                        if (glUniformMatrix4fv) glUniformMatrix4fv(mp_model, 1, 0, model);
+                                    }
+                                }
                                 // Bind texture if available
                                 int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
                                 if (cached->base_color_texture != 0) {
@@ -4335,15 +4539,41 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         mesh->base_color_texture = tex.texture_id;
                                     }
                                 }
+                                
+                                // Transfer animations to mesh
+                                if (ir->animation_count > 0) {
+                                    mesh->animation_data = ir->animations;
+                                    mesh->animation_count = ir->animation_count;
+                                    mesh->current_animation = 0;  // Start first animation
+                                    mesh->animation_time = 0.0f;
+                                    mesh->animation_speed = 1.0f;
+                                    mesh->animation_loop = true;
+                                    ir->animations = nullptr;  // Transfer ownership
+                                }
                             }
                             if (ir) rev::gltf::FreeImportResult(ir);
                             if (mesh) {
                                 rev::mesh::UploadToGPU(mesh);
-                                if (editor->mesh_cache_count < EditorContext::kMeshCacheSize) {
-                                    auto& entry = editor->mesh_cache[editor->mesh_cache_count++];
+                                
+                                // Add to cache (or update existing slot if we just invalidated one)
+                                int cache_slot = -1;
+                                for (int c = 0; c < editor->mesh_cache_count; ++c) {
+                                    if (editor->mesh_cache[c].mesh == nullptr) {
+                                        cache_slot = c; // Reuse invalidated slot
+                                        break;
+                                    }
+                                }
+                                if (cache_slot < 0 && editor->mesh_cache_count < EditorContext::kMeshCacheSize) {
+                                    cache_slot = editor->mesh_cache_count++;
+                                }
+                                
+                                if (cache_slot >= 0) {
+                                    auto& entry = editor->mesh_cache[cache_slot];
                                     strncpy_s(entry.path, cue->asset_path, _TRUNCATE);
                                     entry.mesh = mesh;
+                                    entry.last_write_time = current_file_time;
                                 }
+                                
                                 // Bind texture if available
                                 int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
                                 if (mesh->base_color_texture != 0) {
@@ -4425,6 +4655,7 @@ void RenderPreviewPanel(EditorContext* editor) {
     if (ImGui::Button("Stop")) {
         editor->playing = false;
         editor->current_time = 0.0f;
+        // Mesh animations now driven by scene time, no need to reset them individually
     }
     ImGui::SameLine();
     

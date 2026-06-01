@@ -4,7 +4,6 @@
 
 [image_cues]
 # asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end
-logo - Kopi_1.png|intros/1/project_assets/logo - Kopi_1.png|0.500|0.500|1.000|1.000|0.000|10.000|0|0|0.000|0.000|0.000|0.000
 
 [text_cues]
 # text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order
@@ -14,7 +13,7 @@ logo - Kopi_1.png|intros/1/project_assets/logo - Kopi_1.png|0.500|0.500|1.000|1.
 
 [mesh_cues]
 # asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness
-mesh_0|intros/1/project_assets/logo.glb|4|0.000|0.000|0.000|45.000|0.000|0.000|1.000|1.000|1.000|0.800|0.800|0.800|1.000|1.000|16.000|0.000|10.000|0|0|0.000|0.000|0.000|0.000|0.000|0.400
+mesh_0|intros/1/project_assets/boxie.glb|4|0.000|0.000|0.000|0.000|0.000|0.000|1.000|1.000|1.000|0.800|0.800|0.800|1.000|1.000|16.000|0.000|10.000|0|0|0.000|0.000|0.000|0.000|0.000|0.500
 
 [curves]
 # target|param|point_count

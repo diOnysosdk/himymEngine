@@ -50,16 +50,29 @@ Use this skill for editor-side authoring work.
 - `SaveProject` / `LoadProject` round-trip all MeshCue fields through JSON (`mesh_cues` array).
 
 ## Mesh texture loading (glTF/glb)
-- When user browses for a `.glb` mesh file in the mesh modal, call `rev::gltf::LoadMesh(filepath, editor->project->assets_path)` to extract material properties and textures.
+- When user browses for a `.glb` mesh file in the mesh modal, call `rev::gltf::LoadMesh(filepath, editor->project->assets_path)` to extract material properties, textures, and animations.
 - **Always pass `assets_path` as the second parameter** to extract embedded textures from the glTF file. Without it, textures remain embedded and won't render.
 - Extracted textures are written to `{project_name}_assets/` and the material struct contains relative paths in `base_color_texture`, `normal_texture`, `metallic_roughness_texture` fields.
+- **Animations**: Check `ir->animation_count > 0` after loading. If present, transfer to mesh: `mesh->animation_data = ir->animations; mesh->animation_count = ir->animation_count; mesh->current_animation = 0; ir->animations = nullptr;`
 - In `RenderPreviewFrame`, when rendering mesh type 4 (glTF):
   1. Load mesh via `rev::gltf::LoadMesh(cue->asset_path, editor->project->assets_path)`.
   2. If `ir->material.base_color_texture[0]` is not empty, load texture: `rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)` and assign `mesh->base_color_texture = tex.texture_id`.
-  3. Before rendering, check if `mesh->base_color_texture != 0`. If so, bind texture: `glBindTexture(0x0DE1, mesh->base_color_texture)`, set shader uniforms `u_base_color_texture=0`, `u_has_texture=1`. Otherwise set `u_has_texture=0`.
-- Mesh cache entries retain loaded textures across frames — texture binding happens even for cached meshes.
+  3. **Animation evaluation**: Calculate `float anim_time = editor->current_time - cue->cue_start;` (scene-relative time). Handle looping if `mesh->animation_loop` is true. Call `rev::gltf::EvaluateAnimation(&anims[mesh->current_animation], anim_time, translation, rotation, scale);` then `rev::gltf::ApplyAnimationTransform(anim_pos, anim_rot, anim_scale, translation, rotation, scale);` to blend animation with cue transform.
+  4. Before rendering, check if `mesh->base_color_texture != 0`. If so, bind texture: `glBindTexture(0x0DE1, mesh->base_color_texture)`, set shader uniforms `u_base_color_texture=0`, `u_has_texture=1`. Otherwise set `u_has_texture=0`.
+- Mesh cache entries retain loaded textures and animations across frames — texture binding happens even for cached meshes.
+- **Cache invalidation**: MeshCacheEntry includes `last_write_time` (Win32 FILETIME as uint64). Use `GetFileModificationTime(path)` to check if file changed, invalidate cache if mismatch.
 - Mesh shader must support texture sampling: vertex shader passes `v_uv`, fragment shader samples `u_base_color_texture` when `u_has_texture` is 1.
-- Procedural meshes (cube/sphere/plane/torus) have no textures — always set `u_has_texture=0` for them.
+- Procedural meshes (cube/sphere/plane/torus) have no textures or animations — always set `u_has_texture=0` for them.
+
+## Timeline-driven animation playback
+- **Key principle**: Animations evaluate based on `editor->current_time` (scene time), NOT an independent animation timer per mesh.
+- When `editor->playing` is true, `UpdatePlayback(editor, delta_time)` advances `editor->current_time`.
+- When user scrubs the timeline slider in the Preview panel, `editor->playing` pauses and `editor->current_time` is set directly.
+- Animation evaluation in `RenderPreviewFrame`: `float anim_time = editor->current_time - cue->cue_start;` then evaluate at that time.
+- **Stop button**: Sets `editor->playing = false` and `editor->current_time = 0.0f`. Animations automatically reset because they evaluate at scene time 0.
+- **Mesh modal controls** (in `RenderMeshModal`): Show animation selection dropdown (if multiple animations), but NO independent time scrubber — animations are controlled by scene timeline.
+- Do NOT call `UpdateMeshAnimation(mesh, dt)` in preview rendering — that would advance an independent timer. Instead, evaluate animation at scene-relative time directly via `EvaluateAnimation(..., anim_time, ...)`.
+- Multiple animations: `mesh->current_animation` selects which animation to play (0-based index). User can change this in the mesh modal.
 
 ## Pack, Build and Run workflow
 `PackBuildAndRun()` in `editor_context.cpp`:

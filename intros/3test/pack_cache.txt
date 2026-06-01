@@ -1,2 +1,0 @@
-thelogo2mini.png|intros/3test/test3_assets/thelogo2mini.png|F2313569
-track01.xm|intros/3test/test3_assets/track01.xm|3A27699E

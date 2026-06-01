@@ -374,7 +374,43 @@ type build_diagnostics\runtime_startup.log
 - Embedded textures in .glb files
 - PBR materials (base color, metallic, roughness)
 - Base color textures (diffuse/albedo)
+- **Skeletal animations** (see Animation Workflow below)
 - Procedural meshes (cube, sphere, plane, torus)
+
+#### **Animation Workflow**
+
+glTF animations are **timeline-driven**: animations evaluate based on scene time relative to the mesh cue's start time.
+
+1. **Export animated mesh from Blender**:
+   - Create animation in Blender (keyframes, armatures, etc.)
+   - File → Export → glTF 2.0 (.glb)
+   - Include → **Animations** ✅
+
+2. **Import and configure**:
+   - Import mesh as normal (Browse for .glb)
+   - Set **Cue Start** time (e.g., 2.0s) - animation begins here
+   - Set **Cue End** time (e.g., 8.0s) - animation visibility window
+
+3. **Timeline behavior**:
+   - Animation evaluates at: `(scene_time - cue_start)`
+   - **Scrub timeline** → Animation frame updates automatically
+   - **Play** → Animation advances with scene time
+   - **Stop** → Resets to time 0.0s
+   - **Loop** enabled → Animation wraps using modulo
+
+4. **Preview controls**:
+   - **Play/Pause/Stop** - Control timeline playback
+   - **Timeline scrubber** - Scrub through all animations at once
+   - All assets (shaders, images, meshes) synchronized to scene time
+
+**Example timing**:
+```
+Mesh cue start: 2.0s
+Scene time: 5.5s
+→ Animation evaluates at: 5.5 - 2.0 = 3.5s into animation
+```
+
+**Multiple animations**: If glTF contains multiple animations, use the Mesh Cue modal to select which animation to play.
 
 #### **Option 2: Procedural Meshes**
 

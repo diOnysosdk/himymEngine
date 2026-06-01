@@ -1,2 +1,1 @@
-logo - Kopi_1.png|intros/1/project_assets/logo - Kopi_1.png|E785AA90
-mesh_0|intros/1/project_assets/logo.glb|CB06C80E
+mesh_0|intros/1/project_assets/boxie.glb|AFD0DA7C

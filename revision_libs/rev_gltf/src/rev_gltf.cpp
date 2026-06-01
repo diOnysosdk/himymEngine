@@ -240,6 +240,214 @@ static void ReadVec2(const cgltf_accessor* acc, cgltf_size elem, float dest[2]) 
 }
 
 // ---------------------------------------------------------------------------
+// Animation extraction and evaluation
+// ---------------------------------------------------------------------------
+
+// Extract all animations from cgltf_data into our Animation structures
+static Animation* ExtractAnimations(const cgltf_data* data, int* out_count) {
+    *out_count = 0;
+    if (!data || data->animations_count == 0) return nullptr;
+
+    Animation* anims = new Animation[data->animations_count];
+    *out_count = (int)data->animations_count;
+
+    for (cgltf_size ai = 0; ai < data->animations_count; ++ai) {
+        const cgltf_animation* src = &data->animations[ai];
+        Animation* dst = &anims[ai];
+        
+        memset(dst, 0, sizeof(Animation));
+        if (src->name) strncpy_s(dst->name, src->name, _TRUNCATE);
+        
+        // Count channels targeting position/rotation/scale (ignore morph weights)
+        int valid_channels = 0;
+        for (cgltf_size ci = 0; ci < src->channels_count; ++ci) {
+            cgltf_animation_path_type path = src->channels[ci].target_path;
+            if (path == cgltf_animation_path_type_translation ||
+                path == cgltf_animation_path_type_rotation ||
+                path == cgltf_animation_path_type_scale) {
+                ++valid_channels;
+            }
+        }
+        
+        if (valid_channels == 0) continue;
+        
+        dst->channels = new AnimationChannel[valid_channels];
+        dst->channel_count = valid_channels;
+        dst->duration = 0.0f;
+        
+        int channel_idx = 0;
+        for (cgltf_size ci = 0; ci < src->channels_count; ++ci) {
+            const cgltf_animation_channel* src_chan = &src->channels[ci];
+            cgltf_animation_path_type path = src_chan->target_path;
+            
+            // Skip unsupported paths
+            if (path != cgltf_animation_path_type_translation &&
+                path != cgltf_animation_path_type_rotation &&
+                path != cgltf_animation_path_type_scale) {
+                continue;
+            }
+            
+            AnimationChannel* dst_chan = &dst->channels[channel_idx++];
+            memset(dst_chan, 0, sizeof(AnimationChannel));
+            
+            // Map path type
+            if (path == cgltf_animation_path_type_translation) {
+                dst_chan->path = ANIM_PATH_TRANSLATION;
+                dst_chan->components = 3;
+            } else if (path == cgltf_animation_path_type_rotation) {
+                dst_chan->path = ANIM_PATH_ROTATION;
+                dst_chan->components = 4;  // quaternion
+            } else if (path == cgltf_animation_path_type_scale) {
+                dst_chan->path = ANIM_PATH_SCALE;
+                dst_chan->components = 3;
+            }
+            
+            // Map interpolation
+            cgltf_animation_sampler* sampler = src_chan->sampler;
+            if (!sampler) continue;
+            
+            switch (sampler->interpolation) {
+                case cgltf_interpolation_type_linear: 
+                    dst_chan->interpolation = ANIM_INTERP_LINEAR; 
+                    break;
+                case cgltf_interpolation_type_step: 
+                    dst_chan->interpolation = ANIM_INTERP_STEP; 
+                    break;
+                case cgltf_interpolation_type_cubic_spline: 
+                    dst_chan->interpolation = ANIM_INTERP_CUBIC; 
+                    break;
+                default: 
+                    dst_chan->interpolation = ANIM_INTERP_LINEAR; 
+                    break;
+            }
+            
+            // Extract keyframe times
+            const cgltf_accessor* time_acc = sampler->input;
+            const cgltf_accessor* value_acc = sampler->output;
+            if (!time_acc || !value_acc) continue;
+            
+            dst_chan->keyframe_count = (int)time_acc->count;
+            dst_chan->times = new float[dst_chan->keyframe_count];
+            
+            for (int ki = 0; ki < dst_chan->keyframe_count; ++ki) {
+                cgltf_accessor_read_float(time_acc, ki, &dst_chan->times[ki], 1);
+                // Update animation duration
+                if (dst_chan->times[ki] > dst->duration) {
+                    dst->duration = dst_chan->times[ki];
+                }
+            }
+            
+            // Extract keyframe values
+            int value_count = dst_chan->keyframe_count * dst_chan->components;
+            dst_chan->values = new float[value_count];
+            
+            for (int ki = 0; ki < dst_chan->keyframe_count; ++ki) {
+                cgltf_accessor_read_float(value_acc, ki, 
+                                         &dst_chan->values[ki * dst_chan->components], 
+                                         dst_chan->components);
+            }
+        }
+        
+        printf("[glTF] Animation '%s': %d channels, duration=%.2fs\n", 
+               dst->name, dst->channel_count, dst->duration);
+    }
+    
+    return anims;
+}
+
+// Lerp between two float values
+static float Lerp(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
+// Quaternion slerp (spherical linear interpolation)
+static void QuatSlerp(const float* q1, const float* q2, float t, float* out) {
+    // Compute dot product
+    float dot = q1[0] * q2[0] + q1[1] * q2[1] + q1[2] * q2[2] + q1[3] * q2[3];
+    
+    // If dot < 0, negate q2 to take shorter path
+    float q2_copy[4];
+    if (dot < 0.0f) {
+        dot = -dot;
+        q2_copy[0] = -q2[0]; q2_copy[1] = -q2[1];
+        q2_copy[2] = -q2[2]; q2_copy[3] = -q2[3];
+        q2 = q2_copy;
+    }
+    
+    // If quaternions are very close, use linear interpolation
+    if (dot > 0.9995f) {
+        out[0] = Lerp(q1[0], q2[0], t);
+        out[1] = Lerp(q1[1], q2[1], t);
+        out[2] = Lerp(q1[2], q2[2], t);
+        out[3] = Lerp(q1[3], q2[3], t);
+        // Normalize
+        float len = sqrtf(out[0]*out[0] + out[1]*out[1] + out[2]*out[2] + out[3]*out[3]);
+        if (len > 0.0001f) {
+            out[0] /= len; out[1] /= len; out[2] /= len; out[3] /= len;
+        }
+        return;
+    }
+    
+    // Slerp
+    float theta = acosf(dot);
+    float sin_theta = sinf(theta);
+    float w1 = sinf((1.0f - t) * theta) / sin_theta;
+    float w2 = sinf(t * theta) / sin_theta;
+    
+    out[0] = w1 * q1[0] + w2 * q2[0];
+    out[1] = w1 * q1[1] + w2 * q2[1];
+    out[2] = w1 * q1[2] + w2 * q2[2];
+    out[3] = w1 * q1[3] + w2 * q2[3];
+}
+
+// Evaluate a single animation channel at the given time
+static void EvaluateChannel(const AnimationChannel* chan, float time, float* out) {
+    if (!chan || !chan->times || !chan->values || chan->keyframe_count == 0) return;
+    
+    // Find the keyframe interval
+    int key0 = 0, key1 = 0;
+    float t = 0.0f;
+    
+    if (time <= chan->times[0]) {
+        // Before first keyframe
+        key0 = key1 = 0;
+        t = 0.0f;
+    } else if (time >= chan->times[chan->keyframe_count - 1]) {
+        // After last keyframe
+        key0 = key1 = chan->keyframe_count - 1;
+        t = 0.0f;
+    } else {
+        // Binary search for interval
+        for (int i = 0; i < chan->keyframe_count - 1; ++i) {
+            if (time >= chan->times[i] && time < chan->times[i + 1]) {
+                key0 = i;
+                key1 = i + 1;
+                float dt = chan->times[key1] - chan->times[key0];
+                t = (dt > 0.0001f) ? ((time - chan->times[key0]) / dt) : 0.0f;
+                break;
+            }
+        }
+    }
+    
+    // Interpolate based on type
+    const float* val0 = &chan->values[key0 * chan->components];
+    const float* val1 = &chan->values[key1 * chan->components];
+    
+    if (chan->interpolation == ANIM_INTERP_STEP) {
+        // Step: use val0
+        for (int i = 0; i < chan->components; ++i) out[i] = val0[i];
+    } else if (chan->path == ANIM_PATH_ROTATION) {
+        // Quaternion slerp
+        QuatSlerp(val0, val1, t, out);
+    } else {
+        // Linear interpolation for translation/scale
+        for (int i = 0; i < chan->components; ++i) {
+            out[i] = Lerp(val0[i], val1[i], t);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Public API implementation
 // ---------------------------------------------------------------------------
 
@@ -383,6 +591,9 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
     result->mesh = mesh;
     result->ok   = true;
 
+    // Extract animations before freeing cgltf data
+    result->animations = ExtractAnimations(data, &result->animation_count);
+
     cgltf_free(data);
     return result;
 }
@@ -461,7 +672,153 @@ ImportResult* LoadMeshFromMemory(const void* buf, size_t size,
 void FreeImportResult(ImportResult* result) {
     if (!result) return;
     if (result->mesh) rev::mesh::DestroyMesh(result->mesh);
+    
+    // Free animations
+    if (result->animations) {
+        for (int ai = 0; ai < result->animation_count; ++ai) {
+            Animation* anim = &result->animations[ai];
+            if (anim->channels) {
+                for (int ci = 0; ci < anim->channel_count; ++ci) {
+                    delete[] anim->channels[ci].times;
+                    delete[] anim->channels[ci].values;
+                }
+                delete[] anim->channels;
+            }
+        }
+        delete[] result->animations;
+    }
+    
     delete result;
+}
+
+// ---------------------------------------------------------------------------
+
+void EvaluateAnimation(const Animation* anim, float time,
+                       float* out_translation,
+                       float* out_rotation,
+                       float* out_scale) {
+    if (!anim || anim->channel_count == 0) return;
+    
+    // Loop the animation
+    if (anim->duration > 0.0f) {
+        time = fmodf(time, anim->duration);
+        if (time < 0.0f) time += anim->duration;
+    }
+    
+    // Set defaults
+    if (out_translation) {
+        out_translation[0] = 0.0f;
+        out_translation[1] = 0.0f;
+        out_translation[2] = 0.0f;
+    }
+    if (out_rotation) {
+        out_rotation[0] = 0.0f;
+        out_rotation[1] = 0.0f;
+        out_rotation[2] = 0.0f;
+        out_rotation[3] = 1.0f;  // identity quaternion
+    }
+    if (out_scale) {
+        out_scale[0] = 1.0f;
+        out_scale[1] = 1.0f;
+        out_scale[2] = 1.0f;
+    }
+    
+    // Evaluate each channel
+    for (int ci = 0; ci < anim->channel_count; ++ci) {
+        const AnimationChannel* chan = &anim->channels[ci];
+        
+        switch (chan->path) {
+            case ANIM_PATH_TRANSLATION:
+                if (out_translation) EvaluateChannel(chan, time, out_translation);
+                break;
+            case ANIM_PATH_ROTATION:
+                if (out_rotation) EvaluateChannel(chan, time, out_rotation);
+                break;
+            case ANIM_PATH_SCALE:
+                if (out_scale) EvaluateChannel(chan, time, out_scale);
+                break;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+void QuaternionToEuler(const float* quat, float* euler_degrees) {
+    // quat = [x, y, z, w]
+    float x = quat[0], y = quat[1], z = quat[2], w = quat[3];
+    
+    // Roll (x-axis rotation)
+    float sinr_cosp = 2.0f * (w * x + y * z);
+    float cosr_cosp = 1.0f - 2.0f * (x * x + y * y);
+    euler_degrees[0] = atan2f(sinr_cosp, cosr_cosp) * (180.0f / 3.14159265f);
+    
+    // Pitch (y-axis rotation)
+    float sinp = 2.0f * (w * y - z * x);
+    if (fabsf(sinp) >= 1.0f)
+        euler_degrees[1] = copysignf(90.0f, sinp); // Use 90 degrees if out of range
+    else
+        euler_degrees[1] = asinf(sinp) * (180.0f / 3.14159265f);
+    
+    // Yaw (z-axis rotation)
+    float siny_cosp = 2.0f * (w * z + x * y);
+    float cosy_cosp = 1.0f - 2.0f * (y * y + z * z);
+    euler_degrees[2] = atan2f(siny_cosp, cosy_cosp) * (180.0f / 3.14159265f);
+}
+
+bool UpdateMeshAnimation(rev::mesh::Mesh* mesh, float dt) {
+    if (!mesh || mesh->current_animation < 0 || mesh->current_animation >= mesh->animation_count) {
+        return false;
+    }
+    
+    if (!mesh->animation_data) return false;
+    
+    Animation* anims = (Animation*)mesh->animation_data;
+    Animation* anim = &anims[mesh->current_animation];
+    
+    // Update time
+    mesh->animation_time += dt * mesh->animation_speed;
+    
+    // Handle looping
+    if (anim->duration > 0.0f) {
+        if (mesh->animation_loop) {
+            mesh->animation_time = fmodf(mesh->animation_time, anim->duration);
+            if (mesh->animation_time < 0.0f) mesh->animation_time += anim->duration;
+        } else {
+            // Clamp to duration if not looping
+            if (mesh->animation_time >= anim->duration) {
+                mesh->animation_time = anim->duration;
+                return false;  // Animation ended
+            }
+        }
+    }
+    
+    return true;
+}
+
+void ApplyAnimationTransform(float* pos, float* rot_degrees, float* scale,
+                             const float* translation, const float* rotation_quat, const float* anim_scale) {
+    // Add translation
+    if (translation) {
+        pos[0] += translation[0];
+        pos[1] += translation[1];
+        pos[2] += translation[2];
+    }
+    
+    // Convert quaternion to Euler and add to rotation
+    if (rotation_quat) {
+        float euler[3];
+        QuaternionToEuler(rotation_quat, euler);
+        rot_degrees[0] += euler[0];
+        rot_degrees[1] += euler[1];
+        rot_degrees[2] += euler[2];
+    }
+    
+    // Multiply scale
+    if (anim_scale) {
+        scale[0] *= anim_scale[0];
+        scale[1] *= anim_scale[1];
+        scale[2] *= anim_scale[2];
+    }
 }
 
 // ---------------------------------------------------------------------------
