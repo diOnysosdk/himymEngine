@@ -35,6 +35,14 @@ void RenderTimeline(EditorContext* editor) {
             if (ImGui::Selectable(scene->name, selected, 0, ImVec2(0, 0))) {
                 editor->selected_scene_index = i;
                 editor->selected_cue_index = -1;
+                
+                // Jump to the start of the selected scene
+                float scene_start_time = 0.0f;
+                for (int j = 0; j < i; j++) {
+                    scene_start_time += editor->project->scenes[j].duration;
+                }
+                editor->current_time = scene_start_time;
+                editor->playing = false; // Pause playback when switching scenes
             }
             
             ImGui::SameLine();

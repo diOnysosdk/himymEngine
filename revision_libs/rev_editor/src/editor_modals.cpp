@@ -937,7 +937,7 @@ void RenderImageModal(EditorContext* editor) {
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
         
-        ImGui::SliderFloat("Y", &cue->y, 0.0f, 1.0f);
+        if (ImGui::SliderFloat("Y", &cue->y, 0.0f, 1.0f)) AutoSave();
         ImGui::SameLine();
         if (cue->curve_y >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_y);

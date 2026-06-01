@@ -162,7 +162,7 @@ void main() {
 }
 ```
 
-## Current Shader List (IDs 0-10)
+## Current Shader List (IDs 0-11)
 
 0. **Horizontal Gradient Bands** - Black default with three horizontal fade bands
 1. **Plasma Vibrant** - Classic plasma effect
@@ -175,8 +175,9 @@ void main() {
 8. **Starfield** - 3D starfield with motion blur
 9. **Glow Orbs** - Glowing orb metaballs
 10. **Matrix Rain** - Matrix-style digital rain
+11. **Spiral Galaxy** - Rotating nebula with stars, spiral arms, multi-layer FBM noise
 
-**Next available ID: 11**
+**Next available ID: 12**
 
 ## Benefits of This Architecture
 
@@ -212,3 +213,20 @@ Possible improvements to consider:
 **Problem**: New shader appears in editor but crashes at runtime  
 **Cause**: Forgot to add shader to `minimal_intro/main.cpp`  
 **Solution**: Add the shader to both files and rebuild
+
+**Problem**: New shader works in editor but runtime always shows default shader (ID 0)  
+**Cause**: Hardcoded shader validation check limiting max shader ID (e.g., `shader_id > 9`)  
+**Solution**: Search for hardcoded validation and replace with dynamic check:
+```cpp
+// ❌ BAD - Hardcoded limit
+if (cue.shader_scene_id < 0 || cue.shader_scene_id > 9) {
+    cue.shader_scene_id = 0;
+}
+
+// ✅ GOOD - Dynamic limit
+const int num_shaders = sizeof(fragment_shaders) / sizeof(fragment_shaders[0]);
+if (cue.shader_scene_id < 0 || cue.shader_scene_id >= num_shaders) {
+    cue.shader_scene_id = 0;
+}
+```
+**Files to check**: `examples/minimal_intro/main.cpp`, `examples/demo_intro/main.cpp`, `examples/animated_intro/main.cpp`

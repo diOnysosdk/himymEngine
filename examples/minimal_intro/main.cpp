@@ -209,10 +209,74 @@ bool LoadShaderCue(const char* path, ShaderCue* cue) {
         }
         
         if (in_shader_cues && start[0] != '#' && start[0] != '\0' && start[0] != '\n') {
-            // Parse shader cue line - full 38-field format with backwards compatibility
-            // Format: shader_scene_id|palette(9)|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|
-            //         cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order|
-            //         curve fields (13)
+            printf("[LoadShaderCue] Parsing line: %s\n", start);
+            
+            // Initialize curve fields to -1 (no curve)
+            cue->curve_speed = cue->curve_intensity = cue->curve_warp = -1;
+            cue->curve_exposure = cue->curve_fade = -1;
+            cue->curve_palette_low_r = cue->curve_palette_low_g = cue->curve_palette_low_b = -1;
+            cue->curve_palette_mid_r = cue->curve_palette_mid_g = cue->curve_palette_mid_b = -1;
+            cue->curve_palette_high_r = cue->curve_palette_high_g = cue->curve_palette_high_b = -1;
+            cue->curve_opacity = cue->curve_exposure_ramp = cue->curve_fade_ramp = -1;
+            
+            int parsed = sscanf_s(start,
+                "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+                &cue->shader_scene_id,
+                &cue->palette_low[0], &cue->palette_low[1], &cue->palette_low[2],
+                &cue->palette_mid[0], &cue->palette_mid[1], &cue->palette_mid[2],
+                &cue->palette_high[0], &cue->palette_high[1], &cue->palette_high[2],
+                &cue->speed, &cue->intensity, &cue->warp,
+                &cue->exposure_base, &cue->exposure_ramp,
+                &cue->fade_base, &cue->fade_ramp,
+                &cue->cue_start, &cue->cue_end,
+                &cue->fade_in, &cue->fade_out,
+                &cue->layer_role, &cue->opacity, &cue->blend_mode, &cue->layer_order,
+                &cue->curve_speed, &cue->curve_intensity, &cue->curve_warp,
+                &cue->curve_exposure, &cue->curve_fade,
+                &cue->curve_palette_low_r, &cue->curve_palette_low_g, &cue->curve_palette_low_b,
+                &cue->curve_palette_mid_r, &cue->curve_palette_mid_g, &cue->curve_palette_mid_b,
+                &cue->curve_palette_high_r, &cue->curve_palette_high_g, &cue->curve_palette_high_b,
+                &cue->curve_opacity, &cue->curve_exposure_ramp, &cue->curve_fade_ramp);
+            
+            printf("[LoadShaderCue] Parsed %d fields, shader_scene_id=%d\n", parsed, cue->shader_scene_id);
+            
+            if (parsed >= 14) {  // At least old format (14 basic fields)
+                found = true;
+                break;
+            }
+        }
+    }
+    
+    fclose(f);
+    return found;
+}
+
+// Load ALL shader cues from cues.txt (for multi-scene support)
+int LoadAllShaderCues(const char* path, ShaderCue* cues, int max_cues) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+    
+    char line[512];
+    bool in_shader_cues = false;
+    int count = 0;
+    
+    while (fgets(line, sizeof(line), f) && count < max_cues) {
+        // Trim whitespace
+        char* start = line;
+        while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') start++;
+        
+        if (strstr(start, "[shader_cues]")) {
+            in_shader_cues = true;
+            continue;
+        }
+        
+        if (start[0] == '[' && in_shader_cues) {
+            break;  // End of shader_cues section
+        }
+        
+        if (in_shader_cues && start[0] != '#' && start[0] != '\0' && start[0] != '\n') {
+            ShaderCue* cue = &cues[count];
             
             // Initialize curve fields to -1 (no curve)
             cue->curve_speed = cue->curve_intensity = cue->curve_warp = -1;
@@ -242,14 +306,15 @@ bool LoadShaderCue(const char* path, ShaderCue* cue) {
                 &cue->curve_opacity, &cue->curve_exposure_ramp, &cue->curve_fade_ramp);
             
             if (parsed >= 14) {  // At least old format (14 basic fields)
-                found = true;
-                break;
+                printf("[LoadAllShaderCues] Loaded cue %d: shader_id=%d, time=%.1f-%.1f\n", 
+                    count, cue->shader_scene_id, cue->cue_start, cue->cue_end);
+                count++;
             }
         }
     }
     
     fclose(f);
-    return found;
+    return count;
 }
 
 // LoadMusicCue, LoadImageCue, LoadTextCue, LoadImageTexture,
@@ -724,6 +789,157 @@ void main() {
     
     fragColor = vec4(col, 1.0);
 }
+)",
+    
+    // 11: Spiral Galaxy
+    R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+uniform float u_warp;
+uniform float u_exposure_base;
+uniform float u_fade_base;
+
+float hash(vec2 p)
+{
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float noise(vec2 p)
+{
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+
+    vec2 u = f * f * (3.0 - 2.0 * f);
+
+    return mix(a, b, u.x)
+         + (c - a) * u.y * (1.0 - u.x)
+         + (d - b) * u.x * u.y;
+}
+
+float fbm(vec2 p)
+{
+    float v = 0.0;
+    float a = 0.5;
+
+    for (int i = 0; i < 6; i++)
+    {
+        v += noise(p) * a;
+        p *= 2.05;
+        p += vec2(7.13, 3.71);
+        a *= 0.5;
+    }
+
+    return v;
+}
+
+vec2 rotate(vec2 p, float a)
+{
+    float s = sin(a);
+    float c = cos(a);
+    return mat2(c, -s, s, c) * p;
+}
+
+float starLayer(vec2 p, float scale, float speed, float size)
+{
+    p *= scale;
+
+    vec2 id = floor(p);
+    vec2 gv = fract(p) - 0.5;
+
+    float rnd = hash(id);
+    vec2 offset = vec2(
+        hash(id + 13.1),
+        hash(id + 91.7)
+    ) - 0.5;
+
+    gv -= offset * 0.55;
+
+    float d = length(gv);
+    float star = smoothstep(size, 0.0, d);
+
+    float twinkle = 0.55 + 0.45 * sin(u_time * speed + rnd * 40.0);
+    star *= step(0.965, rnd) * twinkle;
+
+    return star;
+}
+
+void main()
+{
+    vec2 aspect = vec2(u_resolution.x / u_resolution.y, 1.0);
+    vec2 p = (uv - 0.5) * aspect;
+
+    float t = u_time * u_speed;
+
+    float r = length(p);
+    float a = atan(p.y, p.x);
+
+    vec2 drift = vec2(
+        sin(t * 0.11),
+        cos(t * 0.09)
+    ) * 0.35 * u_warp;
+
+    vec2 nebulaUV = p;
+    nebulaUV = rotate(nebulaUV, t * 0.035);
+    nebulaUV += drift;
+
+    float n1 = fbm(nebulaUV * 2.1 + vec2(t * 0.035, -t * 0.025));
+    float n2 = fbm(nebulaUV * 4.3 - vec2(t * 0.02, t * 0.015));
+    float n3 = fbm(nebulaUV * 8.0 + n1 * 2.0);
+
+    float nebula = n1 * 0.55 + n2 * 0.32 + n3 * 0.13;
+    nebula = smoothstep(0.24, 1.0, nebula);
+
+    float spiral = sin(a * 3.0 + r * 11.0 - t * 0.45);
+    spiral = smoothstep(0.15, 1.0, spiral);
+
+    float core = exp(-r * 4.2);
+    float halo = exp(-r * 1.35);
+
+    vec3 col = u_palette_low * 0.08;
+
+    vec3 nebulaCol = mix(u_palette_low, u_palette_mid, nebula);
+    nebulaCol = mix(nebulaCol, u_palette_high, pow(nebula, 3.0));
+
+    col += nebulaCol * nebula * (0.55 + u_warp * 1.2);
+    col += u_palette_mid * spiral * halo * 0.55;
+    col += u_palette_high * core * 1.8;
+
+    float stars = 0.0;
+    stars += starLayer(p + vec2(t * 0.015, -t * 0.010), 55.0, 4.0, 0.045);
+    stars += starLayer(p + vec2(-t * 0.010, t * 0.020), 95.0, 7.0, 0.035);
+    stars += starLayer(p + vec2(t * 0.025, t * 0.015), 150.0, 10.0, 0.025);
+
+    col += vec3(stars) * mix(u_palette_mid, u_palette_high, stars) * 2.2;
+
+    float dust = fbm(p * 18.0 + vec2(t * 0.03, -t * 0.02));
+    dust = smoothstep(0.57, 0.95, dust);
+    col += u_palette_mid * dust * nebula * 0.18;
+
+    float vignette = smoothstep(1.15, 0.15, r);
+    col *= vignette;
+
+    col *= u_intensity;
+    col *= u_exposure_base;
+
+    col = 1.0 - exp(-col);
+
+    fragColor = vec4(col, u_fade_base);
+}
 )"
 };
 
@@ -782,18 +998,29 @@ int main(int argc, char* argv[]) {
     printf("Cues file: %s\n", cues_path);
     if (g_logfile) fprintf(g_logfile, "Cues file: %s\n", cues_path);
 
-    // Load shader cue
-    ShaderCue cue = {};
-    if (!LoadShaderCue(cues_path, &cue)) {
-        // Default fallback
-        cue.shader_scene_id = 0;
-        cue.palette_low[0] = 0.1f; cue.palette_low[1] = 0.3f; cue.palette_low[2] = 0.8f;
-        cue.palette_mid[0] = 0.45f; cue.palette_mid[1] = 0.25f; cue.palette_mid[2] = 0.7f;
-        cue.palette_high[0] = 0.8f; cue.palette_high[1] = 0.2f; cue.palette_high[2] = 0.6f;
-        cue.speed = 1.0f;
-        cue.intensity = 1.0f;
-        cue.warp = 0.5f;
-        cue.exposure_base = 0.76f;
+    // Load ALL shader cues (multi-scene support)
+    ShaderCue shader_cues[16];  // Support up to 16 shader cues
+    int shader_cue_count = LoadAllShaderCues(cues_path, shader_cues, 16);
+    printf("Loaded %d shader cue(s)\n", shader_cue_count);
+    
+    // Setup default fallback shader cue
+    ShaderCue fallback_cue = {};
+    fallback_cue.shader_scene_id = 0;
+    fallback_cue.palette_low[0] = 0.1f; fallback_cue.palette_low[1] = 0.3f; fallback_cue.palette_low[2] = 0.8f;      // Blue
+    fallback_cue.palette_mid[0] = 0.8f; fallback_cue.palette_mid[1] = 0.4f; fallback_cue.palette_mid[2] = 0.2f;      // Orange
+    fallback_cue.palette_high[0] = 1.0f; fallback_cue.palette_high[1] = 0.9f; fallback_cue.palette_high[2] = 0.7f;   // Warm white
+    fallback_cue.speed = 1.0f;
+    fallback_cue.intensity = 1.0f;
+    fallback_cue.warp = 0.5f;
+    fallback_cue.exposure_base = 0.76f;
+    fallback_cue.fade_base = 1.0f;
+    fallback_cue.cue_start = 0.0f;
+    fallback_cue.cue_end = 999999.0f;  // Always active
+    
+    if (shader_cue_count == 0) {
+        printf("No shader cues found, using fallback\n");
+        shader_cues[0] = fallback_cue;
+        shader_cue_count = 1;
     }
     
     // Load curves
@@ -864,7 +1091,9 @@ int main(int argc, char* argv[]) {
     
     // Calculate total duration from all cues
     float total_duration = 0.0f;
-    if (cue.cue_end > total_duration) total_duration = cue.cue_end;  // Shader cue
+    for (int i = 0; i < shader_cue_count; i++) {
+        if (shader_cues[i].cue_end > total_duration) total_duration = shader_cues[i].cue_end;
+    }
     if (has_image && image_cue.cue_end > total_duration) total_duration = image_cue.cue_end;
     if (has_text && text_cue.cue_end > total_duration) total_duration = text_cue.cue_end;
     if (has_mesh && mesh_cue.cue_end > total_duration) total_duration = mesh_cue.cue_end;
@@ -874,11 +1103,6 @@ int main(int argc, char* argv[]) {
     if (total_duration <= 0.0f) total_duration = 10.0f;
     
     printf("Total intro duration: %.1fs\n", total_duration);
-    
-    // Clamp shader_scene_id to valid range
-    if (cue.shader_scene_id < 0 || cue.shader_scene_id > 9) {
-        cue.shader_scene_id = 0;
-    }
     
     // Create window and OpenGL context
     rev::platform::WindowConfig config;
@@ -910,14 +1134,20 @@ int main(int argc, char* argv[]) {
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
     
-    // Compile shader with selected fragment shader
+    // Compile shader for initial cue (first cue that starts at or before time 0)
     const int num_shaders = sizeof(fragment_shaders) / sizeof(fragment_shaders[0]);
-    if (cue.shader_scene_id < 0 || cue.shader_scene_id >= num_shaders) {
-        printf("ERROR: Invalid shader_scene_id %d (must be 0-%d)\n", cue.shader_scene_id, num_shaders - 1);
-        cue.shader_scene_id = 0;  // Fallback to first shader
+    int initial_shader_id = shader_cues[0].shader_scene_id;  // Default to first cue
+    printf("Shader validation: initial shader_id=%d, num_shaders=%d (valid range: 0-%d)\n", 
+           initial_shader_id, num_shaders, num_shaders - 1);
+    if (initial_shader_id < 0 || initial_shader_id >= num_shaders) {
+        printf("ERROR: Invalid shader_scene_id %d (must be 0-%d)\n", initial_shader_id, num_shaders - 1);
+        initial_shader_id = 0;  // Fallback to first shader
+    } else {
+        printf("Using initial shader ID %d\n", initial_shader_id);
     }
-    const char* selected_frag_shader = fragment_shaders[cue.shader_scene_id];
+    const char* selected_frag_shader = fragment_shaders[initial_shader_id];
     rev::shader::Program* shader = rev::shader::CompileFromSource(vertex_shader, selected_frag_shader);
+    int current_shader_id = initial_shader_id;  // Track which shader is currently compiled
     if (!shader) {
         rev::platform::DestroyIntroWindow(window);
         return -1;
@@ -1063,6 +1293,8 @@ int main(int argc, char* argv[]) {
     int u_speed_loc = rev::shader::GetUniformLocation(shader, "u_speed");
     int u_intensity_loc = rev::shader::GetUniformLocation(shader, "u_intensity");
     int u_warp_loc = rev::shader::GetUniformLocation(shader, "u_warp");
+    int u_exposure_base_loc = rev::shader::GetUniformLocation(shader, "u_exposure_base");
+    int u_fade_base_loc = rev::shader::GetUniformLocation(shader, "u_fade_base");
     
     // Load XM music if available
     rev::xm::Player* xm_player = nullptr;
@@ -1204,11 +1436,51 @@ int main(int argc, char* argv[]) {
         float dt = static_cast<float>(current_time - prev_time);
         prev_time = current_time;
         
+        // Find active shader cue based on current time
+        ShaderCue* active_cue = nullptr;
+        int active_shader_id = -1;
+        for (int i = 0; i < shader_cue_count; i++) {
+            if (time >= shader_cues[i].cue_start && time < shader_cues[i].cue_end) {
+                active_cue = &shader_cues[i];
+                active_shader_id = shader_cues[i].shader_scene_id;
+                break;
+            }
+        }
+        
+        // If no active cue found, use the last cue if we're past all cues
+        if (!active_cue && shader_cue_count > 0) {
+            float max_cue_end = 0.0f;
+            int last_cue_index = 0;
+            for (int i = 0; i < shader_cue_count; i++) {
+                if (shader_cues[i].cue_end > max_cue_end) {
+                    max_cue_end = shader_cues[i].cue_end;
+                    last_cue_index = i;
+                }
+            }
+            active_cue = &shader_cues[last_cue_index];
+            active_shader_id = active_cue->shader_scene_id;
+        }
+        
+        // Switch shader if needed
+        if (active_shader_id >= 0 && active_shader_id != current_shader_id) {
+            if (active_shader_id >= 0 && active_shader_id < num_shaders) {
+                printf("[%.1fs] SHADER SWITCH: %d -> %d\n", time, current_shader_id, active_shader_id);
+                rev::shader::DestroyProgram(shader);
+                shader = rev::shader::CompileFromSource(vertex_shader, fragment_shaders[active_shader_id]);
+                if (shader) {
+                    current_shader_id = active_shader_id;
+                } else {
+                    printf("ERROR: Failed to compile shader %d, reverting\n", active_shader_id);
+                    shader = rev::shader::CompileFromSource(vertex_shader, fragment_shaders[current_shader_id]);
+                }
+            }
+        }
+        
         // Image activation/deactivation logging
         static bool image_was_active = false;
         bool image_active_now = (image_loaded && time >= image_cue.cue_start && time <= image_cue.cue_end);
         if (image_active_now && !image_was_active) {
-            printf("[%.1fs] IMAGE ON (sprite_shader=%p)\n", time, sprite_shader);
+            printf("[%.1fs] IMAGE ON (sprite_shader=%p, layer_order=%d)\n", time, sprite_shader, image_cue.layer_order);
             image_was_active = true;
         } else if (!image_active_now && image_was_active) {
             printf("[%.1fs] IMAGE OFF\n", time);
@@ -1238,6 +1510,13 @@ int main(int argc, char* argv[]) {
         // in OpenGL 3.3 core profile (vertex shader only uses gl_VertexID, no attribs).
         glBindVertexArray(vao);
 
+        // Clear depth buffer BEFORE drawing anything (shader background + layers)
+        glClear(GL_DEPTH_BUFFER_BIT);
+        
+        // Disable depth test for background shader (fullscreen quad at infinite depth)
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+
         // Use shader and set uniforms
         rev::shader::Use(shader);
         rev::shader::SetFloat(shader, u_time_loc, time);
@@ -1245,63 +1524,79 @@ int main(int argc, char* argv[]) {
                             static_cast<float>(config.width), 
                             static_cast<float>(config.height));
         
-        // Evaluate shader curves
-        float elapsed_time = time - cue.cue_start;
-        float anim_palette_low[3] = {cue.palette_low[0], cue.palette_low[1], cue.palette_low[2]};
-        float anim_palette_mid[3] = {cue.palette_mid[0], cue.palette_mid[1], cue.palette_mid[2]};
-        float anim_palette_high[3] = {cue.palette_high[0], cue.palette_high[1], cue.palette_high[2]};
-        float anim_speed = cue.speed;
-        float anim_intensity = cue.intensity;
-        float anim_warp = cue.warp;
+        // Evaluate shader curves (use active cue based on current time)
+        float elapsed_time = active_cue ? (time - active_cue->cue_start) : 0.0f;
+        float anim_palette_low[3] = {active_cue ? active_cue->palette_low[0] : 0.1f, 
+                                      active_cue ? active_cue->palette_low[1] : 0.3f, 
+                                      active_cue ? active_cue->palette_low[2] : 0.8f};
+        float anim_palette_mid[3] = {active_cue ? active_cue->palette_mid[0] : 0.8f, 
+                                      active_cue ? active_cue->palette_mid[1] : 0.4f, 
+                                      active_cue ? active_cue->palette_mid[2] : 0.2f};
+        float anim_palette_high[3] = {active_cue ? active_cue->palette_high[0] : 1.0f, 
+                                       active_cue ? active_cue->palette_high[1] : 0.9f, 
+                                       active_cue ? active_cue->palette_high[2] : 0.7f};
+        float anim_speed = active_cue ? active_cue->speed : 1.0f;
+        float anim_intensity = active_cue ? active_cue->intensity : 1.0f;
+        float anim_warp = active_cue ? active_cue->warp : 0.5f;
+        float anim_exposure = active_cue ? active_cue->exposure_base : 0.76f;
+        float anim_fade = active_cue ? active_cue->fade_base : 1.0f;
         
-        if (elapsed_time >= 0.0f) {
-            if (cue.curve_palette_low_r >= 0 && cue.curve_palette_low_r < curve_count) {
-                float t = elapsed_time / curves[cue.curve_palette_low_r].duration;
-                anim_palette_low[0] = rev::curve::Evaluate(curves[cue.curve_palette_low_r], t);
+        if (active_cue && elapsed_time >= 0.0f) {
+            if (active_cue->curve_palette_low_r >= 0 && active_cue->curve_palette_low_r < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_palette_low_r].duration;
+                anim_palette_low[0] = rev::curve::Evaluate(curves[active_cue->curve_palette_low_r], t);
             }
-            if (cue.curve_palette_low_g >= 0 && cue.curve_palette_low_g < curve_count) {
-                float t = elapsed_time / curves[cue.curve_palette_low_g].duration;
-                anim_palette_low[1] = rev::curve::Evaluate(curves[cue.curve_palette_low_g], t);
+            if (active_cue->curve_palette_low_g >= 0 && active_cue->curve_palette_low_g < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_palette_low_g].duration;
+                anim_palette_low[1] = rev::curve::Evaluate(curves[active_cue->curve_palette_low_g], t);
             }
-            if (cue.curve_palette_low_b >= 0 && cue.curve_palette_low_b < curve_count) {
-                float t = elapsed_time / curves[cue.curve_palette_low_b].duration;
-                anim_palette_low[2] = rev::curve::Evaluate(curves[cue.curve_palette_low_b], t);
+            if (active_cue->curve_palette_low_b >= 0 && active_cue->curve_palette_low_b < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_palette_low_b].duration;
+                anim_palette_low[2] = rev::curve::Evaluate(curves[active_cue->curve_palette_low_b], t);
             }
-            if (cue.curve_palette_mid_r >= 0 && cue.curve_palette_mid_r < curve_count) {
-                float t = elapsed_time / curves[cue.curve_palette_mid_r].duration;
-                anim_palette_mid[0] = rev::curve::Evaluate(curves[cue.curve_palette_mid_r], t);
+            if (active_cue->curve_palette_mid_r >= 0 && active_cue->curve_palette_mid_r < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_palette_mid_r].duration;
+                anim_palette_mid[0] = rev::curve::Evaluate(curves[active_cue->curve_palette_mid_r], t);
             }
-            if (cue.curve_palette_mid_g >= 0 && cue.curve_palette_mid_g < curve_count) {
-                float t = elapsed_time / curves[cue.curve_palette_mid_g].duration;
-                anim_palette_mid[1] = rev::curve::Evaluate(curves[cue.curve_palette_mid_g], t);
+            if (active_cue->curve_palette_mid_g >= 0 && active_cue->curve_palette_mid_g < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_palette_mid_g].duration;
+                anim_palette_mid[1] = rev::curve::Evaluate(curves[active_cue->curve_palette_mid_g], t);
             }
-            if (cue.curve_palette_mid_b >= 0 && cue.curve_palette_mid_b < curve_count) {
-                float t = elapsed_time / curves[cue.curve_palette_mid_b].duration;
-                anim_palette_mid[2] = rev::curve::Evaluate(curves[cue.curve_palette_mid_b], t);
+            if (active_cue->curve_palette_mid_b >= 0 && active_cue->curve_palette_mid_b < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_palette_mid_b].duration;
+                anim_palette_mid[2] = rev::curve::Evaluate(curves[active_cue->curve_palette_mid_b], t);
             }
-            if (cue.curve_palette_high_r >= 0 && cue.curve_palette_high_r < curve_count) {
-                float t = elapsed_time / curves[cue.curve_palette_high_r].duration;
-                anim_palette_high[0] = rev::curve::Evaluate(curves[cue.curve_palette_high_r], t);
+            if (active_cue->curve_palette_high_r >= 0 && active_cue->curve_palette_high_r < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_palette_high_r].duration;
+                anim_palette_high[0] = rev::curve::Evaluate(curves[active_cue->curve_palette_high_r], t);
             }
-            if (cue.curve_palette_high_g >= 0 && cue.curve_palette_high_g < curve_count) {
-                float t = elapsed_time / curves[cue.curve_palette_high_g].duration;
-                anim_palette_high[1] = rev::curve::Evaluate(curves[cue.curve_palette_high_g], t);
+            if (active_cue->curve_palette_high_g >= 0 && active_cue->curve_palette_high_g < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_palette_high_g].duration;
+                anim_palette_high[1] = rev::curve::Evaluate(curves[active_cue->curve_palette_high_g], t);
             }
-            if (cue.curve_palette_high_b >= 0 && cue.curve_palette_high_b < curve_count) {
-                float t = elapsed_time / curves[cue.curve_palette_high_b].duration;
-                anim_palette_high[2] = rev::curve::Evaluate(curves[cue.curve_palette_high_b], t);
+            if (active_cue->curve_palette_high_b >= 0 && active_cue->curve_palette_high_b < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_palette_high_b].duration;
+                anim_palette_high[2] = rev::curve::Evaluate(curves[active_cue->curve_palette_high_b], t);
             }
-            if (cue.curve_speed >= 0 && cue.curve_speed < curve_count) {
-                float t = elapsed_time / curves[cue.curve_speed].duration;
-                anim_speed = rev::curve::Evaluate(curves[cue.curve_speed], t);
+            if (active_cue->curve_speed >= 0 && active_cue->curve_speed < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_speed].duration;
+                anim_speed = rev::curve::Evaluate(curves[active_cue->curve_speed], t);
             }
-            if (cue.curve_intensity >= 0 && cue.curve_intensity < curve_count) {
-                float t = elapsed_time / curves[cue.curve_intensity].duration;
-                anim_intensity = rev::curve::Evaluate(curves[cue.curve_intensity], t);
+            if (active_cue->curve_intensity >= 0 && active_cue->curve_intensity < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_intensity].duration;
+                anim_intensity = rev::curve::Evaluate(curves[active_cue->curve_intensity], t);
             }
-            if (cue.curve_warp >= 0 && cue.curve_warp < curve_count) {
-                float t = elapsed_time / curves[cue.curve_warp].duration;
-                anim_warp = rev::curve::Evaluate(curves[cue.curve_warp], t);
+            if (active_cue->curve_warp >= 0 && active_cue->curve_warp < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_warp].duration;
+                anim_warp = rev::curve::Evaluate(curves[active_cue->curve_warp], t);
+            }
+            if (active_cue->curve_exposure >= 0 && active_cue->curve_exposure < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_exposure].duration;
+                anim_exposure = rev::curve::Evaluate(curves[active_cue->curve_exposure], t);
+            }
+            if (active_cue->curve_fade >= 0 && active_cue->curve_fade < curve_count) {
+                float t = elapsed_time / curves[active_cue->curve_fade].duration;
+                anim_fade = rev::curve::Evaluate(curves[active_cue->curve_fade], t);
             }
             // Note: exposure_ramp, fade_ramp, opacity curves not used in runtime shaders yet
         }
@@ -1319,6 +1614,10 @@ int main(int argc, char* argv[]) {
             rev::shader::SetFloat(shader, u_intensity_loc, anim_intensity);
         if (u_warp_loc >= 0)
             rev::shader::SetFloat(shader, u_warp_loc, anim_warp);
+        if (u_exposure_base_loc >= 0)
+            rev::shader::SetFloat(shader, u_exposure_base_loc, anim_exposure);
+        if (u_fade_base_loc >= 0)
+            rev::shader::SetFloat(shader, u_fade_base_loc, anim_fade);
         
         // Draw fullscreen quad (shader background)
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -1336,9 +1635,24 @@ int main(int argc, char* argv[]) {
             bool msh_active = mesh_shader && mesh_obj && has_mesh
                               && time >= mesh_cue.cue_start && time <= mesh_cue.cue_end;
 
+            static bool logged_layer_info = false;
+            if (img_active && !logged_layer_info) {
+                printf("[LAYER] Image entry: type=0, layer_order=%d\n", image_cue.layer_order);
+                logged_layer_info = true;
+            }
+
             if (img_active) entries[ne++] = {0, image_cue.layer_order};
             if (txt_active) entries[ne++] = {1, text_cue.layer_order};
             if (msh_active) entries[ne++] = {2, mesh_cue.layer_order};
+
+            static bool logged_entry_count = false;
+            if (!logged_entry_count && ne > 0) {
+                printf("[LAYER] Total entries to draw: %d\n", ne);
+                for (int i = 0; i < ne; i++) {
+                    printf("[LAYER]   Entry %d: type=%d layer=%d\n", i, entries[i].type, entries[i].layer);
+                }
+                logged_entry_count = true;
+            }
 
             // Bubble sort ascending (lower layer_order draws first = further back)
             for (int i = 0; i < ne - 1; i++)
@@ -1347,12 +1661,33 @@ int main(int argc, char* argv[]) {
                         DrawEntry tmp = entries[j]; entries[j] = entries[j+1]; entries[j+1] = tmp;
                     }
 
+            static bool logged_sorted = false;
+            if (!logged_sorted && ne > 0) {
+                printf("[LAYER] AFTER SORT:\n");
+                for (int i = 0; i < ne; i++) {
+                    const char* type_name = (entries[i].type == 0 ? "IMAGE" : entries[i].type == 1 ? "TEXT" : "MESH");
+                    printf("[LAYER]   Index %d: %s layer=%d\n", i, type_name, entries[i].layer);
+                }
+                logged_sorted = true;
+            }
+
             bool blend_on = false, depth_on = false;
 
             for (int ei = 0; ei < ne; ei++) {
+                static bool logged_draw = false;
+                if (!logged_draw && entries[ei].type == 0) {
+                    printf("[DRAW] Drawing image sprite at index %d/%d, layer=%d\n", ei, ne, entries[ei].layer);
+                    logged_draw = true;
+                }
+                
                 if (entries[ei].type == 0) {
                     // Image sprite
                     if (!blend_on) {
+                        static bool logged_state_change = false;
+                        if (!logged_state_change) {
+                            printf("[STATE] Switching to sprite mode: disabling depth test, enabling blend\n");
+                            logged_state_change = true;
+                        }
                         glDisable(GL_DEPTH_TEST);
                         glDepthMask(GL_FALSE);  // Disable depth writes for sprites
                         glEnable(GL_BLEND);
@@ -1487,11 +1822,17 @@ int main(int argc, char* argv[]) {
 
                 } else {
                     // 3D mesh
+                    static bool logged_mesh_draw = false;
+                    if (!logged_mesh_draw) {
+                        printf("[DRAW] Drawing 3D mesh at index %d/%d, layer=%d (enabling depth test)\n", ei, ne, entries[ei].layer);
+                        logged_mesh_draw = true;
+                    }
+                    
                     if (blend_on) { glDisable(GL_BLEND); blend_on = false; }
                     if (!depth_on) {
                         glEnable(0x0B71);        // GL_DEPTH_TEST
                         glDepthMask(GL_TRUE);    // Enable depth writes for meshes
-                        glClear(0x00000100);     // GL_DEPTH_BUFFER_BIT
+                        // Don't clear depth here - already cleared before layer pass
                         depth_on = true;
                     }
                     rev::shader::Use(mesh_shader);

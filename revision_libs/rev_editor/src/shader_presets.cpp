@@ -424,6 +424,166 @@ void main() {
     fragColor = vec4(col, 1.0);
 }
 )"
+    },
+    
+    {
+        11,
+        "Spiral Galaxy",
+        "Rotating nebula with stars and spiral arms",
+        R"(
+#version 330 core
+
+in vec2 uv;
+out vec4 fragColor;
+
+uniform float u_time;
+uniform vec2 u_resolution;
+
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+
+uniform float u_speed;
+uniform float u_intensity;
+uniform float u_warp;
+
+uniform float u_exposure_base;
+uniform float u_fade_base;
+
+float hash(vec2 p)
+{
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float noise(vec2 p)
+{
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+
+    vec2 u = f * f * (3.0 - 2.0 * f);
+
+    return mix(a, b, u.x)
+         + (c - a) * u.y * (1.0 - u.x)
+         + (d - b) * u.x * u.y;
+}
+
+float fbm(vec2 p)
+{
+    float v = 0.0;
+    float a = 0.5;
+
+    for (int i = 0; i < 6; i++)
+    {
+        v += noise(p) * a;
+        p *= 2.05;
+        p += vec2(7.13, 3.71);
+        a *= 0.5;
+    }
+
+    return v;
+}
+
+vec2 rotate(vec2 p, float a)
+{
+    float s = sin(a);
+    float c = cos(a);
+    return mat2(c, -s, s, c) * p;
+}
+
+float starLayer(vec2 p, float scale, float speed, float size)
+{
+    p *= scale;
+
+    vec2 id = floor(p);
+    vec2 gv = fract(p) - 0.5;
+
+    float rnd = hash(id);
+    vec2 offset = vec2(
+        hash(id + 13.1),
+        hash(id + 91.7)
+    ) - 0.5;
+
+    gv -= offset * 0.55;
+
+    float d = length(gv);
+    float star = smoothstep(size, 0.0, d);
+
+    float twinkle = 0.55 + 0.45 * sin(u_time * speed + rnd * 40.0);
+    star *= step(0.965, rnd) * twinkle;
+
+    return star;
+}
+
+void main()
+{
+    vec2 aspect = vec2(u_resolution.x / u_resolution.y, 1.0);
+    vec2 p = (uv - 0.5) * aspect;
+
+    float t = u_time * u_speed;
+
+    float r = length(p);
+    float a = atan(p.y, p.x);
+
+    vec2 drift = vec2(
+        sin(t * 0.11),
+        cos(t * 0.09)
+    ) * 0.35 * u_warp;
+
+    vec2 nebulaUV = p;
+    nebulaUV = rotate(nebulaUV, t * 0.035);
+    nebulaUV += drift;
+
+    float n1 = fbm(nebulaUV * 2.1 + vec2(t * 0.035, -t * 0.025));
+    float n2 = fbm(nebulaUV * 4.3 - vec2(t * 0.02, t * 0.015));
+    float n3 = fbm(nebulaUV * 8.0 + n1 * 2.0);
+
+    float nebula = n1 * 0.55 + n2 * 0.32 + n3 * 0.13;
+    nebula = smoothstep(0.24, 1.0, nebula);
+
+    float spiral = sin(a * 3.0 + r * 11.0 - t * 0.45);
+    spiral = smoothstep(0.15, 1.0, spiral);
+
+    float core = exp(-r * 4.2);
+    float halo = exp(-r * 1.35);
+
+    vec3 col = u_palette_low * 0.08;
+
+    vec3 nebulaCol = mix(u_palette_low, u_palette_mid, nebula);
+    nebulaCol = mix(nebulaCol, u_palette_high, pow(nebula, 3.0));
+
+    col += nebulaCol * nebula * (0.55 + u_warp * 1.2);
+    col += u_palette_mid * spiral * halo * 0.55;
+    col += u_palette_high * core * 1.8;
+
+    float stars = 0.0;
+    stars += starLayer(p + vec2(t * 0.015, -t * 0.010), 55.0, 4.0, 0.045);
+    stars += starLayer(p + vec2(-t * 0.010, t * 0.020), 95.0, 7.0, 0.035);
+    stars += starLayer(p + vec2(t * 0.025, t * 0.015), 150.0, 10.0, 0.025);
+
+    col += vec3(stars) * mix(u_palette_mid, u_palette_high, stars) * 2.2;
+
+    float dust = fbm(p * 18.0 + vec2(t * 0.03, -t * 0.02));
+    dust = smoothstep(0.57, 0.95, dust);
+    col += u_palette_mid * dust * nebula * 0.18;
+
+    float vignette = smoothstep(1.15, 0.15, r);
+    col *= vignette;
+
+    col *= u_intensity;
+    col *= u_exposure_base;
+
+    col = 1.0 - exp(-col);
+
+    fragColor = vec4(col, u_fade_base);
+}
+)"
     }
 };
 

@@ -2505,6 +2505,12 @@ void RenderPreviewFrame(EditorContext* editor) {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
+    // Disable depth test for background shader (fullscreen quad at infinite depth)
+    glDisable(0x0B71);  // GL_DEPTH_TEST
+    typedef void (*PFNGLDEPTHMASKPROC)(unsigned char flag);
+    auto glDepthMask_fn = (PFNGLDEPTHMASKPROC)wglGetProcAddress("glDepthMask");
+    if (glDepthMask_fn) glDepthMask_fn(0);  // GL_FALSE
+    
     // Only render shader if we have a project with active shader cues
     if (editor->project) {
         // Find active shader cue in any scene
@@ -2513,24 +2519,44 @@ void RenderPreviewFrame(EditorContext* editor) {
         float speed = 1.0f;
         float intensity = 1.0f;
         float warp = 0.5f;
+        float exposure_base = 0.76f;
+        float fade_base = 1.0f;
         float palette_low[3] = {0.2f, 0.0f, 0.4f};
         float palette_mid[3] = {0.8f, 0.2f, 0.6f};
         float palette_high[3] = {1.0f, 0.8f, 0.2f};
         bool found_active_cue = false;
+        float active_cue_scene_start = 0.0f; // Track which scene the active cue belongs to
         
+        // Calculate scene start times to convert scene-relative cue times to absolute project time
+        float scene_start_time = 0.0f;
         for (int s = 0; s < editor->project->scene_count; s++) {
             SceneBlock* scene = &editor->project->scenes[s];
+            
             for (int i = 0; i < scene->shader_cue_count; i++) {
                 ShaderCue* cue = &scene->shader_cues[i];
                 // Handle cue_end = -1 (means until end of scene)
                 float actual_end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
                 
-                if (editor->current_time >= cue->cue_start && editor->current_time <= actual_end) {
+                // Convert scene-relative times to absolute project times
+                float absolute_start = scene_start_time + cue->cue_start;
+                float absolute_end = scene_start_time + actual_end;
+                
+                // Use < for end comparison so scene boundaries don't overlap
+                // At time 10.0, Scene 0 (0-10) ends and Scene 1 (10-20) begins
+                bool is_last_scene = (s == editor->project->scene_count - 1);
+                bool time_in_range = is_last_scene 
+                    ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
+                    : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
+                
+                if (time_in_range) {
                     active_shader_id = cue->shader_scene_id;
                     active_cue = cue;
+                    active_cue_scene_start = scene_start_time; // Store scene start for curve evaluation
                     speed = cue->speed;
                     intensity = cue->intensity;
                     warp = cue->warp;
+                    exposure_base = cue->exposure_base;
+                    fade_base = cue->fade_base;
                     palette_low[0] = cue->palette_low.r;
                     palette_low[1] = cue->palette_low.g;
                     palette_low[2] = cue->palette_low.b;
@@ -2541,15 +2567,19 @@ void RenderPreviewFrame(EditorContext* editor) {
                     palette_high[1] = cue->palette_high.g;
                     palette_high[2] = cue->palette_high.b;
                     found_active_cue = true;
-                    goto found_shader;
+                    // Don't break - let later scenes override earlier ones at boundaries
                 }
             }
+            
+            // Advance scene start time for next scene
+            scene_start_time += scene->duration;
         }
-        found_shader:
         
         // Evaluate curves if active cue exists
         if (found_active_cue && active_cue) {
-            float elapsed_time = editor->current_time - active_cue->cue_start;
+            // Calculate elapsed time from cue start (convert scene-relative to absolute time)
+            float absolute_cue_start = active_cue_scene_start + active_cue->cue_start;
+            float elapsed_time = editor->current_time - absolute_cue_start;
             if (elapsed_time >= 0.0f) {
                 // Evaluate palette curves
                 if (active_cue->curve_palette_low_r >= 0 && active_cue->curve_palette_low_r < editor->project->curve_count) {
@@ -2602,6 +2632,14 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float t = elapsed_time / editor->project->curves[active_cue->curve_warp].duration;
                     warp = rev::curve::Evaluate(editor->project->curves[active_cue->curve_warp], t);
                 }
+                if (active_cue->curve_exposure >= 0 && active_cue->curve_exposure < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[active_cue->curve_exposure].duration;
+                    exposure_base = rev::curve::Evaluate(editor->project->curves[active_cue->curve_exposure], t);
+                }
+                if (active_cue->curve_fade >= 0 && active_cue->curve_fade < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[active_cue->curve_fade].duration;
+                    fade_base = rev::curve::Evaluate(editor->project->curves[active_cue->curve_fade], t);
+                }
                 
                 // Note: exposure_ramp, fade_ramp, opacity curves not used in preview shader yet
                 // Would need shader modifications to support those
@@ -2645,6 +2683,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                 rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_speed"), speed);
                 rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_intensity"), intensity);
                 rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_warp"), warp);
+                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_exposure_base"), exposure_base);
+                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_fade_base"), fade_base);
                 
                 // Draw fullscreen quad
                 glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -2656,9 +2696,6 @@ void RenderPreviewFrame(EditorContext* editor) {
     // Collect all active image/text/mesh cues across all scenes, sort by
     // layer_order (ascending = drawn first = further back), draw in order.
     if (editor->project && (editor->sprite_shader || editor->mesh_shader)) {
-        // Clear depth buffer before unified layer rendering to ensure clean 3D/2D compositing
-        glClear(0x0100);  // GL_DEPTH_BUFFER_BIT
-        
         auto* sprite_prog = editor->sprite_shader ? (rev::shader::Program*)editor->sprite_shader : nullptr;
         auto* mesh_prog   = editor->mesh_shader   ? (rev::shader::Program*)editor->mesh_shader   : nullptr;
 
@@ -2712,31 +2749,53 @@ void RenderPreviewFrame(EditorContext* editor) {
         int sp_opa = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_opacity")  : -1;
 
         // Build unified draw list: type 0=image 1=text 2=mesh
-        struct DrawItem { int type; void* cue; int layer_order; };
+        struct DrawItem { int type; void* cue; int layer_order; float scene_start_time; };
         static const int kMaxItems = 512;
         DrawItem items[kMaxItems];
         int item_count = 0;
 
+        // Calculate scene start times for absolute time comparison
+        float item_scene_start = 0.0f;
         for (int s = 0; s < editor->project->scene_count && item_count < kMaxItems; s++) {
             SceneBlock* scene = &editor->project->scenes[s];
+            bool is_last_scene = (s == editor->project->scene_count - 1);
+            
             for (int i = 0; i < scene->image_cue_count && item_count < kMaxItems; i++) {
                 ImageCue* cue = &scene->image_cues[i];
                 float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
-                if (editor->current_time >= cue->cue_start && editor->current_time <= end)
-                    items[item_count++] = { 0, cue, cue->layer_order };
+                float absolute_start = item_scene_start + cue->cue_start;
+                float absolute_end = item_scene_start + end;
+                bool time_in_range = is_last_scene
+                    ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
+                    : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
+                if (time_in_range)
+                    items[item_count++] = { 0, cue, cue->layer_order, item_scene_start };
             }
             for (int i = 0; i < scene->text_cue_count && item_count < kMaxItems; i++) {
                 TextCue* cue = &scene->text_cues[i];
                 float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
-                if (editor->current_time >= cue->cue_start && editor->current_time <= end && cue->text[0])
-                    items[item_count++] = { 1, cue, cue->layer_order };
+                float absolute_start = item_scene_start + cue->cue_start;
+                float absolute_end = item_scene_start + end;
+                bool time_in_range = is_last_scene
+                    ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
+                    : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
+                if (time_in_range && cue->text[0])
+                    items[item_count++] = { 1, cue, cue->layer_order, item_scene_start };
             }
             for (int i = 0; i < scene->mesh_cue_count && item_count < kMaxItems; i++) {
                 MeshCue* cue = &scene->mesh_cues[i];
                 float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
-                if (editor->current_time >= cue->cue_start && editor->current_time <= end)
-                    items[item_count++] = { 2, cue, cue->layer_order };
+                float absolute_start = item_scene_start + cue->cue_start;
+                float absolute_end = item_scene_start + end;
+                bool time_in_range = is_last_scene
+                    ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
+                    : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
+                if (time_in_range)
+                    items[item_count++] = { 2, cue, cue->layer_order, item_scene_start };
             }
+            
+            // Advance scene start time for next scene
+            item_scene_start += scene->duration;
         }
 
         // Stable bubble sort by layer_order ascending
@@ -2762,8 +2821,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (glBindVertexArray) glBindVertexArray(editor->preview_vao);
                 }
                 
-                // Clear depth buffer when switching from mesh to sprite
-                if (depth_on) glClear(0x0100);  // GL_DEPTH_BUFFER_BIT
+                // Don't clear depth here - already cleared once before layer pass
                 
                 // Disable depth testing for 2D sprites
                 glDisable(0x0B71);  // GL_DEPTH_TEST
@@ -2789,8 +2847,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float anim_scale = cue->scale;
                     float anim_opacity = cue->opacity;
                     
-                    // Calculate elapsed time from cue start
-                    float elapsed_time = editor->current_time - cue->cue_start;
+                    // Calculate elapsed time from cue start (convert scene-relative to absolute)
+                    float absolute_cue_start = item.scene_start_time + cue->cue_start;
+                    float elapsed_time = editor->current_time - absolute_cue_start;
                     if (elapsed_time >= 0.0f) {
                         if (cue->curve_x >= 0 && cue->curve_x < editor->project->curve_count) {
                             rev::curve::Curve* curve = &editor->project->curves[cue->curve_x];
@@ -2838,8 +2897,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float anim_color_g = cue->color.g;
                     float anim_color_b = cue->color.b;
                     
-                    // Calculate elapsed time from cue start
-                    float elapsed_time = editor->current_time - cue->cue_start;
+                    // Calculate elapsed time from cue start (convert scene-relative to absolute)
+                    float absolute_cue_start = item.scene_start_time + cue->cue_start;
+                    float elapsed_time = editor->current_time - absolute_cue_start;
                     if (elapsed_time >= 0.0f) {
                         if (cue->curve_x >= 0 && cue->curve_x < editor->project->curve_count) {
                             rev::curve::Curve* curve = &editor->project->curves[cue->curve_x];
@@ -2922,8 +2982,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                 float anim_roughness = cue->roughness;
                 float anim_mesh_size = cue->mesh_size;
                 
-                // Calculate elapsed time from cue start for curve evaluation
-                float elapsed_time = editor->current_time - cue->cue_start;
+                // Calculate elapsed time from cue start for curve evaluation (convert scene-relative to absolute)
+                float absolute_cue_start = item.scene_start_time + cue->cue_start;
+                float elapsed_time = editor->current_time - absolute_cue_start;
                 if (elapsed_time >= 0.0f) {
                     // Position curves
                     if (cue->curve_pos_x >= 0 && cue->curve_pos_x < editor->project->curve_count) {
@@ -3301,10 +3362,10 @@ void RandomizeShaderValues(ShaderCue* cue) {
 void ResetShaderValues(ShaderCue* cue) {
     if (!cue) return;
     
-    // Default palette - black (user can set colors to create fades)
-    cue->palette_low = {0.0f, 0.0f, 0.0f};
-    cue->palette_mid = {0.0f, 0.0f, 0.0f};
-    cue->palette_high = {0.0f, 0.0f, 0.0f};
+    // Default palette - visible colors (shader ID 0 can be set to black for fades)
+    cue->palette_low = {0.1f, 0.3f, 0.8f};    // Blue
+    cue->palette_mid = {0.8f, 0.4f, 0.2f};    // Orange
+    cue->palette_high = {1.0f, 0.9f, 0.7f};   // Warm white
     
     // Default parameters
     cue->speed = 1.0f;
@@ -3312,7 +3373,7 @@ void ResetShaderValues(ShaderCue* cue) {
     cue->warp = 0.5f;
     cue->exposure_base = 0.76f;
     cue->exposure_ramp = 0.02f;
-    cue->fade_base = 0.04f;
+    cue->fade_base = 1.0f;  // Full opacity (shaders use this as alpha channel)
     cue->fade_ramp = -0.04f;
     
     // Default timing
