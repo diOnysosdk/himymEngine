@@ -17,15 +17,22 @@ Specialist in the HiMYM C++ intro runtime: `rev_runtime` shared lib, `minimal_in
 
 ## Expertise
 
-- **rev_runtime** (source of truth): `ImageCue`, `TextCue`, `MusicCue`, `MeshCue` structs; `LoadImageCue`, `LoadTextCue`, `LoadMusicCue`, `LoadMeshCue` parsers; `ComputeEffectOpacity`; `LoadImageTexture`/`LoadImageTextureFromMemory`; `RenderTextToTexture`; 8 Mat4 math functions
-- **minimal_intro/main.cpp**: frame loop, cue loading, GDI+/GL rendering, packed build
+- **rev_runtime** (source of truth): `ImageCue`, `TextCue`, `MusicCue`, `MeshCue`, `ShaderCue` (runtime mirror) structs; `LoadImageCue`, `LoadTextCue`, `LoadMusicCue`, `LoadMeshCue`, `LoadShaderCue` parsers; `ComputeEffectOpacity`; `LoadImageTexture`/`LoadImageTextureFromMemory`; `RenderTextToTexture`; 8 Mat4 math functions
+- **Curve evaluation**: `rev::curve` namespace provides `Curve`, `Point`, `EaseMode`, `Evaluate` function. Runtime parses curve indices from cues.txt, evaluates curves at `(elapsed_time / curve.duration)` during render, uses animated values for uniforms/transforms.
+- **Field counts**: ShaderCue (42 fields with 17 curve indices), ImageCue (18 fields with 4 curve indices), TextCue (22 fields with 6 curve indices), MusicCue (4 fields), MeshCue (44 fields with 16 curve indices).
+- **minimal_intro/main.cpp**: frame loop, cue loading, GDI+/GL rendering, packed build, curve evaluation during shader/image/text/mesh rendering
 - **WinMM audio**: `waveOut` thread, XM streaming
 - **GDI+ patterns**: PNG loading via IStream (lazy LockBits), backslash paths
 - **GL loading**: `wglGetProcAddress` for GL 2.0+ functions not in `<gl/gl.h>`
 
 ## Non-negotiables
 - Never redefine `ImageCue`, `TextCue`, `MusicCue`, `MeshCue` outside `rev_runtime.h`
-- `LoadMeshCue` has 26 fields — keep aligned with `ExportProject` in editor_context.cpp. Field 2 is `asset_path[512]`; mesh_type 4 = external glTF/GLB.
+- `LoadShaderCue` parses 42 fields (25 base + 17 curve indices) — keep aligned with `ExportProject`
+- `LoadImageCue` parses 18 fields (14 base + 4 curve indices)
+- `LoadTextCue` parses 22 fields (16 base + 6 curve indices)
+- `LoadMeshCue` parses 44 fields (28 base + 16 curve indices). Field 2 is `asset_path[512]`; mesh_type 4 = external glTF/GLB.
+- All curve fields initialize to `-1` (no curve) — parsers use `sscanf_s` with field count validation for backward compatibility
+- Curve evaluation pattern: `if (cue.curve_param >= 0 && cue.curve_param < curve_count) { float t = elapsed_time / curves[cue.curve_param].duration; animated_value = rev::curve::Evaluate(curves[cue.curve_param], t); }`
 - Enable/disable depth test (`glEnable(0x0B71)` / `glDisable(0x0B71)`) around mesh rendering
 - Mat4 functions live in `rev_runtime.cpp` — use via `using rev::runtime::Mat4*;` declarations
 - IStream must NOT be released until after `UnlockBits` + `delete bitmap`

@@ -59,6 +59,18 @@ struct ShaderCue {
     int curve_warp;
     int curve_exposure;
     int curve_fade;
+    int curve_palette_low_r;
+    int curve_palette_low_g;
+    int curve_palette_low_b;
+    int curve_palette_mid_r;
+    int curve_palette_mid_g;
+    int curve_palette_mid_b;
+    int curve_palette_high_r;
+    int curve_palette_high_g;
+    int curve_palette_high_b;
+    int curve_opacity;
+    int curve_exposure_ramp;
+    int curve_fade_ramp;
 };
 
 // (ImageCue, TextCue, MusicCue come from rev_runtime — see using declarations above)
@@ -188,7 +200,17 @@ struct EditorContext {
     // Curve editor state
     int selected_curve_index;
     int dragging_point_index;
+    int selected_point_index;          // Currently selected point for editing (persists after drag)
     bool show_curve_grid;
+    
+    // Curve editor modal state
+    bool curve_editor_modal_open;
+    bool curve_editor_modal_request_open;
+    bool point_properties_modal_open;
+    int editing_curve_index;           // Index of curve being edited
+    int editing_curve_cue_type;        // 0=shader, 1=image, 2=text, 4=mesh
+    int editing_curve_field;           // Which field (custom per cue type)
+    char editing_curve_label[64];     // Display name (e.g., "Image X Position")
     
     // Build status
     char build_status_message[512];
@@ -219,6 +241,7 @@ void EndFrame(EditorContext* editor);
 void RenderMenuBar(EditorContext* editor);
 void RenderTimeline(EditorContext* editor);
 void RenderCurveEditor(EditorContext* editor);
+void RenderCurveEditorModal(EditorContext* editor);
 void RenderShaderModal(EditorContext* editor);
 void RenderMusicModal(EditorContext* editor);
 void RenderImageModal(EditorContext* editor);

@@ -243,7 +243,7 @@ bool LoadImageCue(const char* cues_path, ImageCue* cue)
 
         // Format: asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|
         //         layer_order|effect_type|fade_in_start|fade_in_end|
-        //         fade_out_start|fade_out_end
+        //         fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity
         char* pipe1 = strchr(s, '|');
         if (!pipe1) continue;
         *pipe1 = '\0';
@@ -255,14 +255,27 @@ bool LoadImageCue(const char* cues_path, ImageCue* cue)
         strncpy_s(cue->asset_path, pipe1 + 1, _TRUNCATE);
 
         int layer_order = 0;
-        if (sscanf_s(pipe2 + 1,
-                     "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f",
+        int curve_x = -1, curve_y = -1, curve_scale = -1, curve_opacity = -1;
+        int scanned = sscanf_s(pipe2 + 1,
+                     "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%d|%d|%d",
                      &cue->x, &cue->y, &cue->scale, &cue->opacity,
                      &cue->cue_start, &cue->cue_end,
                      &layer_order, &cue->effect_type,
                      &cue->fade_in_start,  &cue->fade_in_end,
-                     &cue->fade_out_start, &cue->fade_out_end) >= 6) {
+                     &cue->fade_out_start, &cue->fade_out_end,
+                     &curve_x, &curve_y, &curve_scale, &curve_opacity);
+        
+        if (scanned >= 6) {
             cue->layer_order = layer_order;
+            // Load curve assignments if present (backwards compatible)
+            if (scanned >= 16) {
+                cue->curve_x = curve_x;
+                cue->curve_y = curve_y;
+                cue->curve_scale = curve_scale;
+                cue->curve_opacity = curve_opacity;
+            } else {
+                cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_opacity = -1;
+            }
             found = true;
             break;
         }
@@ -290,7 +303,8 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
 
         // Format: text|font_name|x|y|size|color_r|color_g|color_b|
         //         effect_type|cue_start|cue_end|
-        //         fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order
+        //         fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|
+        //         curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b
         char* pipe1 = strchr(s, '|');
         if (!pipe1) continue;
         *pipe1 = '\0';
@@ -302,16 +316,30 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
         strncpy_s(cue->font_name, pipe1 + 1, _TRUNCATE);
 
         int layer_order = 0;
-        if (sscanf_s(pipe2 + 1,
-                     "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d",
+        int curve_x = -1, curve_y = -1, curve_size = -1;
+        int curve_color_r = -1, curve_color_g = -1, curve_color_b = -1;
+        
+        int parsed = sscanf_s(pipe2 + 1,
+                     "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d",
                      &cue->x, &cue->y, &cue->size,
                      &cue->color.r, &cue->color.g, &cue->color.b,
                      &cue->effect_type,
                      &cue->cue_start, &cue->cue_end,
                      &cue->fade_in_start,  &cue->fade_in_end,
                      &cue->fade_out_start, &cue->fade_out_end,
-                     &layer_order) >= 13) {
+                     &layer_order,
+                     &curve_x, &curve_y, &curve_size,
+                     &curve_color_r, &curve_color_g, &curve_color_b);
+        
+        if (parsed >= 14) {  // At least the old format
             cue->layer_order = layer_order;
+            // Curve fields (backwards compatible - default to -1)
+            cue->curve_x = (parsed >= 15) ? curve_x : -1;
+            cue->curve_y = (parsed >= 16) ? curve_y : -1;
+            cue->curve_size = (parsed >= 17) ? curve_size : -1;
+            cue->curve_color_r = (parsed >= 18) ? curve_color_r : -1;
+            cue->curve_color_g = (parsed >= 19) ? curve_color_g : -1;
+            cue->curve_color_b = (parsed >= 20) ? curve_color_b : -1;
             found = true;
             break;
         }
@@ -412,12 +440,20 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
         cue->asset_path[path_len] = '\0';
 
         // Parse remaining numeric fields
-        // 28-field format: mesh_type|pos(3)|rot(3)|scale(3)|color(4)|mesh_size|mesh_param|
-        //                  cue_start|cue_end|layer_order|effect_type|fade_in/out(4)|metallic|roughness
-        cue->metallic  = 0.0f;  // defaults for old 26-field files
+        // Old 26-field format + new 16 curve fields = 42 fields total:
+        // mesh_type|pos(3)|rot(3)|scale(3)|color(4)|mesh_size|mesh_param|
+        // cue_start|cue_end|layer_order|effect_type|fade_in/out(4)|metallic|roughness|
+        // curve_pos(3)|curve_rot(3)|curve_scale(3)|curve_color(4)|curve_mesh_size|curve_metallic|curve_roughness
+        cue->metallic  = 0.0f;  // defaults for old files
         cue->roughness = 0.5f;
+        int curve_pos_x = -1, curve_pos_y = -1, curve_pos_z = -1;
+        int curve_rot_x = -1, curve_rot_y = -1, curve_rot_z = -1;
+        int curve_scale_x = -1, curve_scale_y = -1, curve_scale_z = -1;
+        int curve_color_r = -1, curve_color_g = -1, curve_color_b = -1, curve_color_a = -1;
+        int curve_mesh_size = -1, curve_metallic = -1, curve_roughness = -1;
+        
         int n = sscanf_s(pipe2 + 1,
-            "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%f|%f",
+            "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
             &cue->mesh_type,
             &cue->pos[0],   &cue->pos[1],   &cue->pos[2],
             &cue->rot[0],   &cue->rot[1],   &cue->rot[2],
@@ -428,8 +464,31 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
             &cue->layer_order, &cue->effect_type,
             &cue->fade_in_start, &cue->fade_in_end,
             &cue->fade_out_start, &cue->fade_out_end,
-            &cue->metallic, &cue->roughness);
+            &cue->metallic, &cue->roughness,
+            &curve_pos_x, &curve_pos_y, &curve_pos_z,
+            &curve_rot_x, &curve_rot_y, &curve_rot_z,
+            &curve_scale_x, &curve_scale_y, &curve_scale_z,
+            &curve_color_r, &curve_color_g, &curve_color_b, &curve_color_a,
+            &curve_mesh_size, &curve_metallic, &curve_roughness);
+        
         if (n >= 18) {   // minimum viable parse (first 18 fields after key+path)
+            // Curve fields (backwards compatible - default to -1)
+            cue->curve_pos_x = (n >= 27) ? curve_pos_x : -1;
+            cue->curve_pos_y = (n >= 28) ? curve_pos_y : -1;
+            cue->curve_pos_z = (n >= 29) ? curve_pos_z : -1;
+            cue->curve_rot_x = (n >= 30) ? curve_rot_x : -1;
+            cue->curve_rot_y = (n >= 31) ? curve_rot_y : -1;
+            cue->curve_rot_z = (n >= 32) ? curve_rot_z : -1;
+            cue->curve_scale_x = (n >= 33) ? curve_scale_x : -1;
+            cue->curve_scale_y = (n >= 34) ? curve_scale_y : -1;
+            cue->curve_scale_z = (n >= 35) ? curve_scale_z : -1;
+            cue->curve_color_r = (n >= 36) ? curve_color_r : -1;
+            cue->curve_color_g = (n >= 37) ? curve_color_g : -1;
+            cue->curve_color_b = (n >= 38) ? curve_color_b : -1;
+            cue->curve_color_a = (n >= 39) ? curve_color_a : -1;
+            cue->curve_mesh_size = (n >= 40) ? curve_mesh_size : -1;
+            cue->curve_metallic = (n >= 41) ? curve_metallic : -1;
+            cue->curve_roughness = (n >= 42) ? curve_roughness : -1;
             found = true;
             break;
         }
@@ -437,6 +496,91 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
 
     fclose(f);
     return found;
+}
+
+int LoadCurves(const char* cues_path, curve::Curve* curves, int max_curves)
+{
+    FILE* f = nullptr;
+    fopen_s(&f, cues_path, "r");
+    if (!f) return 0;
+
+    char line[2048];
+    bool in_section = false;
+    int curve_count = 0;
+    int current_curve_idx = -1;
+
+    while (fgets(line, sizeof(line), f) && curve_count < max_curves) {
+        char* s = line;
+        
+        if (strstr(s, "[curves]")) { 
+            in_section = true;  
+            continue; 
+        }
+        if (s[0] == '[' && in_section) {
+            break;
+        }
+        
+        // Check indentation BEFORE trimming
+        bool is_indented = (s[0] == ' ' || s[0] == '\t');
+        TrimLeft(s);
+        
+        if (!in_section || s[0] == '#' || s[0] == '\0' || s[0] == '\n') continue;
+
+        // Check if this is a curve header line (curve_id|wrap_mode|duration|point_count)
+        if (!is_indented) {
+            int curve_id, point_count;
+            char wrap_mode[32];
+            float duration;
+            
+            if (sscanf_s(s, "%d|%31[^|]|%f|%d", 
+                &curve_id, wrap_mode, (unsigned)sizeof(wrap_mode), &duration, &point_count) == 4) {
+                
+                if (curve_id >= 0 && curve_id < max_curves) {
+                    current_curve_idx = curve_id;
+                    if (current_curve_idx >= curve_count) {
+                        curve_count = current_curve_idx + 1;
+                    }
+                    
+                    curves[current_curve_idx] = curve::CreateCurve(point_count);
+                    curves[current_curve_idx].duration = duration;
+                    
+                    // Parse wrap mode
+                    if (strcmp(wrap_mode, "loop") == 0) {
+                        curves[current_curve_idx].wrap_mode = curve::WrapMode::Loop;
+                    } else if (strcmp(wrap_mode, "pingpong") == 0) {
+                        curves[current_curve_idx].wrap_mode = curve::WrapMode::PingPong;
+                    } else if (strcmp(wrap_mode, "mirror") == 0) {
+                        curves[current_curve_idx].wrap_mode = curve::WrapMode::Mirror;
+                    } else {
+                        curves[current_curve_idx].wrap_mode = curve::WrapMode::Clamp;
+                    }
+                }
+            }
+        }
+        // Check if this is a point line (starts with spaces: t|v|in_ease|out_ease|mode)
+        else if (is_indented && current_curve_idx >= 0 && current_curve_idx < max_curves) {
+            float t, v, in_ease, out_ease;
+            char mode[32];
+            
+            if (sscanf_s(s, "%f|%f|%f|%f|%31s", 
+                &t, &v, &in_ease, &out_ease, mode, (unsigned)sizeof(mode)) == 5) {
+                
+                curve::EaseMode ease_mode = curve::EaseMode::Linear;
+                if (strcmp(mode, "ease_in") == 0) ease_mode = curve::EaseMode::EaseIn;
+                else if (strcmp(mode, "ease_out") == 0) ease_mode = curve::EaseMode::EaseOut;
+                else if (strcmp(mode, "ease_in_out") == 0) ease_mode = curve::EaseMode::EaseInOut;
+                else if (strcmp(mode, "smoothstep") == 0) ease_mode = curve::EaseMode::Smoothstep;
+                else if (strcmp(mode, "hold") == 0) ease_mode = curve::EaseMode::Hold;
+                
+                curve::AddPoint(curves[current_curve_idx], t, v, ease_mode);
+                curves[current_curve_idx].points[curves[current_curve_idx].point_count - 1].in_ease = in_ease;
+                curves[current_curve_idx].points[curves[current_curve_idx].point_count - 1].out_ease = out_ease;
+            }
+        }
+    }
+
+    fclose(f);
+    return curve_count;
 }
 
 // ---- Mat4 math -----------------------------------------------------

@@ -28,6 +28,7 @@ using rev::runtime::LoadImageCue;
 using rev::runtime::LoadTextCue;
 using rev::runtime::LoadMusicCue;
 using rev::runtime::LoadMeshCue;
+using rev::runtime::LoadCurves;
 using rev::runtime::Mat4Perspective;
 using rev::runtime::Mat4LookAt;
 using rev::runtime::Mat4Model;
@@ -143,8 +144,36 @@ struct ShaderCue {
     float intensity;
     float warp;
     float exposure_base;
+    float exposure_ramp;
+    float fade_base;
+    float fade_ramp;
     float cue_start;
     float cue_end;
+    float fade_in;
+    float fade_out;
+    int layer_role;
+    float opacity;
+    int blend_mode;
+    int layer_order;
+    
+    // Curve assignments (-1 = no curve)
+    int curve_speed;
+    int curve_intensity;
+    int curve_warp;
+    int curve_exposure;
+    int curve_fade;
+    int curve_palette_low_r;
+    int curve_palette_low_g;
+    int curve_palette_low_b;
+    int curve_palette_mid_r;
+    int curve_palette_mid_g;
+    int curve_palette_mid_b;
+    int curve_palette_high_r;
+    int curve_palette_high_g;
+    int curve_palette_high_b;
+    int curve_opacity;
+    int curve_exposure_ramp;
+    int curve_fade_ramp;
 };
 
 // Music cue data structure — provided by rev_runtime (MusicCue using above)
@@ -180,13 +209,39 @@ bool LoadShaderCue(const char* path, ShaderCue* cue) {
         }
         
         if (in_shader_cues && start[0] != '#' && start[0] != '\0' && start[0] != '\n') {
-            // Parse shader cue line
-            if (sscanf_s(start, "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f",
+            // Parse shader cue line - full 38-field format with backwards compatibility
+            // Format: shader_scene_id|palette(9)|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|
+            //         cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order|
+            //         curve fields (13)
+            
+            // Initialize curve fields to -1 (no curve)
+            cue->curve_speed = cue->curve_intensity = cue->curve_warp = -1;
+            cue->curve_exposure = cue->curve_fade = -1;
+            cue->curve_palette_low_r = cue->curve_palette_low_g = cue->curve_palette_low_b = -1;
+            cue->curve_palette_mid_r = cue->curve_palette_mid_g = cue->curve_palette_mid_b = -1;
+            cue->curve_palette_high_r = cue->curve_palette_high_g = cue->curve_palette_high_b = -1;
+            cue->curve_opacity = cue->curve_exposure_ramp = cue->curve_fade_ramp = -1;
+            
+            int parsed = sscanf_s(start,
+                "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
                 &cue->shader_scene_id,
                 &cue->palette_low[0], &cue->palette_low[1], &cue->palette_low[2],
                 &cue->palette_mid[0], &cue->palette_mid[1], &cue->palette_mid[2],
                 &cue->palette_high[0], &cue->palette_high[1], &cue->palette_high[2],
-                &cue->speed, &cue->intensity, &cue->warp, &cue->exposure_base) >= 14) {
+                &cue->speed, &cue->intensity, &cue->warp,
+                &cue->exposure_base, &cue->exposure_ramp,
+                &cue->fade_base, &cue->fade_ramp,
+                &cue->cue_start, &cue->cue_end,
+                &cue->fade_in, &cue->fade_out,
+                &cue->layer_role, &cue->opacity, &cue->blend_mode, &cue->layer_order,
+                &cue->curve_speed, &cue->curve_intensity, &cue->curve_warp,
+                &cue->curve_exposure, &cue->curve_fade,
+                &cue->curve_palette_low_r, &cue->curve_palette_low_g, &cue->curve_palette_low_b,
+                &cue->curve_palette_mid_r, &cue->curve_palette_mid_g, &cue->curve_palette_mid_b,
+                &cue->curve_palette_high_r, &cue->curve_palette_high_g, &cue->curve_palette_high_b,
+                &cue->curve_opacity, &cue->curve_exposure_ramp, &cue->curve_fade_ramp);
+            
+            if (parsed >= 14) {  // At least old format (14 basic fields)
                 found = true;
                 break;
             }
@@ -704,6 +759,18 @@ int main(int argc, char* argv[]) {
         cue.exposure_base = 0.76f;
     }
     
+    // Load curves
+    rev::curve::Curve curves[32];
+    int curve_count = LoadCurves(cues_path, curves, 32);
+    printf("Loaded %d curves\n", curve_count);
+    if (g_logfile) {
+        fprintf(g_logfile, "Loaded %d curves\n", curve_count);
+        for (int i = 0; i < curve_count; ++i) {
+            fprintf(g_logfile, "  Curve %d: duration=%.2f, points=%d, wrap_mode=%d\n", 
+                i, curves[i].duration, curves[i].point_count, (int)curves[i].wrap_mode);
+        }
+    }
+    
     // Load music cue
     MusicCue music_cue = {};
     bool has_music = LoadMusicCue(cues_path, &music_cue);
@@ -726,9 +793,15 @@ int main(int argc, char* argv[]) {
         printf("  Pos: (%.2f,%.2f), Scale: %.2f, Time: %.1f-%.1fs\n",
                image_cue.x, image_cue.y, image_cue.scale, 
                image_cue.cue_start, image_cue.cue_end);
-        if (g_logfile) fprintf(g_logfile, "  Pos: (%.2f,%.2f), Scale: %.2f, Time: %.1f-%.1fs\n",
-               image_cue.x, image_cue.y, image_cue.scale, 
-               image_cue.cue_start, image_cue.cue_end);
+        printf("  Curves: X=%d, Y=%d, Scale=%d, Opacity=%d\n",
+               image_cue.curve_x, image_cue.curve_y, image_cue.curve_scale, image_cue.curve_opacity);
+        if (g_logfile) {
+            fprintf(g_logfile, "  Pos: (%.2f,%.2f), Scale: %.2f, Time: %.1f-%.1fs\n",
+                   image_cue.x, image_cue.y, image_cue.scale, 
+                   image_cue.cue_start, image_cue.cue_end);
+            fprintf(g_logfile, "  Curves: X=%d, Y=%d, Scale=%d, Opacity=%d\n",
+                   image_cue.curve_x, image_cue.curve_y, image_cue.curve_scale, image_cue.curve_opacity);
+        }
     }
     
     // Load text cue
@@ -1130,19 +1203,80 @@ int main(int argc, char* argv[]) {
                             static_cast<float>(config.width), 
                             static_cast<float>(config.height));
         
-        // Set palette and parameter uniforms
+        // Evaluate shader curves
+        float elapsed_time = time - cue.cue_start;
+        float anim_palette_low[3] = {cue.palette_low[0], cue.palette_low[1], cue.palette_low[2]};
+        float anim_palette_mid[3] = {cue.palette_mid[0], cue.palette_mid[1], cue.palette_mid[2]};
+        float anim_palette_high[3] = {cue.palette_high[0], cue.palette_high[1], cue.palette_high[2]};
+        float anim_speed = cue.speed;
+        float anim_intensity = cue.intensity;
+        float anim_warp = cue.warp;
+        
+        if (elapsed_time >= 0.0f) {
+            if (cue.curve_palette_low_r >= 0 && cue.curve_palette_low_r < curve_count) {
+                float t = elapsed_time / curves[cue.curve_palette_low_r].duration;
+                anim_palette_low[0] = rev::curve::Evaluate(curves[cue.curve_palette_low_r], t);
+            }
+            if (cue.curve_palette_low_g >= 0 && cue.curve_palette_low_g < curve_count) {
+                float t = elapsed_time / curves[cue.curve_palette_low_g].duration;
+                anim_palette_low[1] = rev::curve::Evaluate(curves[cue.curve_palette_low_g], t);
+            }
+            if (cue.curve_palette_low_b >= 0 && cue.curve_palette_low_b < curve_count) {
+                float t = elapsed_time / curves[cue.curve_palette_low_b].duration;
+                anim_palette_low[2] = rev::curve::Evaluate(curves[cue.curve_palette_low_b], t);
+            }
+            if (cue.curve_palette_mid_r >= 0 && cue.curve_palette_mid_r < curve_count) {
+                float t = elapsed_time / curves[cue.curve_palette_mid_r].duration;
+                anim_palette_mid[0] = rev::curve::Evaluate(curves[cue.curve_palette_mid_r], t);
+            }
+            if (cue.curve_palette_mid_g >= 0 && cue.curve_palette_mid_g < curve_count) {
+                float t = elapsed_time / curves[cue.curve_palette_mid_g].duration;
+                anim_palette_mid[1] = rev::curve::Evaluate(curves[cue.curve_palette_mid_g], t);
+            }
+            if (cue.curve_palette_mid_b >= 0 && cue.curve_palette_mid_b < curve_count) {
+                float t = elapsed_time / curves[cue.curve_palette_mid_b].duration;
+                anim_palette_mid[2] = rev::curve::Evaluate(curves[cue.curve_palette_mid_b], t);
+            }
+            if (cue.curve_palette_high_r >= 0 && cue.curve_palette_high_r < curve_count) {
+                float t = elapsed_time / curves[cue.curve_palette_high_r].duration;
+                anim_palette_high[0] = rev::curve::Evaluate(curves[cue.curve_palette_high_r], t);
+            }
+            if (cue.curve_palette_high_g >= 0 && cue.curve_palette_high_g < curve_count) {
+                float t = elapsed_time / curves[cue.curve_palette_high_g].duration;
+                anim_palette_high[1] = rev::curve::Evaluate(curves[cue.curve_palette_high_g], t);
+            }
+            if (cue.curve_palette_high_b >= 0 && cue.curve_palette_high_b < curve_count) {
+                float t = elapsed_time / curves[cue.curve_palette_high_b].duration;
+                anim_palette_high[2] = rev::curve::Evaluate(curves[cue.curve_palette_high_b], t);
+            }
+            if (cue.curve_speed >= 0 && cue.curve_speed < curve_count) {
+                float t = elapsed_time / curves[cue.curve_speed].duration;
+                anim_speed = rev::curve::Evaluate(curves[cue.curve_speed], t);
+            }
+            if (cue.curve_intensity >= 0 && cue.curve_intensity < curve_count) {
+                float t = elapsed_time / curves[cue.curve_intensity].duration;
+                anim_intensity = rev::curve::Evaluate(curves[cue.curve_intensity], t);
+            }
+            if (cue.curve_warp >= 0 && cue.curve_warp < curve_count) {
+                float t = elapsed_time / curves[cue.curve_warp].duration;
+                anim_warp = rev::curve::Evaluate(curves[cue.curve_warp], t);
+            }
+            // Note: exposure_ramp, fade_ramp, opacity curves not used in runtime shaders yet
+        }
+        
+        // Set palette and parameter uniforms (using animated values)
         if (u_palette_low_loc >= 0)
-            rev::shader::SetVec3(shader, u_palette_low_loc, cue.palette_low[0], cue.palette_low[1], cue.palette_low[2]);
+            rev::shader::SetVec3(shader, u_palette_low_loc, anim_palette_low[0], anim_palette_low[1], anim_palette_low[2]);
         if (u_palette_mid_loc >= 0)
-            rev::shader::SetVec3(shader, u_palette_mid_loc, cue.palette_mid[0], cue.palette_mid[1], cue.palette_mid[2]);
+            rev::shader::SetVec3(shader, u_palette_mid_loc, anim_palette_mid[0], anim_palette_mid[1], anim_palette_mid[2]);
         if (u_palette_high_loc >= 0)
-            rev::shader::SetVec3(shader, u_palette_high_loc, cue.palette_high[0], cue.palette_high[1], cue.palette_high[2]);
+            rev::shader::SetVec3(shader, u_palette_high_loc, anim_palette_high[0], anim_palette_high[1], anim_palette_high[2]);
         if (u_speed_loc >= 0)
-            rev::shader::SetFloat(shader, u_speed_loc, cue.speed);
+            rev::shader::SetFloat(shader, u_speed_loc, anim_speed);
         if (u_intensity_loc >= 0)
-            rev::shader::SetFloat(shader, u_intensity_loc, cue.intensity);
+            rev::shader::SetFloat(shader, u_intensity_loc, anim_intensity);
         if (u_warp_loc >= 0)
-            rev::shader::SetFloat(shader, u_warp_loc, cue.warp);
+            rev::shader::SetFloat(shader, u_warp_loc, anim_warp);
         
         // Draw fullscreen quad (shader background)
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -1184,10 +1318,45 @@ int main(int argc, char* argv[]) {
                         blend_on = true; depth_on = false;
                     }
                     rev::shader::Use(sprite_shader);
-                    float w = (image_tex.width  * image_cue.scale) / (float)config.width  * 2.0f;
-                    float h = (image_tex.height * image_cue.scale) / (float)config.height * 2.0f;
-                    float x =  (image_cue.x * 2.0f - 1.0f);
-                    float y = -((image_cue.y * 2.0f) - 1.0f);
+                    
+                    // Evaluate curves for animation
+                    float anim_x = image_cue.x;
+                    float anim_y = image_cue.y;
+                    float anim_scale = image_cue.scale;
+                    float anim_opacity = image_cue.opacity;
+                    
+                    float elapsed_time = time - image_cue.cue_start;
+                    if (elapsed_time >= 0.0f) {
+                        if (image_cue.curve_x >= 0 && image_cue.curve_x < curve_count) {
+                            float t = elapsed_time / curves[image_cue.curve_x].duration;
+                            anim_x = rev::curve::Evaluate(curves[image_cue.curve_x], t);
+                            
+                            // Debug logging (first 5 frames only)
+                            static int log_count = 0;
+                            if (g_logfile && log_count < 5) {
+                                fprintf(g_logfile, "[Frame %d] time=%.2f, elapsed=%.2f, t=%.3f, anim_x=%.3f (base=%.3f)\n",
+                                    log_count, time, elapsed_time, t, anim_x, image_cue.x);
+                                log_count++;
+                            }
+                        }
+                        if (image_cue.curve_y >= 0 && image_cue.curve_y < curve_count) {
+                            float t = elapsed_time / curves[image_cue.curve_y].duration;
+                            anim_y = rev::curve::Evaluate(curves[image_cue.curve_y], t);
+                        }
+                        if (image_cue.curve_scale >= 0 && image_cue.curve_scale < curve_count) {
+                            float t = elapsed_time / curves[image_cue.curve_scale].duration;
+                            anim_scale = rev::curve::Evaluate(curves[image_cue.curve_scale], t);
+                        }
+                        if (image_cue.curve_opacity >= 0 && image_cue.curve_opacity < curve_count) {
+                            float t = elapsed_time / curves[image_cue.curve_opacity].duration;
+                            anim_opacity = rev::curve::Evaluate(curves[image_cue.curve_opacity], t);
+                        }
+                    }
+                    
+                    float w = (image_tex.width  * anim_scale) / (float)config.width  * 2.0f;
+                    float h = (image_tex.height * anim_scale) / (float)config.height * 2.0f;
+                    float x =  (anim_x * 2.0f - 1.0f);
+                    float y = -((anim_y * 2.0f) - 1.0f);
                     int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
                     int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                     int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
@@ -1196,7 +1365,7 @@ int main(int argc, char* argv[]) {
                     if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa,
-                        image_cue.opacity * ComputeEffectOpacity(
+                        anim_opacity * ComputeEffectOpacity(
                             image_cue.effect_type, image_cue.fade_in_start, image_cue.fade_in_end,
                             image_cue.fade_out_start, image_cue.fade_out_end, time));
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
@@ -1213,10 +1382,50 @@ int main(int argc, char* argv[]) {
                         blend_on = true; depth_on = false;
                     }
                     rev::shader::Use(sprite_shader);
-                    float w = (float)text_tex.width  / (float)config.width  * 2.0f;
-                    float h = (float)text_tex.height / (float)config.height * 2.0f;
-                    float x =  (text_cue.x * 2.0f - 1.0f);
-                    float y = -((text_cue.y * 2.0f) - 1.0f);
+                    
+                    // Curve evaluation for text
+                    float elapsed_time = time - text_cue.cue_start;
+                    float anim_text_x = text_cue.x;
+                    float anim_text_y = text_cue.y;
+                    float anim_text_size = text_cue.size;
+                    float anim_text_color_r = text_cue.color.r;
+                    float anim_text_color_g = text_cue.color.g;
+                    float anim_text_color_b = text_cue.color.b;
+                    
+                    if (elapsed_time >= 0.0f) {
+                        if (text_cue.curve_x >= 0 && text_cue.curve_x < curve_count) {
+                            float t = elapsed_time / curves[text_cue.curve_x].duration;
+                            anim_text_x = rev::curve::Evaluate(curves[text_cue.curve_x], t);
+                        }
+                        if (text_cue.curve_y >= 0 && text_cue.curve_y < curve_count) {
+                            float t = elapsed_time / curves[text_cue.curve_y].duration;
+                            anim_text_y = rev::curve::Evaluate(curves[text_cue.curve_y], t);
+                        }
+                        // Note: Size and color curves would require re-rendering text texture
+                        // Currently using base text_tex rendered at load time
+                        if (text_cue.curve_size >= 0 && text_cue.curve_size < curve_count) {
+                            float t = elapsed_time / curves[text_cue.curve_size].duration;
+                            anim_text_size = rev::curve::Evaluate(curves[text_cue.curve_size], t);
+                        }
+                        if (text_cue.curve_color_r >= 0 && text_cue.curve_color_r < curve_count) {
+                            float t = elapsed_time / curves[text_cue.curve_color_r].duration;
+                            anim_text_color_r = rev::curve::Evaluate(curves[text_cue.curve_color_r], t);
+                        }
+                        if (text_cue.curve_color_g >= 0 && text_cue.curve_color_g < curve_count) {
+                            float t = elapsed_time / curves[text_cue.curve_color_g].duration;
+                            anim_text_color_g = rev::curve::Evaluate(curves[text_cue.curve_color_g], t);
+                        }
+                        if (text_cue.curve_color_b >= 0 && text_cue.curve_color_b < curve_count) {
+                            float t = elapsed_time / curves[text_cue.curve_color_b].duration;
+                            anim_text_color_b = rev::curve::Evaluate(curves[text_cue.curve_color_b], t);
+                        }
+                    }
+                    
+                    float size_scale = anim_text_size / text_cue.size;  // Scale based on size curve
+                    float w = ((float)text_tex.width  * size_scale) / (float)config.width  * 2.0f;
+                    float h = ((float)text_tex.height * size_scale) / (float)config.height * 2.0f;
+                    float x =  (anim_text_x * 2.0f - 1.0f);
+                    float y = -((anim_text_y * 2.0f) - 1.0f);
                     float opacity = ComputeEffectOpacity(text_cue.effect_type,
                         text_cue.fade_in_start, text_cue.fade_in_end,
                         text_cue.fade_out_start, text_cue.fade_out_end, time);
@@ -1224,10 +1433,12 @@ int main(int argc, char* argv[]) {
                     int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                     int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
                     int u_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
+                    int u_col = rev::shader::GetUniformLocation(sprite_shader, "u_color_tint");
                     if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
                     if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa, opacity);
+                    if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, anim_text_color_r, anim_text_color_g, anim_text_color_b);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, text_tex.texture_id);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -1247,6 +1458,79 @@ int main(int argc, char* argv[]) {
                     float anim_pos[3] = {mesh_cue.pos[0], mesh_cue.pos[1], mesh_cue.pos[2]};
                     float anim_rot[3] = {mesh_cue.rot[0], mesh_cue.rot[1], mesh_cue.rot[2]};
                     float anim_scale[3] = {mesh_cue.scale[0], mesh_cue.scale[1], mesh_cue.scale[2]};
+                    float anim_color[4] = {mesh_cue.color[0], mesh_cue.color[1], mesh_cue.color[2], mesh_cue.color[3]};
+                    float anim_mesh_size = mesh_cue.mesh_size;
+                    float anim_metallic = mesh_cue.metallic;
+                    float anim_roughness = mesh_cue.roughness;
+                    
+                    // Curve evaluation for mesh
+                    float elapsed_time = time - mesh_cue.cue_start;
+                    if (elapsed_time >= 0.0f) {
+                        if (mesh_cue.curve_pos_x >= 0 && mesh_cue.curve_pos_x < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_pos_x].duration;
+                            anim_pos[0] = rev::curve::Evaluate(curves[mesh_cue.curve_pos_x], t);
+                        }
+                        if (mesh_cue.curve_pos_y >= 0 && mesh_cue.curve_pos_y < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_pos_y].duration;
+                            anim_pos[1] = rev::curve::Evaluate(curves[mesh_cue.curve_pos_y], t);
+                        }
+                        if (mesh_cue.curve_pos_z >= 0 && mesh_cue.curve_pos_z < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_pos_z].duration;
+                            anim_pos[2] = rev::curve::Evaluate(curves[mesh_cue.curve_pos_z], t);
+                        }
+                        if (mesh_cue.curve_rot_x >= 0 && mesh_cue.curve_rot_x < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_rot_x].duration;
+                            anim_rot[0] = rev::curve::Evaluate(curves[mesh_cue.curve_rot_x], t);
+                        }
+                        if (mesh_cue.curve_rot_y >= 0 && mesh_cue.curve_rot_y < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_rot_y].duration;
+                            anim_rot[1] = rev::curve::Evaluate(curves[mesh_cue.curve_rot_y], t);
+                        }
+                        if (mesh_cue.curve_rot_z >= 0 && mesh_cue.curve_rot_z < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_rot_z].duration;
+                            anim_rot[2] = rev::curve::Evaluate(curves[mesh_cue.curve_rot_z], t);
+                        }
+                        if (mesh_cue.curve_scale_x >= 0 && mesh_cue.curve_scale_x < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_scale_x].duration;
+                            anim_scale[0] = rev::curve::Evaluate(curves[mesh_cue.curve_scale_x], t);
+                        }
+                        if (mesh_cue.curve_scale_y >= 0 && mesh_cue.curve_scale_y < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_scale_y].duration;
+                            anim_scale[1] = rev::curve::Evaluate(curves[mesh_cue.curve_scale_y], t);
+                        }
+                        if (mesh_cue.curve_scale_z >= 0 && mesh_cue.curve_scale_z < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_scale_z].duration;
+                            anim_scale[2] = rev::curve::Evaluate(curves[mesh_cue.curve_scale_z], t);
+                        }
+                        if (mesh_cue.curve_color_r >= 0 && mesh_cue.curve_color_r < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_color_r].duration;
+                            anim_color[0] = rev::curve::Evaluate(curves[mesh_cue.curve_color_r], t);
+                        }
+                        if (mesh_cue.curve_color_g >= 0 && mesh_cue.curve_color_g < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_color_g].duration;
+                            anim_color[1] = rev::curve::Evaluate(curves[mesh_cue.curve_color_g], t);
+                        }
+                        if (mesh_cue.curve_color_b >= 0 && mesh_cue.curve_color_b < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_color_b].duration;
+                            anim_color[2] = rev::curve::Evaluate(curves[mesh_cue.curve_color_b], t);
+                        }
+                        if (mesh_cue.curve_color_a >= 0 && mesh_cue.curve_color_a < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_color_a].duration;
+                            anim_color[3] = rev::curve::Evaluate(curves[mesh_cue.curve_color_a], t);
+                        }
+                        if (mesh_cue.curve_mesh_size >= 0 && mesh_cue.curve_mesh_size < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_mesh_size].duration;
+                            anim_mesh_size = rev::curve::Evaluate(curves[mesh_cue.curve_mesh_size], t);
+                        }
+                        if (mesh_cue.curve_metallic >= 0 && mesh_cue.curve_metallic < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_metallic].duration;
+                            anim_metallic = rev::curve::Evaluate(curves[mesh_cue.curve_metallic], t);
+                        }
+                        if (mesh_cue.curve_roughness >= 0 && mesh_cue.curve_roughness < curve_count) {
+                            float t = elapsed_time / curves[mesh_cue.curve_roughness].duration;
+                            anim_roughness = rev::curve::Evaluate(curves[mesh_cue.curve_roughness], t);
+                        }
+                    }
                     
                     // Update and apply animation if present
 #if defined(REV_GLTF_AVAILABLE)
@@ -1298,12 +1582,12 @@ int main(int argc, char* argv[]) {
                             float opa = ComputeEffectOpacity(mesh_cue.effect_type,
                                 mesh_cue.fade_in_start, mesh_cue.fade_in_end,
                                 mesh_cue.fade_out_start, mesh_cue.fade_out_end, time);
-                            float col[4] = {mesh_cue.color[0], mesh_cue.color[1], mesh_cue.color[2], mesh_cue.color[3]*opa};
+                            float col[4] = {anim_color[0], anim_color[1], anim_color[2], anim_color[3]*opa};
                             glUniform4fv_fn(loc_color, 1, col);
                         }
                     }
-                    if (loc_metal >= 0) rev::shader::SetFloat(mesh_shader, loc_metal, mesh_cue.metallic);
-                    if (loc_rough >= 0) rev::shader::SetFloat(mesh_shader, loc_rough, mesh_cue.roughness);
+                    if (loc_metal >= 0) rev::shader::SetFloat(mesh_shader, loc_metal, anim_metallic);
+                    if (loc_rough >= 0) rev::shader::SetFloat(mesh_shader, loc_rough, anim_roughness);
                     
                     // Bind texture if available
                     int loc_has_tex = rev::shader::GetUniformLocation(mesh_shader, "u_has_texture");
@@ -1357,6 +1641,11 @@ int main(int argc, char* argv[]) {
     }
     rev::shader::DestroyProgram(shader);
     rev::platform::DestroyIntroWindow(window);
+    
+    // Clean up curves
+    for (int i = 0; i < curve_count; ++i) {
+        rev::curve::DestroyCurve(curves[i]);
+    }
     
     Gdiplus::GdiplusShutdown(gdiplusToken);
     

@@ -17,10 +17,13 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 ## Non-negotiables
 - Keep the main loop deterministic: pump messages, get time, update cues, render.
 - Keep GDI+ initialized (`GdiplusStartup`) before any `LoadImageTexture` call.
-- Keep `LoadImageCue` parser field count aligned with the export format: currently 14 fields — `asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end`.
-- Keep `LoadTextCue` parser field count aligned with the export format: currently 16 fields.
-- Keep `LoadMeshCue` parser field count aligned with the export format: currently 28 fields — `asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness`. mesh_type 4 = glTF/GLB external file (asset_path). Old 26-field files still load (metallic/roughness default to 0.0/0.5).
-- Do NOT redefine `ImageCue`, `TextCue`, `MusicCue`, `MeshCue`, `ImageTexture`, `TextTexture` in `main.cpp` — they come from `rev_runtime.h` via `using` declarations.
+- Keep `LoadShaderCue` parser field count aligned with the export format: currently 42 fields (25 base + 17 curve indices) — palette colors, speed, intensity, warp, exposure, fade, timing, layer controls, and curve assignments.
+- Keep `LoadImageCue` parser field count aligned with the export format: currently 18 fields (14 base + 4 curve indices) — `asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity`.
+- Keep `LoadTextCue` parser field count aligned with the export format: currently 22 fields (16 base + 6 curve indices).
+- Keep `LoadMeshCue` parser field count aligned with the export format: currently 44 fields (28 base + 16 curve indices) — `asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness` + 16 curve indices. mesh_type 4 = glTF/GLB external file (asset_path). Backward compatible: fewer fields default missing curves to -1.
+- **Curve evaluation**: All cue types support curve animation. Pattern: `if (cue.curve_param >= 0 && cue.curve_param < curve_count) { float t = (time - cue.cue_start) / curves[cue.curve_param].duration; animated_value = rev::curve::Evaluate(curves[cue.curve_param], t); }`. Use animated values for shader uniforms, sprite transforms, mesh transforms, colors, etc.
+- **Curve initialization**: All curve fields default to `-1` (no curve). Parser uses `sscanf_s` with parsed field count validation for backward compatibility.
+- Do NOT redefine `ImageCue`, `TextCue`, `MusicCue`, `MeshCue`, `ShaderCue`, `ImageTexture`, `TextTexture` in `main.cpp` — they come from `rev_runtime.h` via `using` declarations.
 - Do NOT redefine cue loaders or `Mat4*` functions in `main.cpp` — they are implemented in `rev_runtime.cpp`.
 - `glUniformMatrix4fv` and other GL 2.0+ functions are NOT in Windows `<gl/gl.h>`; load via `wglGetProcAddress` before first use.
 - For 3D mesh rendering: enable depth test (`glEnable(0x0B71)`) before mesh draw, disable after (`glDisable(0x0B71)`) to avoid breaking the 2D sprite pass.

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>  // size_t
+#include "rev_curve.h"
 
 // ============================================================
 // rev_runtime — shared cue types and rendering helpers.
@@ -36,6 +37,12 @@ struct ImageCue {
     float fade_out_start;
     float fade_out_end;
     int   layer_order;      // Lower value drawn first
+    
+    // Curve assignments (-1 = no curve)
+    int   curve_x;
+    int   curve_y;
+    int   curve_scale;
+    int   curve_opacity;
 };
 
 // Text cue
@@ -53,6 +60,14 @@ struct TextCue {
     float    fade_out_start;
     float    fade_out_end;
     int      layer_order;
+    
+    // Curve assignments (-1 = no curve)
+    int      curve_x;
+    int      curve_y;
+    int      curve_size;
+    int      curve_color_r;
+    int      curve_color_g;
+    int      curve_color_b;
 };
 
 // Music cue
@@ -89,6 +104,24 @@ struct MeshCue {
     float fade_out_start;
     float fade_out_end;
     int   layer_order;
+    
+    // Curve assignments (-1 = no curve)
+    int   curve_pos_x;
+    int   curve_pos_y;
+    int   curve_pos_z;
+    int   curve_rot_x;
+    int   curve_rot_y;
+    int   curve_rot_z;
+    int   curve_scale_x;
+    int   curve_scale_y;
+    int   curve_scale_z;
+    int   curve_color_r;
+    int   curve_color_g;
+    int   curve_color_b;
+    int   curve_color_a;
+    int   curve_mesh_size;
+    int   curve_metallic;
+    int   curve_roughness;
 };
 
 // ------------------------------------------------------------------
@@ -133,6 +166,10 @@ bool LoadImageCue(const char* cues_path, ImageCue* cue);
 bool LoadTextCue (const char* cues_path, TextCue*  cue);
 bool LoadMusicCue(const char* cues_path, MusicCue* cue);
 bool LoadMeshCue (const char* cues_path, MeshCue*  cue);
+
+// Load all curves from cues.txt into the provided array (max 32 curves)
+// Returns the number of curves loaded
+int LoadCurves(const char* cues_path, curve::Curve* curves, int max_curves);
 
 // ------------------------------------------------------------------
 // 4×4 column-major matrix math (float[16])

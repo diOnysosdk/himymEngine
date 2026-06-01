@@ -64,12 +64,17 @@ Load these by name when relevant context is needed:
 
 All cue structs live in `rev_runtime.h`. Never redefine elsewhere.
 
-| Type | Fields | cues.txt section |
-|------|--------|-----------------|
-| ImageCue | 14 | `[image_cues]` |
-| TextCue | 16 | `[text_cues]` |
-| MusicCue | 4 | `[music_cues]` |
-| MeshCue | 25 | `[mesh_cues]` |
+| Type | Base Fields | With Curves | cues.txt section |
+|------|-------------|-------------|-----------------|
+| ShaderCue | 25 | 42 (17 curve indices) | `[shader_cues]` |
+| ImageCue | 14 | 18 (4 curve indices) | `[image_cues]` |
+| TextCue | 16 | 22 (6 curve indices) | `[text_cues]` |
+| MusicCue | 4 | 4 (no curves) | `[music_cues]` |
+| MeshCue | 28 | 44 (16 curve indices) | `[mesh_cues]` |
+
+**Curve animation**: All animatable parameters can reference curves via `int curve_*` fields (-1 = no curve, 0-31 = curve index). Runtime evaluates curves at `(elapsed_time / curve.duration)` and uses animated values for uniforms/transforms.
+
+**Auto-save pattern**: All editor modals auto-save changes immediately (no Apply/Cancel workflow). Every UI control change triggers `AutoSave()` lambda that copies `editing_cue` to `scene->cues[index]`.
 
 **New cue type pattern**: struct in `rev_runtime.h` → parser in `rev_runtime.cpp` → `rev_editor.h` using → SceneBlock/EditorContext fields → Add/Delete/Modal/UI/Export/Load in `editor_context.cpp` → `RenderPreviewFrame` → `minimal_intro/main.cpp` → rebuild both targets.
 
