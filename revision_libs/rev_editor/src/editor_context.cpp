@@ -452,6 +452,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"fade_out_start\": %f", &current_text_cue.fade_out_start);
             } else if (strstr(start, "\"fade_out_end\":")) {
                 sscanf_s(start, "\"fade_out_end\": %f", &current_text_cue.fade_out_end);
+            } else if (strstr(start, "\"layer_order\":")) {
+                sscanf_s(start, "\"layer_order\": %d", &current_text_cue.layer_order);
             } else if (start[0] == '}' && current_text_cue.text[0] != '\0') {
                 AddTextCue(current_scene, current_text_cue);
                 memset(&current_text_cue, 0, sizeof(current_text_cue));
@@ -667,7 +669,8 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"fade_in_start\": %.3f,\n", cue->fade_in_start);
             fprintf(f, "          \"fade_in_end\": %.3f,\n", cue->fade_in_end);
             fprintf(f, "          \"fade_out_start\": %.3f,\n", cue->fade_out_start);
-            fprintf(f, "          \"fade_out_end\": %.3f\n", cue->fade_out_end);
+            fprintf(f, "          \"fade_out_end\": %.3f,\n", cue->fade_out_end);
+            fprintf(f, "          \"layer_order\": %d\n", cue->layer_order);
             fprintf(f, "        }%s\n", (i < scene->image_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
@@ -690,7 +693,8 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"fade_in_start\": %.3f,\n", cue->fade_in_start);
             fprintf(f, "          \"fade_in_end\": %.3f,\n", cue->fade_in_end);
             fprintf(f, "          \"fade_out_start\": %.3f,\n", cue->fade_out_start);
-            fprintf(f, "          \"fade_out_end\": %.3f\n", cue->fade_out_end);
+            fprintf(f, "          \"fade_out_end\": %.3f,\n", cue->fade_out_end);
+            fprintf(f, "          \"layer_order\": %d\n", cue->layer_order);
             fprintf(f, "        }%s\n", (i < scene->text_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
@@ -826,19 +830,15 @@ bool NewProject(EditorContext* editor) {
         editor->project->curve_count = 0;
     }
     
-    editor->project->total_duration = 10.0f;  // Default 10 seconds
+    editor->project->total_duration = 0.0f;  // Will be updated as scenes are added
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
     editor->project->modified = false;
 
-    // Create a default scene so cues have somewhere to live
-    SceneBlock* default_scene = GetScene(editor, 0);
-    if (default_scene) {
-        strncpy_s(default_scene->name, "Main Scene", _TRUNCATE);
-        default_scene->duration = 10.0f;
-    }
-
+    // Note: GetScene(0) returns nullptr when scene_count==0
+    // First scene will be created via AddScene when user adds content
+    
     // Clear mesh cache — meshes belong to the old project's GPU context
     for (int i = 0; i < editor->mesh_cache_count; ++i) {
         if (editor->mesh_cache[i].mesh) {
@@ -3557,7 +3557,8 @@ void main() {
     float x = -1.0 + float((gl_VertexID & 1) << 2);
     float y = -1.0 + float((gl_VertexID & 2) << 1);
     uv = vec2((x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5);  // Flip V coordinate
-    gl_Position = vec4(u_position.x + x * u_size.x, u_position.y + y * u_size.y, 0.0, 1.0);
+    // Use Z = 0.999 to ensure sprites render in front of 3D meshes even if depth state isn't fully reset
+    gl_Position = vec4(u_position.x + x * u_size.x, u_position.y + y * u_size.y, 0.999, 1.0);
 }
 )";
 
@@ -4184,14 +4185,6 @@ void RenderPreviewFrame(EditorContext* editor) {
                 // Handle cue_end = -1 (means until end of scene)
                 float actual_end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
                 
-                // Debug: log cue check
-                static int debug_frame_count = 0;
-                if (debug_frame_count % 60 == 0) { // Log every 60 frames to avoid spam
-                    printf("[PREVIEW] Checking cue: id=%d time=%.2f range=[%.2f, %.2f] (actual_end=%.2f)\n",
-                           cue->shader_scene_id, editor->current_time, cue->cue_start, cue->cue_end, actual_end);
-                }
-                debug_frame_count++;
-                
                 if (editor->current_time >= cue->cue_start && editor->current_time <= actual_end) {
                     active_shader_id = cue->shader_scene_id;
                     speed = cue->speed;
@@ -4261,6 +4254,9 @@ void RenderPreviewFrame(EditorContext* editor) {
     // Collect all active image/text/mesh cues across all scenes, sort by
     // layer_order (ascending = drawn first = further back), draw in order.
     if (editor->project && (editor->sprite_shader || editor->mesh_shader)) {
+        // Clear depth buffer before unified layer rendering to ensure clean 3D/2D compositing
+        glClear(0x0100);  // GL_DEPTH_BUFFER_BIT
+        
         auto* sprite_prog = editor->sprite_shader ? (rev::shader::Program*)editor->sprite_shader : nullptr;
         auto* mesh_prog   = editor->mesh_shader   ? (rev::shader::Program*)editor->mesh_shader   : nullptr;
 
@@ -4330,8 +4326,7 @@ void RenderPreviewFrame(EditorContext* editor) {
             for (int i = 0; i < scene->text_cue_count && item_count < kMaxItems; i++) {
                 TextCue* cue = &scene->text_cues[i];
                 float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
-                if (editor->current_time >= cue->cue_start && editor->current_time <= end
-                        && cue->text[0])
+                if (editor->current_time >= cue->cue_start && editor->current_time <= end && cue->text[0])
                     items[item_count++] = { 1, cue, cue->layer_order };
             }
             for (int i = 0; i < scene->mesh_cue_count && item_count < kMaxItems; i++) {
@@ -4357,16 +4352,27 @@ void RenderPreviewFrame(EditorContext* editor) {
             if (item.type == 0 || item.type == 1) {
                 // Sprite (image or text)
                 if (!sprite_prog) continue;
-                if (depth_on) {
-                    glDisable(0x0B71);  // GL_DEPTH_TEST
-                    if (glDepthMask_fn) glDepthMask_fn(0);  // GL_FALSE - disable depth writes
-                    depth_on = false;
+                
+                // When switching from mesh to sprite, rebind dummy VAO for gl_VertexID rendering
+                if (depth_on && editor->preview_vao) {
+                    typedef void (*PFNGLBINDVERTEXARRAYPROC)(unsigned int array);
+                    auto glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
+                    if (glBindVertexArray) glBindVertexArray(editor->preview_vao);
                 }
-                if (!blend_on) {
-                    glEnable(GL_BLEND);
-                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    blend_on = true;
-                }
+                
+                // Clear depth buffer when switching from mesh to sprite
+                if (depth_on) glClear(0x0100);  // GL_DEPTH_BUFFER_BIT
+                
+                // Disable depth testing for 2D sprites
+                glDisable(0x0B71);  // GL_DEPTH_TEST
+                if (glDepthMask_fn) glDepthMask_fn(0);  // GL_FALSE
+                depth_on = false;
+                
+                // Enable blending for sprites
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                blend_on = true;
+                
                 rev::shader::Use(sprite_prog);
 
                 unsigned int tex = 0;
@@ -4420,7 +4426,6 @@ void RenderPreviewFrame(EditorContext* editor) {
                     glEnable(0x0B71);                       // GL_DEPTH_TEST
                     if (glDepthMask_fn) glDepthMask_fn(1);  // GL_TRUE - enable depth writes
                     if (glDepthFunc_fn) glDepthFunc_fn(0x0201); // GL_LESS
-                    glClear(0x0100);                        // GL_DEPTH_BUFFER_BIT - clear depth once when enabling
                     depth_on = true;
                 }
                 rev::shader::Use(mesh_prog);

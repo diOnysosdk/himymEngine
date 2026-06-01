@@ -752,6 +752,19 @@ int main(int argc, char* argv[]) {
         printf("  Time: %.1f-%.1fs\n", text_cue.cue_start, text_cue.cue_end);
     }
     
+    // Calculate total duration from all cues
+    float total_duration = 0.0f;
+    if (cue.cue_end > total_duration) total_duration = cue.cue_end;  // Shader cue
+    if (has_image && image_cue.cue_end > total_duration) total_duration = image_cue.cue_end;
+    if (has_text && text_cue.cue_end > total_duration) total_duration = text_cue.cue_end;
+    if (has_mesh && mesh_cue.cue_end > total_duration) total_duration = mesh_cue.cue_end;
+    if (has_music && music_cue.cue_end > total_duration) total_duration = music_cue.cue_end;
+    
+    // If no cues or all have 0 duration, use default
+    if (total_duration <= 0.0f) total_duration = 10.0f;
+    
+    printf("Total intro duration: %.1fs\n", total_duration);
+    
     // Clamp shader_scene_id to valid range
     if (cue.shader_scene_id < 0 || cue.shader_scene_id > 9) {
         cue.shader_scene_id = 0;
@@ -1314,8 +1327,8 @@ int main(int argc, char* argv[]) {
         // Swap buffers
         rev::platform::SwapBuffers(window);
         
-        // Exit after 10 seconds or on ESC
-        if (time > 10.0f || rev::platform::IsKeyPressed(window, VK_ESCAPE)) {
+        // Exit after total duration or on ESC
+        if (time > total_duration || rev::platform::IsKeyPressed(window, VK_ESCAPE)) {
             break;
         }
     }

@@ -26,6 +26,7 @@ Use this skill for editor-side authoring work.
 - Keep the cues.txt mesh_cues format: `asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order` (25 fields).
 - Keep `ProjectData.assets_path` memset-cleared in `CreateEditor`, `NewProject`, and `LoadProject`.
 - Keep editor preview frame rendering: shader cue composited first; then image/text/mesh cues rendered via a **unified sorted draw pass** (sorted by `layer_order` ascending — lower = further back). Do NOT restore the old three-block fixed order.
+- **Layer rendering state management**: When switching from mesh to sprite rendering in the unified draw loop, must (1) rebind the dummy VAO (`editor->preview_vao`) because meshes bind their own VAOs and sprites use `gl_VertexID`, (2) clear the depth buffer with `glClear(GL_DEPTH_BUFFER_BIT)`, (3) disable depth testing, (4) enable blending. Without proper VAO rebinding, sprites will be invisible after meshes render.
 - Do NOT define `ImageCue`, `TextCue`, `MusicCue`, `MeshCue` in `rev_editor.h` — they are imported from `rev_runtime.h` via `using` declarations.
 - When adding fields to shared cue structs, update `rev_runtime.h` and `rev_runtime.cpp` first, then update `ExportProject` and parser in rev_runtime.
 

@@ -154,7 +154,7 @@ The Scene Block Editor is a monolithic Python/tkinter application (8000+ lines) 
 - **Role**: `background` or `overlay`
 - **Opacity**: 0.0 (transparent) to 1.0 (opaque)
 - **Blend Mode**: `alpha`, `additive`, `multiply`, `screen`
-- **Layer Order**: Lower draws first (z-order)
+- **Layer Order**: Controls draw order (z-depth). Lower values = background, higher values = foreground. Works across all asset types (shaders, images, text, 3D meshes). For example: shader at layer 0, mesh at layer 1, text at layer 2 draws mesh on top of shader, text on top of mesh.
 
 **7. Shader Curves**
 - Inline summary: Lists parameters with curve points
