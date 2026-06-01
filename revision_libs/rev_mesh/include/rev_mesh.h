@@ -27,6 +27,11 @@ struct Mesh {
     uint32_t index_count;
     MaterialSlot* material_slots;
     uint32_t material_slot_count;
+    
+    // Texture IDs (0 = no texture)
+    uint32_t base_color_texture;
+    uint32_t normal_texture;
+    uint32_t metallic_roughness_texture;
 };
 
 // Lifecycle

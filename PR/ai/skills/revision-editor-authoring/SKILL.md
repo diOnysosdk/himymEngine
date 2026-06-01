@@ -49,6 +49,18 @@ Use this skill for editor-side authoring work.
 - `ExportProject` writes `[mesh_cues]` section after `[music_cues]` with 25-field pipe format.
 - `SaveProject` / `LoadProject` round-trip all MeshCue fields through JSON (`mesh_cues` array).
 
+## Mesh texture loading (glTF/glb)
+- When user browses for a `.glb` mesh file in the mesh modal, call `rev::gltf::LoadMesh(filepath, editor->project->assets_path)` to extract material properties and textures.
+- **Always pass `assets_path` as the second parameter** to extract embedded textures from the glTF file. Without it, textures remain embedded and won't render.
+- Extracted textures are written to `{project_name}_assets/` and the material struct contains relative paths in `base_color_texture`, `normal_texture`, `metallic_roughness_texture` fields.
+- In `RenderPreviewFrame`, when rendering mesh type 4 (glTF):
+  1. Load mesh via `rev::gltf::LoadMesh(cue->asset_path, editor->project->assets_path)`.
+  2. If `ir->material.base_color_texture[0]` is not empty, load texture: `rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)` and assign `mesh->base_color_texture = tex.texture_id`.
+  3. Before rendering, check if `mesh->base_color_texture != 0`. If so, bind texture: `glBindTexture(0x0DE1, mesh->base_color_texture)`, set shader uniforms `u_base_color_texture=0`, `u_has_texture=1`. Otherwise set `u_has_texture=0`.
+- Mesh cache entries retain loaded textures across frames — texture binding happens even for cached meshes.
+- Mesh shader must support texture sampling: vertex shader passes `v_uv`, fragment shader samples `u_base_color_texture` when `u_has_texture` is 1.
+- Procedural meshes (cube/sphere/plane/torus) have no textures — always set `u_has_texture=0` for them.
+
 ## Pack, Build and Run workflow
 `PackBuildAndRun()` in `editor_context.cpp`:
 1. `GetProjectCuesPath` → export `cues.txt` via `ExportProject`

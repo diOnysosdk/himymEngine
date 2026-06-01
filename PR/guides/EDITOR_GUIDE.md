@@ -341,26 +341,54 @@ type build_diagnostics\runtime_startup.log
 2. Text cue modal: Select text asset key, set position/timing
 3. Effect preset: Choose animation style (fade, type-on, etc.)
 
-### 3D Meshes (Optional)
-
-**Prerequisite**: Build with `-DREV_ENABLE_3D=ON`
+### 3D Meshes
 
 **Workflow**:
-1. **Convert OBJ/MTL** to meshbin:
-   ```powershell
-   python tools/obj_to_meshbin.py assets/meshes/cube.obj
-   ```
-   Output: `assets/meshes/cube.meshbin`
 
-2. **Assign to scene**:
-   - Select scene → 3D Stage tab
-   - **Choose .meshbin file** from dropdown
-   - Adjust camera, lighting, material properties
+#### **Option 1: Import from Blender (Recommended)**
+
+1. **Prepare mesh in Blender**:
+   - Create/model your mesh
+   - Add material with **Principled BSDF**
+   - For textures: Add **Image Texture** node → Connect to **Principled BSDF Base Color**
+   - Load your texture image in the Image Texture node
+
+2. **Export from Blender**:
+   - File → Export → **glTF 2.0 (.glb)**
+   - Format: **Binary (.glb)** ✅
+   - Include → **Images: Automatic** ✅
+   - Export
+
+3. **Import to editor**:
+   - Save your project first (creates assets folder)
+   - Click **+ Mesh Cue**
+   - Browse for `.glb` file
+   - Textures are automatically extracted to project assets folder
+   - Adjust position, rotation, scale, metallic, roughness
+
+4. **Textures work automatically**:
+   - Preview shows textured mesh
+   - "Pack, Build, Run" includes textures in runtime
+
+**Supported glTF features**:
+- Embedded textures in .glb files
+- PBR materials (base color, metallic, roughness)
+- Base color textures (diffuse/albedo)
+- Procedural meshes (cube, sphere, plane, torus)
+
+#### **Option 2: Procedural Meshes**
+
+Use built-in procedural shapes:
+- **Cube** - configurable size
+- **Sphere** - radius and segment count
+- **Plane** - width and height
+- **Torus** - major/minor radius
+
+Set mesh type in Mesh Cue modal, adjust parameters.
 
 3. **Animate with curves**:
    - Open Shader Curves editor
-   - Target: `(common)`
-   - Parameters: `scene3d_yaw_deg`, `scene3d_offset_x`, etc.
+   - Parameters: position (`pos_x/y/z`), rotation (`rot_x/y/z`), scale
 
 ---
 
@@ -418,6 +446,28 @@ type build_diagnostics\runtime_startup.log
 ---
 
 ## Troubleshooting
+
+### "Mesh texture not showing"
+
+**Symptom**: Mesh renders but appears solid color, no texture visible
+
+**Causes**:
+1. **Texture not connected in Blender**
+   - Solution: In Blender Shading workspace, connect Image Texture → Principled BSDF Base Color
+   
+2. **Images not exported**
+   - Solution: In Blender export dialog, enable **Images: Automatic** ✅
+   
+3. **Project not saved before adding mesh**
+   - Solution: Save project first (creates assets folder), then add mesh cue
+   
+4. **Console shows "No base color texture found"**
+   - Solution: Verify Image Texture node has an image loaded and is connected to Base Color
+
+**Debug**:
+- Check editor console for `[glTF]` messages showing texture extraction status
+- Look in `{project_name}_assets/` folder - texture file should be there
+- Verify shader workspace: Image Texture → (yellow wire) → Principled BSDF Base Color
 
 ### "Shader not visible in intro"
 - Check shader cue timing: Start < End, both within scene duration

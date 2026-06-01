@@ -246,6 +246,7 @@ layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_uv;
 out vec3 v_frag_pos;
 out vec3 v_normal;
+out vec2 v_uv;
 uniform mat4 u_model;
 uniform mat4 u_view;
 uniform mat4 u_projection;
@@ -253,6 +254,7 @@ void main() {
     vec4 world_pos = u_model * vec4(a_pos, 1.0);
     v_frag_pos = world_pos.xyz;
     v_normal   = mat3(transpose(inverse(u_model))) * a_normal;
+    v_uv       = a_uv;
     gl_Position = u_projection * u_view * world_pos;
 }
 )";
@@ -261,14 +263,21 @@ const char* mesh_fragment_shader_src = R"(
 #version 330 core
 in vec3 v_frag_pos;
 in vec3 v_normal;
+in vec2 v_uv;
 out vec4 fragColor;
 uniform vec3  u_light_pos;
 uniform vec3  u_view_pos;
 uniform vec4  u_color;
 uniform float u_metallic;
 uniform float u_roughness;
+uniform sampler2D u_base_color_texture;
+uniform int u_has_texture;
 void main() {
-    vec3  base     = u_color.rgb;
+    vec3  base = u_color.rgb;
+    if (u_has_texture != 0) {
+        vec4 tex_color = texture(u_base_color_texture, v_uv);
+        base *= tex_color.rgb;
+    }
     vec3  norm     = normalize(v_normal);
     vec3  ldir     = normalize(u_light_pos - v_frag_pos);
     vec3  vdir     = normalize(u_view_pos  - v_frag_pos);
@@ -820,10 +829,23 @@ int main(int argc, char* argv[]) {
                     const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(
                         mesh_cue.asset_key, kPackedAssets, kPackedAssetCount);
                     if (pa) {
-                        rev::gltf::ImportResult* ir = rev::gltf::LoadMeshFromMemory(pa->data, pa->size);
+                        // Extract textures to current directory (project workspace when launched by editor)
+                        rev::gltf::ImportResult* ir = rev::gltf::LoadMeshFromMemory(pa->data, pa->size, ".");
                         if (ir && ir->ok) {
                             mesh_obj = ir->mesh;
                             ir->mesh = nullptr;
+                            
+                            // Load base color texture if present
+                            if (ir->material.base_color_texture[0] != '\0') {
+                                rev::runtime::ImageTexture tex{};
+                                if (rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)) {
+                                    mesh_obj->base_color_texture = tex.texture_id;
+                                    printf("Loaded mesh texture (packed): %s\n", ir->material.base_color_texture);
+                                } else {
+                                    printf("Failed to load texture (packed): %s\n", ir->material.base_color_texture);
+                                }
+                            }
+                            
                             printf("glTF loaded (packed): %s\n", mesh_cue.asset_key);
                         } else {
                             printf("glTF load failed (packed): %s\n", (ir ? ir->error : "null result"));
@@ -837,10 +859,27 @@ int main(int argc, char* argv[]) {
                 }
 #else
                 {
-                    rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(mesh_cue.asset_path);
+                    // Extract textures to the same directory as the mesh file
+                    char mesh_dir[512] = {};
+                    strncpy_s(mesh_dir, mesh_cue.asset_path, sizeof(mesh_dir) - 1);
+                    char* last_slash = strrchr(mesh_dir, '\\');
+                    if (!last_slash) last_slash = strrchr(mesh_dir, '/');
+                    if (last_slash) *last_slash = '\0'; else mesh_dir[0] = '\0';
+                    
+                    rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(mesh_cue.asset_path, mesh_dir[0] ? mesh_dir : ".");
                     if (ir && ir->ok) {
                         mesh_obj = ir->mesh;
                         ir->mesh = nullptr;
+                        
+                        // Load base color texture if present
+                        if (ir->material.base_color_texture[0] != '\0') {
+                            rev::runtime::ImageTexture tex{};
+                            if (rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)) {
+                                mesh_obj->base_color_texture = tex.texture_id;
+                                printf("Loaded mesh texture: %s\n", ir->material.base_color_texture);
+                            }
+                        }
+                        
                         printf("glTF loaded: %s\n", mesh_cue.asset_path);
                     } else {
                         printf("glTF load failed: %s\n", (ir ? ir->error : "null result"));
@@ -1199,6 +1238,18 @@ int main(int argc, char* argv[]) {
                     }
                     if (loc_metal >= 0) rev::shader::SetFloat(mesh_shader, loc_metal, mesh_cue.metallic);
                     if (loc_rough >= 0) rev::shader::SetFloat(mesh_shader, loc_rough, mesh_cue.roughness);
+                    
+                    // Bind texture if available
+                    int loc_has_tex = rev::shader::GetUniformLocation(mesh_shader, "u_has_texture");
+                    if (mesh_obj->base_color_texture != 0) {
+                        glBindTexture(0x0DE1, mesh_obj->base_color_texture); // GL_TEXTURE_2D = 0x0DE1
+                        int loc_tex = rev::shader::GetUniformLocation(mesh_shader, "u_base_color_texture");
+                        if (loc_tex >= 0) rev::shader::SetInt(mesh_shader, loc_tex, 0);
+                        if (loc_has_tex >= 0) rev::shader::SetInt(mesh_shader, loc_has_tex, 1);
+                    } else {
+                        if (loc_has_tex >= 0) rev::shader::SetInt(mesh_shader, loc_has_tex, 0);
+                    }
+                    
                     rev::mesh::Render(mesh_obj, -1);
                 }
             }

@@ -66,8 +66,9 @@ ImportResult* LoadMesh(const char* gltf_path,
 
 // Load a .glb file from a memory buffer (packed/embedded builds).
 // The buffer must contain a complete, self-contained GLB file.
-// Texture extraction is not available in this path.
-ImportResult* LoadMeshFromMemory(const void* data, size_t size);
+// If texture_output_dir is provided, embedded textures are extracted there.
+ImportResult* LoadMeshFromMemory(const void* data, size_t size,
+                                 const char* texture_output_dir = nullptr);
 
 // Free an ImportResult (and the mesh it owns).
 void FreeImportResult(ImportResult* result);

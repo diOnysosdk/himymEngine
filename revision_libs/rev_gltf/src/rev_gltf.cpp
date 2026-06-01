@@ -123,21 +123,29 @@ static bool ExtractImage(const cgltf_data* data,
     ImageOutputName(filename, sizeof(filename), img, index);
     BuildOutputPath(dest_path, dest_path_size, output_dir, filename);
 
+    printf("[glTF] ExtractImage: output_dir='%s', filename='%s', dest_path='%s'\n",
+           output_dir ? output_dir : "(null)", filename, dest_path);
+
     // Create output directory if needed
     CreateDirectoryA(output_dir, nullptr);
 
     if (img->buffer_view && img->buffer_view->buffer) {
         // Embedded binary image (in .glb buffer or base64 buffer view)
+        printf("[glTF] Extracting embedded image from buffer_view\n");
         const cgltf_buffer_view* bv = img->buffer_view;
         const unsigned char* src = (const unsigned char*)bv->buffer->data + bv->offset;
-        return WriteFile(dest_path, src, bv->size);
+        bool ok = WriteFile(dest_path, src, bv->size);
+        printf("[glTF] WriteFile result: %s\n", ok ? "SUCCESS" : "FAILED");
+        return ok;
     } else if (img->uri && strncmp(img->uri, "data:", 5) == 0) {
         // Data URI — base64 encoded.  cgltf already decoded the buffer if we
         // called cgltf_load_buffers, but the image itself lives in a buffer_view.
         // If buffer_view is null here, the image data was not loaded — skip.
+        printf("[glTF] Image is data URI but no buffer_view - skipping\n");
         return false;
     } else if (img->uri && img->uri[0]) {
         // External file reference
+        printf("[glTF] Copying external image file: %s\n", img->uri);
         char src_path[512] = {};
         ResolveURI(src_path, sizeof(src_path), gltf_path, img->uri);
         return CopyFileToDest(src_path, dest_path);
@@ -150,24 +158,45 @@ static void FillMaterial(Material* out, const cgltf_material* mat,
                           const cgltf_data* data,
                           const char* gltf_path, const char* output_dir) {
     SetMaterialDefaults(out);
-    if (!mat) return;
+    if (!mat) {
+        printf("[glTF] No material in glTF file\n");
+        return;
+    }
 
     if (mat->name) strncpy_s(out->name, mat->name, _TRUNCATE);
     out->double_sided = mat->double_sided != 0;
+    
+    printf("[glTF] Material: name='%s' has_pbr=%d\n", 
+           mat->name ? mat->name : "(unnamed)", 
+           mat->has_pbr_metallic_roughness);
 
     if (mat->has_pbr_metallic_roughness) {
         const auto& pbr = mat->pbr_metallic_roughness;
         for (int i = 0; i < 4; ++i) out->base_color[i] = pbr.base_color_factor[i];
         out->metallic  = pbr.metallic_factor;
         out->roughness = pbr.roughness_factor;
+        
+        printf("[glTF] PBR: base_color_texture.texture=%p\n", (void*)pbr.base_color_texture.texture);
+        if (pbr.base_color_texture.texture) {
+            printf("[glTF]      texture->image=%p\n", (void*)pbr.base_color_texture.texture->image);
+        }
+        printf("[glTF] Total images in glTF: %zu\n", data->images_count);
 
         if (output_dir && output_dir[0]) {
             // Base color texture
             if (pbr.base_color_texture.texture && pbr.base_color_texture.texture->image) {
+                printf("[glTF] Found base color texture in material\n");
                 int img_idx = (int)(pbr.base_color_texture.texture->image - data->images);
-                ExtractImage(data, pbr.base_color_texture.texture->image, img_idx,
+                bool extracted = ExtractImage(data, pbr.base_color_texture.texture->image, img_idx,
                              gltf_path, output_dir,
                              out->base_color_texture, sizeof(out->base_color_texture));
+                if (extracted) {
+                    printf("[glTF] Extracted base color texture to: %s\n", out->base_color_texture);
+                } else {
+                    printf("[glTF] Failed to extract base color texture\n");
+                }
+            } else {
+                printf("[glTF] No base color texture found in material (texture ptr is NULL)\n");
             }
             // Metallic-roughness texture
             if (pbr.metallic_roughness_texture.texture && pbr.metallic_roughness_texture.texture->image) {
@@ -392,7 +421,8 @@ ImportResult* LoadMesh(const char* gltf_path, const char* texture_output_dir) {
 
 // ---------------------------------------------------------------------------
 
-ImportResult* LoadMeshFromMemory(const void* buf, size_t size) {
+ImportResult* LoadMeshFromMemory(const void* buf, size_t size,
+                                  const char* texture_output_dir) {
     ImportResult* result = new ImportResult{};
     result->ok = false;
     SetMaterialDefaults(&result->material);
@@ -421,8 +451,9 @@ ImportResult* LoadMeshFromMemory(const void* buf, size_t size) {
         return result;
     }
 
-    // Texture extraction not possible without a file path; pass nullptr.
-    return BuildFromData(result, data, nullptr, nullptr);
+    // For memory loads, we can still extract embedded textures if output_dir is provided.
+    // Pass empty string as gltf_path since there's no source file.
+    return BuildFromData(result, data, "", texture_output_dir);
 }
 
 // ---------------------------------------------------------------------------

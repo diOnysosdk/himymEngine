@@ -81,6 +81,9 @@ Mesh* CreateMesh(uint32_t vertex_count, uint32_t index_count) {
     mesh->indices = new uint32_t[index_count];
     mesh->material_slots = nullptr;
     mesh->material_slot_count = 0;
+    mesh->base_color_texture = 0;
+    mesh->normal_texture = 0;
+    mesh->metallic_roughness_texture = 0;
     
     memset(mesh->vertices, 0, vertex_count * sizeof(Vertex));
     memset(mesh->indices, 0, index_count * sizeof(uint32_t));

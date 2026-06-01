@@ -2381,7 +2381,8 @@ void RenderMeshModal(EditorContext* editor) {
                     // Extract material properties from the glTF and pre-fill the cue.
                     // This reads the Blender-exported PBR material: base color, metallic,
                     // roughness.  The user can override these in the sliders below.
-                    rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(filepath);
+                    // Extract textures to assets folder so they can be loaded later
+                    rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(filepath, editor->project->assets_path);
                     if (ir && ir->ok) {
                         const rev::gltf::Material& mat = ir->material;
                         // Only overwrite color if it's still the default white
@@ -2400,6 +2401,11 @@ void RenderMeshModal(EditorContext* editor) {
                                mat.name[0] ? mat.name : "(unnamed)",
                                mat.base_color[0], mat.base_color[1], mat.base_color[2],
                                mat.metallic, mat.roughness);
+                        if (mat.base_color_texture[0]) {
+                            printf("[GLTF] Base color texture: %s\n", mat.base_color_texture);
+                        } else {
+                            printf("[GLTF] No base color texture extracted\n");
+                        }
                     }
                     if (ir) rev::gltf::FreeImportResult(ir);
                 }
@@ -3427,6 +3433,7 @@ layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_uv;
 out vec3 v_frag_pos;
 out vec3 v_normal;
+out vec2 v_uv;
 uniform mat4 u_model;
 uniform mat4 u_view;
 uniform mat4 u_projection;
@@ -3434,6 +3441,7 @@ void main() {
     vec4 world_pos = u_model * vec4(a_pos, 1.0);
     v_frag_pos = world_pos.xyz;
     v_normal   = mat3(transpose(inverse(u_model))) * a_normal;
+    v_uv       = a_uv;
     gl_Position = u_projection * u_view * world_pos;
 }
 )";
@@ -3442,14 +3450,21 @@ static const char* mesh_fragment_shader = R"(
 #version 330 core
 in vec3 v_frag_pos;
 in vec3 v_normal;
+in vec2 v_uv;
 out vec4 fragColor;
 uniform vec3  u_light_pos;
 uniform vec3  u_view_pos;
 uniform vec4  u_color;
 uniform float u_metallic;
 uniform float u_roughness;
+uniform sampler2D u_base_color_texture;
+uniform int u_has_texture;
 void main() {
-    vec3  base     = u_color.rgb;
+    vec3  base = u_color.rgb;
+    if (u_has_texture != 0) {
+        vec4 tex_color = texture(u_base_color_texture, v_uv);
+        base *= tex_color.rgb;
+    }
     vec3  norm     = normalize(v_normal);
     vec3  ldir     = normalize(u_light_pos - v_frag_pos);
     vec3  vdir     = normalize(u_view_pos  - v_frag_pos);
@@ -4293,9 +4308,34 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     break;
                                 }
                             }
-                            if (cached) { rev::mesh::Render(cached, -1); continue; }
-                            rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(cue->asset_path);
-                            if (ir && ir->ok) { mesh = ir->mesh; ir->mesh = nullptr; }
+                            if (cached) {
+                                // Bind texture if available
+                                int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
+                                if (cached->base_color_texture != 0) {
+                                    glBindTexture(0x0DE1, cached->base_color_texture); // GL_TEXTURE_2D
+                                    int loc_tex = rev::shader::GetUniformLocation(mesh_prog, "u_base_color_texture");
+                                    if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
+                                    if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
+                                } else {
+                                    if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
+                                }
+                                rev::mesh::Render(cached, -1);
+                                continue;
+                            }
+                            // Extract textures to assets folder
+                            rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(cue->asset_path, editor->project->assets_path);
+                            if (ir && ir->ok) {
+                                mesh = ir->mesh;
+                                ir->mesh = nullptr;
+                                
+                                // Load base color texture if present
+                                if (ir->material.base_color_texture[0] != '\0') {
+                                    rev::runtime::ImageTexture tex{};
+                                    if (rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)) {
+                                        mesh->base_color_texture = tex.texture_id;
+                                    }
+                                }
+                            }
                             if (ir) rev::gltf::FreeImportResult(ir);
                             if (mesh) {
                                 rev::mesh::UploadToGPU(mesh);
@@ -4303,6 +4343,16 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     auto& entry = editor->mesh_cache[editor->mesh_cache_count++];
                                     strncpy_s(entry.path, cue->asset_path, _TRUNCATE);
                                     entry.mesh = mesh;
+                                }
+                                // Bind texture if available
+                                int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
+                                if (mesh->base_color_texture != 0) {
+                                    glBindTexture(0x0DE1, mesh->base_color_texture); // GL_TEXTURE_2D
+                                    int loc_tex = rev::shader::GetUniformLocation(mesh_prog, "u_base_color_texture");
+                                    if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
+                                    if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
+                                } else {
+                                    if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
                                 }
                                 rev::mesh::Render(mesh, -1);
                                 continue;
@@ -4315,6 +4365,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                 }
                 if (mesh) {
                     rev::mesh::UploadToGPU(mesh);
+                    // Procedural meshes don't have textures
+                    int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
+                    if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
                     rev::mesh::Render(mesh, -1);
                     rev::mesh::DestroyMesh(mesh);
                 }

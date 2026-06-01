@@ -9,10 +9,12 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 ## Scope
 - `examples/minimal_intro/main.cpp` — standalone intro, loads cues from file or embedded data; does NOT define cue structs or loader functions (those live in rev_runtime)
 - `revision_libs/rev_runtime/` — shared static lib: cue structs, `ComputeEffectOpacity`, `LoadImageTexture`, `LoadImageTextureFromMemory`, `RenderTextToTexture`, `LoadImageCue`, `LoadTextCue`, `LoadMusicCue`, `LoadMeshCue`, and 8 Mat4 math functions
-- `revision_libs/rev_mesh/` — procedural mesh lib: `CreateCube/Sphere/Plane/Torus`, `UploadToGPU`, `Render`, `DestroyMesh` (linked into both editor and minimal_intro)
+- `revision_libs/rev_mesh/` — procedural mesh lib: `CreateCube/Sphere/Plane/Torus`, `UploadToGPU`, `Render`, `DestroyMesh`. Mesh struct has texture ID fields: `base_color_texture`, `normal_texture`, `metallic_roughness_texture` (all default to 0 = no texture)
+- `revision_libs/rev_gltf/` — glTF/glb importer (editor-only, not in packed runtime): `LoadMesh(path, texture_output_dir)` returns `ImportResult*` with mesh and material data. `LoadMeshFromMemory(buf, size, texture_output_dir)` for packed builds. Pass texture output dir to extract embedded textures from glTF/glb files.
 - `revision_libs/rev_platform/` — Win32 windowing, OpenGL context
 - `revision_libs/rev_shader/` — shader compilation and dispatch
 - `revision_libs/rev_xm/` — XM music player (wraps libxm-windows)
+
 
 ## Non-negotiables
 - Keep the main loop deterministic: pump messages, get time, update cues, render.
@@ -87,6 +89,19 @@ for each sorted entry: switch on type, set GL state, draw
   4. On stop: set `stop=true`, `WaitForSingleObject`, `waveOutReset`, `waveOutUnprepareHeader`, `waveOutClose`.
 - `#pragma comment(lib, "winmm.lib")` + `#include <mmsystem.h>` required.
 - Packed path: look up music asset key in `kPackedAssets`; file path: read the `.xm` file from `music_cue.asset_path` (workspace-relative).
+
+## Mesh texture loading (glTF/glb)
+- `rev::gltf::LoadMesh(path, texture_output_dir)` returns `ImportResult*` containing mesh geometry and material data (base color, metallic, roughness, texture paths).
+- **Always pass `texture_output_dir`** to extract embedded textures from glTF/glb files. Without it, textures remain embedded and cannot be loaded.
+- For non-packed builds: pass the mesh's directory as texture output dir (extract textures alongside mesh file).
+- For packed builds: `rev::gltf::LoadMeshFromMemory(buf, size, texture_output_dir)` extracts embedded textures to the specified directory (typically `"."` for workspace root).
+- After loading, check `ir->material.base_color_texture[0]` for texture path. If present, call `rev::runtime::LoadImageTexture(path, &tex)` and assign `mesh->base_color_texture = tex.texture_id`.
+- Mesh shaders must:
+  1. Pass UVs from vertex shader: `out vec2 v_uv;`
+  2. Sample texture in fragment shader: `uniform sampler2D u_base_color_texture; uniform int u_has_texture;`
+  3. Multiply base color by texture: `if (u_has_texture != 0) base *= texture(u_base_color_texture, v_uv).rgb;`
+- Before rendering, bind texture: `glBindTexture(0x0DE1, mesh->base_color_texture)` and set uniforms `u_base_color_texture=0, u_has_texture=1`.
+- Blender export requirements: Image Texture node must connect to Principled BSDF Base Color, export with **Images** checkbox enabled.
 
 ## Image loading notes (GDI+)
 - Error 3 from GDI+ = FileNotFound OR GDI+ not initialized — check both.

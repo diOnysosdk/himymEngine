@@ -41,9 +41,12 @@ This project uses one shared runtime architecture with profile-specific renderin
 
 Current renderer path:
 - API: OpenGL via Win32/WGL
-- Optional stage/mesh rendering is compile-time controlled by `REV_ENABLE_3D`
-- Global 3D stage timing is continuous across scene changes by default; explicit per-scene timing overrides can still create local restart/fade windows
-- `.meshbin` v3 preserves up to 8 lightweight OBJ/MTL material ranges with diffuse texture paths plus imported `Ka/Kd/Ks/Ke/Ns/d` values for the optional 3D stage
+- Optional mesh rendering with PBR materials and texture support
+- glTF 2.0 (.glb) mesh import via cgltf (editor-side only)
+- Procedural meshes: cube, sphere, plane, torus
+- Texture support: Base color (diffuse) textures from Blender materials
+- Material properties: base color factor, metallic, roughness
+- Phong-based lighting with configurable parameters
 - Goal: robust deterministic startup/shutdown with one explicit render path
 
 Intro build emphasis:
@@ -72,6 +75,14 @@ Text object semantics:
 - Runtime text objects are authored as `title_main`, `credits_main`, `scroll_text`, and `multiline_text`.
 - Text cues keep Active timing separate from Effect timing.
 - For non-scroll text objects, normalized `x`/`y` are anchor coordinates (`0.5`, `0.5` = screen center).
+
+Mesh and texture workflow:
+- Meshes imported from Blender via glTF 2.0 (.glb) format
+- Embedded textures extracted to project assets folder at import time
+- Editor calls `rev::gltf::LoadMesh(path, assets_path)` to parse geometry and extract textures
+- Runtime loads mesh geometry from packed data, textures from extracted files
+- Texture requirement: Image Texture node connected to Principled BSDF Base Color in Blender
+- Supported: base color textures, metallic/roughness factors, procedural meshes (cube/sphere/plane/torus)
 
 ### Application Entry
 
