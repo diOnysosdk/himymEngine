@@ -10,6 +10,12 @@
 
 namespace rev {
 namespace editor {
+static float ClampCurveDuration(float duration) {
+    if (duration < 0.01f) return 0.01f;
+    if (duration > 3600.0f) return 3600.0f;
+    return duration;
+}
+
 void RenderCurveEditorModal(EditorContext* editor) {
     if (!editor) return;
 
@@ -65,9 +71,32 @@ void RenderCurveEditorModal(EditorContext* editor) {
         ImGui::SetNextItemWidth(120);
         float duration = curve->duration;
         if (ImGui::InputFloat("Duration (s)", &duration, 0.1f, 1.0f, "%.2f")) {
-            if (duration < 0.01f) duration = 0.01f;  // Minimum duration
-            if (duration > 3600.0f) duration = 3600.0f;  // Maximum 1 hour
-            curve->duration = duration;
+            curve->duration = ClampCurveDuration(duration);
+            editor->project->modified = true;
+        }
+
+        int duration_centis = (int)floorf(curve->duration * 100.0f + 0.5f);
+        int duration_seconds = duration_centis / 100;
+        int duration_hundredths = duration_centis % 100;
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        int duration_seconds_edit = duration_seconds;
+        if (ImGui::InputInt("Sec", &duration_seconds_edit, 1, 10)) {
+            if (duration_seconds_edit < 0) duration_seconds_edit = 0;
+            duration_centis = duration_seconds_edit * 100 + duration_hundredths;
+            curve->duration = ClampCurveDuration((float)duration_centis / 100.0f);
+            editor->project->modified = true;
+        }
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        int duration_hundredths_edit = duration_hundredths;
+        if (ImGui::InputInt("1/100", &duration_hundredths_edit, 1, 10)) {
+            if (duration_hundredths_edit < 0) duration_hundredths_edit = 0;
+            if (duration_hundredths_edit > 99) duration_hundredths_edit = 99;
+            duration_centis = duration_seconds * 100 + duration_hundredths_edit;
+            curve->duration = ClampCurveDuration((float)duration_centis / 100.0f);
             editor->project->modified = true;
         }
         if (ImGui::IsItemHovered()) {
@@ -106,6 +135,29 @@ void RenderCurveEditorModal(EditorContext* editor) {
         draw_list->AddRect(canvas_pos, 
                           ImVec2(canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y),
                           IM_COL32(100, 100, 100, 255));
+
+        // Bottom timecode labels (seconds.hundredths) mapped to current duration.
+        {
+            const int label_steps = 10;
+            char tc[32];
+            for (int i = 0; i <= label_steps; ++i) {
+                float t_norm = (float)i / (float)label_steps;
+                float t_sec = t_norm * curve->duration;
+                int tc_centis = (int)floorf(t_sec * 100.0f + 0.5f);
+                int tc_seconds = tc_centis / 100;
+                int tc_hundredths = tc_centis % 100;
+
+                snprintf(tc, sizeof(tc), "%d.%02d", tc_seconds, tc_hundredths);
+                ImVec2 text_size = ImGui::CalcTextSize(tc);
+                float label_x = canvas_pos.x + t_norm * canvas_size.x - text_size.x * 0.5f;
+                float min_x = canvas_pos.x + 2.0f;
+                float max_x = canvas_pos.x + canvas_size.x - text_size.x - 2.0f;
+                if (label_x < min_x) label_x = min_x;
+                if (label_x > max_x) label_x = max_x;
+                float label_y = canvas_pos.y + canvas_size.y - text_size.y - 2.0f;
+                draw_list->AddText(ImVec2(label_x, label_y), IM_COL32(170, 170, 170, 220), tc);
+            }
+        }
         
         // Draw curve line
         if (curve->point_count > 1) {
@@ -239,8 +291,12 @@ void RenderCurveEditorModal(EditorContext* editor) {
         // Point properties
         if (editor->selected_point_index >= 0 && editor->selected_point_index < curve->point_count) {
             rev::curve::Point* pt = &curve->points[editor->selected_point_index];
+            float point_time_sec = pt->t * curve->duration;
+            int point_centis = (int)floorf(point_time_sec * 100.0f + 0.5f);
+            int point_seconds = point_centis / 100;
+            int point_hundredths = point_centis % 100;
             ImGui::Text("Selected Point %d:", editor->selected_point_index);
-            ImGui::Text("Time: %.3f  |  Value: %.3f", pt->t, pt->v);
+            ImGui::Text("Time: %.3f (t)  |  %d.%02d s  |  Value: %.3f", pt->t, point_seconds, point_hundredths, pt->v);
             
             const char* ease_modes[] = {"Linear", "EaseIn", "EaseOut", "EaseInOut", "Smoothstep", "Hold"};
             int current_mode = (int)pt->mode;
@@ -473,8 +529,13 @@ void RenderShaderModal(EditorContext* editor) {
         editor->shader_modal_request_open = false;
     }
     
+    // Keep preview readable while this modal is open by disabling dim background.
+    ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    bool shader_popup_open = ImGui::BeginPopupModal("Shader Parameters", NULL, ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleColor();
+
     // ImGui shader modal (NULL = no close button, must use Close)
-    if (ImGui::BeginPopupModal("Shader Parameters", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (shader_popup_open) {
         ShaderCue* cue = &editor->editing_shader;
         
         // Auto-save: Apply changes to scene continuously
@@ -639,6 +700,12 @@ void RenderShaderModal(EditorContext* editor) {
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_warp >= 0 ? "[C]##warp" : "+##warp")) {
             OpenShaderCurve(cue->curve_warp, "Shader Warp", cue->warp);
+        }
+        {
+            float warp_wrap = cue->warp - floorf(cue->warp);
+            if (warp_wrap < 0.0f) warp_wrap += 1.0f;
+            float warp_deg = warp_wrap * 360.0f;
+            ImGui::Text("Warp %.3f | %.1f deg", cue->warp, warp_deg);
         }
         
         if (ImGui::Button("Randomize Values")) {
@@ -835,8 +902,13 @@ void RenderImageModal(EditorContext* editor) {
         editor->image_modal_request_open = false;
     }
     
+    // Keep preview readable while this modal is open by disabling dim background.
+    ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    bool image_popup_open = ImGui::BeginPopupModal("Image Settings", NULL, ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleColor();
+
     // Image modal (NULL = no close button)
-    if (ImGui::BeginPopupModal("Image Settings", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (image_popup_open) {
         ImageCue* cue = &editor->editing_image;
         
         // Auto-save: Apply changes to scene continuously
@@ -1104,8 +1176,13 @@ void RenderTextModal(EditorContext* editor) {
         editor->text_modal_request_open = false;
     }
     
+    // Keep preview readable while this modal is open by disabling dim background.
+    ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    bool text_popup_open = ImGui::BeginPopupModal("Text Settings", NULL, ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleColor();
+
     // Text modal (NULL = no close button)
-    if (ImGui::BeginPopupModal("Text Settings", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (text_popup_open) {
         TextCue* cue = &editor->editing_text;
         
         // Auto-save: Apply changes to scene continuously

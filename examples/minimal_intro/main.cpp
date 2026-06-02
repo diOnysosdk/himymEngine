@@ -10,6 +10,7 @@
 #include "rev_gltf.h"
 #endif
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 
 // Pull shared types into the global scope for this file.
@@ -28,7 +29,6 @@ using rev::runtime::RenderTextToTexture;
 using rev::runtime::MeshCue;
 using rev::runtime::LoadImageCue;
 using rev::runtime::LoadTextCue;
-using rev::runtime::LoadMusicCue;
 using rev::runtime::LoadMeshCue;
 using rev::runtime::LoadCurves;
 using rev::runtime::Mat4Perspective;
@@ -66,13 +66,33 @@ static const int kAudioFrames     = 2048;   // frames per waveOut buffer
 static const int kAudioBufCount   = 4;      // ring-buffer depth
 
 struct AudioState {
-    rev::xm::Player* player;
+    volatile rev::xm::Player* player;
     HWAVEOUT         wave_out;
     WAVEHDR          headers[kAudioBufCount];
     int16_t*         pcm[kAudioBufCount];
     float            fbuf[kAudioFrames * kAudioChannels];
     volatile bool    stop;
 };
+
+static void FillAudioBufferFromPlayer(volatile rev::xm::Player* player,
+                                      float* fbuf,
+                                      int16_t* pcm,
+                                      int frame_count) {
+    const int sample_count = frame_count * kAudioChannels;
+    if (player) {
+        rev::xm::Player* current_player = const_cast<rev::xm::Player*>(player);
+        rev::xm::Update(current_player, fbuf, frame_count);
+    } else {
+        memset(fbuf, 0, sizeof(float) * sample_count);
+    }
+
+    for (int s = 0; s < sample_count; ++s) {
+        float v = fbuf[s];
+        if (v >  1.0f) v =  1.0f;
+        if (v < -1.0f) v = -1.0f;
+        pcm[s] = (int16_t)(v * 32767.0f);
+    }
+}
 
 static DWORD WINAPI AudioThreadProc(LPVOID param) {
     AudioState* a = (AudioState*)param;
@@ -87,13 +107,7 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
 
     // Pre-fill and submit all buffers before entering the loop
     for (int i = 0; i < kAudioBufCount; ++i) {
-        rev::xm::Update(a->player, a->fbuf, kAudioFrames);
-        for (int s = 0; s < kAudioFrames * kAudioChannels; ++s) {
-            float v = a->fbuf[s];
-            if (v >  1.0f) v =  1.0f;
-            if (v < -1.0f) v = -1.0f;
-            a->pcm[i][s] = (int16_t)(v * 32767.0f);
-        }
+        FillAudioBufferFromPlayer(a->player, a->fbuf, a->pcm[i], kAudioFrames);
         waveOutWrite(a->wave_out, &a->headers[i], sizeof(WAVEHDR));
     }
 
@@ -101,13 +115,7 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
         for (int i = 0; i < kAudioBufCount; ++i) {
             if (a->headers[i].dwFlags & WHDR_DONE) {
                 a->headers[i].dwFlags &= ~WHDR_DONE;
-                rev::xm::Update(a->player, a->fbuf, kAudioFrames);
-                for (int s = 0; s < kAudioFrames * kAudioChannels; ++s) {
-                    float v = a->fbuf[s];
-                    if (v >  1.0f) v =  1.0f;
-                    if (v < -1.0f) v = -1.0f;
-                    a->pcm[i][s] = (int16_t)(v * 32767.0f);
-                }
+                FillAudioBufferFromPlayer(a->player, a->fbuf, a->pcm[i], kAudioFrames);
                 waveOutWrite(a->wave_out, &a->headers[i], sizeof(WAVEHDR));
             }
         }
@@ -204,6 +212,27 @@ static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
             }
             break;
     }
+}
+
+static float Clamp01(float v) {
+    if (v < 0.0f) return 0.0f;
+    if (v > 1.0f) return 1.0f;
+    return v;
+}
+
+static float ComputeShaderCueEnvelope(float local_time, float cue_duration, float fade_in, float fade_out) {
+    float env = 1.0f;
+
+    if (fade_in > 0.0001f) {
+        env *= Clamp01(local_time / fade_in);
+    }
+
+    if (fade_out > 0.0001f && cue_duration > 0.0001f) {
+        float time_to_end = cue_duration - local_time;
+        env *= Clamp01(time_to_end / fade_out);
+    }
+
+    return env;
 }
 
 // Shader cue data structure (runtime-local; editor uses its own ShaderCue with more fields)
@@ -666,7 +695,117 @@ int LoadAllImageCues(const char* path, ImageCue* cues, int max_cues) {
     return count;
 }
 
-// LoadMusicCue, LoadImageCue, LoadTextCue, LoadImageTexture,
+struct RuntimePlaybackSettings {
+    float total_duration;
+    bool intro_loop;
+    bool music_loop;
+};
+
+bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* settings) {
+    if (!settings) return false;
+    settings->total_duration = 0.0f;
+    settings->intro_loop = false;
+    settings->music_loop = false;
+
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return false;
+
+    char line[512];
+    bool in_metadata = false;
+    bool found = false;
+
+    while (fgets(line, sizeof(line), f)) {
+        char* s = line;
+        while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+
+        if (strstr(s, "[metadata]")) {
+            in_metadata = true;
+            continue;
+        }
+        if (s[0] == '[' && in_metadata) {
+            break;
+        }
+        if (!in_metadata || s[0] == '#' || s[0] == '\0' || s[0] == '\n') {
+            continue;
+        }
+
+        int bool_value = 0;
+        if (sscanf_s(s, "total_duration=%f", &settings->total_duration) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "intro_loop=%d", &bool_value) == 1) {
+            settings->intro_loop = (bool_value != 0);
+            found = true;
+        } else if (sscanf_s(s, "music_loop=%d", &bool_value) == 1) {
+            settings->music_loop = (bool_value != 0);
+            found = true;
+        }
+    }
+
+    fclose(f);
+    return found;
+}
+
+int LoadAllMusicCues(const char* path, MusicCue* cues, int max_cues) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+
+    char line[1024];
+    bool in_section = false;
+    int count = 0;
+
+    while (fgets(line, sizeof(line), f) && count < max_cues) {
+        char* s = line;
+        while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+
+        if (strstr(s, "[music_cues]")) {
+            in_section = true;
+            continue;
+        }
+        if (s[0] == '[' && in_section) {
+            break;
+        }
+        if (!in_section || s[0] == '#' || s[0] == '\0' || s[0] == '\n') {
+            continue;
+        }
+
+        MusicCue* cue = &cues[count];
+        memset(cue, 0, sizeof(MusicCue));
+
+        char* pipe1 = strchr(s, '|');
+        if (!pipe1) continue;
+        size_t key_len = (size_t)(pipe1 - s);
+        if (key_len >= sizeof(cue->asset_key)) key_len = sizeof(cue->asset_key) - 1;
+        strncpy_s(cue->asset_key, s, key_len);
+        cue->asset_key[key_len] = '\0';
+
+        char* pipe2 = strchr(pipe1 + 1, '|');
+        if (!pipe2) continue;
+        size_t path_len = (size_t)(pipe2 - (pipe1 + 1));
+        if (path_len >= sizeof(cue->asset_path)) path_len = sizeof(cue->asset_path) - 1;
+        strncpy_s(cue->asset_path, pipe1 + 1, path_len);
+        cue->asset_path[path_len] = '\0';
+
+        int parsed = sscanf_s(pipe2 + 1, "%f|%f", &cue->cue_start, &cue->cue_end);
+        if (parsed >= 1) {
+            if (parsed < 2) cue->cue_end = -1.0f;
+            ++count;
+        }
+    }
+
+    fclose(f);
+    return count;
+}
+
+static float ResolveCueEnd(float cue_end, float fallback_end) {
+    if (cue_end < 0.0f) {
+        return fallback_end;
+    }
+    return cue_end;
+}
+
+// LoadImageCue, LoadTextCue, LoadImageTexture,
 // LoadImageTextureFromMemory, RenderTextToTexture, and ComputeEffectOpacity
 // are all provided by rev_runtime (via the using declarations at the top).
 
@@ -674,10 +813,21 @@ int LoadAllImageCues(const char* path, ImageCue* cues, int max_cues) {
 const char* vertex_shader = R"(
 #version 330 core
 out vec2 uv;
+uniform float u_warp;
 void main() {
     float x = -1.0 + float((gl_VertexID & 1) << 2);
     float y = -1.0 + float((gl_VertexID & 2) << 1);
-    uv = vec2((x + 1.0) * 0.5, (y + 1.0) * 0.5);
+
+    vec2 base_uv = vec2((x + 1.0) * 0.5, (y + 1.0) * 0.5);
+    vec2 p = base_uv * 2.0 - 1.0;
+    float r2 = dot(p, p);
+    vec2 swirl = vec2(-p.y, p.x);
+    float warp = clamp(u_warp, 0.0, 1.0);
+
+    // Small common UV warp so every preset reacts to the warp parameter.
+    base_uv += swirl * (0.03 * warp) * (0.2 + 0.8 * max(0.0, 1.0 - r2));
+    uv = base_uv;
+
     gl_Position = vec4(x, y, 0.0, 1.0);
 }
 )";
@@ -776,28 +926,13 @@ uniform vec3 u_palette_mid;
 uniform vec3 u_palette_high;
 
 void main() {
-    // Three horizontal bands with left-to-right color fades
-    // Bottom band: palette_low
-    // Middle band: palette_mid
-    // Top band: palette_high
-    
-    float y = uv.y;  // 0 at bottom, 1 at top
-    float x = uv.x;  // 0 at left, 1 at right (for horizontal fade)
-    
-    vec3 col;
-    
-    // Bottom third (0.0 - 0.33): palette_low fades from black to full color
-    if (y < 0.33) {
-        col = u_palette_low * x;
-    }
-    // Middle third (0.33 - 0.66): palette_mid fades from black to full color
-    else if (y < 0.66) {
-        col = u_palette_mid * x;
-    }
-    // Top third (0.66 - 1.0): palette_high fades from black to full color
-    else {
-        col = u_palette_high * x;
-    }
+    // Smooth vertical blend across low -> mid -> high (no hard band edges).
+    float y = uv.y;
+    float low_to_mid = smoothstep(0.20, 0.55, y);
+    float mid_to_high = smoothstep(0.45, 0.80, y);
+
+    vec3 low_mid = mix(u_palette_low, u_palette_mid, low_to_mid);
+    vec3 col = mix(low_mid, u_palette_high, mid_to_high);
     
     fragColor = vec4(col, 1.0);
 }
@@ -1903,6 +2038,93 @@ void main() {
         fragColor = vec4(col, u_fade_base);
     }
     )"
+        ,
+
+        // Shader 18: Star Scroller 360
+        R"(
+        #version 330 core
+        in vec2 uv;
+        out vec4 fragColor;
+
+        uniform float u_time;
+        uniform vec2 u_resolution;
+        uniform vec3 u_palette_low;
+        uniform vec3 u_palette_mid;
+        uniform vec3 u_palette_high;
+        uniform float u_speed;
+        uniform float u_intensity;
+        uniform float u_warp;
+        uniform float u_exposure_base;
+        uniform float u_fade_base;
+
+        #define PI 3.14159265359
+
+        float hash21(vec2 p) {
+            vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+            p3 += dot(p3, p3.yzx + 33.33);
+            return fract((p3.x + p3.y) * p3.z);
+        }
+
+        float starLayer(vec2 p, vec2 dir, vec2 perp, float t_scroll, float t_twinkle, float scale, float threshold, float base_size) {
+            vec2 q = (p + dir * t_scroll * (0.35 + scale * 0.0015)) * scale;
+            vec2 id = floor(q);
+            vec2 gv = fract(q) - 0.5;
+
+            float rnd = hash21(id);
+            vec2 jitter = vec2(hash21(id + 12.7), hash21(id + 78.3)) - 0.5;
+            gv -= jitter * 0.8;
+
+            float along = dot(gv, dir);
+            float across = dot(gv, perp);
+
+            float core = smoothstep(base_size, 0.0, length(gv));
+            float streak = smoothstep(base_size * 1.8, 0.0, abs(across)) *
+                           smoothstep(base_size * 10.0, 0.0, abs(along));
+
+            float phase_a = hash21(id + 31.7);
+            float phase_b = hash21(id + 83.9);
+            float rate_a = mix(0.10, 0.30, hash21(id + 11.3));
+            float rate_b = mix(0.03, 0.09, hash21(id + 57.1));
+
+            float shimmer = 0.86 + 0.14 * sin(t_twinkle * (6.2831853 * rate_a) + phase_a * 6.2831853);
+            float glint_cycle = fract(t_twinkle * rate_b + phase_b);
+            float glint = smoothstep(0.00, 0.38, glint_cycle) * (1.0 - smoothstep(0.86, 1.00, glint_cycle));
+            glint = mix(0.62, 1.00, glint);
+
+            float twinkle = shimmer * glint;
+            return max(core, streak * 0.75) * step(threshold, rnd) * twinkle;
+        }
+
+        void main() {
+            vec2 aspect = vec2(u_resolution.x / u_resolution.y, 1.0);
+            vec2 p = (uv - 0.5) * aspect;
+
+            float t = u_time * max(u_speed, 0.001);
+            float angle = fract(u_warp) * (2.0 * PI);
+            vec2 dir = vec2(cos(angle), sin(angle));
+            vec2 perp = vec2(-dir.y, dir.x);
+
+            float tw_t = u_time;
+            float layer_far = starLayer(p, dir, perp, t, tw_t, 42.0, 0.970, 0.050);
+            float layer_mid = starLayer(p + perp * 0.13, dir, perp, t * 1.35, tw_t, 75.0, 0.978, 0.040);
+            float layer_near = starLayer(p - perp * 0.18, dir, perp, t * 1.95, tw_t, 120.0, 0.985, 0.033);
+
+            float stars = layer_far + layer_mid * 1.25 + layer_near * 1.6;
+
+            float lane = 0.5 + 0.5 * sin(dot(p, perp) * 3.5 + t * 0.6);
+            vec3 bg = mix(u_palette_low * 0.10, u_palette_mid * 0.14, lane);
+
+            vec3 star_col = mix(u_palette_mid, u_palette_high, clamp(stars, 0.0, 1.0));
+            vec3 col = bg + star_col * stars * (1.1 + 0.9 * u_intensity);
+
+            float vignette = smoothstep(1.25, 0.10, length(p));
+            col *= vignette;
+            col *= max(u_exposure_base, 0.0);
+            col = 1.0 - exp(-col);
+
+            fragColor = vec4(col, u_fade_base);
+        }
+        )"
 };
 
 int main(int argc, char* argv[]) {
@@ -2003,10 +2225,15 @@ int main(int argc, char* argv[]) {
                 i, curves[i].duration, curves[i].point_count, (int)curves[i].wrap_mode);
         }
     }
+
+    RuntimePlaybackSettings playback_settings = {};
+    LoadRuntimePlaybackSettings(cues_path, &playback_settings);
     
-    // Load music cue
-    MusicCue music_cue = {};
-    bool has_music = LoadMusicCue(cues_path, &music_cue);
+    // Load music cues (multi-cue support)
+    const int kMaxMusicCues = 32;
+    MusicCue music_cues[kMaxMusicCues] = {};
+    int music_cue_count = LoadAllMusicCues(cues_path, music_cues, kMaxMusicCues);
+    bool has_music = (music_cue_count > 0);
     
     // Load image cues (multi-cue support)
     const int kMaxImageCues = 32;
@@ -2061,7 +2288,13 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < mesh_cue_count; ++i) {
         if (mesh_cues[i].cue_end > total_duration) total_duration = mesh_cues[i].cue_end;
     }
-    if (has_music && music_cue.cue_end > total_duration) total_duration = music_cue.cue_end;
+    for (int i = 0; i < music_cue_count; ++i) {
+        float music_end = ResolveCueEnd(music_cues[i].cue_end, playback_settings.total_duration > 0.0f ? playback_settings.total_duration : total_duration);
+        if (music_end > total_duration) total_duration = music_end;
+    }
+    if (playback_settings.total_duration > 0.0f && playback_settings.total_duration > total_duration) {
+        total_duration = playback_settings.total_duration;
+    }
     
     // If no cues or all have 0 duration, use default
     if (total_duration <= 0.0f) total_duration = 10.0f;
@@ -2074,6 +2307,10 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
             mesh_cue_count,
             has_music ? "yes" : "no",
             total_duration);
+    printf("Playback: intro_loop=%s music_loop=%s music_cues=%d\n",
+           playback_settings.intro_loop ? "on" : "off",
+           playback_settings.music_loop ? "on" : "off",
+           music_cue_count);
     
     // Create window and OpenGL context
     rev::platform::WindowConfig config;
@@ -2356,20 +2593,33 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
         }
     }
     
-    // Load XM music if available
-    rev::xm::Player* xm_player = nullptr;
-    if (has_music && music_cue.asset_key[0] != '\0') {
+    struct LoadedMusicPlayer {
+        MusicCue cue;
+        rev::xm::Player* player;
+    };
+    LoadedMusicPlayer music_players[kMaxMusicCues] = {};
+    int loaded_music_player_count = 0;
+
+    for (int mi = 0; mi < music_cue_count && mi < kMaxMusicCues; ++mi) {
+        const MusicCue& cue = music_cues[mi];
+        if (cue.asset_key[0] == '\0') {
+            continue;
+        }
+
+        rev::xm::Player* player = nullptr;
 #ifdef HIMYM_PACKED_ASSETS
-        // Load from embedded data
-        const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(music_cue.asset_key, kPackedAssets, kPackedAssetCount);
+        const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(cue.asset_key, kPackedAssets, kPackedAssetCount);
         if (pa) {
-            xm_player = rev::xm::CreatePlayer(pa->data, (long)pa->size);
-            if (xm_player)
-                LOGV("Loaded music (packed): %s\n", music_cue.asset_key);
+            player = rev::xm::CreatePlayer(pa->data, (long)pa->size);
+            if (player) {
+                LOGV("Loaded music cue %d (packed): %s\n", mi, cue.asset_key);
+            }
+        } else {
+            printf("WARNING: Packed music asset not found: %s\n", cue.asset_key);
         }
 #else
-        char music_path[512];
-        strncpy_s(music_path, music_cue.asset_path, _TRUNCATE);
+        char music_path[512] = {};
+        strncpy_s(music_path, cue.asset_path, _TRUNCATE);
 
         FILE* xm_file = nullptr;
         fopen_s(&xm_file, music_path, "rb");
@@ -2378,18 +2628,33 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
             long xm_size = ftell(xm_file);
             fseek(xm_file, 0, SEEK_SET);
 
-            unsigned char* xm_data = new unsigned char[xm_size];
-            fread(xm_data, 1, xm_size, xm_file);
+            if (xm_size > 0) {
+                unsigned char* xm_data = new unsigned char[xm_size];
+                fread(xm_data, 1, xm_size, xm_file);
+                fclose(xm_file);
+                xm_file = nullptr;
+
+                player = rev::xm::CreatePlayer(xm_data, xm_size);
+                delete[] xm_data;
+            }
+        }
+        if (xm_file) {
             fclose(xm_file);
+        }
 
-            xm_player = rev::xm::CreatePlayer(xm_data, xm_size);
-            delete[] xm_data;
-
-            if (xm_player)
-                  LOGV("Loaded music: %s (start: %.2f, end: %.2f)\n",
-                       music_cue.asset_key, music_cue.cue_start, music_cue.cue_end);
+        if (player) {
+            LOGV("Loaded music cue %d: %s (start: %.2f, end: %.2f)\n",
+                 mi, cue.asset_key, cue.cue_start, cue.cue_end);
+        } else {
+            printf("WARNING: Failed to load music cue %d: %s\n", mi, cue.asset_path);
         }
 #endif
+
+        if (player) {
+            music_players[loaded_music_player_count].cue = cue;
+            music_players[loaded_music_player_count].player = player;
+            ++loaded_music_player_count;
+        }
     }
     
     // Load image texture
@@ -2485,11 +2750,241 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
             LOGV("Text cue [%d] effect mode %d renders dynamically per frame\n", ti, text_cue.effect_type);
         }
     }
+
+    // Warm-up prerender: touch all major render paths before playback starts.
+    // This helps avoid first-frame hitches from late GL driver/setup work.
+    {
+        const int kWarmupFrames = 2;
+        const double warmup_begin = rev::platform::GetTime();
+
+        typedef void (*PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
+        typedef void (*PFNGLUNIFORM4FVPROC)(int, int, const float*);
+        auto glUniformMatrix4fv_fn = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
+        auto glUniform4fv_fn = (PFNGLUNIFORM4FVPROC)wglGetProcAddress("glUniform4fv");
+
+        for (int wf = 0; wf < kWarmupFrames; ++wf) {
+            int ww = window->win_width  > 0 ? window->win_width  : config.width;
+            int wh = window->win_height > 0 ? window->win_height : config.height;
+            glViewport(0, 0, ww, wh);
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            glBindVertexArray(vao);
+
+            // Warm all shader scene programs once.
+            glDisable(GL_DEPTH_TEST);
+            glDepthMask(GL_FALSE);
+            glDisable(GL_BLEND);
+            for (int si = 0; si < shader_cue_count; ++si) {
+                ShaderProgramState* shader_state = get_shader_program(shader_cues[si].shader_scene_id);
+                if (!shader_state) continue;
+                rev::shader::Use(shader_state->prog);
+                if (shader_state->u_time >= 0) {
+                    rev::shader::SetFloat(shader_state->prog, shader_state->u_time, 0.0f);
+                }
+                if (shader_state->u_resolution >= 0) {
+                    rev::shader::SetVec2(shader_state->prog, shader_state->u_resolution,
+                                         static_cast<float>(config.width),
+                                         static_cast<float>(config.height));
+                }
+                if (shader_state->u_palette_low >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->u_palette_low,
+                                         shader_cues[si].palette_low[0], shader_cues[si].palette_low[1], shader_cues[si].palette_low[2]);
+                }
+                if (shader_state->u_palette_mid >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->u_palette_mid,
+                                         shader_cues[si].palette_mid[0], shader_cues[si].palette_mid[1], shader_cues[si].palette_mid[2]);
+                }
+                if (shader_state->u_palette_high >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->u_palette_high,
+                                         shader_cues[si].palette_high[0], shader_cues[si].palette_high[1], shader_cues[si].palette_high[2]);
+                }
+                if (shader_state->u_speed >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_speed, shader_cues[si].speed);
+                if (shader_state->u_intensity >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_intensity, shader_cues[si].intensity);
+                if (shader_state->u_warp >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_warp, shader_cues[si].warp);
+                if (shader_state->u_exposure_base >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_exposure_base, shader_cues[si].exposure_base);
+                if (shader_state->u_fade_base >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_fade_base, shader_cues[si].fade_base);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            }
+
+            // Warm sprite path with loaded image/text textures.
+            if (sprite_shader) {
+                rev::shader::Use(sprite_shader);
+                int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
+                int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
+                int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
+                int u_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
+                if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, -0.95f, -0.95f);
+                if (u_sz >= 0) rev::shader::SetVec2(sprite_shader, u_sz, 0.05f, 0.05f);
+                if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
+                if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa, 1.0f);
+
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
+
+                for (int ii = 0; ii < image_cue_count; ++ii) {
+                    if (!image_loaded[ii] || image_texes[ii].texture_id == 0) continue;
+                    glBindTexture(GL_TEXTURE_2D, image_texes[ii].texture_id);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                }
+                for (int ti = 0; ti < text_cue_count; ++ti) {
+                    if (!text_loaded[ti] || text_texes[ti].texture_id == 0) continue;
+                    glBindTexture(GL_TEXTURE_2D, text_texes[ti].texture_id);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                }
+
+                // Warm dynamic text raster path once per cue.
+                for (int ti = 0; ti < text_cue_count; ++ti) {
+                    TextCue& text_cue = text_cues[ti];
+                    if (text_cue.text[0] == '\0' || text_cue.effect_type < 3 || text_force_baked[ti]) continue;
+                    TextEffectFrame fx = {};
+                    if (!BuildTextEffectFrame(&text_cue, text_cue.cue_start, &fx)) continue;
+                    TextTexture tmp = {};
+                    if (RenderTextToTexture(fx.text, text_cue.font_name, text_cue.size,
+                                            text_cue.color.r, text_cue.color.g, text_cue.color.b, &tmp)) {
+                        glBindTexture(GL_TEXTURE_2D, tmp.texture_id);
+                        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                        if (tmp.texture_id != 0) {
+                            glDeleteTextures(1, &tmp.texture_id);
+                        }
+                    }
+                }
+                glDisable(GL_BLEND);
+            }
+
+            // Warm mesh path (including per-slot materials/textures).
+            if (mesh_shader && has_mesh) {
+                glEnable(GL_DEPTH_TEST);
+                glDepthMask(GL_TRUE);
+                glDisable(GL_BLEND);
+                rev::shader::Use(mesh_shader);
+
+                float aspect = (float)config.width / (float)config.height;
+                float eye[3]    = {0.0f, 0.0f, 5.0f};
+                float center[3] = {0.0f, 0.0f, 0.0f};
+                float up_v[3]   = {0.0f, 1.0f, 0.0f};
+                float view_mat[16], proj_mat[16], model_mat[16];
+                Mat4Perspective(proj_mat, 3.14159265f * 0.25f, aspect, 0.1f, 100.0f);
+                Mat4LookAt(view_mat, eye, center, up_v);
+
+                int loc_model = rev::shader::GetUniformLocation(mesh_shader, "u_model");
+                int loc_view = rev::shader::GetUniformLocation(mesh_shader, "u_view");
+                int loc_proj = rev::shader::GetUniformLocation(mesh_shader, "u_projection");
+                int loc_light = rev::shader::GetUniformLocation(mesh_shader, "u_light_pos");
+                int loc_vpos = rev::shader::GetUniformLocation(mesh_shader, "u_view_pos");
+                int loc_color = rev::shader::GetUniformLocation(mesh_shader, "u_color");
+                int loc_metal = rev::shader::GetUniformLocation(mesh_shader, "u_metallic");
+                int loc_rough = rev::shader::GetUniformLocation(mesh_shader, "u_roughness");
+                int loc_has_tex = rev::shader::GetUniformLocation(mesh_shader, "u_has_texture");
+                int loc_tex = rev::shader::GetUniformLocation(mesh_shader, "u_base_color_texture");
+
+                if (glUniformMatrix4fv_fn && loc_view >= 0) glUniformMatrix4fv_fn(loc_view, 1, 0, view_mat);
+                if (glUniformMatrix4fv_fn && loc_proj >= 0) glUniformMatrix4fv_fn(loc_proj, 1, 0, proj_mat);
+                if (loc_vpos >= 0) rev::shader::SetVec3(mesh_shader, loc_vpos, eye[0], eye[1], eye[2]);
+
+                for (int mi = 0; mi < mesh_cue_count; ++mi) {
+                    MeshCue& mesh_cue = mesh_cues[mi];
+                    rev::mesh::Mesh* mesh_obj = mesh_objs[mi];
+                    if (!mesh_obj) continue;
+
+                    Mat4Model(model_mat, mesh_cue.pos, mesh_cue.rot, mesh_cue.scale);
+                    if (glUniformMatrix4fv_fn && loc_model >= 0) glUniformMatrix4fv_fn(loc_model, 1, 0, model_mat);
+
+                    float light_pos[3] = {3.0f, 5.0f, 4.0f};
+                    if (mesh_obj->has_imported_light) {
+                        light_pos[0] = mesh_obj->imported_light_pos[0];
+                        light_pos[1] = mesh_obj->imported_light_pos[1];
+                        light_pos[2] = mesh_obj->imported_light_pos[2];
+                    }
+                    if (loc_light >= 0) rev::shader::SetVec3(mesh_shader, loc_light, light_pos[0], light_pos[1], light_pos[2]);
+
+                    if (loc_metal >= 0) rev::shader::SetFloat(mesh_shader, loc_metal, mesh_cue.metallic);
+                    if (loc_rough >= 0) rev::shader::SetFloat(mesh_shader, loc_rough, mesh_cue.roughness);
+
+                    bool rendered_slot = false;
+                    for (uint32_t si = 0; si < mesh_obj->material_slot_count; ++si) {
+                        const rev::mesh::MaterialSlot& slot = mesh_obj->material_slots[si];
+                        if (loc_color >= 0 && glUniform4fv_fn) {
+                            float slot_r = (float)((slot.diffuse_color >> 0) & 0xFF) / 255.0f;
+                            float slot_g = (float)((slot.diffuse_color >> 8) & 0xFF) / 255.0f;
+                            float slot_b = (float)((slot.diffuse_color >> 16) & 0xFF) / 255.0f;
+                            float slot_a = (float)((slot.diffuse_color >> 24) & 0xFF) / 255.0f;
+                            float col[4] = { mesh_cue.color[0] * slot_r, mesh_cue.color[1] * slot_g, mesh_cue.color[2] * slot_b, mesh_cue.color[3] * slot_a };
+                            glUniform4fv_fn(loc_color, 1, col);
+                        }
+                        unsigned int tex_id = slot.base_color_texture;
+                        if (tex_id == 0) tex_id = mesh_obj->base_color_texture;
+                        if (tex_id != 0) {
+                            glBindTexture(GL_TEXTURE_2D, tex_id);
+                            if (loc_tex >= 0) rev::shader::SetInt(mesh_shader, loc_tex, 0);
+                            if (loc_has_tex >= 0) rev::shader::SetInt(mesh_shader, loc_has_tex, 1);
+                        } else if (loc_has_tex >= 0) {
+                            rev::shader::SetInt(mesh_shader, loc_has_tex, 0);
+                        }
+                        rev::mesh::Render(mesh_obj, (int)si);
+                        rendered_slot = true;
+                    }
+                    if (!rendered_slot) {
+                        if (loc_color >= 0 && glUniform4fv_fn) {
+                            float col[4] = { mesh_cue.color[0], mesh_cue.color[1], mesh_cue.color[2], mesh_cue.color[3] };
+                            glUniform4fv_fn(loc_color, 1, col);
+                        }
+                        unsigned int tex_id = mesh_obj->base_color_texture;
+                        if (tex_id != 0) {
+                            glBindTexture(GL_TEXTURE_2D, tex_id);
+                            if (loc_tex >= 0) rev::shader::SetInt(mesh_shader, loc_tex, 0);
+                            if (loc_has_tex >= 0) rev::shader::SetInt(mesh_shader, loc_has_tex, 1);
+                        } else if (loc_has_tex >= 0) {
+                            rev::shader::SetInt(mesh_shader, loc_has_tex, 0);
+                        }
+                        rev::mesh::Render(mesh_obj, -1);
+                    }
+                }
+
+                glDisable(GL_DEPTH_TEST);
+                glDepthMask(GL_FALSE);
+            }
+
+            rev::platform::SwapBuffers(window);
+            rev::platform::PollEvents(window);
+        }
+
+        const double warmup_end = rev::platform::GetTime();
+        printf("Warm-up prerender complete: %d frames in %.3f s\n", kWarmupFrames, warmup_end - warmup_begin);
+    }
     
     // Start audio thread
     AudioState* audio_state = nullptr;
     HANDLE audio_thread = nullptr;
-    if (xm_player) {
+    int active_music_index = -1;
+    rev::xm::Player* active_music_player = nullptr;
+    bool music_finish_latched = false;
+    if (loaded_music_player_count > 0) {
+        float latest_start = -1.0f;
+        float earliest_start = 1.0e30f;
+        int earliest_index = 0;
+        for (int mi = 0; mi < loaded_music_player_count; ++mi) {
+            if (music_players[mi].cue.cue_start < earliest_start) {
+                earliest_start = music_players[mi].cue.cue_start;
+                earliest_index = mi;
+            }
+            float cue_end = ResolveCueEnd(music_players[mi].cue.cue_end, total_duration);
+            if (0.0f >= music_players[mi].cue.cue_start && 0.0f <= cue_end) {
+                if (music_players[mi].cue.cue_start >= latest_start) {
+                    latest_start = music_players[mi].cue.cue_start;
+                    active_music_index = mi;
+                }
+            }
+        }
+        if (active_music_index < 0) {
+            active_music_index = earliest_index;
+        }
+        if (active_music_index >= 0) {
+            active_music_player = music_players[active_music_index].player;
+        }
+    }
+
+    if (loaded_music_player_count > 0) {
         WAVEFORMATEX wfx = {};
         wfx.wFormatTag      = WAVE_FORMAT_PCM;
         wfx.nChannels       = (WORD)kAudioChannels;
@@ -2500,7 +2995,7 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
 
         audio_state = new AudioState();
         memset(audio_state, 0, sizeof(AudioState));
-        audio_state->player = xm_player;
+    audio_state->player = active_music_player;
         audio_state->stop   = false;
 
         if (waveOutOpen(&audio_state->wave_out, WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL) == MMSYSERR_NOERROR) {
@@ -2516,12 +3011,59 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
     // Main loop
     double start_time = rev::platform::GetTime();
     double prev_time = start_time;
+    int debug_frame = 0;
 
     while (rev::platform::PollEvents(window) && !window->should_close) {
         double current_time = rev::platform::GetTime();
         float time = static_cast<float>(current_time - start_time);
         float dt = static_cast<float>(current_time - prev_time);
         prev_time = current_time;
+
+        if (audio_state && loaded_music_player_count > 0) {
+            // music_loop=true means one continuously looping track for the project;
+            // avoid timeline-driven cue switching to prevent restart lock/stall.
+            if (!playback_settings.music_loop) {
+                int new_music_index = -1;
+                float latest_start = -1.0f;
+                for (int mi = 0; mi < loaded_music_player_count; ++mi) {
+                    float cue_end = ResolveCueEnd(music_players[mi].cue.cue_end, total_duration);
+                    if (time >= music_players[mi].cue.cue_start && time <= cue_end) {
+                        if (music_players[mi].cue.cue_start >= latest_start) {
+                            latest_start = music_players[mi].cue.cue_start;
+                            new_music_index = mi;
+                        }
+                    }
+                }
+
+                if (new_music_index != active_music_index) {
+                    active_music_index = new_music_index;
+                    rev::xm::Player* selected_player = nullptr;
+                    if (active_music_index >= 0) {
+                        selected_player = music_players[active_music_index].player;
+                        if (selected_player) {
+                            rev::xm::SetPosition(selected_player, 0, 0);
+                        }
+                    }
+                    audio_state->player = selected_player;
+                    music_finish_latched = false;
+                }
+            }
+
+            if (playback_settings.music_loop && active_music_index >= 0) {
+                rev::xm::Player* selected_player = music_players[active_music_index].player;
+                if (selected_player) {
+                    bool finished = rev::xm::IsFinished(selected_player);
+                    if (finished) {
+                        if (!music_finish_latched) {
+                            rev::xm::SetPosition(selected_player, 0, 0);
+                            music_finish_latched = true;
+                        }
+                    } else {
+                        music_finish_latched = false;
+                    }
+                }
+            }
+        }
         
         // Clear the full physical window (letterbox bars go black too)
         int ww = window->win_width  > 0 ? window->win_width  : config.width;
@@ -2547,6 +3089,7 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
         glBindVertexArray(vao);
 
         // Clear depth buffer BEFORE drawing anything (shader background + layers)
+        glDepthMask(GL_TRUE);
         glClear(GL_DEPTH_BUFFER_BIT);
         
         // Disable depth test for background shader (fullscreen quad at infinite depth)
@@ -2554,7 +3097,13 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
         glDepthMask(GL_FALSE);
 
         // Build active shader layer list (supports stacked shader compositing).
-        struct ActiveShaderLayer { int cue_index; int layer_order; int layer_role; };
+        struct ActiveShaderLayer {
+            int cue_index;
+            int layer_order;
+            int layer_role;
+            float absolute_start;
+            float absolute_end;
+        };
         ActiveShaderLayer active_layers[16];
         int active_layer_count = 0;
         for (int i = 0; i < shader_cue_count && active_layer_count < 16; ++i) {
@@ -2562,7 +3111,16 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
             float cue_end = cue.cue_end;
             if (cue_end < 0.0f) cue_end = total_duration;
             if (time >= cue.cue_start && time <= cue_end) {
-                active_layers[active_layer_count++] = { i, cue.layer_order, cue.layer_role };
+                active_layers[active_layer_count++] = { i, cue.layer_order, cue.layer_role, cue.cue_start, cue_end };
+            }
+        }
+
+        if (g_verbose_logging && (debug_frame < 240) && (debug_frame % 30 == 0)) {
+            LOGV("[Frame %d] t=%.3f shader_layers=%d\n", debug_frame, time, active_layer_count);
+            if (active_layer_count > 0) {
+                const ShaderCue& dbg_cue = shader_cues[active_layers[0].cue_index];
+                LOGV("           first_shader id=%d layer=%d role=%d\n",
+                     dbg_cue.shader_scene_id, dbg_cue.layer_order, dbg_cue.layer_role);
             }
         }
 
@@ -2598,8 +3156,16 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
                 float anim_intensity = cue.intensity;
                 float anim_warp = cue.warp;
                 float anim_exposure = cue.exposure_base;
+                float anim_exposure_ramp = cue.exposure_ramp;
                 float anim_fade = cue.fade_base;
+                float anim_fade_ramp = cue.fade_ramp;
                 float anim_opacity = cue.opacity;
+
+                float cue_duration = active_layers[li].absolute_end - active_layers[li].absolute_start;
+                float local_time = elapsed_time;
+                if (local_time < 0.0f) local_time = 0.0f;
+                if (cue_duration > 0.0f && local_time > cue_duration) local_time = cue_duration;
+                elapsed_time = local_time;
 
                 if (elapsed_time >= 0.0f) {
                     if (cue.curve_palette_low_r >= 0 && cue.curve_palette_low_r < curve_count) {
@@ -2662,7 +3228,23 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
                         float t = elapsed_time / curves[cue.curve_opacity].duration;
                         anim_opacity = rev::curve::Evaluate(curves[cue.curve_opacity], t);
                     }
+                    if (cue.curve_exposure_ramp >= 0 && cue.curve_exposure_ramp < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_exposure_ramp].duration;
+                        anim_exposure_ramp = rev::curve::Evaluate(curves[cue.curve_exposure_ramp], t);
+                    }
+                    if (cue.curve_fade_ramp >= 0 && cue.curve_fade_ramp < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_fade_ramp].duration;
+                        anim_fade_ramp = rev::curve::Evaluate(curves[cue.curve_fade_ramp], t);
+                    }
                 }
+
+                anim_exposure = anim_exposure + anim_exposure_ramp * local_time;
+                anim_fade = anim_fade + anim_fade_ramp * local_time;
+
+                float envelope = ComputeShaderCueEnvelope(local_time, cue_duration, cue.fade_in, cue.fade_out);
+                anim_fade *= envelope;
+                if (anim_exposure < 0.0f) anim_exposure = 0.0f;
+                if (anim_fade < 0.0f) anim_fade = 0.0f;
 
                 // If the shader uses fade as alpha/intensity, fold layer opacity in there too.
                 anim_fade *= anim_opacity;
@@ -2743,11 +3325,29 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
             }
 
             // Bubble sort ascending (lower layer_order draws first = further back)
+            // Tie-break rule for same layer: mesh behind image behind text.
+            auto draw_priority = [](int type) {
+                // type: 0=image, 1=text, 2=mesh
+                if (type == 2) return 0; // mesh first (back)
+                if (type == 0) return 1; // image middle
+                return 2;                // text front
+            };
             for (int i = 0; i < ne - 1; i++)
                 for (int j = 0; j < ne - i - 1; j++)
-                    if (entries[j].layer > entries[j+1].layer) {
+                    if (entries[j].layer > entries[j+1].layer ||
+                        (entries[j].layer == entries[j+1].layer &&
+                         draw_priority(entries[j].type) > draw_priority(entries[j+1].type))) {
                         DrawEntry tmp = entries[j]; entries[j] = entries[j+1]; entries[j+1] = tmp;
                     }
+
+            if (g_verbose_logging && (debug_frame < 240) && (debug_frame % 30 == 0)) {
+                LOGV("           draw_entries=%d", ne);
+                for (int di = 0; di < ne && di < 8; ++di) {
+                    const char* type_name = (entries[di].type == 0) ? "img" : (entries[di].type == 1) ? "txt" : "msh";
+                    LOGV(" [%s L%d idx%d]", type_name, entries[di].layer, entries[di].cue_idx);
+                }
+                LOGV("\n");
+            }
 
             bool blend_on = false, depth_on = false;
 
@@ -2758,11 +3358,19 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
                     ImageCue& image_cue = image_cues[img_idx];
                     ImageTexture& image_tex = image_texes[img_idx];
 
-                    if (!blend_on) {
+                    // Mesh rendering may leave a different VAO (or VAO 0) bound.
+                    // Sprite fullscreen-quad draws require our gl_VertexID VAO.
+                    glBindVertexArray(vao);
+
+                    // 2D overlays must always render on top of 3D regardless of depth buffer state.
+                    if (depth_on) {
                         glDisable(GL_DEPTH_TEST);
                         glDepthMask(GL_FALSE);
+                        depth_on = false;
+                    }
+                    if (!blend_on) {
                         glEnable(GL_BLEND);
-                        blend_on = true; depth_on = false;
+                        blend_on = true;
                     }
                     ApplySpriteBlendMode(image_cue.blend_mode);
                     rev::shader::Use(sprite_shader);
@@ -2819,11 +3427,19 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
                     TextTexture& base_text_tex = text_texes[text_idx];
                     bool force_baked = text_force_baked[text_idx];
 
-                    if (!blend_on) {
+                    // Mesh rendering may leave a different VAO (or VAO 0) bound.
+                    // Sprite fullscreen-quad draws require our gl_VertexID VAO.
+                    glBindVertexArray(vao);
+
+                    // 2D overlays must always render on top of 3D regardless of depth buffer state.
+                    if (depth_on) {
                         glDisable(GL_DEPTH_TEST);
-                        glDepthMask(GL_FALSE);  // Disable depth writes for sprites
+                        glDepthMask(GL_FALSE);
+                        depth_on = false;
+                    }
+                    if (!blend_on) {
                         glEnable(GL_BLEND);
-                        blend_on = true; depth_on = false;
+                        blend_on = true;
                     }
                     ApplySpriteBlendMode(text_cue.blend_mode);
                     rev::shader::Use(sprite_shader);
@@ -2926,12 +3542,16 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
 
                     if (!depth_on) {
                         glEnable(0x0B71);        // GL_DEPTH_TEST
+                        glDepthMask(GL_TRUE);    // Re-enable depth writes after 2D overlay passes
                         // Don't clear depth here - already cleared before layer pass
                         depth_on = true;
                     }
                     rev::shader::Use(mesh_shader);
                     
                     // Animated transform (start with cue values)
+
+                // Ensure next frame can clear depth regardless of what the last layer type was.
+                glDepthMask(GL_TRUE);
                     float anim_pos[3] = {mesh_cue.pos[0], mesh_cue.pos[1], mesh_cue.pos[2]};
                     float anim_rot[3] = {mesh_cue.rot[0], mesh_cue.rot[1], mesh_cue.rot[2]};
                     float anim_scale[3] = {mesh_cue.scale[0], mesh_cue.scale[1], mesh_cue.scale[2]};
@@ -3009,20 +3629,17 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
                         }
                     }
                     
-                    // Update and apply animation if present
+                    // Update and apply animation if present.
+                    // Imported multi-node meshes use per-node delta matrices later during slot draws.
 #if defined(REV_GLTF_AVAILABLE)
                     if (mesh_obj->current_animation >= 0) {
-                        // Update animation time
-                        rev::gltf::UpdateMeshAnimation(mesh_obj, dt);
-                        
-                        // Evaluate animation at current time
                         rev::gltf::Animation* anims = (rev::gltf::Animation*)mesh_obj->animation_data;
-                        if (anims) {
+                        if (anims && (!mesh_obj->imported_nodes || mesh_obj->imported_node_count == 0)) {
+                            rev::gltf::UpdateMeshAnimation(mesh_obj, dt);
                             float translation[3], rotation[4], scale[3];
                             rev::gltf::EvaluateAnimation(&anims[mesh_obj->current_animation],
                                                         mesh_obj->animation_time,
                                                         translation, rotation, scale);
-                            // Apply animation transform on top of cue transform
                             rev::gltf::ApplyAnimationTransform(anim_pos, anim_rot, anim_scale,
                                                               translation, rotation, scale);
                         }
@@ -3053,8 +3670,29 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
                     Mat4Model(model_mat, anim_pos, anim_rot, anim_scale);  // Use animated transform
                     typedef void (*PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
                     auto glUniformMatrix4fv_fn = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
+                    int loc_model = rev::shader::GetUniformLocation(mesh_shader, "u_model");
+                    float* node_delta_mats = nullptr;
+#if defined(REV_GLTF_AVAILABLE)
+                    if (mesh_obj->animation_data && mesh_obj->animation_count > 0 &&
+                        mesh_obj->imported_nodes && mesh_obj->imported_node_count > 0) {
+                        rev::gltf::Animation* anims = (rev::gltf::Animation*)mesh_obj->animation_data;
+                        float anim_time = time - mesh_cue.cue_start;
+                        if (anim_time < 0.0f) anim_time = 0.0f;
+                        node_delta_mats = new float[mesh_obj->imported_node_count * 16];
+                        if (!rev::gltf::BuildAnimatedNodeDeltaMatricesAll(mesh_obj,
+                                                                         anims,
+                                                                         mesh_obj->animation_count,
+                                                                         anim_time,
+                                                                         mesh_obj->animation_loop,
+                                                                         node_delta_mats,
+                                                                         (int)mesh_obj->imported_node_count)) {
+                            delete[] node_delta_mats;
+                            node_delta_mats = nullptr;
+                        }
+                    }
+#endif
                     if (glUniformMatrix4fv_fn) {
-                        glUniformMatrix4fv_fn(rev::shader::GetUniformLocation(mesh_shader,"u_model"), 1,0,model_mat);
+                        glUniformMatrix4fv_fn(loc_model, 1,0,model_mat);
                         glUniformMatrix4fv_fn(rev::shader::GetUniformLocation(mesh_shader,"u_view"),  1,0,view_mat);
                         glUniformMatrix4fv_fn(rev::shader::GetUniformLocation(mesh_shader,"u_projection"),1,0,proj_mat);
                     }
@@ -3132,6 +3770,17 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
                                 glUniform4fv_fn(loc_color, 1, col);
                             }
 
+                            if (glUniformMatrix4fv_fn && loc_model >= 0) {
+                                if (node_delta_mats && slot.source_node_index >= 0 &&
+                                    slot.source_node_index < (int)mesh_obj->imported_node_count) {
+                                    float slot_model[16] = {};
+                                    Mat4Multiply(slot_model, model_mat, &node_delta_mats[slot.source_node_index * 16]);
+                                    glUniformMatrix4fv_fn(loc_model, 1, 0, slot_model);
+                                } else {
+                                    glUniformMatrix4fv_fn(loc_model, 1, 0, model_mat);
+                                }
+                            }
+
                             unsigned int tex_id = slot.base_color_texture;
                             if (tex_id == 0) tex_id = mesh_obj->base_color_texture;
                             if (tex_id != 0) {
@@ -3148,6 +3797,9 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
                     }
 
                     if (!rendered_slot) {
+                        if (glUniformMatrix4fv_fn && loc_model >= 0) {
+                            glUniformMatrix4fv_fn(loc_model, 1, 0, model_mat);
+                        }
                         bool mesh_needs_blend = (cue_col[3] < 0.999f);
                         if (mesh_needs_blend) {
                             if (!blend_on) {
@@ -3176,6 +3828,7 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
                         }
                         rev::mesh::Render(mesh_obj, -1);
                     }
+                    delete[] node_delta_mats;
                 }
             }
 
@@ -3189,10 +3842,33 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
         // Swap buffers
         rev::platform::SwapBuffers(window);
         
-        // Exit after total duration or on ESC
-        if (time > total_duration || rev::platform::IsKeyPressed(window, VK_ESCAPE)) {
+        // Exit on ESC. On duration end, either loop or stop based on metadata.
+        if (rev::platform::IsKeyPressed(window, VK_ESCAPE)) {
             break;
         }
+        if (time > total_duration) {
+            if (playback_settings.intro_loop) {
+                start_time = current_time;
+                prev_time = current_time;
+                // Keep currently playing music continuous across timeline wraps when
+                // music looping is enabled; otherwise reset to cue starts.
+                if (!playback_settings.music_loop) {
+                    active_music_index = -1;
+                    if (audio_state) {
+                        for (int mi = 0; mi < loaded_music_player_count; ++mi) {
+                            if (music_players[mi].player) {
+                                rev::xm::SetPosition(music_players[mi].player, 0, 0);
+                            }
+                        }
+                        audio_state->player = nullptr;
+                    }
+                }
+                continue;
+            }
+            break;
+        }
+
+        ++debug_frame;
     }
     
     // Cleanup audio
@@ -3205,8 +3881,11 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration
         waveOutClose(audio_state->wave_out);
         delete audio_state;
     }
-    if (xm_player) {
-        rev::xm::DestroyPlayer(xm_player);
+    for (int mi = 0; mi < loaded_music_player_count; ++mi) {
+        if (music_players[mi].player) {
+            rev::xm::DestroyPlayer(music_players[mi].player);
+            music_players[mi].player = nullptr;
+        }
     }
     if (sprite_shader) {
         rev::shader::DestroyProgram(sprite_shader);

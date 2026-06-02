@@ -34,6 +34,10 @@ Specialist in the HiMYM C++ intro runtime: `rev_runtime` shared lib, `minimal_in
 - All curve fields initialize to `-1` (no curve) — parsers use `sscanf_s` with field count validation for backward compatibility
 - Curve evaluation pattern: `if (cue.curve_param >= 0 && cue.curve_param < curve_count) { float t = elapsed_time / curves[cue.curve_param].duration; animated_value = rev::curve::Evaluate(curves[cue.curve_param], t); }`
 - Enable/disable depth test (`glEnable(0x0B71)` / `glDisable(0x0B71)`) around mesh rendering
+- In mixed mesh + sprite layered passes:
+    - bind fullscreen VAO before image/text fullscreen draws
+    - force `glDepthMask(GL_TRUE)` before per-frame depth clear
+    - restore both depth test and depth writes before mesh draws after 2D overlays
 - Mat4 functions live in `rev_runtime.cpp` — use via `using rev::runtime::Mat4*;` declarations
 - IStream must NOT be released until after `UnlockBits` + `delete bitmap`
 - CWD walk-up: `main()` walks up 3 dirs from exe (`build/bin/Release/`) to workspace root

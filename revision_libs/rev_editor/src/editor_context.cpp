@@ -139,6 +139,27 @@ static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
     }
 }
 
+static float Clamp01(float v) {
+    if (v < 0.0f) return 0.0f;
+    if (v > 1.0f) return 1.0f;
+    return v;
+}
+
+static float ComputeShaderCueEnvelope(float local_time, float cue_duration, float fade_in, float fade_out) {
+    float env = 1.0f;
+
+    if (fade_in > 0.0001f) {
+        env *= Clamp01(local_time / fade_in);
+    }
+
+    if (fade_out > 0.0001f && cue_duration > 0.0001f) {
+        float time_to_end = cue_duration - local_time;
+        env *= Clamp01(time_to_end / fade_out);
+    }
+
+    return env;
+}
+
 static void JsonUnescapeString(const char* src, char* dst, size_t dst_size) {
     if (!src || !dst || dst_size == 0) return;
     size_t di = 0;
@@ -436,6 +457,8 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     
     editor->project->modified = false;
     editor->project->total_duration = 0.0f;
+    editor->project->loop_intro = false;
+    editor->project->loop_music = false;
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
@@ -526,6 +549,14 @@ bool LoadProject(EditorContext* editor, const char* path) {
     
     ImageCue current_image_cue = {};
     TextCue current_text_cue = {};
+    current_text_cue.curve_x = -1;
+    current_text_cue.curve_y = -1;
+    current_text_cue.curve_size = -1;
+    current_text_cue.curve_color_r = -1;
+    current_text_cue.curve_color_g = -1;
+    current_text_cue.curve_color_b = -1;
+    current_text_cue.blend_mode = 0;
+    current_text_cue.bake_mode = 0;
     MusicCue current_music_cue = {};
     MeshCue current_mesh_cue = {};
     current_mesh_cue.scale[0] = current_mesh_cue.scale[1] = current_mesh_cue.scale[2] = 1.0f;
@@ -546,6 +577,16 @@ bool LoadProject(EditorContext* editor, const char* path) {
         // Trim whitespace
         char* start = line;
         while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') start++;
+
+        int bool_value = 0;
+        if (sscanf_s(start, "\"loop_intro\": %d", &bool_value) == 1) {
+            editor->project->loop_intro = (bool_value != 0);
+            continue;
+        }
+        if (sscanf_s(start, "\"loop_music\": %d", &bool_value) == 1) {
+            editor->project->loop_music = (bool_value != 0);
+            continue;
+        }
         
         // Detect sections
         if (strstr(start, "\"scenes\":")) {
@@ -850,6 +891,18 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"blend_mode\": %d", &current_text_cue.blend_mode);
             } else if (strstr(start, "\"bake_mode\":")) {
                 sscanf_s(start, "\"bake_mode\": %d", &current_text_cue.bake_mode);
+            } else if (strstr(start, "\"curve_x\":")) {
+                sscanf_s(start, "\"curve_x\": %d", &current_text_cue.curve_x);
+            } else if (strstr(start, "\"curve_y\":")) {
+                sscanf_s(start, "\"curve_y\": %d", &current_text_cue.curve_y);
+            } else if (strstr(start, "\"curve_size\":")) {
+                sscanf_s(start, "\"curve_size\": %d", &current_text_cue.curve_size);
+            } else if (strstr(start, "\"curve_color_r\":")) {
+                sscanf_s(start, "\"curve_color_r\": %d", &current_text_cue.curve_color_r);
+            } else if (strstr(start, "\"curve_color_g\":")) {
+                sscanf_s(start, "\"curve_color_g\": %d", &current_text_cue.curve_color_g);
+            } else if (strstr(start, "\"curve_color_b\":")) {
+                sscanf_s(start, "\"curve_color_b\": %d", &current_text_cue.curve_color_b);
             } else if (strstr(start, "\"baked_asset_key\":")) {
                 ParseJsonStringValue(start, current_text_cue.baked_asset_key, sizeof(current_text_cue.baked_asset_key));
             } else if (strstr(start, "\"baked_asset_path\":")) {
@@ -859,6 +912,14 @@ bool LoadProject(EditorContext* editor, const char* path) {
             } else if (start[0] == '}' && current_text_cue.text[0] != '\0') {
                 AddTextCue(current_scene, current_text_cue);
                 memset(&current_text_cue, 0, sizeof(current_text_cue));
+                current_text_cue.curve_x = -1;
+                current_text_cue.curve_y = -1;
+                current_text_cue.curve_size = -1;
+                current_text_cue.curve_color_r = -1;
+                current_text_cue.curve_color_g = -1;
+                current_text_cue.curve_color_b = -1;
+                current_text_cue.blend_mode = 0;
+                current_text_cue.bake_mode = 0;
             }
         }
 
@@ -1078,6 +1139,8 @@ bool SaveProject(EditorContext* editor, const char* path) {
     fprintf(f, "  \"version\": \"1.0\",\n");
     fprintf(f, "  \"workspace_path\": \"%s\",\n", escaped_workspace);
     fprintf(f, "  \"total_duration\": %.3f,\n", editor->project->total_duration);
+    fprintf(f, "  \"loop_intro\": %d,\n", editor->project->loop_intro ? 1 : 0);
+    fprintf(f, "  \"loop_music\": %d,\n", editor->project->loop_music ? 1 : 0);
     fprintf(f, "  \"scenes\": [\n");
     
     // Save scenes
@@ -1198,6 +1261,12 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"fade_out_end\": %.3f,\n", cue->fade_out_end);
             fprintf(f, "          \"blend_mode\": %d,\n", cue->blend_mode);
             fprintf(f, "          \"bake_mode\": %d,\n", cue->bake_mode);
+            fprintf(f, "          \"curve_x\": %d,\n", cue->curve_x);
+            fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
+            fprintf(f, "          \"curve_size\": %d,\n", cue->curve_size);
+            fprintf(f, "          \"curve_color_r\": %d,\n", cue->curve_color_r);
+            fprintf(f, "          \"curve_color_g\": %d,\n", cue->curve_color_g);
+            fprintf(f, "          \"curve_color_b\": %d,\n", cue->curve_color_b);
             fprintf(f, "          \"baked_asset_key\": \"%s\",\n", escaped_baked_key);
             fprintf(f, "          \"baked_asset_path\": \"%s\",\n", escaped_baked_path);
             fprintf(f, "          \"layer_order\": %d\n", cue->layer_order);
@@ -1373,6 +1442,8 @@ bool NewProject(EditorContext* editor) {
     }
     
     editor->project->total_duration = 0.0f;  // Will be updated as scenes are added
+    editor->project->loop_intro = false;
+    editor->project->loop_music = false;
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
@@ -1738,6 +1809,8 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     Section current_section = NONE;
     
     float total_duration = 10.0f; // Default
+    int intro_loop_setting = 0;
+    int music_loop_setting = 0;
     
     while (fgets(line, sizeof(line), f)) {
         // Trim whitespace
@@ -1757,6 +1830,10 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         if (current_section == METADATA) {
             if (sscanf_s(start, "total_duration=%f", &total_duration) == 1) {
                 printf("[ImportFromCues] Total duration: %.2f\n", total_duration);
+            } else if (sscanf_s(start, "intro_loop=%d", &intro_loop_setting) == 1) {
+                // parsed below
+            } else if (sscanf_s(start, "music_loop=%d", &music_loop_setting) == 1) {
+                // parsed below
             }
             continue;
         }
@@ -1946,6 +2023,8 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     // Update project metadata
     if (editor->project) {
         editor->project->total_duration = total_duration;
+        editor->project->loop_intro = (intro_loop_setting != 0);
+        editor->project->loop_music = (music_loop_setting != 0);
     }
     
     printf("[ImportFromCues] Import complete!\n");
@@ -2254,6 +2333,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     fprintf(f, "[metadata]\n");
     fprintf(f, "total_duration=%.3f\n", editor->project->total_duration);
     fprintf(f, "scene_count=%d\n", editor->project->scene_count);
+    fprintf(f, "intro_loop=%d\n", editor->project->loop_intro ? 1 : 0);
+    fprintf(f, "music_loop=%d\n", editor->project->loop_music ? 1 : 0);
     
     fclose(f);
     return true;
@@ -2732,10 +2813,21 @@ void RandomizeShaderColors(ShaderCue* cue) {
 static const char* preview_vertex_shader = R"(
 #version 330 core
 out vec2 uv;
+uniform float u_warp;
 void main() {
     float x = -1.0 + float((gl_VertexID & 1) << 2);
     float y = -1.0 + float((gl_VertexID & 2) << 1);
-    uv = vec2((x + 1.0) * 0.5, (y + 1.0) * 0.5);
+
+    vec2 base_uv = vec2((x + 1.0) * 0.5, (y + 1.0) * 0.5);
+    vec2 p = base_uv * 2.0 - 1.0;
+    float r2 = dot(p, p);
+    vec2 swirl = vec2(-p.y, p.x);
+    float warp = clamp(u_warp, 0.0, 1.0);
+
+    // Small common UV warp so all shader presets react to warp, even without explicit u_warp usage.
+    base_uv += swirl * (0.03 * warp) * (0.2 + 0.8 * max(0.0, 1.0 - r2));
+    uv = base_uv;
+
     gl_Position = vec4(x, y, 0.0, 1.0);
 }
 )";
@@ -3097,9 +3189,10 @@ void RenderPreviewFrame(EditorContext* editor) {
     if (editor->project) {
         struct ActiveShaderLayer {
             ShaderCue* cue;
-            float scene_start_time;
             int layer_order;
             int layer_role;
+            float absolute_start;
+            float absolute_end;
         };
 
         ActiveShaderLayer layers[256];
@@ -3119,7 +3212,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
                     : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
                 if (time_in_range) {
-                    layers[layer_count++] = { cue, scene_start_time, cue->layer_order, cue->layer_role };
+                    layers[layer_count++] = { cue, cue->layer_order, cue->layer_role, absolute_start, absolute_end };
                 }
             }
 
@@ -3150,14 +3243,21 @@ void RenderPreviewFrame(EditorContext* editor) {
             float intensity = cue->intensity;
             float warp = cue->warp;
             float exposure_base = cue->exposure_base;
+            float exposure_ramp = cue->exposure_ramp;
             float fade_base = cue->fade_base;
+            float fade_ramp = cue->fade_ramp;
             float opacity = cue->opacity;
             float palette_low[3] = { cue->palette_low.r, cue->palette_low.g, cue->palette_low.b };
             float palette_mid[3] = { cue->palette_mid.r, cue->palette_mid.g, cue->palette_mid.b };
             float palette_high[3] = { cue->palette_high.r, cue->palette_high.g, cue->palette_high.b };
 
-            float absolute_cue_start = layers[li].scene_start_time + cue->cue_start;
-            float elapsed_time = editor->current_time - absolute_cue_start;
+            float elapsed_time = editor->current_time - layers[li].absolute_start;
+            float cue_duration = layers[li].absolute_end - layers[li].absolute_start;
+            float local_time = elapsed_time;
+            if (local_time < 0.0f) local_time = 0.0f;
+            if (cue_duration > 0.0f && local_time > cue_duration) local_time = cue_duration;
+            elapsed_time = local_time;
+
             if (elapsed_time >= 0.0f) {
                 if (cue->curve_palette_low_r >= 0 && cue->curve_palette_low_r < editor->project->curve_count) {
                     float t = elapsed_time / editor->project->curves[cue->curve_palette_low_r].duration;
@@ -3219,7 +3319,21 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float t = elapsed_time / editor->project->curves[cue->curve_opacity].duration;
                     opacity = rev::curve::Evaluate(editor->project->curves[cue->curve_opacity], t);
                 }
+                if (cue->curve_exposure_ramp >= 0 && cue->curve_exposure_ramp < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_exposure_ramp].duration;
+                    exposure_ramp = rev::curve::Evaluate(editor->project->curves[cue->curve_exposure_ramp], t);
+                }
+                if (cue->curve_fade_ramp >= 0 && cue->curve_fade_ramp < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_fade_ramp].duration;
+                    fade_ramp = rev::curve::Evaluate(editor->project->curves[cue->curve_fade_ramp], t);
+                }
             }
+
+            float envelope = ComputeShaderCueEnvelope(local_time, cue_duration, cue->fade_in, cue->fade_out);
+            float exposure = exposure_base + exposure_ramp * local_time;
+            float fade = (fade_base + fade_ramp * local_time) * envelope;
+            if (exposure < 0.0f) exposure = 0.0f;
+            if (fade < 0.0f) fade = 0.0f;
 
             if (li == 0) {
                 glDisable(GL_BLEND);
@@ -3229,7 +3343,7 @@ void RenderPreviewFrame(EditorContext* editor) {
             }
 
             // Fold layer opacity into fade for shaders that use fade as alpha/intensity.
-            fade_base *= opacity;
+            fade *= opacity;
 
             rev::shader::Use(prog);
             rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_time"), editor->current_time);
@@ -3244,8 +3358,8 @@ void RenderPreviewFrame(EditorContext* editor) {
             rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_speed"), speed);
             rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_intensity"), intensity);
             rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_warp"), warp);
-            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_exposure_base"), exposure_base);
-            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_fade_base"), fade_base);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_exposure_base"), exposure);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_fade_base"), fade);
 
             glDrawArrays(GL_TRIANGLES, 0, 3);
         }
@@ -3360,9 +3474,18 @@ void RenderPreviewFrame(EditorContext* editor) {
         }
 
         // Stable bubble sort by layer_order ascending
+        // Tie-break rule for same layer: mesh behind image behind text.
+        auto draw_priority = [](int type) {
+            // type: 0=image, 1=text, 2=mesh
+            if (type == 2) return 0; // mesh first (back)
+            if (type == 0) return 1; // image middle
+            return 2;                // text front
+        };
         for (int i = 0; i < item_count - 1; i++)
             for (int j = 0; j < item_count - i - 1; j++)
-                if (items[j].layer_order > items[j+1].layer_order) {
+                if (items[j].layer_order > items[j+1].layer_order ||
+                    (items[j].layer_order == items[j+1].layer_order &&
+                     draw_priority(items[j].type) > draw_priority(items[j+1].type))) {
                     DrawItem tmp = items[j]; items[j] = items[j+1]; items[j+1] = tmp;
                 }
 
@@ -3691,10 +3814,12 @@ void RenderPreviewFrame(EditorContext* editor) {
                             }
                             
                             if (cached) {
-                                // Evaluate and apply animation transform based on scene time
+                                // Evaluate and apply animation transform based on scene time.
+                                // Imported multi-node meshes use per-node delta matrices later during slot draws.
+                                float* node_delta_mats = nullptr;
                                 if (cached->current_animation >= 0) {
                                     rev::gltf::Animation* anims = (rev::gltf::Animation*)cached->animation_data;
-                                    if (anims) {
+                                    if (anims && (!cached->imported_nodes || cached->imported_node_count == 0)) {
                                         // Calculate animation time relative to cue start time
                                         float anim_time = editor->current_time - cue->cue_start;
                                         
@@ -3704,7 +3829,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                                             if (anim_time < 0.0f) {
                                                 anim_time = 0.0f;
                                             } else if (anim_time > duration) {
-                                                anim_time = fmodf(anim_time, duration);
+                                                anim_time = (float)std::fmod(anim_time, duration);
                                             }
                                         } else {
                                             // Clamp to animation duration if not looping
@@ -3723,6 +3848,21 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         // Rebuild model matrix with animated transform
                                         rev::runtime::Mat4Model(model, anim_pos, anim_rot, anim_scale);
                                         if (glUniformMatrix4fv) glUniformMatrix4fv(mp_model, 1, 0, model);
+                                    }
+                                    if (anims && cached->animation_count > 0 && cached->imported_nodes && cached->imported_node_count > 0) {
+                                        float anim_time = editor->current_time - cue->cue_start;
+                                        if (anim_time < 0.0f) anim_time = 0.0f;
+                                        node_delta_mats = new float[cached->imported_node_count * 16];
+                                        if (!rev::gltf::BuildAnimatedNodeDeltaMatricesAll(cached,
+                                                                                          anims,
+                                                                                          cached->animation_count,
+                                                                                          anim_time,
+                                                                                          cached->animation_loop,
+                                                                                          node_delta_mats,
+                                                                                          (int)cached->imported_node_count)) {
+                                            delete[] node_delta_mats;
+                                            node_delta_mats = nullptr;
+                                        }
                                     }
                                 }
 
@@ -3757,8 +3897,8 @@ void RenderPreviewFrame(EditorContext* editor) {
 
                                 bool rendered_slot = false;
                                 for (uint32_t si = 0; si < cached->material_slot_count; ++si) {
+                                    const rev::mesh::MaterialSlot& slot = cached->material_slots[si];
                                     if (mp_col >= 0 && glUniform4fv_fn) {
-                                        const rev::mesh::MaterialSlot& slot = cached->material_slots[si];
                                         float slot_r = (float)((slot.diffuse_color >> 0)  & 0xFF) / 255.0f;
                                         float slot_g = (float)((slot.diffuse_color >> 8)  & 0xFF) / 255.0f;
                                         float slot_b = (float)((slot.diffuse_color >> 16) & 0xFF) / 255.0f;
@@ -3772,7 +3912,18 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         glUniform4fv_fn(mp_col, 1, col);
                                     }
 
-                                    unsigned int tex_id = cached->material_slots[si].base_color_texture;
+                                    if (glUniformMatrix4fv && mp_model >= 0) {
+                                        if (node_delta_mats && slot.source_node_index >= 0 &&
+                                            slot.source_node_index < (int)cached->imported_node_count) {
+                                            float slot_model[16] = {};
+                                            rev::runtime::Mat4Multiply(slot_model, model, &node_delta_mats[slot.source_node_index * 16]);
+                                            glUniformMatrix4fv(mp_model, 1, 0, slot_model);
+                                        } else {
+                                            glUniformMatrix4fv(mp_model, 1, 0, model);
+                                        }
+                                    }
+
+                                    unsigned int tex_id = slot.base_color_texture;
                                     if (tex_id == 0) tex_id = cached->base_color_texture;
                                     if (tex_id != 0) {
                                         glBindTexture(0x0DE1, tex_id); // GL_TEXTURE_2D
@@ -3785,6 +3936,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     rendered_slot = true;
                                 }
                                 if (!rendered_slot) {
+                                    if (glUniformMatrix4fv && mp_model >= 0) {
+                                        glUniformMatrix4fv(mp_model, 1, 0, model);
+                                    }
                                     if (mp_col >= 0 && glUniform4fv_fn) {
                                         glUniform4fv_fn(mp_col, 1, cue_col);
                                     }
@@ -3797,6 +3951,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     }
                                     rev::mesh::Render(cached, -1);
                                 }
+                                delete[] node_delta_mats;
                                 continue;
                             }
                             // Extract textures to assets folder
@@ -3883,6 +4038,26 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 }
                                 if (mp_light >= 0) rev::shader::SetVec3(mesh_prog, mp_light, draw_light[0], draw_light[1], draw_light[2]);
 
+                                float* node_delta_mats = nullptr;
+                                if (mesh->animation_data && mesh->animation_count > 0 && mesh->imported_nodes && mesh->imported_node_count > 0) {
+                                    rev::gltf::Animation* anims = (rev::gltf::Animation*)mesh->animation_data;
+                                    if (anims) {
+                                        float anim_time = editor->current_time - cue->cue_start;
+                                        if (anim_time < 0.0f) anim_time = 0.0f;
+                                        node_delta_mats = new float[mesh->imported_node_count * 16];
+                                        if (!rev::gltf::BuildAnimatedNodeDeltaMatricesAll(mesh,
+                                                                                          anims,
+                                                                                          mesh->animation_count,
+                                                                                          anim_time,
+                                                                                          mesh->animation_loop,
+                                                                                          node_delta_mats,
+                                                                                          (int)mesh->imported_node_count)) {
+                                            delete[] node_delta_mats;
+                                            node_delta_mats = nullptr;
+                                        }
+                                    }
+                                }
+
                                 int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
                                 int loc_tex = rev::shader::GetUniformLocation(mesh_prog, "u_base_color_texture");
                                 for (uint32_t si = 0; si < mesh->material_slot_count; ++si) {
@@ -3906,8 +4081,8 @@ void RenderPreviewFrame(EditorContext* editor) {
 
                                 bool rendered_slot = false;
                                 for (uint32_t si = 0; si < mesh->material_slot_count; ++si) {
+                                    const rev::mesh::MaterialSlot& slot = mesh->material_slots[si];
                                     if (mp_col >= 0 && glUniform4fv_fn) {
-                                        const rev::mesh::MaterialSlot& slot = mesh->material_slots[si];
                                         float slot_r = (float)((slot.diffuse_color >> 0)  & 0xFF) / 255.0f;
                                         float slot_g = (float)((slot.diffuse_color >> 8)  & 0xFF) / 255.0f;
                                         float slot_b = (float)((slot.diffuse_color >> 16) & 0xFF) / 255.0f;
@@ -3921,7 +4096,18 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         glUniform4fv_fn(mp_col, 1, col);
                                     }
 
-                                    unsigned int tex_id = mesh->material_slots[si].base_color_texture;
+                                    if (glUniformMatrix4fv && mp_model >= 0) {
+                                        if (node_delta_mats && slot.source_node_index >= 0 &&
+                                            slot.source_node_index < (int)mesh->imported_node_count) {
+                                            float slot_model[16] = {};
+                                            rev::runtime::Mat4Multiply(slot_model, model, &node_delta_mats[slot.source_node_index * 16]);
+                                            glUniformMatrix4fv(mp_model, 1, 0, slot_model);
+                                        } else {
+                                            glUniformMatrix4fv(mp_model, 1, 0, model);
+                                        }
+                                    }
+
+                                    unsigned int tex_id = slot.base_color_texture;
                                     if (tex_id == 0) tex_id = mesh->base_color_texture;
                                     if (tex_id != 0) {
                                         glBindTexture(0x0DE1, tex_id); // GL_TEXTURE_2D
@@ -3934,6 +4120,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     rendered_slot = true;
                                 }
                                 if (!rendered_slot) {
+                                    if (glUniformMatrix4fv && mp_model >= 0) {
+                                        glUniformMatrix4fv(mp_model, 1, 0, model);
+                                    }
                                     if (mp_col >= 0 && glUniform4fv_fn) {
                                         glUniform4fv_fn(mp_col, 1, cue_col);
                                     }
@@ -3946,6 +4135,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     }
                                     rev::mesh::Render(mesh, -1);
                                 }
+                                delete[] node_delta_mats;
                                 continue;
                             }
                         }
@@ -4044,6 +4234,41 @@ void RenderPreviewPanel(EditorContext* editor) {
             editor->playing = false;
         }
     }
+
+    // Show playback mode and which music cue would be active at current preview time.
+    const char* active_music_key = "(none)";
+    if (editor->project->scene_count > 0) {
+        float scene_start_time = 0.0f;
+        float t = editor->current_time;
+        for (int s = 0; s < editor->project->scene_count; ++s) {
+            SceneBlock* scene = &editor->project->scenes[s];
+            float scene_end_time = scene_start_time + scene->duration;
+            bool in_scene = (s == editor->project->scene_count - 1)
+                ? (t >= scene_start_time && t <= scene_end_time)
+                : (t >= scene_start_time && t < scene_end_time);
+            if (in_scene) {
+                float local_t = t - scene_start_time;
+                float latest_start = -1.0f;
+                for (int i = 0; i < scene->music_cue_count; ++i) {
+                    MusicCue* cue = &scene->music_cues[i];
+                    float cue_end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                    if (local_t >= cue->cue_start && local_t <= cue_end) {
+                        if (cue->cue_start >= latest_start) {
+                            latest_start = cue->cue_start;
+                            active_music_key = (cue->asset_key[0] != '\0') ? cue->asset_key : "(no key)";
+                        }
+                    }
+                }
+                break;
+            }
+            scene_start_time = scene_end_time;
+        }
+    }
+
+    ImGui::Text("Playback Mode: Intro %s | Music %s",
+        editor->project->loop_intro ? "Loop" : "One-shot",
+        editor->project->loop_music ? "Loop" : "One-shot");
+    ImGui::Text("Active Music Cue @ %.2fs: %s", editor->current_time, active_music_key);
     
     ImGui::Separator();
     

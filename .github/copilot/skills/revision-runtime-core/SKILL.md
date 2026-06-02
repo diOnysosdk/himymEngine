@@ -28,6 +28,10 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 - Do NOT redefine cue loaders or `Mat4*` functions in `main.cpp` — they are implemented in `rev_runtime.cpp`.
 - `glUniformMatrix4fv` and other GL 2.0+ functions are NOT in Windows `<gl/gl.h>`; load via `wglGetProcAddress` before first use.
 - For 3D mesh rendering: enable depth test (`glEnable(0x0B71)`) before mesh draw, disable after (`glDisable(0x0B71)`) to avoid breaking the 2D sprite pass.
+- In unified layered passes (mesh + image/text), enforce GL-state parity:
+  - rebind fullscreen VAO before image/text `glDrawArrays` calls
+  - clear depth with `glDepthMask(GL_TRUE)` before `glClear(GL_DEPTH_BUFFER_BIT)`
+  - when switching back to mesh after 2D overlays, restore both `GL_DEPTH_TEST` and `glDepthMask(GL_TRUE)`
 - Imported glTF behavior must preserve authored fidelity:
   - Merge all scene mesh nodes (not first-mesh-only)
   - Keep per-slot material mapping (`MaterialSlot.material_index`, `MaterialSlot.base_color_texture`)

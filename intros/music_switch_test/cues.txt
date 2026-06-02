@@ -1,0 +1,23 @@
+[shader_cues]
+# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order
+0|0.080|0.180|0.450|0.300|0.520|0.950|0.950|0.950|1.000|0.850|0.950|0.280|0.900|0.000|1.000|0.000|0.000|14.000|0.250|0.250|0|1.000|0|0
+
+[image_cues]
+# none
+
+[text_cues]
+# none
+
+[music_cues]
+# asset_key|asset_path|cue_start|cue_end
+track_a|assets/music/1stone.xm|0.000|8.000
+track_b|assets/imported/book_of_memories2.xm|6.000|14.000
+
+[curves]
+# none
+
+[metadata]
+total_duration=14.000
+scene_count=1
+intro_loop=0
+music_loop=1

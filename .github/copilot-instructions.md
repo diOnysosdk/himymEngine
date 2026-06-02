@@ -28,6 +28,10 @@
   - per-material-slot texture/color usage (mixed textured and color-only slots)
   - transparency/fade behavior (texture alpha, cue fade alpha, opaque-vs-transparent slot passes)
   - imported light fallback (use imported light when present, else `{3,5,4}`)
+- For unified layered rendering (mesh + image + text), keep GL state parity between editor and runtime:
+  - rebind fullscreen-quad VAO before image/text draws after mesh work
+  - clear depth with `glDepthMask(GL_TRUE)` each frame
+  - restore depth test + depth writes before mesh draws after 2D overlays
 - When semantics change, update the relevant docs in the same pass.
 - Treat doc parity as a first-class deliverable: keep `PR/architecture/ARCHITECTURE.md`, `PR/architecture/API-REFERENCE.md`, `PR/context/CODE_STYLE.md`, and relevant skills/instructions synchronized when runtime contracts change.
 - When a fix establishes a durable workflow rule or regression trap, sync a short note into `/memories/repo/`.

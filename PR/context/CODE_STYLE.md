@@ -177,6 +177,10 @@ No lib should link another lib unless it genuinely uses its types or functions.
 ## Rendering Contract Rules (HiMYM runtime/editor)
 
 - Keep runtime and preview rendering semantics aligned for imported glTF meshes.
+- Keep runtime and preview GL state transitions aligned in layered rendering:
+    - Rebind fullscreen quad VAO before image/text fullscreen draws.
+    - Ensure per-frame depth clear runs with `glDepthMask(GL_TRUE)`.
+    - Restore depth test and depth writes before any mesh draw after 2D overlays.
 - Treat texture presence and transparency as separate concerns:
     - Texture presence alone does not imply transparent rendering.
     - Final alpha for textured mesh slots should include sampled texture alpha.

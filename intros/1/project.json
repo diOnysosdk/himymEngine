@@ -1,18 +1,131 @@
 {
   "version": "1.0",
   "workspace_path": "E:\\code\\cpp\\mono\\himym\\intros\\1",
-  "total_duration": 10.000,
+  "total_duration": 11.000,
+  "loop_intro": 1,
+  "loop_music": 1,
   "scenes": [
     {
       "name": "New Scene",
-      "duration": 10.000,
+      "duration": 11.000,
       "shader_cues": [
+        {
+          "shader_name": "Star Scroller 360",
+          "shader_scene_id": 18,
+          "palette_low": [1.000, 0.000, 1.000],
+          "palette_mid": [1.000, 0.000, 1.000],
+          "palette_high": [1.000, 0.000, 1.000],
+          "speed": 0.407,
+          "intensity": 5.000,
+          "warp": 0.229,
+          "exposure_base": 0.760,
+          "exposure_ramp": 0.020,
+          "fade_base": 1.000,
+          "fade_ramp": -0.040,
+          "cue_start": 0.000,
+          "cue_end": 11.000,
+          "fade_in": 0.500,
+          "fade_out": 0.500,
+          "layer_role": 0,
+          "opacity": 1.000,
+          "blend_mode": 0,
+          "layer_order": 0,
+          "curve_speed": -1,
+          "curve_intensity": -1,
+          "curve_warp": -1,
+          "curve_exposure": -1,
+          "curve_fade": -1,
+          "curve_palette_low_r": 13,
+          "curve_palette_low_g": 14,
+          "curve_palette_low_b": 15,
+          "curve_palette_mid_r": 16,
+          "curve_palette_mid_g": -1,
+          "curve_palette_mid_b": 17,
+          "curve_palette_high_r": 18,
+          "curve_palette_high_g": -1,
+          "curve_palette_high_b": 19,
+          "curve_opacity": -1,
+          "curve_exposure_ramp": -1,
+          "curve_fade_ramp": -1
+        }
       ],
       "image_cues": [
+        {
+          "asset_key": "logo.png",
+          "x": 0.500,
+          "y": 0.500,
+          "scale": 0.250,
+          "opacity": 1.000,
+          "effect_type": 0,
+          "cue_start": 4.650,
+          "cue_end": 10.050,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 1,
+          "layer_order": 0,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_scale": -1,
+          "curve_opacity": 21
+        },
+        {
+          "asset_key": "thelogo2mini.png",
+          "x": 0.500,
+          "y": 0.500,
+          "scale": 1.000,
+          "opacity": 1.000,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 4.995,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 0,
+          "layer_order": 1,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_scale": -1,
+          "curve_opacity": 8
+        }
       ],
       "text_cues": [
+        {
+          "text": "Presents",
+          "font_name": "Cabin Sketch",
+          "x": 0.500,
+          "y": 0.500,
+          "size": 128.000,
+          "color": [0.971, 0.000, 1.000],
+          "effect_type": 0,
+          "cue_start": 2.050,
+          "cue_end": 4.500,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 1,
+          "bake_mode": 1,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_size": -1,
+          "curve_color_r": -1,
+          "curve_color_g": -1,
+          "curve_color_b": -1,
+          "baked_asset_key": "text_s00_c00.png",
+          "baked_asset_path": "intros/1/project_assets/text_s00_c00.png",
+          "layer_order": 1
+        }
       ],
       "music_cues": [
+        {
+          "asset_key": "track01.xm",
+          "asset_path": "intros/1/project_assets/track01.xm",
+          "cue_start": 0.000,
+          "cue_end": -1.000
+        }
       ],
       "mesh_cues": [
         {
@@ -21,15 +134,15 @@
           "mesh_type": 4,
           "pos": [0.000, 0.000, 0.000],
           "rot": [0.000, 0.000, 0.000],
-          "scale": [1.000, 1.000, 1.000],
+          "scale": [2.000, 2.000, 2.000],
           "color": [1.000, 1.000, 1.000, 1.000],
           "mesh_size": 1.000,
           "mesh_param": 16.000,
           "metallic": 0.000,
-          "roughness": 0.500,
+          "roughness": 1.000,
           "effect_type": 0,
           "cue_start": 0.000,
-          "cue_end": 10.000,
+          "cue_end": 11.000,
           "fade_in_start": 0.000,
           "fade_in_end": 0.000,
           "fade_out_start": 0.000,
@@ -41,9 +154,9 @@
           "curve_rot_x": -1,
           "curve_rot_y": -1,
           "curve_rot_z": -1,
-          "curve_scale_x": -1,
-          "curve_scale_y": -1,
-          "curve_scale_z": -1,
+          "curve_scale_x": 23,
+          "curve_scale_y": 24,
+          "curve_scale_z": 25,
           "curve_color_r": -1,
           "curve_color_g": -1,
           "curve_color_b": -1,
@@ -56,5 +169,246 @@
     }
   ],
   "curves": [
+    {
+      "wrap_mode": "clamp",
+      "duration": 30.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "ease_in_out"},
+        {"t": 1.000, "v": 0.500, "in_ease": 0.500, "out_ease": 0.500, "mode": "ease_in_out"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 8.500,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.105, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.897, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 10.000,
+      "points": [
+        {"t": 0.000, "v": -0.483, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.399, "v": 0.500, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.600, "v": 0.500, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.799, "v": 1.500, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.020, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 5.000,
+      "points": [
+        {"t": 0.000, "v": 2.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.595, "v": 0.997, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.798, "v": 0.665, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.665, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 2.500,
+      "points": [
+        {"t": 0.000, "v": 0.665, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.665, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 30.000,
+      "points": [
+        {"t": 0.000, "v": 0.323, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.732, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 6.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.098, "v": 0.997, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 10.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.099, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.898, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 2.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.100, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.900, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 2.500,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "ease_in_out"},
+        {"t": 0.199, "v": 50.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "ease_in_out"},
+        {"t": 0.798, "v": 50.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "ease_in_out"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "ease_in_out"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.043, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.900, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 30.000,
+      "points": [
+        {"t": 0.000, "v": 0.407, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.198, "v": 0.206, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.407, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 2.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "ease_in_out"},
+        {"t": 0.501, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "ease_in_out"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "ease_in_out"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 11.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.099, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.900, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 11.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.100, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.900, "v": 0.997, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 11.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.102, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.898, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 11.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.105, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.900, "v": 0.991, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 11.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.098, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.901, "v": 0.994, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 11.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.100, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.899, "v": 0.994, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.041, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 128.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 5.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.201, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.801, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 2.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 2.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 2.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    }
   ]
 }

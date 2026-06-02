@@ -20,29 +20,13 @@ uniform vec3 u_palette_mid;
 uniform vec3 u_palette_high;
 
 void main() {
-    // Three horizontal bands with left-to-right color fades
-    // Bottom band: palette_low
-    // Middle band: palette_mid
-    // Top band: palette_high
-    // Default (black): all palette colors at (0,0,0)
-    
-    float y = uv.y;  // 0 at bottom, 1 at top
-    float x = uv.x;  // 0 at left, 1 at right (for horizontal fade)
-    
-    vec3 col;
-    
-    // Bottom third (0.0 - 0.33): palette_low fades from black to full color
-    if (y < 0.33) {
-        col = u_palette_low * x;
-    }
-    // Middle third (0.33 - 0.66): palette_mid fades from black to full color
-    else if (y < 0.66) {
-        col = u_palette_mid * x;
-    }
-    // Top third (0.66 - 1.0): palette_high fades from black to full color
-    else {
-        col = u_palette_high * x;
-    }
+    // Smooth vertical blend across low -> mid -> high (no hard band edges).
+    float y = uv.y;
+    float low_to_mid = smoothstep(0.20, 0.55, y);
+    float mid_to_high = smoothstep(0.45, 0.80, y);
+
+    vec3 low_mid = mix(u_palette_low, u_palette_mid, low_to_mid);
+    vec3 col = mix(low_mid, u_palette_high, mid_to_high);
     
     fragColor = vec4(col, 1.0);
 }
@@ -1452,6 +1436,96 @@ void main()
 
     col = 1.0 - exp(-col);
     col = pow(col, vec3(0.92));
+
+    fragColor = vec4(col, u_fade_base);
+}
+)"
+    },
+
+    {
+        18,
+        "Star Scroller 360",
+        "Directional starfield scroller (Warp controls 0-360 direction)",
+        R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+uniform float u_warp;
+uniform float u_exposure_base;
+uniform float u_fade_base;
+
+#define PI 3.14159265359
+
+float hash21(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+float starLayer(vec2 p, vec2 dir, vec2 perp, float t_scroll, float t_twinkle, float scale, float threshold, float base_size) {
+    vec2 q = (p + dir * t_scroll * (0.35 + scale * 0.0015)) * scale;
+    vec2 id = floor(q);
+    vec2 gv = fract(q) - 0.5;
+
+    float rnd = hash21(id);
+    vec2 jitter = vec2(hash21(id + 12.7), hash21(id + 78.3)) - 0.5;
+    gv -= jitter * 0.8;
+
+    float along = dot(gv, dir);
+    float across = dot(gv, perp);
+
+    float core = smoothstep(base_size, 0.0, length(gv));
+    float streak = smoothstep(base_size * 1.8, 0.0, abs(across)) *
+                   smoothstep(base_size * 10.0, 0.0, abs(along));
+
+    float phase_a = hash21(id + 31.7);
+    float phase_b = hash21(id + 83.9);
+    float rate_a = mix(0.10, 0.30, hash21(id + 11.3));
+    float rate_b = mix(0.03, 0.09, hash21(id + 57.1));
+
+    float shimmer = 0.86 + 0.14 * sin(t_twinkle * (6.2831853 * rate_a) + phase_a * 6.2831853);
+    float glint_cycle = fract(t_twinkle * rate_b + phase_b);
+    float glint = smoothstep(0.00, 0.38, glint_cycle) * (1.0 - smoothstep(0.86, 1.00, glint_cycle));
+    glint = mix(0.62, 1.00, glint);
+
+    float twinkle = shimmer * glint;
+    return max(core, streak * 0.75) * step(threshold, rnd) * twinkle;
+}
+
+void main() {
+    vec2 aspect = vec2(u_resolution.x / u_resolution.y, 1.0);
+    vec2 p = (uv - 0.5) * aspect;
+
+    float t = u_time * max(u_speed, 0.001);
+    float angle = fract(u_warp) * (2.0 * PI);
+    vec2 dir = vec2(cos(angle), sin(angle));
+    vec2 perp = vec2(-dir.y, dir.x);
+
+    float tw_t = u_time;
+    float layer_far = starLayer(p, dir, perp, t, tw_t, 42.0, 0.970, 0.050);
+    float layer_mid = starLayer(p + perp * 0.13, dir, perp, t * 1.35, tw_t, 75.0, 0.978, 0.040);
+    float layer_near = starLayer(p - perp * 0.18, dir, perp, t * 1.95, tw_t, 120.0, 0.985, 0.033);
+
+    float stars = layer_far + layer_mid * 1.25 + layer_near * 1.6;
+
+    float lane = 0.5 + 0.5 * sin(dot(p, perp) * 3.5 + t * 0.6);
+    vec3 bg = mix(u_palette_low * 0.10, u_palette_mid * 0.14, lane);
+
+    vec3 star_col = mix(u_palette_mid, u_palette_high, clamp(stars, 0.0, 1.0));
+    vec3 col = bg + star_col * stars * (1.1 + 0.9 * u_intensity);
+
+    float vignette = smoothstep(1.25, 0.10, length(p));
+    col *= vignette;
+    col *= max(u_exposure_base, 0.0);
+    col = 1.0 - exp(-col);
 
     fragColor = vec4(col, u_fade_base);
 }

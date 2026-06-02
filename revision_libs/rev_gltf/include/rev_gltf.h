@@ -39,6 +39,7 @@ enum AnimationInterpolation {
 struct AnimationChannel {
     AnimationPathType     path;           // Which property to animate
     AnimationInterpolation interpolation; // How to interpolate between keyframes
+    int                   target_node_index; // Source glTF node animated by this channel
     
     float* times;           // Keyframe times (seconds)
     float* values;          // Keyframe values (vec3 for trans/scale, vec4 quaternion for rotation)
@@ -125,6 +126,14 @@ void EvaluateAnimation(const Animation* anim, float time,
                        float* out_rotation,
                        float* out_scale);
 
+// Evaluate only the channels targeting one imported glTF node.
+void EvaluateAnimationNodeLocalTransform(const Animation* anim,
+                                         int target_node_index,
+                                         float time,
+                                         float* out_translation,
+                                         float* out_rotation,
+                                         float* out_scale);
+
 // Convert a quaternion (xyzw) to Euler angles (xyz) in degrees
 void QuaternionToEuler(const float* quat, float* euler_degrees);
 
@@ -137,6 +146,24 @@ bool UpdateMeshAnimation(rev::mesh::Mesh* mesh, float dt);
 // rotation_quat: 4-component quaternion (xyzw) from EvaluateAnimation
 void ApplyAnimationTransform(float* pos, float* rot_degrees, float* scale,
                              const float* translation, const float* rotation_quat, const float* anim_scale);
+
+// Build per-node delta matrices (current_world * inverse(base_world)) for imported meshes.
+// out_matrices must have room for mesh->imported_node_count * 16 floats.
+bool BuildAnimatedNodeDeltaMatrices(const rev::mesh::Mesh* mesh,
+                                    const Animation* anim,
+                                    float time,
+                                    float* out_matrices,
+                                    int max_nodes);
+
+// Build per-node delta matrices by evaluating all animation clips.
+// Useful when imported files store independent object motion in separate clips.
+bool BuildAnimatedNodeDeltaMatricesAll(const rev::mesh::Mesh* mesh,
+                                       const Animation* anims,
+                                       int animation_count,
+                                       float time,
+                                       bool loop,
+                                       float* out_matrices,
+                                       int max_nodes);
 
 // Extract all textures from a glTF file to output_dir without loading geometry.
 // Returns the number of textures successfully extracted.

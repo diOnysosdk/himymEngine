@@ -15,6 +15,18 @@ void RenderTimeline(EditorContext* editor) {
         ImGui::Text("Total Duration: %.2fs | Scenes: %d", 
                     editor->project->total_duration, 
                     editor->project->scene_count);
+
+        bool loop_intro = editor->project->loop_intro;
+        if (ImGui::Checkbox("Loop Intro", &loop_intro)) {
+            editor->project->loop_intro = loop_intro;
+            editor->project->modified = true;
+        }
+        ImGui::SameLine();
+        bool loop_music = editor->project->loop_music;
+        if (ImGui::Checkbox("Loop Music", &loop_music)) {
+            editor->project->loop_music = loop_music;
+            editor->project->modified = true;
+        }
         
         ImGui::SliderFloat("Zoom", &editor->timeline_zoom, 0.1f, 10.0f);
         ImGui::SameLine();
@@ -24,6 +36,9 @@ void RenderTimeline(EditorContext* editor) {
         }
         
         ImGui::Separator();
+
+        int pending_move_from = -1;
+        int pending_move_to = -1;
         
         // Scene list
         for (int i = 0; i < editor->project->scene_count; ++i) {
@@ -44,9 +59,48 @@ void RenderTimeline(EditorContext* editor) {
                 editor->current_time = scene_start_time;
                 editor->playing = false; // Pause playback when switching scenes
             }
+
+            // Drag scene row to reorder timeline scene order.
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                int drag_scene_index = i;
+                ImGui::SetDragDropPayload("TIMELINE_SCENE_INDEX", &drag_scene_index, sizeof(int));
+                ImGui::Text("Move Scene: %s", scene->name);
+                ImGui::EndDragDropSource();
+            }
+
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("TIMELINE_SCENE_INDEX")) {
+                    if (payload->DataSize == sizeof(int)) {
+                        int from_index = *(const int*)payload->Data;
+                        if (from_index >= 0 && from_index < editor->project->scene_count && from_index != i) {
+                            pending_move_from = from_index;
+                            pending_move_to = i;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
             
             ImGui::SameLine();
             ImGui::Text("%.2fs", scene->duration);
+
+            ImGui::SameLine();
+            bool can_move_up = (i > 0);
+            if (!can_move_up) ImGui::BeginDisabled();
+            if (ImGui::SmallButton("Up")) {
+                pending_move_from = i;
+                pending_move_to = i - 1;
+            }
+            if (!can_move_up) ImGui::EndDisabled();
+
+            ImGui::SameLine();
+            bool can_move_down = (i < editor->project->scene_count - 1);
+            if (!can_move_down) ImGui::BeginDisabled();
+            if (ImGui::SmallButton("Down")) {
+                pending_move_from = i;
+                pending_move_to = i + 1;
+            }
+            if (!can_move_down) ImGui::EndDisabled();
             
             // Show cue counts
             if (scene->shader_cue_count > 0 || scene->image_cue_count > 0 || 
@@ -73,11 +127,51 @@ void RenderTimeline(EditorContext* editor) {
             
             ImGui::PopID();
         }
+
+        if (pending_move_from >= 0 && pending_move_to >= 0) {
+            MoveScene(editor, pending_move_from, pending_move_to);
+
+            // Keep selected scene consistent after reorder.
+            int sel = editor->selected_scene_index;
+            if (sel == pending_move_from) {
+                editor->selected_scene_index = pending_move_to;
+            } else if (pending_move_from < pending_move_to) {
+                if (sel > pending_move_from && sel <= pending_move_to) {
+                    editor->selected_scene_index = sel - 1;
+                }
+            } else {
+                if (sel >= pending_move_to && sel < pending_move_from) {
+                    editor->selected_scene_index = sel + 1;
+                }
+            }
+        }
         
         ImGui::Separator();
         
         // Bottom controls
         if (editor->selected_scene_index >= 0) {
+            bool can_move_selected_up = (editor->selected_scene_index > 0);
+            if (!can_move_selected_up) ImGui::BeginDisabled();
+            if (ImGui::Button("Move Selected Up")) {
+                int from = editor->selected_scene_index;
+                int to = from - 1;
+                MoveScene(editor, from, to);
+                editor->selected_scene_index = to;
+            }
+            if (!can_move_selected_up) ImGui::EndDisabled();
+
+            ImGui::SameLine();
+            bool can_move_selected_down = (editor->selected_scene_index < editor->project->scene_count - 1);
+            if (!can_move_selected_down) ImGui::BeginDisabled();
+            if (ImGui::Button("Move Selected Down")) {
+                int from = editor->selected_scene_index;
+                int to = from + 1;
+                MoveScene(editor, from, to);
+                editor->selected_scene_index = to;
+            }
+            if (!can_move_selected_down) ImGui::EndDisabled();
+
+            ImGui::SameLine();
             if (ImGui::Button("Delete Scene")) {
                 DeleteScene(editor, editor->selected_scene_index);
                 editor->selected_scene_index = -1;

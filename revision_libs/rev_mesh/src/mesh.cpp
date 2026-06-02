@@ -88,6 +88,8 @@ Mesh* CreateMesh(uint32_t vertex_count, uint32_t index_count) {
     mesh->imported_light_pos[0] = 0.0f;
     mesh->imported_light_pos[1] = 0.0f;
     mesh->imported_light_pos[2] = 0.0f;
+    mesh->imported_nodes = nullptr;
+    mesh->imported_node_count = 0;
     
     // Animation state
     mesh->animation_data = nullptr;
@@ -121,6 +123,7 @@ void DestroyMesh(Mesh* mesh) {
     delete[] mesh->vertices;
     delete[] mesh->indices;
     delete[] mesh->material_slots;
+    delete[] mesh->imported_nodes;
     delete mesh;
 }
 
@@ -139,7 +142,8 @@ void AddMaterialSlot(Mesh* mesh,
                      uint32_t count,
                      uint32_t color,
                      int material_index,
-                     uint32_t base_color_texture) {
+                     uint32_t base_color_texture,
+                     int source_node_index) {
     if (!mesh) return;
     
     // Reallocate material slots array
@@ -154,6 +158,7 @@ void AddMaterialSlot(Mesh* mesh,
     new_slots[mesh->material_slot_count].diffuse_color = color;
     new_slots[mesh->material_slot_count].material_index = material_index;
     new_slots[mesh->material_slot_count].base_color_texture = base_color_texture;
+    new_slots[mesh->material_slot_count].source_node_index = source_node_index;
     
     mesh->material_slots = new_slots;
     mesh->material_slot_count++;

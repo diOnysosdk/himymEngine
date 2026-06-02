@@ -24,6 +24,12 @@ Render contract for imported meshes:
     - Do not mark meshes transparent solely due to texture presence
     - Render opaque slots first, then transparent slots
 
+Layered draw GL-state contract (runtime):
+
+- In the unified layered pass, image/text draws must bind the fullscreen quad VAO before `glDrawArrays`.
+- Per-frame depth clear must occur with depth writes enabled (`glDepthMask(GL_TRUE)`), then overlays may disable depth writes.
+- When control returns to mesh draws after overlay draws, runtime must restore both `GL_DEPTH_TEST` and depth writes.
+
 These additions keep runtime and preview behavior aligned for mixed textured + color-only glTF material slots.
 
 ---

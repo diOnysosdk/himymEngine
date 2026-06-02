@@ -179,6 +179,12 @@ Runtime timing model:
   9. `SwapBuffers` with VSync (wglSwapIntervalEXT(1) by default).
   10. If VSync is unavailable/disabled by driver, main loop applies deterministic 60 Hz software pacing fallback.
 
+Runtime layered draw GL-state contract (mesh + image/text in same frame):
+- Always rebind the fullscreen quad VAO before image/text draws. Mesh rendering may leave a different VAO (or VAO 0) bound, which can break core-profile `gl_VertexID` sprite passes.
+- Before per-frame `glClear(GL_DEPTH_BUFFER_BIT)`, force `glDepthMask(GL_TRUE)` so depth clear is effective.
+- During layered pass transitions, image/text overlays run with depth test disabled and depth writes disabled; mesh draws must restore both depth test and depth writes.
+- End each layered pass with depth writes enabled to keep the next frame depth-clear behavior deterministic.
+
 ### Renderer Optimizations
 
 RenderFrame applies several optimizations to reduce per-frame overhead and binary size:

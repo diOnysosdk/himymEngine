@@ -17,6 +17,16 @@ struct MaterialSlot {
     uint32_t diffuse_color;  // RGBA packed as uint32
     int      material_index; // Source material index for imported meshes (-1 if unknown)
     uint32_t base_color_texture; // Optional per-slot texture override (0 = none)
+    int      source_node_index; // Source glTF node for imported meshes (-1 if unknown)
+};
+
+struct ImportedNode {
+    int   parent_index;
+    float base_translation[3];
+    float base_rotation[4];
+    float base_scale[3];
+    float base_world[16];
+    float inverse_base_world[16];
 };
 
 struct Mesh {
@@ -38,6 +48,8 @@ struct Mesh {
     // Imported light placement from glTF (if present)
     bool     has_imported_light;
     float    imported_light_pos[3];
+    ImportedNode* imported_nodes;
+    uint32_t      imported_node_count;
     
     // Animation state (runtime only, not set by CreateMesh)
     void*    animation_data;   // Opaque pointer to animation data (cast to rev::gltf::Animation*)
@@ -60,7 +72,8 @@ void AddMaterialSlot(Mesh* mesh,
                      uint32_t count,
                      uint32_t color,
                      int material_index = -1,
-                     uint32_t base_color_texture = 0);
+                     uint32_t base_color_texture = 0,
+                     int source_node_index = -1);
 
 // GPU operations
 void UploadToGPU(Mesh* mesh);

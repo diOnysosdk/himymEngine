@@ -121,6 +121,8 @@ struct ProjectData {
     
     // Timing
     float total_duration;       // Sum of all scene durations
+    bool  loop_intro;           // true = restart timeline when reaching end
+    bool  loop_music;           // true = loop active XM cue playback
 };
 
 // Editor context (opaque handle)

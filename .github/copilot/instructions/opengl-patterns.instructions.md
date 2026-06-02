@@ -105,6 +105,30 @@ bool LoadGLFunctions()
 
 ## Rendering Pipeline
 
+### Layered Mesh + Sprite State Rules (HiMYM)
+
+- In mixed 3D/2D frames, always rebind the fullscreen quad VAO before sprite/text fullscreen draws.
+- Clear depth each frame with depth writes enabled:
+
+```cpp
+glDepthMask(GL_TRUE);
+glClear(GL_DEPTH_BUFFER_BIT);
+```
+
+- 2D overlays should disable depth test and depth writes, but mesh draws must restore both:
+
+```cpp
+// 2D overlay phase
+glDisable(GL_DEPTH_TEST);
+glDepthMask(GL_FALSE);
+
+// Back to mesh phase
+glEnable(GL_DEPTH_TEST);
+glDepthMask(GL_TRUE);
+```
+
+- Leave depth writes enabled at end of frame/layer pass so next-frame depth clear remains effective.
+
 ### 1. VAO/VBO/IBO Setup
 
 ```cpp

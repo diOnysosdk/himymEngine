@@ -248,6 +248,184 @@ static void ReadVec2(const cgltf_accessor* acc, cgltf_size elem, float dest[2]) 
     cgltf_accessor_read_float(acc, elem, dest, 2);
 }
 
+static void Mat4IdentityLocal(float* m) {
+    for (int i = 0; i < 16; ++i) m[i] = 0.0f;
+    m[0] = m[5] = m[10] = m[15] = 1.0f;
+}
+
+static void Mat4Copy(float* dst, const float* src) {
+    memcpy(dst, src, sizeof(float) * 16);
+}
+
+static void Mat4MultiplyLocal(float* out, const float* a, const float* b) {
+    float tmp[16] = {};
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            tmp[col * 4 + row] =
+                a[0 * 4 + row] * b[col * 4 + 0] +
+                a[1 * 4 + row] * b[col * 4 + 1] +
+                a[2 * 4 + row] * b[col * 4 + 2] +
+                a[3 * 4 + row] * b[col * 4 + 3];
+        }
+    }
+    memcpy(out, tmp, sizeof(tmp));
+}
+
+static void BuildNodeWorldRecursive(const rev::mesh::Mesh* mesh,
+                                    const float* local_matrices,
+                                    int node_index,
+                                    unsigned char* computed,
+                                    float* world_matrices) {
+    if (!mesh || !mesh->imported_nodes || node_index < 0 || node_index >= (int)mesh->imported_node_count) return;
+    if (computed[node_index]) return;
+
+    const rev::mesh::ImportedNode& node = mesh->imported_nodes[node_index];
+    if (node.parent_index >= 0 && node.parent_index < (int)mesh->imported_node_count) {
+        BuildNodeWorldRecursive(mesh, local_matrices, node.parent_index, computed, world_matrices);
+        Mat4MultiplyLocal(&world_matrices[node_index * 16],
+                          &world_matrices[node.parent_index * 16],
+                          &local_matrices[node_index * 16]);
+    } else {
+        Mat4Copy(&world_matrices[node_index * 16], &local_matrices[node_index * 16]);
+    }
+    computed[node_index] = 1;
+}
+
+static void ComposeMatrixFromTRS(float* out,
+                                 const float translation[3],
+                                 const float rotation[4],
+                                 const float scale[3]) {
+    float x = rotation[0], y = rotation[1], z = rotation[2], w = rotation[3];
+    float xx = x * x, yy = y * y, zz = z * z;
+    float xy = x * y, xz = x * z, yz = y * z;
+    float wx = w * x, wy = w * y, wz = w * z;
+
+    Mat4IdentityLocal(out);
+    out[0] = (1.0f - 2.0f * (yy + zz)) * scale[0];
+    out[1] = (2.0f * (xy + wz)) * scale[0];
+    out[2] = (2.0f * (xz - wy)) * scale[0];
+
+    out[4] = (2.0f * (xy - wz)) * scale[1];
+    out[5] = (1.0f - 2.0f * (xx + zz)) * scale[1];
+    out[6] = (2.0f * (yz + wx)) * scale[1];
+
+    out[8] = (2.0f * (xz + wy)) * scale[2];
+    out[9] = (2.0f * (yz - wx)) * scale[2];
+    out[10] = (1.0f - 2.0f * (xx + yy)) * scale[2];
+
+    out[12] = translation[0];
+    out[13] = translation[1];
+    out[14] = translation[2];
+}
+
+static bool InvertMatrix4x4(const float* m, float* out) {
+    float inv[16];
+    inv[0] = m[5]  * m[10] * m[15] -
+             m[5]  * m[11] * m[14] -
+             m[9]  * m[6]  * m[15] +
+             m[9]  * m[7]  * m[14] +
+             m[13] * m[6]  * m[11] -
+             m[13] * m[7]  * m[10];
+    inv[4] = -m[4]  * m[10] * m[15] +
+              m[4]  * m[11] * m[14] +
+              m[8]  * m[6]  * m[15] -
+              m[8]  * m[7]  * m[14] -
+              m[12] * m[6]  * m[11] +
+              m[12] * m[7]  * m[10];
+    inv[8] = m[4]  * m[9] * m[15] -
+             m[4]  * m[11] * m[13] -
+             m[8]  * m[5] * m[15] +
+             m[8]  * m[7] * m[13] +
+             m[12] * m[5] * m[11] -
+             m[12] * m[7] * m[9];
+    inv[12] = -m[4]  * m[9] * m[14] +
+               m[4]  * m[10] * m[13] +
+               m[8]  * m[5] * m[14] -
+               m[8]  * m[6] * m[13] -
+               m[12] * m[5] * m[10] +
+               m[12] * m[6] * m[9];
+    inv[1] = -m[1]  * m[10] * m[15] +
+              m[1]  * m[11] * m[14] +
+              m[9]  * m[2] * m[15] -
+              m[9]  * m[3] * m[14] -
+              m[13] * m[2] * m[11] +
+              m[13] * m[3] * m[10];
+    inv[5] = m[0]  * m[10] * m[15] -
+             m[0]  * m[11] * m[14] -
+             m[8]  * m[2] * m[15] +
+             m[8]  * m[3] * m[14] +
+             m[12] * m[2] * m[11] -
+             m[12] * m[3] * m[10];
+    inv[9] = -m[0]  * m[9] * m[15] +
+              m[0]  * m[11] * m[13] +
+              m[8]  * m[1] * m[15] -
+              m[8]  * m[3] * m[13] -
+              m[12] * m[1] * m[11] +
+              m[12] * m[3] * m[9];
+    inv[13] = m[0]  * m[9] * m[14] -
+              m[0]  * m[10] * m[13] -
+              m[8]  * m[1] * m[14] +
+              m[8]  * m[2] * m[13] +
+              m[12] * m[1] * m[10] -
+              m[12] * m[2] * m[9];
+    inv[2] = m[1]  * m[6] * m[15] -
+             m[1]  * m[7] * m[14] -
+             m[5]  * m[2] * m[15] +
+             m[5]  * m[3] * m[14] +
+             m[13] * m[2] * m[7] -
+             m[13] * m[3] * m[6];
+    inv[6] = -m[0]  * m[6] * m[15] +
+              m[0]  * m[7] * m[14] +
+              m[4]  * m[2] * m[15] -
+              m[4]  * m[3] * m[14] -
+              m[12] * m[2] * m[7] +
+              m[12] * m[3] * m[6];
+    inv[10] = m[0]  * m[5] * m[15] -
+              m[0]  * m[7] * m[13] -
+              m[4]  * m[1] * m[15] +
+              m[4]  * m[3] * m[13] +
+              m[12] * m[1] * m[7] -
+              m[12] * m[3] * m[5];
+    inv[14] = -m[0]  * m[5] * m[14] +
+               m[0]  * m[6] * m[13] +
+               m[4]  * m[1] * m[14] -
+               m[4]  * m[2] * m[13] -
+               m[12] * m[1] * m[6] +
+               m[12] * m[2] * m[5];
+    inv[3] = -m[1] * m[6] * m[11] +
+              m[1] * m[7] * m[10] +
+              m[5] * m[2] * m[11] -
+              m[5] * m[3] * m[10] -
+              m[9] * m[2] * m[7] +
+              m[9] * m[3] * m[6];
+    inv[7] = m[0] * m[6] * m[11] -
+             m[0] * m[7] * m[10] -
+             m[4] * m[2] * m[11] +
+             m[4] * m[3] * m[10] +
+             m[8] * m[2] * m[7] -
+             m[8] * m[3] * m[6];
+    inv[11] = -m[0] * m[5] * m[11] +
+               m[0] * m[7] * m[9] +
+               m[4] * m[1] * m[11] -
+               m[4] * m[3] * m[9] -
+               m[8] * m[1] * m[7] +
+               m[8] * m[3] * m[5];
+    inv[15] = m[0] * m[5] * m[10] -
+              m[0] * m[6] * m[9] -
+              m[4] * m[1] * m[10] +
+              m[4] * m[2] * m[9] +
+              m[8] * m[1] * m[6] -
+              m[8] * m[2] * m[5];
+    float det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+    if (fabsf(det) < 0.000001f) {
+        Mat4IdentityLocal(out);
+        return false;
+    }
+    det = 1.0f / det;
+    for (int i = 0; i < 16; ++i) out[i] = inv[i] * det;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Animation extraction and evaluation
 // ---------------------------------------------------------------------------
@@ -298,6 +476,7 @@ static Animation* ExtractAnimations(const cgltf_data* data, int* out_count) {
             
             AnimationChannel* dst_chan = &dst->channels[channel_idx++];
             memset(dst_chan, 0, sizeof(AnimationChannel));
+            dst_chan->target_node_index = src_chan->target_node ? (int)cgltf_node_index(data, src_chan->target_node) : -1;
             
             // Map path type
             if (path == cgltf_animation_path_type_translation) {
@@ -729,7 +908,8 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
             }
 
             uint32_t prim_idx_count = idx_offset - prim_idx_start;
-            rev::mesh::AddMaterialSlot(mesh, prim_idx_start, prim_idx_count, slot_color, material_index, 0);
+                int source_node_index = (int)cgltf_node_index(data, src_node);
+                rev::mesh::AddMaterialSlot(mesh, prim_idx_start, prim_idx_count, slot_color, material_index, 0, source_node_index);
 
             vert_offset += prim_vert_count;
 
@@ -746,6 +926,28 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
     mesh->imported_light_pos[0] = result->light_pos[0];
     mesh->imported_light_pos[1] = result->light_pos[1];
     mesh->imported_light_pos[2] = result->light_pos[2];
+    if (data->nodes_count > 0) {
+        mesh->imported_node_count = (uint32_t)data->nodes_count;
+        mesh->imported_nodes = new rev::mesh::ImportedNode[mesh->imported_node_count];
+        memset(mesh->imported_nodes, 0, sizeof(rev::mesh::ImportedNode) * mesh->imported_node_count);
+        for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
+            const cgltf_node* node = &data->nodes[ni];
+            rev::mesh::ImportedNode& dst_node = mesh->imported_nodes[ni];
+            dst_node.parent_index = node->parent ? (int)cgltf_node_index(data, node->parent) : -1;
+            dst_node.base_translation[0] = node->has_translation ? node->translation[0] : 0.0f;
+            dst_node.base_translation[1] = node->has_translation ? node->translation[1] : 0.0f;
+            dst_node.base_translation[2] = node->has_translation ? node->translation[2] : 0.0f;
+            dst_node.base_rotation[0] = node->has_rotation ? node->rotation[0] : 0.0f;
+            dst_node.base_rotation[1] = node->has_rotation ? node->rotation[1] : 0.0f;
+            dst_node.base_rotation[2] = node->has_rotation ? node->rotation[2] : 0.0f;
+            dst_node.base_rotation[3] = node->has_rotation ? node->rotation[3] : 1.0f;
+            dst_node.base_scale[0] = node->has_scale ? node->scale[0] : 1.0f;
+            dst_node.base_scale[1] = node->has_scale ? node->scale[1] : 1.0f;
+            dst_node.base_scale[2] = node->has_scale ? node->scale[2] : 1.0f;
+            cgltf_node_transform_world(node, dst_node.base_world);
+            InvertMatrix4x4(dst_node.base_world, dst_node.inverse_base_world);
+        }
+    }
 
     result->mesh = mesh;
     result->ok   = true;
@@ -914,6 +1116,36 @@ void EvaluateAnimation(const Animation* anim, float time,
     }
 }
 
+void EvaluateAnimationNodeLocalTransform(const Animation* anim,
+                                         int target_node_index,
+                                         float time,
+                                         float* out_translation,
+                                         float* out_rotation,
+                                         float* out_scale) {
+    if (!anim || anim->channel_count == 0) return;
+
+    if (anim->duration > 0.0f) {
+        time = fmodf(time, anim->duration);
+        if (time < 0.0f) time += anim->duration;
+    }
+
+    for (int ci = 0; ci < anim->channel_count; ++ci) {
+        const AnimationChannel* chan = &anim->channels[ci];
+        if (chan->target_node_index != target_node_index) continue;
+        switch (chan->path) {
+            case ANIM_PATH_TRANSLATION:
+                if (out_translation) EvaluateChannel(chan, time, out_translation);
+                break;
+            case ANIM_PATH_ROTATION:
+                if (out_rotation) EvaluateChannel(chan, time, out_rotation);
+                break;
+            case ANIM_PATH_SCALE:
+                if (out_scale) EvaluateChannel(chan, time, out_scale);
+                break;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 void QuaternionToEuler(const float* quat, float* euler_degrees) {
@@ -992,6 +1224,93 @@ void ApplyAnimationTransform(float* pos, float* rot_degrees, float* scale,
         scale[1] *= anim_scale[1];
         scale[2] *= anim_scale[2];
     }
+}
+
+bool BuildAnimatedNodeDeltaMatrices(const rev::mesh::Mesh* mesh,
+                                    const Animation* anim,
+                                    float time,
+                                    float* out_matrices,
+                                    int max_nodes) {
+    if (!mesh || !mesh->imported_nodes || mesh->imported_node_count == 0 || !out_matrices) return false;
+    if ((int)mesh->imported_node_count > max_nodes) return false;
+
+    float* local_matrices = new float[mesh->imported_node_count * 16];
+    float* world_matrices = new float[mesh->imported_node_count * 16];
+    unsigned char* computed = new unsigned char[mesh->imported_node_count];
+    memset(computed, 0, mesh->imported_node_count);
+    for (uint32_t ni = 0; ni < mesh->imported_node_count; ++ni) {
+        const rev::mesh::ImportedNode& node = mesh->imported_nodes[ni];
+        float translation[3] = { node.base_translation[0], node.base_translation[1], node.base_translation[2] };
+        float rotation[4] = { node.base_rotation[0], node.base_rotation[1], node.base_rotation[2], node.base_rotation[3] };
+        float scale[3] = { node.base_scale[0], node.base_scale[1], node.base_scale[2] };
+        if (anim) {
+            EvaluateAnimationNodeLocalTransform(anim, (int)ni, time, translation, rotation, scale);
+        }
+
+        ComposeMatrixFromTRS(&local_matrices[ni * 16], translation, rotation, scale);
+    }
+
+    for (uint32_t ni = 0; ni < mesh->imported_node_count; ++ni) {
+        BuildNodeWorldRecursive(mesh, local_matrices, (int)ni, computed, world_matrices);
+        Mat4MultiplyLocal(&out_matrices[ni * 16], &world_matrices[ni * 16], mesh->imported_nodes[ni].inverse_base_world);
+    }
+
+    delete[] computed;
+    delete[] local_matrices;
+    delete[] world_matrices;
+    return true;
+}
+
+bool BuildAnimatedNodeDeltaMatricesAll(const rev::mesh::Mesh* mesh,
+                                       const Animation* anims,
+                                       int animation_count,
+                                       float time,
+                                       bool loop,
+                                       float* out_matrices,
+                                       int max_nodes) {
+    if (!mesh || !mesh->imported_nodes || mesh->imported_node_count == 0 || !out_matrices) return false;
+    if ((int)mesh->imported_node_count > max_nodes) return false;
+
+    float* local_matrices = new float[mesh->imported_node_count * 16];
+    float* world_matrices = new float[mesh->imported_node_count * 16];
+    unsigned char* computed = new unsigned char[mesh->imported_node_count];
+    memset(computed, 0, mesh->imported_node_count);
+
+    for (uint32_t ni = 0; ni < mesh->imported_node_count; ++ni) {
+        const rev::mesh::ImportedNode& node = mesh->imported_nodes[ni];
+        float translation[3] = { node.base_translation[0], node.base_translation[1], node.base_translation[2] };
+        float rotation[4] = { node.base_rotation[0], node.base_rotation[1], node.base_rotation[2], node.base_rotation[3] };
+        float scale[3] = { node.base_scale[0], node.base_scale[1], node.base_scale[2] };
+
+        if (anims && animation_count > 0) {
+            for (int ai = 0; ai < animation_count; ++ai) {
+                const Animation& anim = anims[ai];
+                float anim_time = time;
+                if (anim.duration > 0.0f) {
+                    if (loop) {
+                        anim_time = fmodf(anim_time, anim.duration);
+                        if (anim_time < 0.0f) anim_time += anim.duration;
+                    } else {
+                        if (anim_time < 0.0f) anim_time = 0.0f;
+                        if (anim_time > anim.duration) anim_time = anim.duration;
+                    }
+                }
+                EvaluateAnimationNodeLocalTransform(&anim, (int)ni, anim_time, translation, rotation, scale);
+            }
+        }
+
+        ComposeMatrixFromTRS(&local_matrices[ni * 16], translation, rotation, scale);
+    }
+
+    for (uint32_t ni = 0; ni < mesh->imported_node_count; ++ni) {
+        BuildNodeWorldRecursive(mesh, local_matrices, (int)ni, computed, world_matrices);
+        Mat4MultiplyLocal(&out_matrices[ni * 16], &world_matrices[ni * 16], mesh->imported_nodes[ni].inverse_base_world);
+    }
+
+    delete[] computed;
+    delete[] local_matrices;
+    delete[] world_matrices;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
