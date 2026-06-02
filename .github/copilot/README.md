@@ -96,3 +96,9 @@ All cue structs live in `rev_runtime.h`. Never redefine elsewhere.
 - **`PR/ai/skills/`** is the maintained source; sync to `.github/copilot/skills/` each session.
 - When a domain changes, update: agent description + relevant skill + `copilot-instructions.md`.
 - `agent-customizations.instructions.md` tracks the full skill/agent inventory.
+- Keep docs/prompts/API/code-style parity when runtime contracts change:
+    - `PR/architecture/ARCHITECTURE.md`
+    - `PR/architecture/API-REFERENCE.md`
+    - `PR/context/CODE_STYLE.md`
+    - `PR/ai/prompts/README.md` and any prompt entry points
+- Current runtime mesh contract (glTF): preserve per-slot texture/color behavior, compose texture alpha into final mesh alpha, and render opaque slots before transparent slots.

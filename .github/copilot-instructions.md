@@ -23,7 +23,13 @@
 
 - If a task touches both authoring/export and runtime consumption, keep semantics aligned across both layers in the same change set.
 - When adding a new cue type, follow the established pattern: struct in `rev_runtime.h` → parser in `rev_runtime.cpp` → ExportProject in `editor_context.cpp` → LoadProject round-trip → render in RenderPreviewFrame → render in `minimal_intro/main.cpp`.
+- For imported glTF meshes, keep editor/runtime semantics aligned for:
+  - scene-wide mesh merge (all mesh nodes), not first-mesh-only behavior
+  - per-material-slot texture/color usage (mixed textured and color-only slots)
+  - transparency/fade behavior (texture alpha, cue fade alpha, opaque-vs-transparent slot passes)
+  - imported light fallback (use imported light when present, else `{3,5,4}`)
 - When semantics change, update the relevant docs in the same pass.
+- Treat doc parity as a first-class deliverable: keep `PR/architecture/ARCHITECTURE.md`, `PR/architecture/API-REFERENCE.md`, `PR/context/CODE_STYLE.md`, and relevant skills/instructions synchronized when runtime contracts change.
 - When a fix establishes a durable workflow rule or regression trap, sync a short note into `/memories/repo/`.
 
 - Keep the workspace customization map simple: specialist agents handle domain work, `@director` routes multi-domain work, and file instructions define per-file constraints.

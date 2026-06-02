@@ -711,6 +711,10 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
                 uint8_t g = (uint8_t)(mat.base_color[1] * 255.0f);
                 uint8_t b = (uint8_t)(mat.base_color[2] * 255.0f);
                 uint8_t a = (uint8_t)(mat.base_color[3] * 255.0f);
+                if (prim->material && prim->material->alpha_mode != cgltf_alpha_mode_opaque && a == 255) {
+                    // Preserve alpha-blended rendering intent even when base_color alpha is 1.
+                    a = 254;
+                }
                 slot_color = (a << 24) | (b << 16) | (g << 8) | r;
             } else if (prim->material && prim->material->has_pbr_metallic_roughness) {
                 const float* bc = prim->material->pbr_metallic_roughness.base_color_factor;
@@ -718,6 +722,9 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
                 uint8_t g = (uint8_t)(bc[1] * 255.0f);
                 uint8_t b = (uint8_t)(bc[2] * 255.0f);
                 uint8_t a = (uint8_t)(bc[3] * 255.0f);
+                if (prim->material->alpha_mode != cgltf_alpha_mode_opaque && a == 255) {
+                    a = 254;
+                }
                 slot_color = (a << 24) | (b << 16) | (g << 8) | r;
             }
 

@@ -48,6 +48,11 @@ description: "Use when editing the intro runtime frame loop, Win32/WGL behavior,
 - Preserve compatibility with older authored rows where already supported.
 - Text object kinds are authored as `title_main`, `credits_main`, `scroll_text`, and `multiline_text`.
 - For non-scroll text cues, normalized coordinates are anchor coordinates; `x=0.5`, `y=0.5` should resolve to screen center.
+- For imported glTF mesh cues, preserve mixed material slot behavior:
+  - textured and color-only slots can coexist in one imported mesh
+  - cue fade alpha, slot/material alpha, and sampled texture alpha compose final mesh alpha
+  - transparent rendering is decided by alpha intent, not texture presence alone
+  - render opaque slots before transparent slots for mixed-material imports
 
 ## Asset Sourcing Policy
 - Intro/release behavior is embedded-only for authored runtime assets.

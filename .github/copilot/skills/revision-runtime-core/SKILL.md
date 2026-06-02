@@ -10,6 +10,7 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 - `examples/minimal_intro/main.cpp` — standalone intro, loads cues from file or embedded data; does NOT define cue structs or loader functions (those live in rev_runtime)
 - `revision_libs/rev_runtime/` — shared static lib: cue structs, `ComputeEffectOpacity`, `LoadImageTexture`, `LoadImageTextureFromMemory`, `RenderTextToTexture`, `LoadImageCue`, `LoadTextCue`, `LoadMusicCue`, `LoadMeshCue`, and 8 Mat4 math functions
 - `revision_libs/rev_mesh/` — procedural mesh lib: `CreateCube/Sphere/Plane/Torus`, `UploadToGPU`, `Render`, `DestroyMesh` (linked into both editor and minimal_intro)
+- `revision_libs/rev_gltf/` — glTF importer used by runtime/editor for mesh_type=4 assets
 - `revision_libs/rev_platform/` — Win32 windowing, OpenGL context
 - `revision_libs/rev_shader/` — shader compilation and dispatch
 - `revision_libs/rev_xm/` — XM music player (wraps libxm-windows)
@@ -27,6 +28,14 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 - Do NOT redefine cue loaders or `Mat4*` functions in `main.cpp` — they are implemented in `rev_runtime.cpp`.
 - `glUniformMatrix4fv` and other GL 2.0+ functions are NOT in Windows `<gl/gl.h>`; load via `wglGetProcAddress` before first use.
 - For 3D mesh rendering: enable depth test (`glEnable(0x0B71)`) before mesh draw, disable after (`glDisable(0x0B71)`) to avoid breaking the 2D sprite pass.
+- Imported glTF behavior must preserve authored fidelity:
+  - Merge all scene mesh nodes (not first-mesh-only)
+  - Keep per-slot material mapping (`MaterialSlot.material_index`, `MaterialSlot.base_color_texture`)
+  - Keep imported light fallback (`Mesh.has_imported_light` / `imported_light_pos`; default `{3,5,4}`)
+- Mesh alpha contract:
+  - Mesh fragment shader alpha = cue alpha * slot alpha * sampled texture alpha (when textured)
+  - Do not classify meshes as transparent solely because they have textures
+  - For mixed meshes, draw opaque material slots first (depth write on, blend off), then transparent slots (depth write off, blend on)
 - Asset paths in `cues.txt` are workspace-relative (`{project_name}_assets/{key}`). CWD is always workspace root (walk-up-3 from exe at startup).
 - Convert forward slashes to backslashes before passing paths to GDI+.
 - `TextCue.size` is `float` — do not cast to `int` at call sites.

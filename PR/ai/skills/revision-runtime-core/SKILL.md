@@ -1,6 +1,6 @@
 ---
 name: Revision Runtime Core
-description: "Use for C++ runtime work in examples/minimal_intro/ that changes frame flow, cue loading, image/music rendering, shader dispatch, asset path resolution, or packed build behavior."
+description: "Use for C++ runtime work in examples/minimal_intro/ that changes frame flow, cue loading, image/music/mesh rendering, shader dispatch, asset path resolution, glTF import/render behavior, or packed build behavior."
 ---
 # Revision Runtime Core
 
@@ -9,8 +9,8 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 ## Scope
 - `examples/minimal_intro/main.cpp` — standalone intro, loads cues from file or embedded data; does NOT define cue structs or loader functions (those live in rev_runtime)
 - `revision_libs/rev_runtime/` — shared static lib: cue structs, `ComputeEffectOpacity`, `LoadImageTexture`, `LoadImageTextureFromMemory`, `RenderTextToTexture`, `LoadImageCue`, `LoadTextCue`, `LoadMusicCue`, `LoadMeshCue`, and 8 Mat4 math functions
-- `revision_libs/rev_mesh/` — procedural mesh lib: `CreateCube/Sphere/Plane/Torus`, `UploadToGPU`, `Render`, `DestroyMesh`. Mesh struct has texture ID fields: `base_color_texture`, `normal_texture`, `metallic_roughness_texture` (all default to 0 = no texture)
-- `revision_libs/rev_gltf/` — glTF/glb importer (editor-only, not in packed runtime): `LoadMesh(path, texture_output_dir)` returns `ImportResult*` with mesh and material data. `LoadMeshFromMemory(buf, size, texture_output_dir)` for packed builds. Pass texture output dir to extract embedded textures from glTF/glb files.
+- `revision_libs/rev_mesh/` — procedural mesh lib: `CreateCube/Sphere/Plane/Torus`, `UploadToGPU`, `Render`, `DestroyMesh`. Mesh now also carries per-slot material mapping + imported-light metadata for glTF assets.
+- `revision_libs/rev_gltf/` — glTF/glb importer: `LoadMesh(path, texture_output_dir)` and `LoadMeshFromMemory(buf, size, texture_output_dir)`.
 - `revision_libs/rev_platform/` — Win32 windowing, OpenGL context
 - `revision_libs/rev_shader/` — shader compilation and dispatch
 - `revision_libs/rev_xm/` — XM music player (wraps libxm-windows)
@@ -19,13 +19,22 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 ## Non-negotiables
 - Keep the main loop deterministic: pump messages, get time, update cues, render.
 - Keep GDI+ initialized (`GdiplusStartup`) before any `LoadImageTexture` call.
-- Keep `LoadImageCue` parser field count aligned with the export format: currently 14 fields — `asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end`.
-- Keep `LoadTextCue` parser field count aligned with the export format: currently 16 fields.
-- Keep `LoadMeshCue` parser field count aligned with the export format: currently 25 fields — `asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order`.
+- Keep `LoadShaderCue` parser field count aligned with the export format: currently 42 fields (25 base + 17 curve indices).
+- Keep `LoadImageCue` parser field count aligned with the export format: currently 18 fields (14 base + 4 curve indices).
+- Keep `LoadTextCue` parser field count aligned with the export format: currently 22 fields (16 base + 6 curve indices).
+- Keep `LoadMeshCue` parser field count aligned with the export format: currently 44 fields (28 base + 16 curve indices).
 - Do NOT redefine `ImageCue`, `TextCue`, `MusicCue`, `MeshCue`, `ImageTexture`, `TextTexture` in `main.cpp` — they come from `rev_runtime.h` via `using` declarations.
 - Do NOT redefine cue loaders or `Mat4*` functions in `main.cpp` — they are implemented in `rev_runtime.cpp`.
 - `glUniformMatrix4fv` and other GL 2.0+ functions are NOT in Windows `<gl/gl.h>`; load via `wglGetProcAddress` before first use.
 - For 3D mesh rendering: enable depth test (`glEnable(0x0B71)`) before mesh draw, disable after (`glDisable(0x0B71)`) to avoid breaking the 2D sprite pass.
+- Imported glTF behavior must preserve authored fidelity:
+  - Merge all scene mesh nodes (not first-mesh-only)
+  - Keep per-slot material mapping (`MaterialSlot.material_index`, `MaterialSlot.base_color_texture`)
+  - Keep imported light fallback (`Mesh.has_imported_light` / `imported_light_pos`; default `{3,5,4}`)
+- Mesh alpha/transparency contract:
+  - Mesh fragment shader alpha = cue alpha * slot alpha * sampled texture alpha (when textured)
+  - Do not classify meshes as transparent solely because they have textures
+  - For mixed meshes, draw opaque material slots first (depth write on, blend off), then transparent slots (depth write off, blend on)
 - Asset paths in `cues.txt` are workspace-relative (`{project_name}_assets/{key}`). CWD is always workspace root (walk-up-3 from exe at startup).
 - Convert forward slashes to backslashes before passing paths to GDI+.
 - `TextCue.size` is `float` — do not cast to `int` at call sites.
@@ -58,14 +67,14 @@ glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT);
 - All NDC calculations still use `config.width` / `config.height` (unchanged).
 
 ## Unified sorted draw pass (minimal_intro/main.cpp)
-- Image, text, and mesh cues are **not drawn in fixed order**. They are collected into a `DrawEntry[3]` array, bubble-sorted by `layer_order` ascending (lower = drawn first = further back), then rendered in one loop.
+- Image, text, and mesh cues are **not drawn in fixed order**. They are collected into one draw-entry list, sorted by `layer_order` ascending (lower = drawn first = further back), then rendered in one loop.
 - Blend/depth state is switched lazily: sprites enable blend + disable depth; mesh enables depth + clears depth buffer once, disables blend.
 - The pattern (pseudocode):
 ```cpp
-DrawEntry entries[3]; int ne = 0;
+DrawEntry entries[kMaxImageCues + kMaxTextCues + kMaxMeshCues]; int ne = 0;
 if (img_active) entries[ne++] = {0, image_cue.layer_order};
-if (txt_active) entries[ne++] = {1, text_cue.layer_order};
-if (msh_active) entries[ne++] = {2, mesh_cue.layer_order};
+if (txt_active) entries[ne++] = {1, text_cue.layer_order, text_idx};
+if (msh_active) entries[ne++] = {2, mesh_cue.layer_order, mesh_idx};
 // bubble sort by layer
 for each sorted entry: switch on type, set GL state, draw
 ```

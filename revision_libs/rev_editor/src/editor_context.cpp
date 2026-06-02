@@ -2831,9 +2831,11 @@ uniform sampler2D u_base_color_texture;
 uniform int u_has_texture;
 void main() {
     vec3  base = u_color.rgb;
+    float alpha = u_color.a;
     if (u_has_texture != 0) {
         vec4 tex_color = texture(u_base_color_texture, v_uv);
         base *= tex_color.rgb;
+        alpha *= tex_color.a;
     }
     vec3  norm     = normalize(v_normal);
     vec3  ldir     = normalize(u_light_pos - v_frag_pos);
@@ -2849,7 +2851,7 @@ void main() {
     vec3  spec_col    = mix(vec3(0.04), base, u_metallic);
     vec3  spec        = spec_col * spec_fac * (1.0 - u_roughness * 0.85);
     vec3  result      = base * (ambient + diff) + spec;
-    fragColor = vec4(result, u_color.a);
+    fragColor = vec4(result, alpha);
 }
 )";
 
@@ -3528,10 +3530,8 @@ void RenderPreviewFrame(EditorContext* editor) {
             } else {
                 // Mesh (type == 2)
                 if (!mesh_prog) continue;
-                if (blend_on) { glDisable(GL_BLEND); blend_on = false; }
                 if (!depth_on) {
                     glEnable(0x0B71);                       // GL_DEPTH_TEST
-                    if (glDepthMask_fn) glDepthMask_fn(1);  // GL_TRUE - enable depth writes
                     if (glDepthFunc_fn) glDepthFunc_fn(0x0201); // GL_LESS
                     depth_on = true;
                 }
@@ -3653,6 +3653,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                 if (mp_metal >= 0) rev::shader::SetFloat(mesh_prog, mp_metal, anim_metallic);
                 if (mp_rough >= 0) rev::shader::SetFloat(mesh_prog, mp_rough, anim_roughness);
 
+                float cue_col[4] = {anim_color[0], anim_color[1], anim_color[2], anim_color[3] * opacity};
+
+                bool mesh_needs_blend = (cue_col[3] < 0.999f);
+
                 float size  = anim_mesh_size > 0.0f ? anim_mesh_size : 1.0f;
                 float param = cue->mesh_param > 0.0f ? cue->mesh_param : 16.0f;
                 rev::mesh::Mesh* mesh = nullptr;
@@ -3732,8 +3736,42 @@ void RenderPreviewFrame(EditorContext* editor) {
 
                                 int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
                                 int loc_tex = rev::shader::GetUniformLocation(mesh_prog, "u_base_color_texture");
+                                for (uint32_t si = 0; si < cached->material_slot_count; ++si) {
+                                    const rev::mesh::MaterialSlot& slot = cached->material_slots[si];
+                                    if (((slot.diffuse_color >> 24) & 0xFF) < 255) {
+                                        mesh_needs_blend = true;
+                                        break;
+                                    }
+                                }
+                                if (mesh_needs_blend) {
+                                    if (!blend_on) {
+                                        glEnable(GL_BLEND);
+                                        blend_on = true;
+                                    }
+                                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                                    if (glDepthMask_fn) glDepthMask_fn(0); // GL_FALSE
+                                } else {
+                                    if (blend_on) { glDisable(GL_BLEND); blend_on = false; }
+                                    if (glDepthMask_fn) glDepthMask_fn(1); // GL_TRUE
+                                }
+
                                 bool rendered_slot = false;
                                 for (uint32_t si = 0; si < cached->material_slot_count; ++si) {
+                                    if (mp_col >= 0 && glUniform4fv_fn) {
+                                        const rev::mesh::MaterialSlot& slot = cached->material_slots[si];
+                                        float slot_r = (float)((slot.diffuse_color >> 0)  & 0xFF) / 255.0f;
+                                        float slot_g = (float)((slot.diffuse_color >> 8)  & 0xFF) / 255.0f;
+                                        float slot_b = (float)((slot.diffuse_color >> 16) & 0xFF) / 255.0f;
+                                        float slot_a = (float)((slot.diffuse_color >> 24) & 0xFF) / 255.0f;
+                                        float col[4] = {
+                                            cue_col[0] * slot_r,
+                                            cue_col[1] * slot_g,
+                                            cue_col[2] * slot_b,
+                                            cue_col[3] * slot_a
+                                        };
+                                        glUniform4fv_fn(mp_col, 1, col);
+                                    }
+
                                     unsigned int tex_id = cached->material_slots[si].base_color_texture;
                                     if (tex_id == 0) tex_id = cached->base_color_texture;
                                     if (tex_id != 0) {
@@ -3747,6 +3785,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     rendered_slot = true;
                                 }
                                 if (!rendered_slot) {
+                                    if (mp_col >= 0 && glUniform4fv_fn) {
+                                        glUniform4fv_fn(mp_col, 1, cue_col);
+                                    }
                                     if (cached->base_color_texture != 0) {
                                         glBindTexture(0x0DE1, cached->base_color_texture);
                                         if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
@@ -3844,8 +3885,42 @@ void RenderPreviewFrame(EditorContext* editor) {
 
                                 int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
                                 int loc_tex = rev::shader::GetUniformLocation(mesh_prog, "u_base_color_texture");
+                                for (uint32_t si = 0; si < mesh->material_slot_count; ++si) {
+                                    const rev::mesh::MaterialSlot& slot = mesh->material_slots[si];
+                                    if (((slot.diffuse_color >> 24) & 0xFF) < 255) {
+                                        mesh_needs_blend = true;
+                                        break;
+                                    }
+                                }
+                                if (mesh_needs_blend) {
+                                    if (!blend_on) {
+                                        glEnable(GL_BLEND);
+                                        blend_on = true;
+                                    }
+                                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                                    if (glDepthMask_fn) glDepthMask_fn(0); // GL_FALSE
+                                } else {
+                                    if (blend_on) { glDisable(GL_BLEND); blend_on = false; }
+                                    if (glDepthMask_fn) glDepthMask_fn(1); // GL_TRUE
+                                }
+
                                 bool rendered_slot = false;
                                 for (uint32_t si = 0; si < mesh->material_slot_count; ++si) {
+                                    if (mp_col >= 0 && glUniform4fv_fn) {
+                                        const rev::mesh::MaterialSlot& slot = mesh->material_slots[si];
+                                        float slot_r = (float)((slot.diffuse_color >> 0)  & 0xFF) / 255.0f;
+                                        float slot_g = (float)((slot.diffuse_color >> 8)  & 0xFF) / 255.0f;
+                                        float slot_b = (float)((slot.diffuse_color >> 16) & 0xFF) / 255.0f;
+                                        float slot_a = (float)((slot.diffuse_color >> 24) & 0xFF) / 255.0f;
+                                        float col[4] = {
+                                            cue_col[0] * slot_r,
+                                            cue_col[1] * slot_g,
+                                            cue_col[2] * slot_b,
+                                            cue_col[3] * slot_a
+                                        };
+                                        glUniform4fv_fn(mp_col, 1, col);
+                                    }
+
                                     unsigned int tex_id = mesh->material_slots[si].base_color_texture;
                                     if (tex_id == 0) tex_id = mesh->base_color_texture;
                                     if (tex_id != 0) {
@@ -3859,6 +3934,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     rendered_slot = true;
                                 }
                                 if (!rendered_slot) {
+                                    if (mp_col >= 0 && glUniform4fv_fn) {
+                                        glUniform4fv_fn(mp_col, 1, cue_col);
+                                    }
                                     if (mesh->base_color_texture != 0) {
                                         glBindTexture(0x0DE1, mesh->base_color_texture);
                                         if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
@@ -3881,6 +3959,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                     // Procedural meshes don't have textures
                     if (mp_light >= 0) rev::shader::SetVec3(mesh_prog, mp_light, 3.0f, 5.0f, 4.0f);
                     int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
+                    if (blend_on) { glDisable(GL_BLEND); blend_on = false; }
+                    if (glDepthMask_fn) glDepthMask_fn(1); // GL_TRUE
                     if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
                     rev::mesh::Render(mesh, -1);
                     rev::mesh::DestroyMesh(mesh);
@@ -3889,7 +3969,10 @@ void RenderPreviewFrame(EditorContext* editor) {
         }
 
         if (blend_on) glDisable(GL_BLEND);
-        if (depth_on) glDisable(0x0B71); // GL_DEPTH_TEST
+        if (depth_on) {
+            if (glDepthMask_fn) glDepthMask_fn(1); // GL_TRUE
+            glDisable(0x0B71); // GL_DEPTH_TEST
+        }
     }
 
     // Unbind framebuffer (restore default)

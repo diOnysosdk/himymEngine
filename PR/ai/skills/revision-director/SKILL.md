@@ -25,6 +25,8 @@ Do NOT touch `main.cpp` or `rev_editor.h` for struct changes.
 - If authoring/export and runtime consumption both change, keep the semantics aligned in the same change set.
 - If shader and runtime contracts change, update both layers together.
 - If workspace customization files change, keep the agent, instruction, prompt, and skill surfaces synchronized.
+- If runtime contracts change, keep parity docs synchronized in the same pass: architecture, API reference, code style notes, prompt/instruction guidance, and relevant skills.
+- For imported glTF transparency/material behavior, verify both runtime and editor agree on texture alpha, slot color/texture usage, and opaque-before-transparent slot rendering.
 - If launch fails after a successful build, route diagnostics first to editor workflow logs (`build/scene_block_editor_workflow.log`) and runtime startup logs (`build/runtime_startup.log`) before changing unrelated subsystems.
 
 ## Output expectation

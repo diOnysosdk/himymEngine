@@ -4,6 +4,30 @@ All public APIs are in namespace `revision2026`. All source lives under `src/`.
 
 ---
 
+## HiMYM Runtime/API Addendum (2026-06)
+
+Current HiMYM runtime/editor behavior for imported meshes relies on these APIs and data contracts:
+
+- `rev::gltf::ImportResult`:
+    - Primary mesh (`mesh`) plus full material table (`materials`, `material_count`)
+    - Optional imported light (`has_light`, `light_pos`)
+- `rev::mesh::MaterialSlot`:
+    - Material mapping via `material_index`
+    - Per-slot texture binding via `base_color_texture`
+- `rev::mesh::Mesh`:
+    - Imported-light fallback fields (`has_imported_light`, `imported_light_pos`)
+
+Render contract for imported meshes:
+
+- Alpha composition: cue/fade alpha * slot/material alpha * sampled texture alpha (when textured)
+- Opaque/transparent handling:
+    - Do not mark meshes transparent solely due to texture presence
+    - Render opaque slots first, then transparent slots
+
+These additions keep runtime and preview behavior aligned for mixed textured + color-only glTF material slots.
+
+---
+
 ## `app/profile_config.h`
 
 ### `enum class ProfileId`

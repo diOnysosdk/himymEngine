@@ -5,6 +5,26 @@ No runtime plugins. One authored flow. Optional compile-time 3D path.
 
 ---
 
+## HiMYM Runtime Addendum (2026-06)
+
+The active HiMYM runtime/editor pipeline also includes a glTF path used by mesh cues (`mesh_type=4`) with these behavioral contracts:
+
+- Import fidelity:
+  - Merge all mesh nodes from the active scene into one runtime mesh (not first-node-only behavior).
+  - Preserve per-primitive material slot mapping (`material_index`) and per-slot base color texture assignment.
+  - Preserve imported light position when available; fallback to `{3,5,4}` when absent.
+- Material rendering:
+  - Mixed material slots are valid: some slots textured, others color-only.
+  - Slot color and slot alpha are applied per material slot.
+- Transparency/fade contract:
+  - Final mesh alpha composes cue fade alpha, slot/material alpha, and sampled texture alpha.
+  - Mesh transparency is not inferred from texture presence alone.
+  - Mixed opaque/transparent meshes render in two phases: opaque slots first (depth write on, blend off), then transparent slots (depth write off, blend on).
+
+This contract exists to keep runtime and editor preview visually aligned for imported multi-object, multi-material assets.
+
+---
+
 ## Directory Layout
 
 ```

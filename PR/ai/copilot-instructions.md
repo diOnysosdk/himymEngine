@@ -25,6 +25,13 @@
 
 - If a task touches both authoring/export and runtime consumption, keep semantics aligned across both layers in the same change set when practical.
 - When semantics change, update the relevant docs (`docs/ARCHITECTURE.md`, `docs/API-REFERENCE.md`, and related authored-data docs) in the same pass when practical.
+- For imported glTF meshes, keep editor/runtime behavior aligned for:
+  - full scene mesh-node merge
+  - per-material-slot texture/color rendering
+  - texture alpha + cue fade alpha composition
+  - opaque-slot pass before transparent-slot pass
+  - imported light fallback to `{3,5,4}` when no light exists
+- Treat parity docs as mandatory when contracts change: update `PR/architecture/ARCHITECTURE.md`, `PR/architecture/API-REFERENCE.md`, `PR/context/CODE_STYLE.md`, and relevant skills/instructions together.
 - When a fix establishes a durable workflow rule or regression trap, sync a short verified note into `/memories/repo/`.
 
 - Keep the workspace customization map simple: specialist agents handle domain work, the director agent routes multi-domain work, and file instructions define per-file constraints.

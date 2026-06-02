@@ -1,1 +1,1 @@
-mesh_0|intros/1/project_assets/boxie.glb|CDA01449
+mesh_0|intros/1/project_assets/world.glb|E55F9826

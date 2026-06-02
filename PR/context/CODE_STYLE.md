@@ -171,3 +171,27 @@ No lib should link another lib unless it genuinely uses its types or functions.
 | Allocating in library internals silently | Return allocated pointer, let caller control |
 | Putting platform code in lib internals | Put it in `rev_platform` or `main.cpp` |
 | Magic numbers inline | Named `constexpr` or `#define` with a comment |
+
+---
+
+## Rendering Contract Rules (HiMYM runtime/editor)
+
+- Keep runtime and preview rendering semantics aligned for imported glTF meshes.
+- Treat texture presence and transparency as separate concerns:
+    - Texture presence alone does not imply transparent rendering.
+    - Final alpha for textured mesh slots should include sampled texture alpha.
+- For mixed opaque/transparent imported meshes, preserve deterministic pass order:
+    - Opaque slots first (depth write on, blend off)
+    - Transparent slots after (depth write off, blend on)
+- Preserve per-material-slot behavior:
+    - Slot texture binding and slot color/alpha modulation must both be honored.
+    - Color-only slots are first-class and must render without texture fallback artifacts.
+
+## Documentation Parity Rule
+
+When changing runtime/editor rendering contracts, update these in the same pass:
+
+- `PR/architecture/ARCHITECTURE.md`
+- `PR/architecture/API-REFERENCE.md`
+- `PR/context/CODE_STYLE.md`
+- Relevant AI skills/instructions/prompts that describe the affected workflow
