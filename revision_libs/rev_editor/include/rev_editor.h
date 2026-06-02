@@ -180,6 +180,10 @@ struct EditorContext {
     TextCue editing_text;
     bool text_modal_open;
     bool text_modal_request_open;
+    
+    // Installed Windows fonts (for font picker)
+    char** installed_fonts;
+    int installed_font_count;
 
     // Mesh modal state
     MeshCue editing_mesh;

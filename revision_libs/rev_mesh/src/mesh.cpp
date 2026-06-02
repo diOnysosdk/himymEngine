@@ -84,6 +84,10 @@ Mesh* CreateMesh(uint32_t vertex_count, uint32_t index_count) {
     mesh->base_color_texture = 0;
     mesh->normal_texture = 0;
     mesh->metallic_roughness_texture = 0;
+    mesh->has_imported_light = false;
+    mesh->imported_light_pos[0] = 0.0f;
+    mesh->imported_light_pos[1] = 0.0f;
+    mesh->imported_light_pos[2] = 0.0f;
     
     // Animation state
     mesh->animation_data = nullptr;
@@ -130,7 +134,12 @@ void SetIndex(Mesh* mesh, uint32_t index, uint32_t vertex_index) {
     mesh->indices[index] = vertex_index;
 }
 
-void AddMaterialSlot(Mesh* mesh, uint32_t start_index, uint32_t count, uint32_t color) {
+void AddMaterialSlot(Mesh* mesh,
+                     uint32_t start_index,
+                     uint32_t count,
+                     uint32_t color,
+                     int material_index,
+                     uint32_t base_color_texture) {
     if (!mesh) return;
     
     // Reallocate material slots array
@@ -143,6 +152,8 @@ void AddMaterialSlot(Mesh* mesh, uint32_t start_index, uint32_t count, uint32_t 
     new_slots[mesh->material_slot_count].start_index = start_index;
     new_slots[mesh->material_slot_count].count = count;
     new_slots[mesh->material_slot_count].diffuse_color = color;
+    new_slots[mesh->material_slot_count].material_index = material_index;
+    new_slots[mesh->material_slot_count].base_color_texture = base_color_texture;
     
     mesh->material_slots = new_slots;
     mesh->material_slot_count++;

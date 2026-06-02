@@ -1048,6 +1048,9 @@ void RenderImageModal(EditorContext* editor) {
             }
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
+
+        const char* blend_modes[] = {"Alpha", "Add", "Multiply", "Screen"};
+        if (ImGui::Combo("Blend", &cue->blend_mode, blend_modes, 4)) AutoSave();
         
         ImGui::Separator();
         
@@ -1125,7 +1128,48 @@ void RenderTextModal(EditorContext* editor) {
         
         // Font
         ImGui::Text("Font:");
-        if (ImGui::InputText("Font Name", cue->font_name, sizeof(cue->font_name))) AutoSave();
+        
+        // Font picker combo box
+        if (editor->installed_font_count > 0) {
+            // Find current font in list
+            int current_font_index = -1;
+            for (int i = 0; i < editor->installed_font_count; ++i) {
+                if (strcmp(editor->installed_fonts[i], cue->font_name) == 0) {
+                    current_font_index = i;
+                    break;
+                }
+            }
+            
+            // If not found, default to first font
+            if (current_font_index < 0 && editor->installed_font_count > 0) {
+                current_font_index = 0;
+                strncpy_s(cue->font_name, sizeof(cue->font_name), 
+                         editor->installed_fonts[0], _TRUNCATE);
+            }
+            
+            const char* preview = (current_font_index >= 0) ? 
+                                  editor->installed_fonts[current_font_index] : 
+                                  "Select Font...";
+            
+            if (ImGui::BeginCombo("##fontpicker", preview)) {
+                for (int i = 0; i < editor->installed_font_count; ++i) {
+                    bool is_selected = (i == current_font_index);
+                    if (ImGui::Selectable(editor->installed_fonts[i], is_selected)) {
+                        strncpy_s(cue->font_name, sizeof(cue->font_name), 
+                                 editor->installed_fonts[i], _TRUNCATE);
+                        AutoSave();
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        } else {
+            // Fallback to text input if no fonts enumerated
+            if (ImGui::InputText("Font Name", cue->font_name, sizeof(cue->font_name))) AutoSave();
+        }
+        
         if (ImGui::SliderFloat("Size", &cue->size, 8.0f, 128.0f)) AutoSave();
         ImGui::SameLine();
         if (cue->curve_size >= 0) {
@@ -1361,14 +1405,39 @@ void RenderTextModal(EditorContext* editor) {
         
         // Effect
         ImGui::Text("Effect:");
-        const char* effects[] = {"None", "Fade In/Out", "Scroll"};
-        if (ImGui::Combo("Type", &cue->effect_type, effects, 3)) AutoSave();
+        const char* effects[] = {
+            "None",
+            "Fade In/Out",
+            "Scroll",
+            "Line By Line",
+            "Typewriter",
+            "Sandstorm"
+        };
+        if (ImGui::Combo("Type", &cue->effect_type, effects, 6)) AutoSave();
         
         if (cue->effect_type > 0) {
             if (ImGui::InputFloat("Fade In Start",  &cue->fade_in_start,  0.1f, 1.0f)) AutoSave();
             if (ImGui::InputFloat("Fade In End",    &cue->fade_in_end,    0.1f, 1.0f)) AutoSave();
             if (ImGui::InputFloat("Fade Out Start", &cue->fade_out_start, 0.1f, 1.0f)) AutoSave();
             if (ImGui::InputFloat("Fade Out End",   &cue->fade_out_end,   0.1f, 1.0f)) AutoSave();
+        }
+
+        const char* blend_modes[] = {"Alpha", "Add", "Multiply", "Screen"};
+        if (ImGui::Combo("Blend", &cue->blend_mode, blend_modes, 4)) AutoSave();
+
+        if (cue->bake_mode == 1) {
+            if (ImGui::Button("Use Dynamic Render")) {
+                cue->bake_mode = 0;
+                AutoSave();
+            }
+        } else {
+            if (ImGui::Button("Use Baked Sprite")) {
+                cue->bake_mode = 1;
+                AutoSave();
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Forced bake exports this cue as a PNG sprite, even for dynamic effects.");
         }
         
         ImGui::Separator();
@@ -1426,6 +1495,13 @@ void RenderMeshModal(EditorContext* editor) {
                 rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(cue->asset_path, editor->project->assets_path);
                 if (ir && ir->ok) {
                     rev::mesh::Mesh* mesh = ir->mesh;
+
+                    if (mesh) {
+                        mesh->has_imported_light = ir->has_light;
+                        mesh->imported_light_pos[0] = ir->light_pos[0];
+                        mesh->imported_light_pos[1] = ir->light_pos[1];
+                        mesh->imported_light_pos[2] = ir->light_pos[2];
+                    }
                     
                     // Load texture if present
                     if (mesh && ir->material.base_color_texture[0]) {
@@ -1433,6 +1509,27 @@ void RenderMeshModal(EditorContext* editor) {
                         if (rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)) {
                             mesh->base_color_texture = tex.texture_id;
                         }
+                    }
+
+                    // Load per-material textures and map to mesh slots.
+                    if (mesh && ir->material_count > 0 && ir->materials) {
+                        unsigned int* material_textures = new unsigned int[ir->material_count];
+                        memset(material_textures, 0, sizeof(unsigned int) * ir->material_count);
+                        for (int mat_i = 0; mat_i < ir->material_count; ++mat_i) {
+                            const char* tex_path = ir->materials[mat_i].base_color_texture;
+                            if (!tex_path[0]) continue;
+                            rev::runtime::ImageTexture tex = {};
+                            if (rev::runtime::LoadImageTexture(tex_path, &tex)) {
+                                material_textures[mat_i] = tex.texture_id;
+                            }
+                        }
+                        for (uint32_t si = 0; si < mesh->material_slot_count; ++si) {
+                            rev::mesh::MaterialSlot& slot = mesh->material_slots[si];
+                            if (slot.material_index >= 0 && slot.material_index < ir->material_count) {
+                                slot.base_color_texture = material_textures[slot.material_index];
+                            }
+                        }
+                        delete[] material_textures;
                     }
                     
                     // Transfer animations

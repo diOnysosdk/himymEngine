@@ -168,6 +168,7 @@ void RenderProperties(EditorContext* editor) {
                 cue.cue_start = 0.0f;
                 cue.cue_end = scene->duration;
                 cue.layer_order = 0;
+                cue.blend_mode = 0;
                 cue.curve_x = -1;
                 cue.curve_y = -1;
                 cue.curve_scale = -1;
@@ -194,6 +195,7 @@ void RenderProperties(EditorContext* editor) {
                 cue.cue_start = 0.0f;
                 cue.cue_end = scene->duration;
                 cue.layer_order = 0;
+                cue.blend_mode = 0;
                 cue.curve_x = -1;
                 cue.curve_y = -1;
                 cue.curve_size = -1;

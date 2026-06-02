@@ -4,6 +4,7 @@
 #include <gdiplus.h>
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
@@ -34,6 +35,154 @@ float ComputeEffectOpacity(int effect_type,
                                          : 1.0f - (time - fade_out_start) / out_dur;
     }
     return 1.0f;
+}
+
+static float Clamp01(float v) {
+    if (v < 0.0f) return 0.0f;
+    if (v > 1.0f) return 1.0f;
+    return v;
+}
+
+static float Hash01(unsigned int x) {
+    x ^= x >> 16;
+    x *= 0x7feb352dU;
+    x ^= x >> 15;
+    x *= 0x846ca68bU;
+    x ^= x >> 16;
+    return (float)(x & 0x00FFFFFFU) / 16777215.0f;
+}
+
+bool BuildTextEffectFrame(const TextCue* cue, float time, TextEffectFrame* out)
+{
+    if (!cue || !out) return false;
+
+    memset(out, 0, sizeof(*out));
+    strncpy_s(out->text, cue->text, _TRUNCATE);
+    out->offset_x = 0.0f;
+    out->offset_y = 0.0f;
+    out->opacity_mul = 1.0f;
+
+    const float in_dur = cue->fade_in_end - cue->fade_in_start;
+    const float out_dur = cue->fade_out_end - cue->fade_out_start;
+    float in_t = 1.0f;
+    float out_t = 0.0f;
+
+    if (in_dur > 0.0f) in_t = Clamp01((time - cue->fade_in_start) / in_dur);
+    if (out_dur > 0.0f) out_t = Clamp01((time - cue->fade_out_start) / out_dur);
+
+    if (cue->effect_type == 2) {
+        // Classic scroll: enters from below, exits upward.
+        out->offset_y = (1.0f - in_t) * 0.08f - out_t * 0.08f;
+    } else if (cue->effect_type == 3) {
+        // Line-by-line reveal / hide.
+        int total_lines = 1;
+        for (int i = 0; cue->text[i] != '\0'; ++i) {
+            if (cue->text[i] == '\n') total_lines++;
+        }
+
+        int visible_lines = (int)(in_t * (float)total_lines + 0.999f);
+        if (visible_lines < 0) visible_lines = 0;
+        if (visible_lines > total_lines) visible_lines = total_lines;
+
+        if (out_t > 0.0f) {
+            int hide_lines = (int)(out_t * (float)total_lines + 0.999f);
+            int remain = total_lines - hide_lines;
+            if (remain < visible_lines) visible_lines = remain;
+            if (visible_lines < 0) visible_lines = 0;
+        }
+
+        char result[256] = {};
+        int ri = 0;
+        int line_idx = 1;
+        for (int i = 0; cue->text[i] != '\0' && ri < 255; ++i) {
+            if (line_idx > visible_lines) break;
+            result[ri++] = cue->text[i];
+            if (cue->text[i] == '\n') line_idx++;
+        }
+        result[ri] = '\0';
+        strncpy_s(out->text, result, _TRUNCATE);
+    } else if (cue->effect_type == 4) {
+        // Character-by-character reveal / hide.
+        const int len = (int)strlen(cue->text);
+        int visible = (int)(in_t * (float)len + 0.999f);
+        if (visible < 0) visible = 0;
+        if (visible > len) visible = len;
+
+        if (out_t > 0.0f) {
+            int hide = (int)(out_t * (float)len + 0.999f);
+            int remain = len - hide;
+            if (remain < visible) visible = remain;
+            if (visible < 0) visible = 0;
+        }
+
+        strncpy_s(out->text, cue->text, visible);
+        out->text[visible] = '\0';
+        out->opacity_mul = 0.6f + 0.4f * in_t;
+    } else if (cue->effect_type == 5) {
+        // Sandstorm gather/disperse: stochastic character reveal + jitter.
+        char result[256] = {};
+        int ri = 0;
+        bool has_visible = false;
+
+        for (int i = 0; cue->text[i] != '\0' && ri < 255; ++i) {
+            const char c = cue->text[i];
+            if (c == '\n') {
+                result[ri++] = '\n';
+                continue;
+            }
+
+            if (c == ' ') {
+                result[ri++] = ' ';
+                continue;
+            }
+
+            float score = Hash01((unsigned int)(i * 131 + 17));
+            bool appear = (score <= in_t);
+            bool keep = (score > out_t);
+            if (appear && keep) {
+                result[ri++] = c;
+                has_visible = true;
+            } else {
+                result[ri++] = ' ';
+            }
+        }
+        result[ri] = '\0';
+        strncpy_s(out->text, result, _TRUNCATE);
+
+        float gather_amp = (1.0f - in_t) * (1.0f - out_t) * 0.045f;
+        float spread_amp = out_t * 0.065f;
+        float amp = (gather_amp > spread_amp) ? gather_amp : spread_amp;
+        out->offset_x = sinf(time * 21.7f + 1.7f) * amp;
+        out->offset_y = cosf(time * 17.9f + 0.4f) * amp;
+        out->opacity_mul = (1.0f - out_t) * (0.35f + 0.65f * in_t);
+
+        if (!has_visible && in_t > 0.0f && out_t < 1.0f) {
+            // Keep at least one glyph visible during transition to avoid hard pop.
+            for (int i = 0; result[i] != '\0'; ++i) {
+                if (result[i] != ' ' && result[i] != '\n') {
+                    has_visible = true;
+                    break;
+                }
+                if (cue->text[i] != ' ' && cue->text[i] != '\n') {
+                    result[i] = cue->text[i];
+                    has_visible = true;
+                    break;
+                }
+            }
+            strncpy_s(out->text, result, _TRUNCATE);
+        }
+    }
+
+    // No drawable glyphs left this frame.
+    bool has_drawable = false;
+    for (int i = 0; out->text[i] != '\0'; ++i) {
+        if (out->text[i] != ' ' && out->text[i] != '\n' && out->text[i] != '\r' && out->text[i] != '\t') {
+            has_drawable = true;
+            break;
+        }
+    }
+
+    return has_drawable;
 }
 
 // ------------------------------------------------------------------
@@ -164,11 +313,20 @@ bool RenderTextToTexture(const char* text, const char* font_name, float size,
     Gdiplus::Graphics temp_g(&temp_bitmap);
     Gdiplus::Font font_obj(wfont, (Gdiplus::REAL)size,
                            Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    
+    // Create StringFormat once for both measuring and drawing.
+    // Keep explicit newlines but disable automatic word wrapping.
+    Gdiplus::StringFormat format;
+    format.SetAlignment(Gdiplus::StringAlignmentNear);
+    format.SetLineAlignment(Gdiplus::StringAlignmentNear);
+    format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+    format.SetTrimming(Gdiplus::StringTrimmingNone);
+    
     Gdiplus::RectF layout(0.0f, 0.0f, 2048.0f, 2048.0f);
     Gdiplus::RectF bounds;
-    temp_g.MeasureString(wtext, -1, &font_obj, layout, &bounds);
+    temp_g.MeasureString(wtext, -1, &font_obj, layout, &format, &bounds);
 
-    int width  = (int)(bounds.Width)  + 8;
+    int width  = (int)(bounds.Width)  + 16;
     int height = (int)(bounds.Height) + 8;
     if (width <= 0 || height <= 0) return false;
 
@@ -178,8 +336,10 @@ bool RenderTextToTexture(const char* text, const char* font_name, float size,
     gfx->SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
     Gdiplus::SolidBrush brush(Gdiplus::Color(255,
         (BYTE)(r * 255.0f), (BYTE)(g * 255.0f), (BYTE)(b * 255.0f)));
-    Gdiplus::PointF origin(4.0f, 4.0f);
-    gfx->DrawString(wtext, -1, &font_obj, origin, &brush);
+    
+    // Use the same StringFormat for drawing
+    Gdiplus::RectF draw_rect(4.0f, 4.0f, (float)width - 8.0f, (float)height - 8.0f);
+    gfx->DrawString(wtext, -1, &font_obj, draw_rect, &format, &brush);
     delete gfx;
 
     tex->width  = width;
@@ -243,7 +403,7 @@ bool LoadImageCue(const char* cues_path, ImageCue* cue)
 
         // Format: asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|
         //         layer_order|effect_type|fade_in_start|fade_in_end|
-        //         fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity
+        //         fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity|blend_mode
         char* pipe1 = strchr(s, '|');
         if (!pipe1) continue;
         *pipe1 = '\0';
@@ -256,14 +416,16 @@ bool LoadImageCue(const char* cues_path, ImageCue* cue)
 
         int layer_order = 0;
         int curve_x = -1, curve_y = -1, curve_scale = -1, curve_opacity = -1;
+        int blend_mode = 0;
         int scanned = sscanf_s(pipe2 + 1,
-                     "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%d|%d|%d",
+                 "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%d|%d|%d|%d",
                      &cue->x, &cue->y, &cue->scale, &cue->opacity,
                      &cue->cue_start, &cue->cue_end,
                      &layer_order, &cue->effect_type,
                      &cue->fade_in_start,  &cue->fade_in_end,
                      &cue->fade_out_start, &cue->fade_out_end,
-                     &curve_x, &curve_y, &curve_scale, &curve_opacity);
+                 &curve_x, &curve_y, &curve_scale, &curve_opacity,
+                 &blend_mode);
         
         if (scanned >= 6) {
             cue->layer_order = layer_order;
@@ -276,6 +438,7 @@ bool LoadImageCue(const char* cues_path, ImageCue* cue)
             } else {
                 cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_opacity = -1;
             }
+            cue->blend_mode = (scanned >= 17) ? blend_mode : 0;
             found = true;
             break;
         }
@@ -303,12 +466,28 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
 
         // Format: text|font_name|x|y|size|color_r|color_g|color_b|
         //         effect_type|cue_start|cue_end|
-        //         fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|
-        //         curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b
+        //         fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|
+        //         curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|
+        //         bake_mode|baked_asset_key|baked_asset_path (optional)
         char* pipe1 = strchr(s, '|');
         if (!pipe1) continue;
         *pipe1 = '\0';
-        strncpy_s(cue->text, s, _TRUNCATE);
+        
+        // Decode literal \\n back to actual newlines
+        char decoded_text[256];
+        const char* src = s;
+        char* dst = decoded_text;
+        while (*src && (dst - decoded_text) < 254) {
+            if (src[0] == '\\' && src[1] == 'n') {
+                *dst++ = '\n';
+                src += 2;
+            } else {
+                *dst++ = *src++;
+            }
+        }
+        *dst = '\0';
+        
+        strncpy_s(cue->text, decoded_text, _TRUNCATE);
 
         char* pipe2 = strchr(pipe1 + 1, '|');
         if (!pipe2) continue;
@@ -316,11 +495,34 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
         strncpy_s(cue->font_name, pipe1 + 1, _TRUNCATE);
 
         int layer_order = 0;
+        int blend_mode = 0;
         int curve_x = -1, curve_y = -1, curve_size = -1;
         int curve_color_r = -1, curve_color_g = -1, curve_color_b = -1;
+        int bake_mode = 0;
+        char baked_asset_key[64] = {};
+        char baked_asset_path[512] = {};
         
+        bool parsed_with_bake_mode = true;
         int parsed = sscanf_s(pipe2 + 1,
-                     "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d",
+                 "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%63[^|]|%511[^|\r\n]",
+                     &cue->x, &cue->y, &cue->size,
+                     &cue->color.r, &cue->color.g, &cue->color.b,
+                     &cue->effect_type,
+                     &cue->cue_start, &cue->cue_end,
+                     &cue->fade_in_start,  &cue->fade_in_end,
+                     &cue->fade_out_start, &cue->fade_out_end,
+                     &layer_order,
+                     &blend_mode,
+                     &curve_x, &curve_y, &curve_size,
+                     &curve_color_r, &curve_color_g, &curve_color_b,
+                     &bake_mode,
+                     baked_asset_key, (unsigned)_countof(baked_asset_key),
+                     baked_asset_path, (unsigned)_countof(baked_asset_path));
+        if (parsed < 23) {
+            // Backward compatibility: older exports had no blend_mode column.
+            parsed_with_bake_mode = false;
+            parsed = sscanf_s(pipe2 + 1,
+                 "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%63[^|]|%511[^|\r\n]",
                      &cue->x, &cue->y, &cue->size,
                      &cue->color.r, &cue->color.g, &cue->color.b,
                      &cue->effect_type,
@@ -329,17 +531,54 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
                      &cue->fade_out_start, &cue->fade_out_end,
                      &layer_order,
                      &curve_x, &curve_y, &curve_size,
-                     &curve_color_r, &curve_color_g, &curve_color_b);
+                     &curve_color_r, &curve_color_g, &curve_color_b,
+                     baked_asset_key, (unsigned)_countof(baked_asset_key),
+                     baked_asset_path, (unsigned)_countof(baked_asset_path));
+        }
         
         if (parsed >= 14) {  // At least the old format
             cue->layer_order = layer_order;
+            cue->blend_mode = (parsed_with_bake_mode && parsed >= 15) ? blend_mode : 0;
             // Curve fields (backwards compatible - default to -1)
-            cue->curve_x = (parsed >= 15) ? curve_x : -1;
-            cue->curve_y = (parsed >= 16) ? curve_y : -1;
-            cue->curve_size = (parsed >= 17) ? curve_size : -1;
-            cue->curve_color_r = (parsed >= 18) ? curve_color_r : -1;
-            cue->curve_color_g = (parsed >= 19) ? curve_color_g : -1;
-            cue->curve_color_b = (parsed >= 20) ? curve_color_b : -1;
+            if (parsed_with_bake_mode) {
+                cue->curve_x = (parsed >= 16) ? curve_x : -1;
+                cue->curve_y = (parsed >= 17) ? curve_y : -1;
+                cue->curve_size = (parsed >= 18) ? curve_size : -1;
+                cue->curve_color_r = (parsed >= 19) ? curve_color_r : -1;
+                cue->curve_color_g = (parsed >= 20) ? curve_color_g : -1;
+                cue->curve_color_b = (parsed >= 21) ? curve_color_b : -1;
+            } else {
+                cue->curve_x = (parsed >= 15) ? curve_x : -1;
+                cue->curve_y = (parsed >= 16) ? curve_y : -1;
+                cue->curve_size = (parsed >= 17) ? curve_size : -1;
+                cue->curve_color_r = (parsed >= 18) ? curve_color_r : -1;
+                cue->curve_color_g = (parsed >= 19) ? curve_color_g : -1;
+                cue->curve_color_b = (parsed >= 20) ? curve_color_b : -1;
+            }
+            cue->bake_mode = (parsed_with_bake_mode && parsed >= 22) ? bake_mode : 0;
+            if (parsed_with_bake_mode) {
+                if (parsed >= 23) {
+                    strncpy_s(cue->baked_asset_key, baked_asset_key, _TRUNCATE);
+                } else {
+                    cue->baked_asset_key[0] = '\0';
+                }
+                if (parsed >= 24) {
+                    strncpy_s(cue->baked_asset_path, baked_asset_path, _TRUNCATE);
+                } else {
+                    cue->baked_asset_path[0] = '\0';
+                }
+            } else {
+                if (parsed >= 21) {
+                    strncpy_s(cue->baked_asset_key, baked_asset_key, _TRUNCATE);
+                } else {
+                    cue->baked_asset_key[0] = '\0';
+                }
+                if (parsed >= 22) {
+                    strncpy_s(cue->baked_asset_path, baked_asset_path, _TRUNCATE);
+                } else {
+                    cue->baked_asset_path[0] = '\0';
+                }
+            }
             found = true;
             break;
         }

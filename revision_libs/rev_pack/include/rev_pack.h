@@ -41,6 +41,7 @@ struct PackResult {
     int total;     // total assets found
     int packed;    // assets written (new or changed)
     int skipped;   // assets unchanged (checksum matched cache)
+    int optional_skipped; // optional assets skipped due to read failures
     bool ok;       // false if a critical error occurred
     char error[256];
 };

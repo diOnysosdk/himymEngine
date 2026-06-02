@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <windows.h>
 
 namespace rev {
 namespace pack {
@@ -41,6 +42,20 @@ struct CacheEntry {
 
 static const int kMaxCacheEntries = 256;
 
+static bool IsAbsolutePath(const char* path) {
+    if (!path || !path[0]) return false;
+    // Windows drive path: C:\... or C:/...
+    if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
+        path[1] == ':' && (path[2] == '\\' || path[2] == '/')) {
+        return true;
+    }
+    // UNC path: \\server\share
+    if (path[0] == '\\' && path[1] == '\\') return true;
+    // Network/posix-like absolute path //server/... or /...
+    if (path[0] == '/') return true;
+    return false;
+}
+
 static int LoadCache(const char* cache_path, CacheEntry* entries) {
     FILE* f = nullptr;
     fopen_s(&f, cache_path, "r");
@@ -77,19 +92,45 @@ static uint32_t CacheFind(const CacheEntry* entries, int count, const char* key)
 }
 
 static unsigned char* ReadFile(const char* path, size_t* out_size) {
-    FILE* f = nullptr;
-    fopen_s(&f, path, "rb");
-    if (!f) return nullptr;
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (sz <= 0) { fclose(f); return nullptr; }
-    unsigned char* buf = (unsigned char*)malloc((size_t)sz);
-    if (!buf) { fclose(f); return nullptr; }
-    fread(buf, 1, (size_t)sz, f);
-    fclose(f);
-    *out_size = (size_t)sz;
-    return buf;
+    if (out_size) *out_size = 0;
+
+    // Freshly baked files can be briefly unavailable due to writer/AV sharing.
+    for (int attempt = 0; attempt < 12; ++attempt) {
+        FILE* f = nullptr;
+        fopen_s(&f, path, "rb");
+        if (!f) {
+            Sleep(15);
+            continue;
+        }
+
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (sz <= 0) {
+            fclose(f);
+            Sleep(15);
+            continue;
+        }
+
+        unsigned char* buf = (unsigned char*)malloc((size_t)sz);
+        if (!buf) {
+            fclose(f);
+            return nullptr;
+        }
+
+        size_t read_sz = fread(buf, 1, (size_t)sz, f);
+        fclose(f);
+        if (read_sz != (size_t)sz) {
+            free(buf);
+            Sleep(15);
+            continue;
+        }
+
+        if (out_size) *out_size = (size_t)sz;
+        return buf;
+    }
+
+    return nullptr;
 }
 
 static void WriteHexArray(FILE* f, const unsigned char* data, size_t size) {
@@ -177,6 +218,43 @@ static bool ParseMeshAssetLine(const char* line, char* key_out, char* path_out) 
     return key_out[0] != '\0' && path_out[0] != '\0';
 }
 
+// Parse [text_cues] line and read optional trailing baked_asset_key|baked_asset_path.
+static bool ParseTextAssetLine(const char* line, char* key_out, char* path_out) {
+    char tmp[1024];
+    strncpy_s(tmp, line, sizeof(tmp) - 1);
+
+    // Strip trailing newline/CR from the whole line first.
+    size_t tlen = strlen(tmp);
+    while (tlen > 0 && (tmp[tlen-1] == '\r' || tmp[tlen-1] == '\n' || tmp[tlen-1] == ' '))
+        tmp[--tlen] = '\0';
+
+    char* last = strrchr(tmp, '|');
+    if (!last) return false;
+    *last = '\0';
+    char* path = last + 1;
+
+    char* prev = strrchr(tmp, '|');
+    if (!prev) return false;
+    *prev = '\0';
+    char* key = prev + 1;
+
+    // Must look like path/key, not numeric legacy fields.
+    if (key[0] == '\0' || path[0] == '\0') return false;
+    if (!strchr(path, '/') && !strchr(path, '\\') && !strstr(path, ".png") && !strstr(path, ".dds")) return false;
+
+    strncpy_s(key_out, 128, key, _TRUNCATE);
+    strncpy_s(path_out, 512, path, _TRUNCATE);
+    return true;
+}
+
+static bool IsOptionalBakedTextAsset(const char* key, const char* path) {
+    if (!key || !path) return false;
+    if (strncmp(key, "text_s", 6) != 0) return false;
+    if (!strstr(path, ".png")) return false;
+    if (!strstr(path, "project_assets")) return false;
+    return true;
+}
+
 PackResult PackAssets(const char* cues_path,
                       const char* output_header,
                       const char* cache_path,
@@ -193,16 +271,17 @@ PackResult PackAssets(const char* cues_path,
 
     AssetRef refs[kMaxAssets];
     int ref_count = 0;
-    bool in_image = false, in_music = false, in_mesh = false;
+    bool in_image = false, in_music = false, in_mesh = false, in_text = false;
     char line[1024];
 
     while (fgets(line, sizeof(line), cues)) {
         char* s = line;
         while (*s == ' ' || *s == '\t') s++;
-        if (strstr(s, "[image_cues]")) { in_image = true; in_music = false; in_mesh = false; continue; }
-        if (strstr(s, "[music_cues]")) { in_image = false; in_music = true; in_mesh = false; continue; }
-        if (strstr(s, "[mesh_cues]"))  { in_image = false; in_music = false; in_mesh = true;  continue; }
-        if (s[0] == '[') { in_image = false; in_music = false; in_mesh = false; continue; }
+        if (strstr(s, "[image_cues]")) { in_image = true; in_music = false; in_mesh = false; in_text = false; continue; }
+        if (strstr(s, "[music_cues]")) { in_image = false; in_music = true; in_mesh = false; in_text = false; continue; }
+        if (strstr(s, "[mesh_cues]"))  { in_image = false; in_music = false; in_mesh = true;  in_text = false; continue; }
+        if (strstr(s, "[text_cues]"))  { in_image = false; in_music = false; in_mesh = false; in_text = true;  continue; }
+        if (s[0] == '[') { in_image = false; in_music = false; in_mesh = false; in_text = false; continue; }
         if (s[0] == '#' || s[0] == '\r' || s[0] == '\n' || s[0] == '\0') continue;
 
         if ((in_image || in_music) && ref_count < kMaxAssets) {
@@ -210,6 +289,9 @@ PackResult PackAssets(const char* cues_path,
                 ref_count++;
         } else if (in_mesh && ref_count < kMaxAssets) {
             if (ParseMeshAssetLine(s, refs[ref_count].key, refs[ref_count].path))
+                ref_count++;
+        } else if (in_text && ref_count < kMaxAssets) {
+            if (ParseTextAssetLine(s, refs[ref_count].key, refs[ref_count].path))
                 ref_count++;
         }
     }
@@ -226,15 +308,19 @@ PackResult PackAssets(const char* cues_path,
             for (char* p = cues_fwd; *p; ++p) if (*p == '\\') *p = '/';
 
             fprintf(hdr, "// packed_assets.h -- generated by rev_pack (no assets)\n");
+            fprintf(hdr, "// format: rev_pack_v2_indexed_asset_symbols\n");
             fprintf(hdr, "#pragma once\n");
             fprintf(hdr, "#include \"rev_pack.h\"\n\n");
+            fprintf(hdr, "#define HIMYM_PACKED_ASSET_FORMAT_VERSION 2\n\n");
             fprintf(hdr, "static const char* PACKED_CUES_PATH = \"%s\";\n\n", cues_fwd);
             fprintf(hdr, "static const rev::pack::PackedAsset kPackedAssets[] = { { nullptr, nullptr, 0, 0 } };\n");
             fprintf(hdr, "static const int kPackedAssetCount = 0;\n");
             // Embed cues.txt content so the packed exe needs no disk access.
             {
                 char full_cues[640] = {};
-                if (workspace_root && workspace_root[0])
+                if (IsAbsolutePath(cues_path))
+                    strncpy_s(full_cues, cues_path, sizeof(full_cues) - 1);
+                else if (workspace_root && workspace_root[0])
                     snprintf(full_cues, sizeof(full_cues), "%s\\%s", workspace_root, cues_path);
                 else
                     strncpy_s(full_cues, cues_path, sizeof(full_cues) - 1);
@@ -272,10 +358,13 @@ PackResult PackAssets(const char* cues_path,
     LoadedAsset* loaded = (LoadedAsset*)malloc(ref_count * sizeof(LoadedAsset));
     if (!loaded) { snprintf(result.error, sizeof(result.error), "OOM"); return result; }
     memset(loaded, 0, ref_count * sizeof(LoadedAsset));
+    int loaded_count = 0;
 
     for (int i = 0; i < ref_count; ++i) {
         char full_path[640];
-        if (workspace_root && workspace_root[0])
+        if (IsAbsolutePath(refs[i].path))
+            snprintf(full_path, sizeof(full_path), "%s", refs[i].path);
+        else if (workspace_root && workspace_root[0])
             snprintf(full_path, sizeof(full_path), "%s\\%s", workspace_root, refs[i].path);
         else
             snprintf(full_path, sizeof(full_path), "%s", refs[i].path);
@@ -284,23 +373,30 @@ PackResult PackAssets(const char* cues_path,
         size_t sz = 0;
         unsigned char* data = ReadFile(full_path, &sz);
         if (!data) {
+            if (IsOptionalBakedTextAsset(refs[i].key, refs[i].path)) {
+                printf("[rev_pack] Warning: skipping missing baked text asset: %s\n", full_path);
+                result.skipped++;
+                result.optional_skipped++;
+                continue;
+            }
             snprintf(result.error, sizeof(result.error), "Cannot read asset: %s", full_path);
-            for (int j = 0; j < i; ++j) free(loaded[j].data);
+            for (int j = 0; j < loaded_count; ++j) free(loaded[j].data);
             free(loaded);
             return result;
         }
         uint32_t crc        = CRC32(data, sz);
         uint32_t cached_crc = CacheFind(cache, cache_count, refs[i].key);
 
-        strncpy_s(loaded[i].key,      refs[i].key,  _TRUNCATE);
-        strncpy_s(loaded[i].rel_path, refs[i].path, _TRUNCATE);
-        KeyToIdent(refs[i].key, loaded[i].ident, sizeof(loaded[i].ident));
-        loaded[i].data    = data;
-        loaded[i].size    = sz;
-        loaded[i].crc32   = crc;
-        loaded[i].changed = (crc != cached_crc);
+        strncpy_s(loaded[loaded_count].key,      refs[i].key,  _TRUNCATE);
+        strncpy_s(loaded[loaded_count].rel_path, refs[i].path, _TRUNCATE);
+        KeyToIdent(refs[i].key, loaded[loaded_count].ident, sizeof(loaded[loaded_count].ident));
+        loaded[loaded_count].data    = data;
+        loaded[loaded_count].size    = sz;
+        loaded[loaded_count].crc32   = crc;
+        loaded[loaded_count].changed = (crc != cached_crc);
+        loaded_count++;
 
-        if (loaded[i].changed) result.packed++;
+        if (loaded[loaded_count - 1].changed) result.packed++;
         else result.skipped++;
     }
 
@@ -309,14 +405,16 @@ PackResult PackAssets(const char* cues_path,
     fopen_s(&hdr, output_header, "w");
     if (!hdr) {
         snprintf(result.error, sizeof(result.error), "Cannot write: %s", output_header);
-        for (int i = 0; i < ref_count; ++i) free(loaded[i].data);
+        for (int i = 0; i < loaded_count; ++i) free(loaded[i].data);
         free(loaded);
         return result;
     }
 
     fprintf(hdr, "// packed_assets.h -- generated by rev_pack. DO NOT EDIT.\n");
+    fprintf(hdr, "// format: rev_pack_v2_indexed_asset_symbols\n");
     fprintf(hdr, "#pragma once\n");
     fprintf(hdr, "#include \"rev_pack.h\"\n\n");
+    fprintf(hdr, "#define HIMYM_PACKED_ASSET_FORMAT_VERSION 2\n\n");
 
     // Embed the cues path (kept for backward compat) and the full cues.txt content.
     {
@@ -345,32 +443,37 @@ PackResult PackAssets(const char* cues_path,
         }
     }
 
-    for (int i = 0; i < ref_count; ++i) {
+    for (int i = 0; i < loaded_count; ++i) {
         fprintf(hdr, "// %s  CRC32=0x%08X  size=%zu\n", loaded[i].key, loaded[i].crc32, loaded[i].size);
-        fprintf(hdr, "static const unsigned char kAsset_%s[] = {\n", loaded[i].ident);
+        fprintf(hdr, "static const unsigned char kAsset_%d[] = {\n", i);
         WriteHexArray(hdr, loaded[i].data, loaded[i].size);
         fprintf(hdr, "};\n\n");
     }
 
     fprintf(hdr, "static const rev::pack::PackedAsset kPackedAssets[] = {\n");
-    for (int i = 0; i < ref_count; ++i) {
-        fprintf(hdr, "    { \"%s\", kAsset_%s, sizeof(kAsset_%s), 0x%08Xu },\n",
-                loaded[i].key, loaded[i].ident, loaded[i].ident, loaded[i].crc32);
+    if (loaded_count == 0) {
+        // Empty initializer lists produce a zero-sized array in C++, which is ill-formed.
+        fprintf(hdr, "    { nullptr, nullptr, 0, 0 },\n");
+    } else {
+        for (int i = 0; i < loaded_count; ++i) {
+            fprintf(hdr, "    { \"%s\", kAsset_%d, sizeof(kAsset_%d), 0x%08Xu },\n",
+                    loaded[i].key, i, i, loaded[i].crc32);
+        }
     }
     fprintf(hdr, "};\n");
-    fprintf(hdr, "static const int kPackedAssetCount = %d;\n", ref_count);
+    fprintf(hdr, "static const int kPackedAssetCount = %d;\n", loaded_count);
     fclose(hdr);
 
     // --- Step 5: update checksum cache ---
     FILE* cache_f = nullptr;
     fopen_s(&cache_f, cache_path, "w");
     if (cache_f) {
-        for (int i = 0; i < ref_count; ++i)
+        for (int i = 0; i < loaded_count; ++i)
             fprintf(cache_f, "%s|%s|%08X\n", loaded[i].key, loaded[i].rel_path, loaded[i].crc32);
         fclose(cache_f);
     }
 
-    for (int i = 0; i < ref_count; ++i) free(loaded[i].data);
+    for (int i = 0; i < loaded_count; ++i) free(loaded[i].data);
     free(loaded);
 
     result.ok = true;

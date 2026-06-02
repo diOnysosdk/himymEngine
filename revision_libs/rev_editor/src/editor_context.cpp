@@ -6,6 +6,8 @@
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+#include <vector>
+#include <string>
 #include <windows.h>
 #include <gl/gl.h>
 #include <gdiplus.h>
@@ -15,6 +17,12 @@
 // OpenGL constants not in gl.h
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
+#endif
+#ifndef GL_CONSTANT_ALPHA
+#define GL_CONSTANT_ALPHA 0x8003
+#endif
+#ifndef GL_ONE_MINUS_CONSTANT_ALPHA
+#define GL_ONE_MINUS_CONSTANT_ALPHA 0x8004
 #endif
 
 // NOTE: This file requires Dear ImGui to be fully functional
@@ -37,8 +45,6 @@ static long long ImGuiMessageCallback(void* hwnd, unsigned int msg, unsigned lon
 namespace rev {
 namespace editor {
 
-// Shader presets now defined in shader_presets.cpp for modularity
-
 // Helper: get file modification time as uint64 (Windows FILETIME)
 uint64_t GetFileModificationTime(const char* path) {
     WIN32_FILE_ATTRIBUTE_DATA fileInfo;
@@ -48,7 +54,290 @@ uint64_t GetFileModificationTime(const char* path) {
         ull.HighPart = fileInfo.ftLastWriteTime.dwHighDateTime;
         return ull.QuadPart;
     }
-    return 0; // File doesn't exist or error
+    return 0;
+}
+
+static void JsonEscapeString(const char* src, char* dst, size_t dst_size) {
+    if (!src || !dst || dst_size == 0) return;
+    size_t di = 0;
+    for (size_t si = 0; src[si] != '\0' && di + 1 < dst_size; ++si) {
+        char c = src[si];
+        if (c == '"' || c == '\\') {
+            if (di + 2 >= dst_size) break;
+            dst[di++] = '\\';
+            dst[di++] = c;
+        } else if (c == '\n') {
+            if (di + 2 >= dst_size) break;
+            dst[di++] = '\\';
+            dst[di++] = 'n';
+        } else if (c == '\r') {
+            if (di + 2 >= dst_size) break;
+            dst[di++] = '\\';
+            dst[di++] = 'r';
+        } else if (c == '\t') {
+            if (di + 2 >= dst_size) break;
+            dst[di++] = '\\';
+            dst[di++] = 't';
+        } else {
+            dst[di++] = c;
+        }
+    }
+    dst[di] = '\0';
+}
+
+static void ApplySpriteBlendMode(int blend_mode) {
+    switch (blend_mode) {
+        case 1: // Additive
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            break;
+        case 2: // Multiply
+            glBlendFunc(GL_DST_COLOR, GL_ZERO);
+            break;
+        case 3: // Screen
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
+            break;
+        case 0:
+        default: // Alpha
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            break;
+    }
+}
+
+static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
+    typedef void (*PFNGLBLENDCOLORPROC)(float red, float green, float blue, float alpha);
+    static PFNGLBLENDCOLORPROC glBlendColor_fn = nullptr;
+    static bool blend_color_loaded = false;
+    if (!blend_color_loaded) {
+        glBlendColor_fn = (PFNGLBLENDCOLORPROC)wglGetProcAddress("glBlendColor");
+        blend_color_loaded = true;
+    }
+
+    float a = opacity;
+    if (a < 0.0f) a = 0.0f;
+    if (a > 1.0f) a = 1.0f;
+
+    bool has_blend_color = (glBlendColor_fn != nullptr);
+    if (has_blend_color) {
+        glBlendColor_fn(0.0f, 0.0f, 0.0f, a);
+    }
+
+    switch (blend_mode) {
+        case 1: // Additive
+            glBlendFunc(has_blend_color ? GL_CONSTANT_ALPHA : GL_SRC_ALPHA, GL_ONE);
+            break;
+        case 2: // Multiply
+            glBlendFunc(GL_DST_COLOR, GL_ZERO);
+            break;
+        case 3: // Screen
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
+            break;
+        case 0:
+        default: // Alpha
+            glBlendFunc(has_blend_color ? GL_CONSTANT_ALPHA : GL_SRC_ALPHA,
+                        has_blend_color ? GL_ONE_MINUS_CONSTANT_ALPHA : GL_ONE_MINUS_SRC_ALPHA);
+            break;
+    }
+}
+
+static void JsonUnescapeString(const char* src, char* dst, size_t dst_size) {
+    if (!src || !dst || dst_size == 0) return;
+    size_t di = 0;
+    for (size_t si = 0; src[si] != '\0' && di + 1 < dst_size; ++si) {
+        if (src[si] == '\\' && src[si + 1] != '\0') {
+            ++si;
+            if (src[si] == 'n') dst[di++] = '\n';
+            else if (src[si] == 'r') dst[di++] = '\r';
+            else if (src[si] == 't') dst[di++] = '\t';
+            else dst[di++] = src[si];
+        } else {
+            dst[di++] = src[si];
+        }
+    }
+    dst[di] = '\0';
+}
+
+static bool ParseJsonStringValue(const char* line, char* out, size_t out_size) {
+    if (!line || !out || out_size == 0) return false;
+
+    const char* colon = strchr(line, ':');
+    if (!colon) return false;
+
+    const char* p = colon + 1;
+    while (*p == ' ' || *p == '\t') ++p;
+    if (*p != '"') return false;
+    ++p;
+
+    char escaped[1024] = {};
+    size_t ei = 0;
+    while (*p && ei + 1 < sizeof(escaped)) {
+        if (*p == '"' && (p == line || *(p - 1) != '\\')) break;
+        escaped[ei++] = *p++;
+    }
+    escaped[ei] = '\0';
+
+    JsonUnescapeString(escaped, out, out_size);
+    return true;
+}
+
+static bool GetPngEncoderClsid(CLSID* clsid) {
+    if (!clsid) return false;
+    UINT num = 0, size = 0;
+    Gdiplus::GetImageEncodersSize(&num, &size);
+    if (size == 0) return false;
+
+    BYTE* image_codec_memory = new BYTE[size];
+    Gdiplus::ImageCodecInfo* image_codecs = (Gdiplus::ImageCodecInfo*)image_codec_memory;
+    if (Gdiplus::GetImageEncoders(num, size, image_codecs) != Gdiplus::Ok) {
+        delete[] image_codec_memory;
+        return false;
+    }
+
+    bool found = false;
+    for (UINT i = 0; i < num; ++i) {
+        if (wcscmp(image_codecs[i].MimeType, L"image/png") == 0) {
+            *clsid = image_codecs[i].Clsid;
+            found = true;
+            break;
+        }
+    }
+
+    delete[] image_codec_memory;
+    return found;
+}
+
+struct FontEnumData {
+    char** fonts;
+    int count;
+    int capacity;
+};
+
+static int CALLBACK EnumFontFamExProc(const LOGFONTA* lpelfe, const TEXTMETRICA*, DWORD, LPARAM lParam) {
+    FontEnumData* data = (FontEnumData*)lParam;
+    if (!data || !lpelfe) return 1;
+
+    const char* face = lpelfe->lfFaceName;
+    if (!face || face[0] == '\0') return 1;
+
+    for (int i = 0; i < data->count; ++i) {
+        if (strcmp(data->fonts[i], face) == 0) {
+            return 1;
+        }
+    }
+
+    if (data->count >= data->capacity) {
+        int new_capacity = (data->capacity > 0) ? (data->capacity * 2) : 64;
+        char** new_fonts = new char*[new_capacity];
+        for (int i = 0; i < data->count; ++i) {
+            new_fonts[i] = data->fonts[i];
+        }
+        delete[] data->fonts;
+        data->fonts = new_fonts;
+        data->capacity = new_capacity;
+    }
+
+    size_t len = strlen(face);
+    char* copy = new char[len + 1];
+    strcpy_s(copy, len + 1, face);
+    data->fonts[data->count++] = copy;
+    return 1;
+}
+
+static void EnumerateInstalledFonts(char*** out_fonts, int* out_count) {
+    if (!out_fonts || !out_count) return;
+    *out_fonts = nullptr;
+    *out_count = 0;
+
+    HDC hdc = GetDC(nullptr);
+    if (!hdc) {
+        return;
+    }
+
+    FontEnumData data = {};
+    LOGFONTA lf = {};
+    lf.lfCharSet = DEFAULT_CHARSET;
+
+    EnumFontFamiliesExA(hdc, &lf, (FONTENUMPROCA)EnumFontFamExProc, (LPARAM)&data, 0);
+    ReleaseDC(nullptr, hdc);
+
+    if (data.count == 0) {
+        data.fonts = new char*[1];
+        data.fonts[0] = new char[6];
+        strcpy_s(data.fonts[0], 6, "Arial");
+        data.count = 1;
+        data.capacity = 1;
+    }
+
+    *out_fonts = data.fonts;
+    *out_count = data.count;
+}
+
+static bool BakeTextCueToPng(const TextCue* cue, const char* output_path) {
+    if (!cue || !output_path || cue->text[0] == '\0' || cue->font_name[0] == '\0') return false;
+
+    wchar_t wtext[256] = {};
+    wchar_t wfont[64] = {};
+    wchar_t wpath[512] = {};
+    MultiByteToWideChar(CP_UTF8, 0, cue->text, -1, wtext, (int)_countof(wtext));
+    MultiByteToWideChar(CP_UTF8, 0, cue->font_name, -1, wfont, (int)_countof(wfont));
+    MultiByteToWideChar(CP_UTF8, 0, output_path, -1, wpath, (int)_countof(wpath));
+
+    Gdiplus::Bitmap temp_bitmap(1, 1, PixelFormat32bppARGB);
+    Gdiplus::Graphics temp_g(&temp_bitmap);
+    Gdiplus::Font font_obj(wfont, (Gdiplus::REAL)cue->size,
+                           Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::StringFormat format;
+    format.SetAlignment(Gdiplus::StringAlignmentNear);
+    format.SetLineAlignment(Gdiplus::StringAlignmentNear);
+    // Do NOT set StringFormatFlagsNoWrap — it suppresses embedded \n line breaks.
+    format.SetTrimming(Gdiplus::StringTrimmingNone);
+
+    Gdiplus::RectF layout(0.0f, 0.0f, 8192.0f, 8192.0f);
+    Gdiplus::RectF bounds;
+    temp_g.MeasureString(wtext, -1, &font_obj, layout, &format, &bounds);
+
+    int width  = (int)(bounds.Width)  + 32;
+    int height = (int)(bounds.Height) + 32;
+    if (width  < 8) width  = 8;
+    if (height < 8) height = 8;
+
+    Gdiplus::Bitmap bitmap(width, height, PixelFormat32bppARGB);
+    Gdiplus::Graphics gfx(&bitmap);
+    gfx.Clear(Gdiplus::Color(0, 0, 0, 0));
+    gfx.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
+    gfx.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
+    gfx.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
+    gfx.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    Gdiplus::SolidBrush brush(Gdiplus::Color(
+        255,
+        (BYTE)(cue->color.r * 255.0f),
+        (BYTE)(cue->color.g * 255.0f),
+        (BYTE)(cue->color.b * 255.0f)));
+
+    Gdiplus::RectF draw_rect(8.0f, 8.0f, (float)width - 16.0f, (float)height - 16.0f);
+    gfx.DrawString(wtext, -1, &font_obj, draw_rect, &format, &brush);
+
+    CLSID png_clsid = {};
+    if (!GetPngEncoderClsid(&png_clsid)) return false;
+    return bitmap.Save(wpath, &png_clsid, nullptr) == Gdiplus::Ok;
+}
+
+static bool IsFileReadableWithRetry(const char* path, int max_attempts, int sleep_ms) {
+    if (!path || path[0] == '\0') return false;
+    if (max_attempts < 1) max_attempts = 1;
+    if (sleep_ms < 0) sleep_ms = 0;
+
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        FILE* f = nullptr;
+        fopen_s(&f, path, "rb");
+        if (f) {
+            fclose(f);
+            return true;
+        }
+        if (attempt + 1 < max_attempts && sleep_ms > 0) {
+            Sleep((DWORD)sleep_ms);
+        }
+    }
+    return false;
 }
 
 EditorContext* CreateEditor(rev::platform::Window* window) {
@@ -87,6 +376,8 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->image_modal_request_open = false;
     editor->text_modal_open = false;
     editor->text_modal_request_open = false;
+    editor->installed_fonts = nullptr;
+    editor->installed_font_count = 0;
     editor->mesh_modal_open = false;
     editor->mesh_modal_request_open = false;
     memset(&editor->editing_mesh, 0, sizeof(editor->editing_mesh));
@@ -149,6 +440,10 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
     
+    // Enumerate installed Windows fonts for font picker
+    EnumerateInstalledFonts(&editor->installed_fonts, &editor->installed_font_count);
+    printf("Enumerated %d installed fonts\n", editor->installed_font_count);
+    
     return editor;
 }
 
@@ -182,6 +477,14 @@ void DestroyEditor(EditorContext* editor) {
     
     // Cleanup preview
     CleanupPreview(editor);
+    
+    // Cleanup installed fonts list
+    if (editor->installed_fonts) {
+        for (int i = 0; i < editor->installed_font_count; ++i) {
+            delete[] editor->installed_fonts[i];
+        }
+        delete[] editor->installed_fonts;
+    }
     
     // Cleanup ImGui
     ImGui_ImplOpenGL3_Shutdown();
@@ -225,7 +528,14 @@ bool LoadProject(EditorContext* editor, const char* path) {
     TextCue current_text_cue = {};
     MusicCue current_music_cue = {};
     MeshCue current_mesh_cue = {};
-    current_mesh_cue.scale[0] = current_mesh_cue.scale[1] = current_mesh_cue.scale[2] = 1.0f;    rev::curve::Curve* current_curve = nullptr;
+    current_mesh_cue.scale[0] = current_mesh_cue.scale[1] = current_mesh_cue.scale[2] = 1.0f;
+    current_mesh_cue.roughness = 0.5f;
+    current_mesh_cue.curve_pos_x = current_mesh_cue.curve_pos_y = current_mesh_cue.curve_pos_z = -1;
+    current_mesh_cue.curve_rot_x = current_mesh_cue.curve_rot_y = current_mesh_cue.curve_rot_z = -1;
+    current_mesh_cue.curve_scale_x = current_mesh_cue.curve_scale_y = current_mesh_cue.curve_scale_z = -1;
+    current_mesh_cue.curve_color_r = current_mesh_cue.curve_color_g = current_mesh_cue.curve_color_b = current_mesh_cue.curve_color_a = -1;
+    current_mesh_cue.curve_mesh_size = current_mesh_cue.curve_metallic = current_mesh_cue.curve_roughness = -1;
+    rev::curve::Curve* current_curve = nullptr;
     
     char scene_name[64] = {};
     float scene_duration = 0.0f;
@@ -250,7 +560,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
         
         // Scene name and duration detection (inside scenes array)
         if (in_scenes && strstr(start, "\"name\":")) {
-            if (sscanf_s(start, "\"name\": \"%63[^\"]\"", scene_name, (unsigned)sizeof(scene_name)) == 1) {
+            if (ParseJsonStringValue(start, scene_name, sizeof(scene_name))) {
                 has_name = true;
             }
         }
@@ -308,7 +618,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
         // Parse shader cue fields
         if (in_shader_cues && current_scene) {
             if (strstr(start, "\"shader_name\":")) {
-                sscanf_s(start, "\"shader_name\": \"%63[^\"]\"", current_shader_cue.shader_name, (unsigned)sizeof(current_shader_cue.shader_name));
+                ParseJsonStringValue(start, current_shader_cue.shader_name, sizeof(current_shader_cue.shader_name));
             } else if (strstr(start, "\"shader_scene_id\":")) {
                 sscanf_s(start, "\"shader_scene_id\": %d", &current_shader_cue.shader_scene_id);
             } else if (strstr(start, "\"palette_low\":")) {
@@ -403,7 +713,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
         // Parse image cue fields
         if (in_image_cues && current_scene) {
             if (strstr(start, "\"asset_key\":")) {
-                sscanf_s(start, "\"asset_key\": \"%127[^\"]\"", current_image_cue.asset_key, (unsigned)sizeof(current_image_cue.asset_key));
+                ParseJsonStringValue(start, current_image_cue.asset_key, sizeof(current_image_cue.asset_key));
             } else if (strstr(start, "\"x\":")) {
                 sscanf_s(start, "\"x\": %f", &current_image_cue.x);
             } else if (strstr(start, "\"y\":")) {
@@ -430,6 +740,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"fade_out_start\": %f", &current_image_cue.fade_out_start);
             } else if (strstr(start, "\"fade_out_end\":")) {
                 sscanf_s(start, "\"fade_out_end\": %f", &current_image_cue.fade_out_end);
+            } else if (strstr(start, "\"blend_mode\":")) {
+                sscanf_s(start, "\"blend_mode\": %d", &current_image_cue.blend_mode);
             } else if (strstr(start, "\"layer_order\":")) {
                 sscanf_s(start, "\"layer_order\": %d", &current_image_cue.layer_order);
             } else if (strstr(start, "\"curve_x\":")) {
@@ -460,9 +772,53 @@ bool LoadProject(EditorContext* editor, const char* path) {
         // Parse text cue fields
         if (in_text_cues && current_scene) {
             if (strstr(start, "\"text\":")) {
-                sscanf_s(start, "\"text\": \"%255[^\"]\"", current_text_cue.text, (unsigned)sizeof(current_text_cue.text));
+                // Robust parse: handle both valid JSON escaped text and legacy multiline text
+                // that may span multiple physical lines in old project files.
+                char escaped_text[512] = {};
+                size_t out_len = 0;
+                char* colon = strchr(start, ':');
+                if (colon) {
+                    char* p = colon + 1;
+                    while (*p == ' ' || *p == '\t') ++p;
+                    if (*p == '"') {
+                        ++p; // skip opening quote
+                        bool done = false;
+                        char continuation[1024];
+
+                        while (!done && out_len + 1 < sizeof(escaped_text)) {
+                            for (; *p && out_len + 1 < sizeof(escaped_text); ++p) {
+                                // End at unescaped quote
+                                if (*p == '"' && (p == start || *(p - 1) != '\\')) {
+                                    done = true;
+                                    break;
+                                }
+                                if (*p == '\r' || *p == '\n') continue;
+                                escaped_text[out_len++] = *p;
+                            }
+
+                            if (done) break;
+
+                            // Legacy recovery: text continued on next line in malformed JSON.
+                            if (out_len + 1 < sizeof(escaped_text)) {
+                                escaped_text[out_len++] = '\\';
+                            }
+                            if (out_len + 1 < sizeof(escaped_text)) {
+                                escaped_text[out_len++] = 'n';
+                            }
+
+                            if (!fgets(continuation, sizeof(continuation), f)) break;
+                            p = continuation;
+                            while (*p == ' ' || *p == '\t') ++p;
+                        }
+                        escaped_text[out_len] = '\0';
+                    }
+                }
+
+                if (escaped_text[0] != '\0') {
+                    JsonUnescapeString(escaped_text, current_text_cue.text, sizeof(current_text_cue.text));
+                }
             } else if (strstr(start, "\"font_name\":")) {
-                sscanf_s(start, "\"font_name\": \"%63[^\"]\"", current_text_cue.font_name, (unsigned)sizeof(current_text_cue.font_name));
+                ParseJsonStringValue(start, current_text_cue.font_name, sizeof(current_text_cue.font_name));
             } else if (strstr(start, "\"x\":")) {
                 sscanf_s(start, "\"x\": %f", &current_text_cue.x);
             } else if (strstr(start, "\"y\":")) {
@@ -490,6 +846,14 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"fade_out_start\": %f", &current_text_cue.fade_out_start);
             } else if (strstr(start, "\"fade_out_end\":")) {
                 sscanf_s(start, "\"fade_out_end\": %f", &current_text_cue.fade_out_end);
+            } else if (strstr(start, "\"blend_mode\":")) {
+                sscanf_s(start, "\"blend_mode\": %d", &current_text_cue.blend_mode);
+            } else if (strstr(start, "\"bake_mode\":")) {
+                sscanf_s(start, "\"bake_mode\": %d", &current_text_cue.bake_mode);
+            } else if (strstr(start, "\"baked_asset_key\":")) {
+                ParseJsonStringValue(start, current_text_cue.baked_asset_key, sizeof(current_text_cue.baked_asset_key));
+            } else if (strstr(start, "\"baked_asset_path\":")) {
+                ParseJsonStringValue(start, current_text_cue.baked_asset_path, sizeof(current_text_cue.baked_asset_path));
             } else if (strstr(start, "\"layer_order\":")) {
                 sscanf_s(start, "\"layer_order\": %d", &current_text_cue.layer_order);
             } else if (start[0] == '}' && current_text_cue.text[0] != '\0') {
@@ -501,9 +865,9 @@ bool LoadProject(EditorContext* editor, const char* path) {
         // Parse music cue fields
         if (in_music_cues && current_scene) {
             if (strstr(start, "\"asset_key\":")) {
-                sscanf_s(start, "\"asset_key\": \"%63[^\"]\"", current_music_cue.asset_key, (unsigned)sizeof(current_music_cue.asset_key));
+                ParseJsonStringValue(start, current_music_cue.asset_key, sizeof(current_music_cue.asset_key));
             } else if (strstr(start, "\"asset_path\":")) {
-                sscanf_s(start, "\"asset_path\": \"%511[^\"]\"", current_music_cue.asset_path, (unsigned)sizeof(current_music_cue.asset_path));
+                ParseJsonStringValue(start, current_music_cue.asset_path, sizeof(current_music_cue.asset_path));
             } else if (strstr(start, "\"cue_start\":")) {
                 sscanf_s(start, "\"cue_start\": %f", &current_music_cue.cue_start);
             } else if (strstr(start, "\"cue_end\":")) {
@@ -519,9 +883,9 @@ bool LoadProject(EditorContext* editor, const char* path) {
         // Parse mesh cue fields
         if (in_mesh_cues && current_scene) {
             if (strstr(start, "\"asset_key\":")) {
-                sscanf_s(start, "\"asset_key\": \"%63[^\"]\"", current_mesh_cue.asset_key, (unsigned)sizeof(current_mesh_cue.asset_key));
+                ParseJsonStringValue(start, current_mesh_cue.asset_key, sizeof(current_mesh_cue.asset_key));
             } else if (strstr(start, "\"asset_path\":")) {
-                sscanf_s(start, "\"asset_path\": \"%511[^\"]\"", current_mesh_cue.asset_path, (unsigned)sizeof(current_mesh_cue.asset_path));
+                ParseJsonStringValue(start, current_mesh_cue.asset_path, sizeof(current_mesh_cue.asset_path));
             } else if (strstr(start, "\"mesh_type\":")) {
                 sscanf_s(start, "\"mesh_type\": %d", &current_mesh_cue.mesh_type);
             } else if (strstr(start, "\"pos\":")) {
@@ -556,11 +920,48 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"fade_out_end\": %f", &current_mesh_cue.fade_out_end);
             } else if (strstr(start, "\"layer_order\":")) {
                 sscanf_s(start, "\"layer_order\": %d", &current_mesh_cue.layer_order);
+            } else if (strstr(start, "\"curve_pos_x\":")) {
+                sscanf_s(start, "\"curve_pos_x\": %d", &current_mesh_cue.curve_pos_x);
+            } else if (strstr(start, "\"curve_pos_y\":")) {
+                sscanf_s(start, "\"curve_pos_y\": %d", &current_mesh_cue.curve_pos_y);
+            } else if (strstr(start, "\"curve_pos_z\":")) {
+                sscanf_s(start, "\"curve_pos_z\": %d", &current_mesh_cue.curve_pos_z);
+            } else if (strstr(start, "\"curve_rot_x\":")) {
+                sscanf_s(start, "\"curve_rot_x\": %d", &current_mesh_cue.curve_rot_x);
+            } else if (strstr(start, "\"curve_rot_y\":")) {
+                sscanf_s(start, "\"curve_rot_y\": %d", &current_mesh_cue.curve_rot_y);
+            } else if (strstr(start, "\"curve_rot_z\":")) {
+                sscanf_s(start, "\"curve_rot_z\": %d", &current_mesh_cue.curve_rot_z);
+            } else if (strstr(start, "\"curve_scale_x\":")) {
+                sscanf_s(start, "\"curve_scale_x\": %d", &current_mesh_cue.curve_scale_x);
+            } else if (strstr(start, "\"curve_scale_y\":")) {
+                sscanf_s(start, "\"curve_scale_y\": %d", &current_mesh_cue.curve_scale_y);
+            } else if (strstr(start, "\"curve_scale_z\":")) {
+                sscanf_s(start, "\"curve_scale_z\": %d", &current_mesh_cue.curve_scale_z);
+            } else if (strstr(start, "\"curve_color_r\":")) {
+                sscanf_s(start, "\"curve_color_r\": %d", &current_mesh_cue.curve_color_r);
+            } else if (strstr(start, "\"curve_color_g\":")) {
+                sscanf_s(start, "\"curve_color_g\": %d", &current_mesh_cue.curve_color_g);
+            } else if (strstr(start, "\"curve_color_b\":")) {
+                sscanf_s(start, "\"curve_color_b\": %d", &current_mesh_cue.curve_color_b);
+            } else if (strstr(start, "\"curve_color_a\":")) {
+                sscanf_s(start, "\"curve_color_a\": %d", &current_mesh_cue.curve_color_a);
+            } else if (strstr(start, "\"curve_mesh_size\":")) {
+                sscanf_s(start, "\"curve_mesh_size\": %d", &current_mesh_cue.curve_mesh_size);
+            } else if (strstr(start, "\"curve_metallic\":")) {
+                sscanf_s(start, "\"curve_metallic\": %d", &current_mesh_cue.curve_metallic);
+            } else if (strstr(start, "\"curve_roughness\":")) {
+                sscanf_s(start, "\"curve_roughness\": %d", &current_mesh_cue.curve_roughness);
             } else if (start[0] == '}' && current_mesh_cue.asset_key[0] != '\0') {
                 AddMeshCue(current_scene, current_mesh_cue);
                 MeshCue blank = {};
                 blank.scale[0] = blank.scale[1] = blank.scale[2] = 1.0f;
                 blank.roughness = 0.5f;
+                blank.curve_pos_x = blank.curve_pos_y = blank.curve_pos_z = -1;
+                blank.curve_rot_x = blank.curve_rot_y = blank.curve_rot_z = -1;
+                blank.curve_scale_x = blank.curve_scale_y = blank.curve_scale_z = -1;
+                blank.curve_color_r = blank.curve_color_g = blank.curve_color_b = blank.curve_color_a = -1;
+                blank.curve_mesh_size = blank.curve_metallic = blank.curve_roughness = -1;
                 current_mesh_cue = blank;
             }
         }
@@ -670,25 +1071,32 @@ bool SaveProject(EditorContext* editor, const char* path) {
     fopen_s(&f, path, "w");
     if (!f) return false;
     
+    char escaped_workspace[1024] = {};
+    JsonEscapeString(editor->project->workspace_path, escaped_workspace, sizeof(escaped_workspace));
+
     fprintf(f, "{\n");
     fprintf(f, "  \"version\": \"1.0\",\n");
-    fprintf(f, "  \"workspace_path\": \"%s\",\n", editor->project->workspace_path);
+    fprintf(f, "  \"workspace_path\": \"%s\",\n", escaped_workspace);
     fprintf(f, "  \"total_duration\": %.3f,\n", editor->project->total_duration);
     fprintf(f, "  \"scenes\": [\n");
     
     // Save scenes
     for (int s = 0; s < editor->project->scene_count; ++s) {
         SceneBlock* scene = &editor->project->scenes[s];
+        char escaped_scene_name[128] = {};
+        JsonEscapeString(scene->name, escaped_scene_name, sizeof(escaped_scene_name));
         fprintf(f, "    {\n");
-        fprintf(f, "      \"name\": \"%s\",\n", scene->name);
+        fprintf(f, "      \"name\": \"%s\",\n", escaped_scene_name);
         fprintf(f, "      \"duration\": %.3f,\n", scene->duration);
         
         // Shader cues
         fprintf(f, "      \"shader_cues\": [\n");
         for (int i = 0; i < scene->shader_cue_count; ++i) {
             ShaderCue* cue = &scene->shader_cues[i];
+            char escaped_shader_name[128] = {};
+            JsonEscapeString(cue->shader_name, escaped_shader_name, sizeof(escaped_shader_name));
             fprintf(f, "        {\n");
-            fprintf(f, "          \"shader_name\": \"%s\",\n", cue->shader_name);
+            fprintf(f, "          \"shader_name\": \"%s\",\n", escaped_shader_name);
             fprintf(f, "          \"shader_scene_id\": %d,\n", cue->shader_scene_id);
             fprintf(f, "          \"palette_low\": [%.3f, %.3f, %.3f],\n", 
                 cue->palette_low.r, cue->palette_low.g, cue->palette_low.b);
@@ -736,8 +1144,10 @@ bool SaveProject(EditorContext* editor, const char* path) {
         fprintf(f, "      \"image_cues\": [\n");
         for (int i = 0; i < scene->image_cue_count; ++i) {
             ImageCue* cue = &scene->image_cues[i];
+            char escaped_asset_key[256] = {};
+            JsonEscapeString(cue->asset_key, escaped_asset_key, sizeof(escaped_asset_key));
             fprintf(f, "        {\n");
-            fprintf(f, "          \"asset_key\": \"%s\",\n", cue->asset_key);
+            fprintf(f, "          \"asset_key\": \"%s\",\n", escaped_asset_key);
             fprintf(f, "          \"x\": %.3f,\n", cue->x);
             fprintf(f, "          \"y\": %.3f,\n", cue->y);
             fprintf(f, "          \"scale\": %.3f,\n", cue->scale);
@@ -749,6 +1159,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"fade_in_end\": %.3f,\n", cue->fade_in_end);
             fprintf(f, "          \"fade_out_start\": %.3f,\n", cue->fade_out_start);
             fprintf(f, "          \"fade_out_end\": %.3f,\n", cue->fade_out_end);
+            fprintf(f, "          \"blend_mode\": %d,\n", cue->blend_mode);
             fprintf(f, "          \"layer_order\": %d,\n", cue->layer_order);
             fprintf(f, "          \"curve_x\": %d,\n", cue->curve_x);
             fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
@@ -762,9 +1173,17 @@ bool SaveProject(EditorContext* editor, const char* path) {
         fprintf(f, "      \"text_cues\": [\n");
         for (int i = 0; i < scene->text_cue_count; ++i) {
             TextCue* cue = &scene->text_cues[i];
+            char escaped_text[512] = {};
+            char escaped_font[128] = {};
+            char escaped_baked_key[128] = {};
+            char escaped_baked_path[1024] = {};
+            JsonEscapeString(cue->text, escaped_text, sizeof(escaped_text));
+            JsonEscapeString(cue->font_name, escaped_font, sizeof(escaped_font));
+            JsonEscapeString(cue->baked_asset_key, escaped_baked_key, sizeof(escaped_baked_key));
+            JsonEscapeString(cue->baked_asset_path, escaped_baked_path, sizeof(escaped_baked_path));
             fprintf(f, "        {\n");
-            fprintf(f, "          \"text\": \"%s\",\n", cue->text);
-            fprintf(f, "          \"font_name\": \"%s\",\n", cue->font_name);
+            fprintf(f, "          \"text\": \"%s\",\n", escaped_text);
+            fprintf(f, "          \"font_name\": \"%s\",\n", escaped_font);
             fprintf(f, "          \"x\": %.3f,\n", cue->x);
             fprintf(f, "          \"y\": %.3f,\n", cue->y);
             fprintf(f, "          \"size\": %.3f,\n", cue->size);
@@ -777,6 +1196,10 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"fade_in_end\": %.3f,\n", cue->fade_in_end);
             fprintf(f, "          \"fade_out_start\": %.3f,\n", cue->fade_out_start);
             fprintf(f, "          \"fade_out_end\": %.3f,\n", cue->fade_out_end);
+            fprintf(f, "          \"blend_mode\": %d,\n", cue->blend_mode);
+            fprintf(f, "          \"bake_mode\": %d,\n", cue->bake_mode);
+            fprintf(f, "          \"baked_asset_key\": \"%s\",\n", escaped_baked_key);
+            fprintf(f, "          \"baked_asset_path\": \"%s\",\n", escaped_baked_path);
             fprintf(f, "          \"layer_order\": %d\n", cue->layer_order);
             fprintf(f, "        }%s\n", (i < scene->text_cue_count - 1) ? "," : "");
         }
@@ -786,9 +1209,13 @@ bool SaveProject(EditorContext* editor, const char* path) {
         fprintf(f, "      \"music_cues\": [\n");
         for (int i = 0; i < scene->music_cue_count; ++i) {
             MusicCue* cue = &scene->music_cues[i];
+            char escaped_asset_key[128] = {};
+            char escaped_asset_path[1024] = {};
+            JsonEscapeString(cue->asset_key, escaped_asset_key, sizeof(escaped_asset_key));
+            JsonEscapeString(cue->asset_path, escaped_asset_path, sizeof(escaped_asset_path));
             fprintf(f, "        {\n");
-            fprintf(f, "          \"asset_key\": \"%s\",\n", cue->asset_key);
-            fprintf(f, "          \"asset_path\": \"%s\",\n", cue->asset_path);
+            fprintf(f, "          \"asset_key\": \"%s\",\n", escaped_asset_key);
+            fprintf(f, "          \"asset_path\": \"%s\",\n", escaped_asset_path);
             fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
             fprintf(f, "          \"cue_end\": %.3f\n", cue->cue_end);
             fprintf(f, "        }%s\n", (i < scene->music_cue_count - 1) ? "," : "");
@@ -799,9 +1226,13 @@ bool SaveProject(EditorContext* editor, const char* path) {
         fprintf(f, "      \"mesh_cues\": [\n");
         for (int i = 0; i < scene->mesh_cue_count; ++i) {
             MeshCue* cue = &scene->mesh_cues[i];
+            char escaped_asset_key[128] = {};
+            char escaped_asset_path[1024] = {};
+            JsonEscapeString(cue->asset_key, escaped_asset_key, sizeof(escaped_asset_key));
+            JsonEscapeString(cue->asset_path, escaped_asset_path, sizeof(escaped_asset_path));
             fprintf(f, "        {\n");
-            fprintf(f, "          \"asset_key\": \"%s\",\n",   cue->asset_key);
-            fprintf(f, "          \"asset_path\": \"%s\",\n",  cue->asset_path);
+            fprintf(f, "          \"asset_key\": \"%s\",\n",   escaped_asset_key);
+            fprintf(f, "          \"asset_path\": \"%s\",\n",  escaped_asset_path);
             fprintf(f, "          \"mesh_type\": %d,\n",        cue->mesh_type);
             fprintf(f, "          \"pos\": [%.3f, %.3f, %.3f],\n",   cue->pos[0],   cue->pos[1],   cue->pos[2]);
             fprintf(f, "          \"rot\": [%.3f, %.3f, %.3f],\n",   cue->rot[0],   cue->rot[1],   cue->rot[2]);
@@ -818,7 +1249,23 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"fade_in_end\": %.3f,\n",    cue->fade_in_end);
             fprintf(f, "          \"fade_out_start\": %.3f,\n", cue->fade_out_start);
             fprintf(f, "          \"fade_out_end\": %.3f,\n",   cue->fade_out_end);
-            fprintf(f, "          \"layer_order\": %d\n",   cue->layer_order);
+            fprintf(f, "          \"layer_order\": %d,\n",   cue->layer_order);
+            fprintf(f, "          \"curve_pos_x\": %d,\n", cue->curve_pos_x);
+            fprintf(f, "          \"curve_pos_y\": %d,\n", cue->curve_pos_y);
+            fprintf(f, "          \"curve_pos_z\": %d,\n", cue->curve_pos_z);
+            fprintf(f, "          \"curve_rot_x\": %d,\n", cue->curve_rot_x);
+            fprintf(f, "          \"curve_rot_y\": %d,\n", cue->curve_rot_y);
+            fprintf(f, "          \"curve_rot_z\": %d,\n", cue->curve_rot_z);
+            fprintf(f, "          \"curve_scale_x\": %d,\n", cue->curve_scale_x);
+            fprintf(f, "          \"curve_scale_y\": %d,\n", cue->curve_scale_y);
+            fprintf(f, "          \"curve_scale_z\": %d,\n", cue->curve_scale_z);
+            fprintf(f, "          \"curve_color_r\": %d,\n", cue->curve_color_r);
+            fprintf(f, "          \"curve_color_g\": %d,\n", cue->curve_color_g);
+            fprintf(f, "          \"curve_color_b\": %d,\n", cue->curve_color_b);
+            fprintf(f, "          \"curve_color_a\": %d,\n", cue->curve_color_a);
+            fprintf(f, "          \"curve_mesh_size\": %d,\n", cue->curve_mesh_size);
+            fprintf(f, "          \"curve_metallic\": %d,\n", cue->curve_metallic);
+            fprintf(f, "          \"curve_roughness\": %d\n", cue->curve_roughness);
             fprintf(f, "        }%s\n", (i < scene->mesh_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ]\n");
@@ -1361,7 +1808,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             continue;
         }
         
-        // Parse image cues: asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end
+        // Parse image cues: ...|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|blend_mode(optional)
         if (current_section == IMAGE_CUES) {
             char* p1 = strchr(start, '|');
             if (!p1) continue;
@@ -1372,12 +1819,14 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             char* p2 = strchr(p1 + 1, '|'); // skip asset_path field
             if (!p2) continue;
             float abs_start = 0.0f, abs_end = 0.0f;
-            int parsed = sscanf_s(p2 + 1, "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f",
+            int parsed = sscanf_s(p2 + 1, "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d",
                 &cue.x, &cue.y, &cue.scale, &cue.opacity,
                 &abs_start, &abs_end, &cue.layer_order,
-                &cue.effect_type, &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end
+                &cue.effect_type, &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end,
+                &cue.blend_mode
             );
             if (parsed >= 7) {
+                if (parsed < 13) cue.blend_mode = 0;
                 cue.cue_start = abs_start;
                 cue.cue_end = abs_end;
                 if (editor->project->scene_count == 0)
@@ -1389,28 +1838,75 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             continue;
         }
 
-        // Parse text cues: text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order
+        // Parse text cues: ...|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path(optional)
         if (current_section == TEXT_CUES) {
             char* p1 = strchr(start, '|');
             if (!p1) continue;
             TextCue cue = {};
             size_t text_len = (size_t)(p1 - start);
             if (text_len >= sizeof(cue.text)) text_len = sizeof(cue.text) - 1;
-            strncpy_s(cue.text, start, text_len);
+            char encoded_text[256] = {};
+            strncpy_s(encoded_text, sizeof(encoded_text), start, text_len);
+            JsonUnescapeString(encoded_text, cue.text, sizeof(cue.text));
             char* p2 = strchr(p1 + 1, '|');
             if (!p2) continue;
             size_t font_len = (size_t)(p2 - (p1 + 1));
             if (font_len >= sizeof(cue.font_name)) font_len = sizeof(cue.font_name) - 1;
             strncpy_s(cue.font_name, p1 + 1, font_len);
             float size_f = 0.0f;
-            int parsed = sscanf_s(p2 + 1, "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d",
+            char baked_key[64] = {};
+            char baked_path[512] = {};
+            int blend_mode = 0;
+            int bake_mode = 0;
+            bool parsed_with_bake_mode = true;
+            bool parsed_with_blend_mode = true;
+            int parsed = sscanf_s(p2 + 1, "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%*d|%*d|%*d|%*d|%*d|%*d|%d|%63[^|]|%511[^|\r\n]",
                 &cue.x, &cue.y, &size_f,
                 &cue.color.r, &cue.color.g, &cue.color.b,
                 &cue.effect_type, &cue.cue_start, &cue.cue_end,
                 &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end,
-                &cue.layer_order);
+                &cue.layer_order,
+                &blend_mode,
+                &bake_mode,
+                baked_key, (unsigned)_countof(baked_key),
+                baked_path, (unsigned)_countof(baked_path));
+            if (parsed < 16) {
+                // Backward compatibility: older exports had no blend_mode column.
+                parsed_with_blend_mode = false;
+                parsed = sscanf_s(p2 + 1, "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%*d|%*d|%*d|%*d|%*d|%*d|%d|%63[^|]|%511[^|\r\n]",
+                    &cue.x, &cue.y, &size_f,
+                    &cue.color.r, &cue.color.g, &cue.color.b,
+                    &cue.effect_type, &cue.cue_start, &cue.cue_end,
+                    &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end,
+                    &cue.layer_order,
+                    &bake_mode,
+                    baked_key, (unsigned)_countof(baked_key),
+                    baked_path, (unsigned)_countof(baked_path));
+            }
+            if (parsed < 16) {
+                // Backward compatibility: older exports had no bake_mode column.
+                parsed_with_bake_mode = false;
+                parsed = sscanf_s(p2 + 1, "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%*d|%*d|%*d|%*d|%*d|%*d|%63[^|]|%511[^|\r\n]",
+                    &cue.x, &cue.y, &size_f,
+                    &cue.color.r, &cue.color.g, &cue.color.b,
+                    &cue.effect_type, &cue.cue_start, &cue.cue_end,
+                    &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end,
+                    &cue.layer_order,
+                    baked_key, (unsigned)_countof(baked_key),
+                    baked_path, (unsigned)_countof(baked_path));
+                bake_mode = 0;
+            }
             if (parsed >= 9) {
                 cue.size = size_f;
+                cue.blend_mode = (parsed_with_blend_mode && parsed >= 15) ? blend_mode : 0;
+                cue.bake_mode = (parsed_with_bake_mode && parsed >= (parsed_with_blend_mode ? 16 : 15)) ? bake_mode : 0;
+                if (parsed_with_bake_mode) {
+                    if (parsed >= (parsed_with_blend_mode ? 17 : 16)) strncpy_s(cue.baked_asset_key, baked_key, _TRUNCATE);
+                    if (parsed >= (parsed_with_blend_mode ? 18 : 17)) strncpy_s(cue.baked_asset_path, baked_path, _TRUNCATE);
+                } else {
+                    if (parsed >= (parsed_with_blend_mode ? 16 : 15)) strncpy_s(cue.baked_asset_key, baked_key, _TRUNCATE);
+                    if (parsed >= (parsed_with_blend_mode ? 17 : 16)) strncpy_s(cue.baked_asset_path, baked_path, _TRUNCATE);
+                }
                 if (editor->project->scene_count == 0)
                     AddScene(editor, "Imported Scene", total_duration);
                 AddTextCue(&editor->project->scenes[0], cue);
@@ -1511,7 +2007,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     
     // [image_cues] section
     fprintf(f, "[image_cues]\n");
-    fprintf(f, "# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity\n");
+    fprintf(f, "# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity|blend_mode\n");
     
     // Compute workspace-root-relative prefix for asset paths once.
     // assets_path is absolute (e.g. E:\himym\intros\test\test_assets).
@@ -1557,11 +2053,12 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             char full_path[640];
             snprintf(full_path, sizeof(full_path), "%s/%s", rel_assets_prefix, cue->asset_key);
             
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d\n",
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d\n",
                 cue->asset_key, full_path, cue->x, cue->y, cue->scale, cue->opacity,
                 abs_start, abs_end, cue->layer_order,
                 cue->effect_type, cue->fade_in_start, cue->fade_in_end, cue->fade_out_start, cue->fade_out_end,
-                cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_opacity
+                cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_opacity,
+                cue->blend_mode
             );
         }
     }
@@ -1570,7 +2067,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     
     // [text_cues] section
     fprintf(f, "[text_cues]\n");
-    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b\n");
+    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path\n");
     
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
@@ -1589,14 +2086,59 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             float abs_fade_out_start = scene_start + cue->fade_out_start;
             float abs_fade_out_end   = scene_start + cue->fade_out_end;
             
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d\n",
-                cue->text, cue->font_name, cue->x, cue->y, cue->size,
+            // Encode newlines as literal \\n for CSV compatibility
+            char encoded_text[256];
+            const char* src = cue->text;
+            char* dst = encoded_text;
+            while (*src && (dst - encoded_text) < 254) {
+                if (*src == '\n') {
+                    *dst++ = '\\';
+                    *dst++ = 'n';
+                } else {
+                    *dst++ = *src;
+                }
+                src++;
+            }
+            *dst = '\0';
+
+            // Bake static text cues to PNG so they can be packed into runtime assets.
+            char baked_asset_key[64] = {};
+            char baked_asset_path[512] = {};
+            if ((cue->effect_type <= 2 || cue->bake_mode == 1) && cue->text[0] != '\0') {
+                snprintf(baked_asset_key, sizeof(baked_asset_key), "text_s%02d_c%02d.png", scene_idx, cue_idx);
+
+                char baked_abs_path[640] = {};
+                snprintf(baked_abs_path, sizeof(baked_abs_path), "%s\\%s", editor->project->assets_path, baked_asset_key);
+
+                if (BakeTextCueToPng(cue, baked_abs_path)) {
+                    if (IsFileReadableWithRetry(baked_abs_path, 60, 25)) {
+                        snprintf(baked_asset_path, sizeof(baked_asset_path), "%s/%s", rel_assets_prefix, baked_asset_key);
+                        strncpy_s(cue->baked_asset_key, sizeof(cue->baked_asset_key), baked_asset_key, _TRUNCATE);
+                        strncpy_s(cue->baked_asset_path, sizeof(cue->baked_asset_path), baked_asset_path, _TRUNCATE);
+                    } else {
+                        printf("[ExportProject] WARNING: baked text exists but is not readable yet: %s\n", baked_abs_path);
+                        baked_asset_key[0] = '\0';
+                        baked_asset_path[0] = '\0';
+                        cue->baked_asset_key[0] = '\0';
+                        cue->baked_asset_path[0] = '\0';
+                    }
+                } else {
+                    cue->baked_asset_key[0] = '\0';
+                    cue->baked_asset_path[0] = '\0';
+                }
+            }
+            
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%s|%s\n",
+                encoded_text, cue->font_name, cue->x, cue->y, cue->size,
                 cue->color.r, cue->color.g, cue->color.b,
                 cue->effect_type, abs_start, abs_end,
                 abs_fade_in_start, abs_fade_in_end, abs_fade_out_start, abs_fade_out_end,
                 cue->layer_order,
+                cue->blend_mode,
                 cue->curve_x, cue->curve_y, cue->curve_size,
-                cue->curve_color_r, cue->curve_color_g, cue->curve_color_b
+                cue->curve_color_r, cue->curve_color_g, cue->curve_color_b,
+                cue->bake_mode,
+                baked_asset_key, baked_asset_path
             );
         }
     }
@@ -1826,7 +2368,7 @@ bool PackBuildAndRun(EditorContext* editor) {
         cues_path,              // cues source (project-relative)
         packed_header_path,     // output header (absolute path to build dir)
         pack_cache_path,        // checksum cache next to project
-        ""                      // workspace_root — paths in cues.txt are already relative to cwd
+        editor->startup_dir     // exported cue asset paths are workspace-root-relative
     );
 
     if (!pack_result.ok) {
@@ -1839,6 +2381,9 @@ bool PackBuildAndRun(EditorContext* editor) {
     }
     printf("Pack complete: %d total, %d packed, %d skipped.\n",
            pack_result.total, pack_result.packed, pack_result.skipped);
+    if (pack_result.optional_skipped > 0) {
+        printf("[Pack] Warning: %d optional baked text asset(s) were skipped.\n", pack_result.optional_skipped);
+    }
 
     // Step 3: Build the packed target — absolute build dir
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Building packed intro...", _TRUNCATE);
@@ -1868,8 +2413,12 @@ bool PackBuildAndRun(EditorContext* editor) {
     int run_result = system(run_command);
     if (run_result == 0) {
         char msg[128];
-        snprintf(msg, sizeof(msg), "Packed intro launched! (%d assets, %d skipped)",
-                 pack_result.total, pack_result.skipped);
+        if (pack_result.optional_skipped > 0) {
+            snprintf(msg, sizeof(msg), "Launched with %d baked-text warning(s)", pack_result.optional_skipped);
+        } else {
+            snprintf(msg, sizeof(msg), "Packed intro launched! (%d assets, %d skipped)",
+                     pack_result.total, pack_result.skipped);
+        }
         strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), msg, _TRUNCATE);
         editor->build_status_timer = 5.0f;
         printf("Packed intro launched successfully!\n");
@@ -2307,6 +2856,30 @@ void main() {
 // Shader source is now centralized in shader_presets.cpp
 // Use GetShaderSourceById() to fetch shader GLSL code
 
+static rev::shader::Program* g_preview_shader_cache[128] = {};
+
+static rev::shader::Program* GetOrCompilePreviewShaderProgram(int shader_id) {
+    if (shader_id < 0 || shader_id >= g_shader_preset_count) return nullptr;
+    if (shader_id >= (int)(sizeof(g_preview_shader_cache) / sizeof(g_preview_shader_cache[0]))) return nullptr;
+
+    if (g_preview_shader_cache[shader_id]) {
+        return g_preview_shader_cache[shader_id];
+    }
+
+    const char* shader_source = GetShaderSourceById(shader_id);
+    if (!shader_source) {
+        return nullptr;
+    }
+
+    rev::shader::Program* prog = rev::shader::CompileFromSource(preview_vertex_shader, shader_source);
+    if (!prog) {
+        return nullptr;
+    }
+
+    g_preview_shader_cache[shader_id] = prog;
+    return prog;
+}
+
 static void CompilePreviewShader(EditorContext* editor, int shader_id) {
     if (!editor) return;
     if (shader_id < 0 || shader_id >= g_shader_preset_count) shader_id = 0;
@@ -2466,6 +3039,13 @@ void CleanupPreview(EditorContext* editor) {
         editor->preview_vao = 0;
     }
 
+    for (int i = 0; i < (int)(sizeof(g_preview_shader_cache) / sizeof(g_preview_shader_cache[0])); ++i) {
+        if (g_preview_shader_cache[i]) {
+            rev::shader::DestroyProgram(g_preview_shader_cache[i]);
+            g_preview_shader_cache[i] = nullptr;
+        }
+    }
+
     editor->preview_initialized = false;
 }
 
@@ -2511,185 +3091,164 @@ void RenderPreviewFrame(EditorContext* editor) {
     auto glDepthMask_fn = (PFNGLDEPTHMASKPROC)wglGetProcAddress("glDepthMask");
     if (glDepthMask_fn) glDepthMask_fn(0);  // GL_FALSE
     
-    // Only render shader if we have a project with active shader cues
+    // Render shader layers first (supports stacked shader compositing with blend and order).
     if (editor->project) {
-        // Find active shader cue in any scene
-        int active_shader_id = -1;  // -1 means no active cue
-        ShaderCue* active_cue = nullptr;
-        float speed = 1.0f;
-        float intensity = 1.0f;
-        float warp = 0.5f;
-        float exposure_base = 0.76f;
-        float fade_base = 1.0f;
-        float palette_low[3] = {0.2f, 0.0f, 0.4f};
-        float palette_mid[3] = {0.8f, 0.2f, 0.6f};
-        float palette_high[3] = {1.0f, 0.8f, 0.2f};
-        bool found_active_cue = false;
-        float active_cue_scene_start = 0.0f; // Track which scene the active cue belongs to
-        
-        // Calculate scene start times to convert scene-relative cue times to absolute project time
+        struct ActiveShaderLayer {
+            ShaderCue* cue;
+            float scene_start_time;
+            int layer_order;
+            int layer_role;
+        };
+
+        ActiveShaderLayer layers[256];
+        int layer_count = 0;
+
         float scene_start_time = 0.0f;
-        for (int s = 0; s < editor->project->scene_count; s++) {
+        for (int s = 0; s < editor->project->scene_count && layer_count < 256; s++) {
             SceneBlock* scene = &editor->project->scenes[s];
-            
-            for (int i = 0; i < scene->shader_cue_count; i++) {
+            bool is_last_scene = (s == editor->project->scene_count - 1);
+
+            for (int i = 0; i < scene->shader_cue_count && layer_count < 256; i++) {
                 ShaderCue* cue = &scene->shader_cues[i];
-                // Handle cue_end = -1 (means until end of scene)
-                float actual_end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
-                
-                // Convert scene-relative times to absolute project times
+                float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
                 float absolute_start = scene_start_time + cue->cue_start;
-                float absolute_end = scene_start_time + actual_end;
-                
-                // Use < for end comparison so scene boundaries don't overlap
-                // At time 10.0, Scene 0 (0-10) ends and Scene 1 (10-20) begins
-                bool is_last_scene = (s == editor->project->scene_count - 1);
-                bool time_in_range = is_last_scene 
+                float absolute_end = scene_start_time + end;
+                bool time_in_range = is_last_scene
                     ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
                     : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
-                
                 if (time_in_range) {
-                    active_shader_id = cue->shader_scene_id;
-                    active_cue = cue;
-                    active_cue_scene_start = scene_start_time; // Store scene start for curve evaluation
-                    speed = cue->speed;
-                    intensity = cue->intensity;
-                    warp = cue->warp;
-                    exposure_base = cue->exposure_base;
-                    fade_base = cue->fade_base;
-                    palette_low[0] = cue->palette_low.r;
-                    palette_low[1] = cue->palette_low.g;
-                    palette_low[2] = cue->palette_low.b;
-                    palette_mid[0] = cue->palette_mid.r;
-                    palette_mid[1] = cue->palette_mid.g;
-                    palette_mid[2] = cue->palette_mid.b;
-                    palette_high[0] = cue->palette_high.r;
-                    palette_high[1] = cue->palette_high.g;
-                    palette_high[2] = cue->palette_high.b;
-                    found_active_cue = true;
-                    // Don't break - let later scenes override earlier ones at boundaries
+                    layers[layer_count++] = { cue, scene_start_time, cue->layer_order, cue->layer_role };
                 }
             }
-            
-            // Advance scene start time for next scene
+
             scene_start_time += scene->duration;
         }
-        
-        // Evaluate curves if active cue exists
-        if (found_active_cue && active_cue) {
-            // Calculate elapsed time from cue start (convert scene-relative to absolute time)
-            float absolute_cue_start = active_cue_scene_start + active_cue->cue_start;
+
+        for (int i = 0; i < layer_count - 1; i++) {
+            for (int j = 0; j < layer_count - i - 1; j++) {
+                const ActiveShaderLayer& a = layers[j];
+                const ActiveShaderLayer& b = layers[j + 1];
+                if ((a.layer_order > b.layer_order) ||
+                    (a.layer_order == b.layer_order && a.layer_role > b.layer_role)) {
+                    ActiveShaderLayer tmp = layers[j];
+                    layers[j] = layers[j + 1];
+                    layers[j + 1] = tmp;
+                }
+            }
+        }
+
+        for (int li = 0; li < layer_count; ++li) {
+            ShaderCue* cue = layers[li].cue;
+            if (!cue) continue;
+
+            rev::shader::Program* prog = GetOrCompilePreviewShaderProgram(cue->shader_scene_id);
+            if (!prog) continue;
+
+            float speed = cue->speed;
+            float intensity = cue->intensity;
+            float warp = cue->warp;
+            float exposure_base = cue->exposure_base;
+            float fade_base = cue->fade_base;
+            float opacity = cue->opacity;
+            float palette_low[3] = { cue->palette_low.r, cue->palette_low.g, cue->palette_low.b };
+            float palette_mid[3] = { cue->palette_mid.r, cue->palette_mid.g, cue->palette_mid.b };
+            float palette_high[3] = { cue->palette_high.r, cue->palette_high.g, cue->palette_high.b };
+
+            float absolute_cue_start = layers[li].scene_start_time + cue->cue_start;
             float elapsed_time = editor->current_time - absolute_cue_start;
             if (elapsed_time >= 0.0f) {
-                // Evaluate palette curves
-                if (active_cue->curve_palette_low_r >= 0 && active_cue->curve_palette_low_r < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_palette_low_r].duration;
-                    palette_low[0] = rev::curve::Evaluate(editor->project->curves[active_cue->curve_palette_low_r], t);
+                if (cue->curve_palette_low_r >= 0 && cue->curve_palette_low_r < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_palette_low_r].duration;
+                    palette_low[0] = rev::curve::Evaluate(editor->project->curves[cue->curve_palette_low_r], t);
                 }
-                if (active_cue->curve_palette_low_g >= 0 && active_cue->curve_palette_low_g < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_palette_low_g].duration;
-                    palette_low[1] = rev::curve::Evaluate(editor->project->curves[active_cue->curve_palette_low_g], t);
+                if (cue->curve_palette_low_g >= 0 && cue->curve_palette_low_g < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_palette_low_g].duration;
+                    palette_low[1] = rev::curve::Evaluate(editor->project->curves[cue->curve_palette_low_g], t);
                 }
-                if (active_cue->curve_palette_low_b >= 0 && active_cue->curve_palette_low_b < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_palette_low_b].duration;
-                    palette_low[2] = rev::curve::Evaluate(editor->project->curves[active_cue->curve_palette_low_b], t);
+                if (cue->curve_palette_low_b >= 0 && cue->curve_palette_low_b < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_palette_low_b].duration;
+                    palette_low[2] = rev::curve::Evaluate(editor->project->curves[cue->curve_palette_low_b], t);
                 }
-                if (active_cue->curve_palette_mid_r >= 0 && active_cue->curve_palette_mid_r < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_palette_mid_r].duration;
-                    palette_mid[0] = rev::curve::Evaluate(editor->project->curves[active_cue->curve_palette_mid_r], t);
+                if (cue->curve_palette_mid_r >= 0 && cue->curve_palette_mid_r < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_palette_mid_r].duration;
+                    palette_mid[0] = rev::curve::Evaluate(editor->project->curves[cue->curve_palette_mid_r], t);
                 }
-                if (active_cue->curve_palette_mid_g >= 0 && active_cue->curve_palette_mid_g < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_palette_mid_g].duration;
-                    palette_mid[1] = rev::curve::Evaluate(editor->project->curves[active_cue->curve_palette_mid_g], t);
+                if (cue->curve_palette_mid_g >= 0 && cue->curve_palette_mid_g < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_palette_mid_g].duration;
+                    palette_mid[1] = rev::curve::Evaluate(editor->project->curves[cue->curve_palette_mid_g], t);
                 }
-                if (active_cue->curve_palette_mid_b >= 0 && active_cue->curve_palette_mid_b < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_palette_mid_b].duration;
-                    palette_mid[2] = rev::curve::Evaluate(editor->project->curves[active_cue->curve_palette_mid_b], t);
+                if (cue->curve_palette_mid_b >= 0 && cue->curve_palette_mid_b < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_palette_mid_b].duration;
+                    palette_mid[2] = rev::curve::Evaluate(editor->project->curves[cue->curve_palette_mid_b], t);
                 }
-                if (active_cue->curve_palette_high_r >= 0 && active_cue->curve_palette_high_r < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_palette_high_r].duration;
-                    palette_high[0] = rev::curve::Evaluate(editor->project->curves[active_cue->curve_palette_high_r], t);
+                if (cue->curve_palette_high_r >= 0 && cue->curve_palette_high_r < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_palette_high_r].duration;
+                    palette_high[0] = rev::curve::Evaluate(editor->project->curves[cue->curve_palette_high_r], t);
                 }
-                if (active_cue->curve_palette_high_g >= 0 && active_cue->curve_palette_high_g < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_palette_high_g].duration;
-                    palette_high[1] = rev::curve::Evaluate(editor->project->curves[active_cue->curve_palette_high_g], t);
+                if (cue->curve_palette_high_g >= 0 && cue->curve_palette_high_g < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_palette_high_g].duration;
+                    palette_high[1] = rev::curve::Evaluate(editor->project->curves[cue->curve_palette_high_g], t);
                 }
-                if (active_cue->curve_palette_high_b >= 0 && active_cue->curve_palette_high_b < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_palette_high_b].duration;
-                    palette_high[2] = rev::curve::Evaluate(editor->project->curves[active_cue->curve_palette_high_b], t);
+                if (cue->curve_palette_high_b >= 0 && cue->curve_palette_high_b < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_palette_high_b].duration;
+                    palette_high[2] = rev::curve::Evaluate(editor->project->curves[cue->curve_palette_high_b], t);
                 }
-                
-                // Evaluate animation parameter curves
-                if (active_cue->curve_speed >= 0 && active_cue->curve_speed < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_speed].duration;
-                    speed = rev::curve::Evaluate(editor->project->curves[active_cue->curve_speed], t);
+                if (cue->curve_speed >= 0 && cue->curve_speed < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_speed].duration;
+                    speed = rev::curve::Evaluate(editor->project->curves[cue->curve_speed], t);
                 }
-                if (active_cue->curve_intensity >= 0 && active_cue->curve_intensity < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_intensity].duration;
-                    intensity = rev::curve::Evaluate(editor->project->curves[active_cue->curve_intensity], t);
+                if (cue->curve_intensity >= 0 && cue->curve_intensity < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_intensity].duration;
+                    intensity = rev::curve::Evaluate(editor->project->curves[cue->curve_intensity], t);
                 }
-                if (active_cue->curve_warp >= 0 && active_cue->curve_warp < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_warp].duration;
-                    warp = rev::curve::Evaluate(editor->project->curves[active_cue->curve_warp], t);
+                if (cue->curve_warp >= 0 && cue->curve_warp < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_warp].duration;
+                    warp = rev::curve::Evaluate(editor->project->curves[cue->curve_warp], t);
                 }
-                if (active_cue->curve_exposure >= 0 && active_cue->curve_exposure < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_exposure].duration;
-                    exposure_base = rev::curve::Evaluate(editor->project->curves[active_cue->curve_exposure], t);
+                if (cue->curve_exposure >= 0 && cue->curve_exposure < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_exposure].duration;
+                    exposure_base = rev::curve::Evaluate(editor->project->curves[cue->curve_exposure], t);
                 }
-                if (active_cue->curve_fade >= 0 && active_cue->curve_fade < editor->project->curve_count) {
-                    float t = elapsed_time / editor->project->curves[active_cue->curve_fade].duration;
-                    fade_base = rev::curve::Evaluate(editor->project->curves[active_cue->curve_fade], t);
+                if (cue->curve_fade >= 0 && cue->curve_fade < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_fade].duration;
+                    fade_base = rev::curve::Evaluate(editor->project->curves[cue->curve_fade], t);
                 }
-                
-                // Note: exposure_ramp, fade_ramp, opacity curves not used in preview shader yet
-                // Would need shader modifications to support those
+                if (cue->curve_opacity >= 0 && cue->curve_opacity < editor->project->curve_count) {
+                    float t = elapsed_time / editor->project->curves[cue->curve_opacity].duration;
+                    opacity = rev::curve::Evaluate(editor->project->curves[cue->curve_opacity], t);
+                }
             }
+
+            if (li == 0) {
+                glDisable(GL_BLEND);
+            } else {
+                glEnable(GL_BLEND);
+                ApplyShaderLayerBlendMode(cue->blend_mode, opacity);
+            }
+
+            // Fold layer opacity into fade for shaders that use fade as alpha/intensity.
+            fade_base *= opacity;
+
+            rev::shader::Use(prog);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_time"), editor->current_time);
+            rev::shader::SetVec2(prog, rev::shader::GetUniformLocation(prog, "u_resolution"),
+                                 (float)editor->preview_width, (float)editor->preview_height);
+            rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_low"),
+                                 palette_low[0], palette_low[1], palette_low[2]);
+            rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_mid"),
+                                 palette_mid[0], palette_mid[1], palette_mid[2]);
+            rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_high"),
+                                 palette_high[0], palette_high[1], palette_high[2]);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_speed"), speed);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_intensity"), intensity);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_warp"), warp);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_exposure_base"), exposure_base);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_fade_base"), fade_base);
+
+            glDrawArrays(GL_TRIANGLES, 0, 3);
         }
-        
-        // Only render if we found an active shader cue
-        if (found_active_cue && active_shader_id >= 0) {
-            // Debug output
-            static int last_logged_shader = -2;
-            if (active_shader_id != last_logged_shader) {
-                printf("[PREVIEW] Active shader ID: %d | Current compiled: %d\n", active_shader_id, editor->preview_current_shader_id);
-                last_logged_shader = active_shader_id;
-            }
-            
-            // Check if shader has changed and recompile if needed
-            if (editor->preview_current_shader_id != active_shader_id) {
-                printf("[PREVIEW] Recompiling shader from %d to %d\n", editor->preview_current_shader_id, active_shader_id);
-                CompilePreviewShader(editor, active_shader_id);
-                if (editor->preview_shader) {
-                    printf("[PREVIEW] Shader %d compiled successfully!\n", active_shader_id);
-                } else {
-                    printf("[PREVIEW] ERROR: Shader %d compilation failed!\n", active_shader_id);
-                }
-            }
-            
-            // Use the current shader program
-            auto* prog = (rev::shader::Program*)editor->preview_shader;
-            if (prog) {
-                rev::shader::Use(prog);
-                
-                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_time"), editor->current_time);
-                rev::shader::SetVec2(prog, rev::shader::GetUniformLocation(prog, "u_resolution"), 
-                                    (float)editor->preview_width, (float)editor->preview_height);
-                rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_low"), 
-                                    palette_low[0], palette_low[1], palette_low[2]);
-                rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_mid"), 
-                                    palette_mid[0], palette_mid[1], palette_mid[2]);
-                rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_high"), 
-                                    palette_high[0], palette_high[1], palette_high[2]);
-                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_speed"), speed);
-                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_intensity"), intensity);
-                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_warp"), warp);
-                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_exposure_base"), exposure_base);
-                rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_fade_base"), fade_base);
-                
-                // Draw fullscreen quad
-                glDrawArrays(GL_TRIANGLES, 0, 3);
-            }
-        }
+
+        glDisable(GL_BLEND);
     }
 
     // --- Unified layered draw pass ---
@@ -2830,8 +3389,15 @@ void RenderPreviewFrame(EditorContext* editor) {
                 
                 // Enable blending for sprites
                 glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                 blend_on = true;
+
+                int sprite_blend_mode = 0;
+                if (item.type == 0) {
+                    sprite_blend_mode = ((ImageCue*)item.cue)->blend_mode;
+                } else {
+                    sprite_blend_mode = ((TextCue*)item.cue)->blend_mode;
+                }
+                ApplySpriteBlendMode(sprite_blend_mode);
                 
                 rev::shader::Use(sprite_prog);
 
@@ -2933,18 +3499,21 @@ void RenderPreviewFrame(EditorContext* editor) {
                         }
                     }
                     
-                    rev::runtime::TextTexture rt_txt{};
-                    if (!rev::runtime::RenderTextToTexture(
-                            cue->text, cue->font_name, anim_size,
+                        rev::runtime::TextEffectFrame fx = {};
+                        if (!rev::runtime::BuildTextEffectFrame(cue, editor->current_time, &fx)) continue;
+
+                        rev::runtime::TextTexture rt_txt{};
+                        if (!rev::runtime::RenderTextToTexture(
+                            fx.text, cue->font_name, anim_size,
                             anim_color_r, anim_color_g, anim_color_b, &rt_txt)) continue;
                     tex    = rt_txt.texture_id;
                     norm_w = (float)rt_txt.width  / editor->preview_width  * 2.0f;
                     norm_h = (float)rt_txt.height / editor->preview_height * 2.0f;
-                    pos_x  =  (anim_x * 2.0f) - 1.0f;
-                    pos_y  = -((anim_y * 2.0f) - 1.0f);
-                    opacity = rev::runtime::ComputeEffectOpacity(
+                        pos_x  =  ((anim_x + fx.offset_x) * 2.0f) - 1.0f;
+                        pos_y  = -(((anim_y + fx.offset_y) * 2.0f) - 1.0f);
+                        opacity = rev::runtime::ComputeEffectOpacity(
                         cue->effect_type, cue->fade_in_start, cue->fade_in_end,
-                        cue->fade_out_start, cue->fade_out_end, editor->current_time);
+                        cue->fade_out_start, cue->fade_out_end, editor->current_time) * fx.opacity_mul;
                 }
 
                 if (glActiveTexture_fn) glActiveTexture_fn(0x84C0); // GL_TEXTURE0
@@ -3152,17 +3721,41 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         if (glUniformMatrix4fv) glUniformMatrix4fv(mp_model, 1, 0, model);
                                     }
                                 }
-                                // Bind texture if available
-                                int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
-                                if (cached->base_color_texture != 0) {
-                                    glBindTexture(0x0DE1, cached->base_color_texture); // GL_TEXTURE_2D
-                                    int loc_tex = rev::shader::GetUniformLocation(mesh_prog, "u_base_color_texture");
-                                    if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
-                                    if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
-                                } else {
-                                    if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
+
+                                float draw_light[3] = {3.0f, 5.0f, 4.0f};
+                                if (cached->has_imported_light) {
+                                    draw_light[0] = cached->imported_light_pos[0];
+                                    draw_light[1] = cached->imported_light_pos[1];
+                                    draw_light[2] = cached->imported_light_pos[2];
                                 }
-                                rev::mesh::Render(cached, -1);
+                                if (mp_light >= 0) rev::shader::SetVec3(mesh_prog, mp_light, draw_light[0], draw_light[1], draw_light[2]);
+
+                                int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
+                                int loc_tex = rev::shader::GetUniformLocation(mesh_prog, "u_base_color_texture");
+                                bool rendered_slot = false;
+                                for (uint32_t si = 0; si < cached->material_slot_count; ++si) {
+                                    unsigned int tex_id = cached->material_slots[si].base_color_texture;
+                                    if (tex_id == 0) tex_id = cached->base_color_texture;
+                                    if (tex_id != 0) {
+                                        glBindTexture(0x0DE1, tex_id); // GL_TEXTURE_2D
+                                        if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
+                                        if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
+                                    } else if (loc_has_tex >= 0) {
+                                        rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
+                                    }
+                                    rev::mesh::Render(cached, (int)si);
+                                    rendered_slot = true;
+                                }
+                                if (!rendered_slot) {
+                                    if (cached->base_color_texture != 0) {
+                                        glBindTexture(0x0DE1, cached->base_color_texture);
+                                        if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
+                                        if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
+                                    } else if (loc_has_tex >= 0) {
+                                        rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
+                                    }
+                                    rev::mesh::Render(cached, -1);
+                                }
                                 continue;
                             }
                             // Extract textures to assets folder
@@ -3170,6 +3763,13 @@ void RenderPreviewFrame(EditorContext* editor) {
                             if (ir && ir->ok) {
                                 mesh = ir->mesh;
                                 ir->mesh = nullptr;
+
+                                if (mesh) {
+                                    mesh->has_imported_light = ir->has_light;
+                                    mesh->imported_light_pos[0] = ir->light_pos[0];
+                                    mesh->imported_light_pos[1] = ir->light_pos[1];
+                                    mesh->imported_light_pos[2] = ir->light_pos[2];
+                                }
                                 
                                 // Load base color texture if present
                                 if (ir->material.base_color_texture[0] != '\0') {
@@ -3177,6 +3777,27 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     if (rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)) {
                                         mesh->base_color_texture = tex.texture_id;
                                     }
+                                }
+
+                                // Load per-material textures and map to material slots.
+                                if (mesh && ir->material_count > 0 && ir->materials) {
+                                    unsigned int* material_textures = new unsigned int[ir->material_count];
+                                    memset(material_textures, 0, sizeof(unsigned int) * ir->material_count);
+                                    for (int mat_i = 0; mat_i < ir->material_count; ++mat_i) {
+                                        const char* tex_path = ir->materials[mat_i].base_color_texture;
+                                        if (tex_path[0] == '\0') continue;
+                                        rev::runtime::ImageTexture tex{};
+                                        if (rev::runtime::LoadImageTexture(tex_path, &tex)) {
+                                            material_textures[mat_i] = tex.texture_id;
+                                        }
+                                    }
+                                    for (uint32_t si = 0; si < mesh->material_slot_count; ++si) {
+                                        rev::mesh::MaterialSlot& slot = mesh->material_slots[si];
+                                        if (slot.material_index >= 0 && slot.material_index < ir->material_count) {
+                                            slot.base_color_texture = material_textures[slot.material_index];
+                                        }
+                                    }
+                                    delete[] material_textures;
                                 }
                                 
                                 // Transfer animations to mesh
@@ -3213,17 +3834,40 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     entry.last_write_time = current_file_time;
                                 }
                                 
-                                // Bind texture if available
-                                int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
-                                if (mesh->base_color_texture != 0) {
-                                    glBindTexture(0x0DE1, mesh->base_color_texture); // GL_TEXTURE_2D
-                                    int loc_tex = rev::shader::GetUniformLocation(mesh_prog, "u_base_color_texture");
-                                    if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
-                                    if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
-                                } else {
-                                    if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
+                                float draw_light[3] = {3.0f, 5.0f, 4.0f};
+                                if (mesh->has_imported_light) {
+                                    draw_light[0] = mesh->imported_light_pos[0];
+                                    draw_light[1] = mesh->imported_light_pos[1];
+                                    draw_light[2] = mesh->imported_light_pos[2];
                                 }
-                                rev::mesh::Render(mesh, -1);
+                                if (mp_light >= 0) rev::shader::SetVec3(mesh_prog, mp_light, draw_light[0], draw_light[1], draw_light[2]);
+
+                                int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
+                                int loc_tex = rev::shader::GetUniformLocation(mesh_prog, "u_base_color_texture");
+                                bool rendered_slot = false;
+                                for (uint32_t si = 0; si < mesh->material_slot_count; ++si) {
+                                    unsigned int tex_id = mesh->material_slots[si].base_color_texture;
+                                    if (tex_id == 0) tex_id = mesh->base_color_texture;
+                                    if (tex_id != 0) {
+                                        glBindTexture(0x0DE1, tex_id); // GL_TEXTURE_2D
+                                        if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
+                                        if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
+                                    } else if (loc_has_tex >= 0) {
+                                        rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
+                                    }
+                                    rev::mesh::Render(mesh, (int)si);
+                                    rendered_slot = true;
+                                }
+                                if (!rendered_slot) {
+                                    if (mesh->base_color_texture != 0) {
+                                        glBindTexture(0x0DE1, mesh->base_color_texture);
+                                        if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
+                                        if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
+                                    } else if (loc_has_tex >= 0) {
+                                        rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
+                                    }
+                                    rev::mesh::Render(mesh, -1);
+                                }
                                 continue;
                             }
                         }
@@ -3235,6 +3879,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                 if (mesh) {
                     rev::mesh::UploadToGPU(mesh);
                     // Procedural meshes don't have textures
+                    if (mp_light >= 0) rev::shader::SetVec3(mesh_prog, mp_light, 3.0f, 5.0f, 4.0f);
                     int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
                     if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
                     rev::mesh::Render(mesh, -1);

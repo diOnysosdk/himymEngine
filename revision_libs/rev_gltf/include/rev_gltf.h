@@ -6,11 +6,12 @@
 //
 // Supported features:
 //   * .gltf (ASCII JSON) and .glb (binary) files
-//   * First mesh / all primitives merged into one Mesh
+//   * All mesh nodes in the active scene merged into one Mesh
 //   * PBR metallic-roughness material (base color factor, metallic, roughness)
 //   * Base color texture, normal texture, metallic-roughness texture extraction
 //   * Embedded (base64) and external texture images written to output directory
 //   * Multi-material meshes via MaterialSlot index ranges
+//   * First imported light position (if present on a light node)
 
 #include "rev_mesh.h"
 #include <stddef.h>
@@ -78,10 +79,14 @@ struct Material {
 // Result of a single import call
 // ---------------------------------------------------------------------------
 struct ImportResult {
-    rev::mesh::Mesh* mesh;          // Merged geometry (all primitives)
-    Material         material;      // First (or primary) material
+    rev::mesh::Mesh* mesh;          // Merged geometry (all mesh nodes/primitives)
+    Material         material;      // Primary material (backward compatibility)
+    Material*        materials;     // All materials from the source glTF (nullable)
+    int              material_count;
     Animation*       animations;    // Array of animations (nullptr if none)
     int              animation_count;
+    bool             has_light;
+    float            light_pos[3];
     bool             ok;
     char             error[256];
 };
@@ -90,7 +95,7 @@ struct ImportResult {
 // API
 // ---------------------------------------------------------------------------
 
-// Load a .gltf or .glb file.  All mesh primitives in the first mesh node are
+// Load a .gltf or .glb file.  All mesh primitives in scene mesh nodes are
 // merged into a single rev::mesh::Mesh.  Call rev::mesh::UploadToGPU() on the
 // result before rendering.
 //

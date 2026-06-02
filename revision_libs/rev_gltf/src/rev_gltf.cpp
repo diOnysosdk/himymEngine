@@ -9,6 +9,7 @@
 #include <cstring>
 #include <cmath>
 #include <cstdlib>
+#include <cstddef>
 
 // Windows only (matches the rest of the framework)
 #define WIN32_LEAN_AND_MEAN
@@ -16,6 +17,14 @@
 
 namespace rev {
 namespace gltf {
+
+static bool IsVerboseGltfLoggingEnabled() {
+    char env[16] = {};
+    DWORD n = GetEnvironmentVariableA("HIMYM_VERBOSE", env, sizeof(env));
+    return (n > 0 && env[0] != '0');
+}
+
+#define GLTF_LOGV(...) do { if (IsVerboseGltfLoggingEnabled()) printf(__VA_ARGS__); } while (0)
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -123,7 +132,7 @@ static bool ExtractImage(const cgltf_data* data,
     ImageOutputName(filename, sizeof(filename), img, index);
     BuildOutputPath(dest_path, dest_path_size, output_dir, filename);
 
-    printf("[glTF] ExtractImage: output_dir='%s', filename='%s', dest_path='%s'\n",
+    GLTF_LOGV("[glTF] ExtractImage: output_dir='%s', filename='%s', dest_path='%s'\n",
            output_dir ? output_dir : "(null)", filename, dest_path);
 
     // Create output directory if needed
@@ -131,21 +140,21 @@ static bool ExtractImage(const cgltf_data* data,
 
     if (img->buffer_view && img->buffer_view->buffer) {
         // Embedded binary image (in .glb buffer or base64 buffer view)
-        printf("[glTF] Extracting embedded image from buffer_view\n");
+        GLTF_LOGV("[glTF] Extracting embedded image from buffer_view\n");
         const cgltf_buffer_view* bv = img->buffer_view;
         const unsigned char* src = (const unsigned char*)bv->buffer->data + bv->offset;
         bool ok = WriteFile(dest_path, src, bv->size);
-        printf("[glTF] WriteFile result: %s\n", ok ? "SUCCESS" : "FAILED");
+        GLTF_LOGV("[glTF] WriteFile result: %s\n", ok ? "SUCCESS" : "FAILED");
         return ok;
     } else if (img->uri && strncmp(img->uri, "data:", 5) == 0) {
         // Data URI — base64 encoded.  cgltf already decoded the buffer if we
         // called cgltf_load_buffers, but the image itself lives in a buffer_view.
         // If buffer_view is null here, the image data was not loaded — skip.
-        printf("[glTF] Image is data URI but no buffer_view - skipping\n");
+        GLTF_LOGV("[glTF] Image is data URI but no buffer_view - skipping\n");
         return false;
     } else if (img->uri && img->uri[0]) {
         // External file reference
-        printf("[glTF] Copying external image file: %s\n", img->uri);
+        GLTF_LOGV("[glTF] Copying external image file: %s\n", img->uri);
         char src_path[512] = {};
         ResolveURI(src_path, sizeof(src_path), gltf_path, img->uri);
         return CopyFileToDest(src_path, dest_path);
@@ -159,14 +168,14 @@ static void FillMaterial(Material* out, const cgltf_material* mat,
                           const char* gltf_path, const char* output_dir) {
     SetMaterialDefaults(out);
     if (!mat) {
-        printf("[glTF] No material in glTF file\n");
+        GLTF_LOGV("[glTF] No material in glTF file\n");
         return;
     }
 
     if (mat->name) strncpy_s(out->name, mat->name, _TRUNCATE);
     out->double_sided = mat->double_sided != 0;
     
-    printf("[glTF] Material: name='%s' has_pbr=%d\n", 
+    GLTF_LOGV("[glTF] Material: name='%s' has_pbr=%d\n", 
            mat->name ? mat->name : "(unnamed)", 
            mat->has_pbr_metallic_roughness);
 
@@ -176,27 +185,27 @@ static void FillMaterial(Material* out, const cgltf_material* mat,
         out->metallic  = pbr.metallic_factor;
         out->roughness = pbr.roughness_factor;
         
-        printf("[glTF] PBR: base_color_texture.texture=%p\n", (void*)pbr.base_color_texture.texture);
+        GLTF_LOGV("[glTF] PBR: base_color_texture.texture=%p\n", (void*)pbr.base_color_texture.texture);
         if (pbr.base_color_texture.texture) {
-            printf("[glTF]      texture->image=%p\n", (void*)pbr.base_color_texture.texture->image);
+            GLTF_LOGV("[glTF]      texture->image=%p\n", (void*)pbr.base_color_texture.texture->image);
         }
-        printf("[glTF] Total images in glTF: %zu\n", data->images_count);
+        GLTF_LOGV("[glTF] Total images in glTF: %zu\n", data->images_count);
 
         if (output_dir && output_dir[0]) {
             // Base color texture
             if (pbr.base_color_texture.texture && pbr.base_color_texture.texture->image) {
-                printf("[glTF] Found base color texture in material\n");
+                GLTF_LOGV("[glTF] Found base color texture in material\n");
                 int img_idx = (int)(pbr.base_color_texture.texture->image - data->images);
                 bool extracted = ExtractImage(data, pbr.base_color_texture.texture->image, img_idx,
                              gltf_path, output_dir,
                              out->base_color_texture, sizeof(out->base_color_texture));
                 if (extracted) {
-                    printf("[glTF] Extracted base color texture to: %s\n", out->base_color_texture);
+                    GLTF_LOGV("[glTF] Extracted base color texture to: %s\n", out->base_color_texture);
                 } else {
-                    printf("[glTF] Failed to extract base color texture\n");
+                    GLTF_LOGV("[glTF] Failed to extract base color texture\n");
                 }
             } else {
-                printf("[glTF] No base color texture found in material (texture ptr is NULL)\n");
+                GLTF_LOGV("[glTF] No base color texture found in material (texture ptr is NULL)\n");
             }
             // Metallic-roughness texture
             if (pbr.metallic_roughness_texture.texture && pbr.metallic_roughness_texture.texture->image) {
@@ -348,7 +357,7 @@ static Animation* ExtractAnimations(const cgltf_data* data, int* out_count) {
             }
         }
         
-        printf("[glTF] Animation '%s': %d channels, duration=%.2fs\n", 
+        GLTF_LOGV("[glTF] Animation '%s': %d channels, duration=%.2fs\n", 
                dst->name, dst->channel_count, dst->duration);
     }
     
@@ -456,56 +465,167 @@ static void EvaluateChannel(const AnimationChannel* chan, float time, float* out
 // Takes ownership of data (calls cgltf_free).
 // gltf_path and texture_output_dir may be null (disables material texture extraction).
 // ---------------------------------------------------------------------------
+static int MaterialIndexFromPtr(const cgltf_data* data, const cgltf_material* mat) {
+    if (!data || !mat || !data->materials) return -1;
+    ptrdiff_t idx = mat - data->materials;
+    if (idx < 0 || (cgltf_size)idx >= data->materials_count) return -1;
+    return (int)idx;
+}
+
+static void TransformPoint(const float m[16], const float in[3], float out[3]) {
+    out[0] = m[0] * in[0] + m[4] * in[1] + m[8]  * in[2] + m[12];
+    out[1] = m[1] * in[0] + m[5] * in[1] + m[9]  * in[2] + m[13];
+    out[2] = m[2] * in[0] + m[6] * in[1] + m[10] * in[2] + m[14];
+}
+
+static void TransformVector(const float m[16], const float in[3], float out[3]) {
+    out[0] = m[0] * in[0] + m[4] * in[1] + m[8]  * in[2];
+    out[1] = m[1] * in[0] + m[5] * in[1] + m[9]  * in[2];
+    out[2] = m[2] * in[0] + m[6] * in[1] + m[10] * in[2];
+    float len = sqrtf(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+    if (len > 0.000001f) {
+        out[0] /= len;
+        out[1] /= len;
+        out[2] /= len;
+    }
+}
+
+static void GatherSceneMeshNodes(cgltf_node* node, cgltf_node** out_nodes, int max_nodes, int* out_count) {
+    if (!node || !out_nodes || !out_count) return;
+    if (node->mesh && *out_count < max_nodes) {
+        out_nodes[(*out_count)++] = node;
+    }
+    for (cgltf_size ci = 0; ci < node->children_count; ++ci) {
+        GatherSceneMeshNodes(node->children[ci], out_nodes, max_nodes, out_count);
+    }
+}
+
+static bool FindFirstSceneLight(cgltf_node* node, float out_pos[3]) {
+    if (!node) return false;
+    if (node->light) {
+        float m[16] = {};
+        cgltf_node_transform_world(node, m);
+        out_pos[0] = m[12];
+        out_pos[1] = m[13];
+        out_pos[2] = m[14];
+        return true;
+    }
+    for (cgltf_size ci = 0; ci < node->children_count; ++ci) {
+        if (FindFirstSceneLight(node->children[ci], out_pos)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
                                     const char* gltf_path,
                                     const char* texture_output_dir) {
-    // Find the first mesh (from the default scene or the first mesh in data)
-    cgltf_mesh* src_mesh = nullptr;
+    if (!data) {
+        strncpy_s(result->error, "invalid glTF data", _TRUNCATE);
+        cgltf_free(data);
+        return result;
+    }
+
+    const int max_nodes = (int)data->nodes_count;
+    cgltf_node** mesh_nodes = nullptr;
+    int mesh_node_count = 0;
+    if (max_nodes > 0) {
+        mesh_nodes = new cgltf_node*[max_nodes];
+        memset(mesh_nodes, 0, sizeof(cgltf_node*) * max_nodes);
+    }
+
     if (data->scene && data->scene->nodes_count > 0) {
         for (cgltf_size ni = 0; ni < data->scene->nodes_count; ++ni) {
-            cgltf_node* node = data->scene->nodes[ni];
-            if (node->mesh) { src_mesh = node->mesh; break; }
+            GatherSceneMeshNodes(data->scene->nodes[ni], mesh_nodes, max_nodes, &mesh_node_count);
+        }
+    } else {
+        for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
+            if (data->nodes[ni].mesh && mesh_node_count < max_nodes) {
+                mesh_nodes[mesh_node_count++] = &data->nodes[ni];
+            }
         }
     }
-    if (!src_mesh && data->meshes_count > 0) {
-        src_mesh = &data->meshes[0];
-    }
-    if (!src_mesh) {
+
+    if (mesh_node_count == 0) {
+        delete[] mesh_nodes;
         strncpy_s(result->error, "no mesh found in glTF file", _TRUNCATE);
         cgltf_free(data);
         return result;
     }
 
-    // ---------------------------------------------------------------------------
-    // Count total vertices and indices across all primitives
-    // ---------------------------------------------------------------------------
-    uint32_t total_verts   = 0;
-    uint32_t total_indices = 0;
-    for (cgltf_size pi = 0; pi < src_mesh->primitives_count; ++pi) {
-        cgltf_primitive* prim = &src_mesh->primitives[pi];
-        if (prim->type != cgltf_primitive_type_triangles) continue;
+    // Extract all materials up-front so callers can map slots to textures.
+    if (data->materials_count > 0) {
+        result->material_count = (int)data->materials_count;
+        result->materials = new Material[result->material_count];
+        for (int mi = 0; mi < result->material_count; ++mi) {
+            FillMaterial(&result->materials[mi], &data->materials[mi], data, gltf_path, texture_output_dir);
+        }
+        result->material = result->materials[0];
+    }
 
-        // Find POSITION accessor to get vertex count
-        for (cgltf_size ai = 0; ai < prim->attributes_count; ++ai) {
-            if (prim->attributes[ai].type == cgltf_attribute_type_position) {
-                total_verts += (uint32_t)prim->attributes[ai].data->count;
+    // Capture the first light position from the active scene (if present).
+    result->has_light = false;
+    result->light_pos[0] = 0.0f;
+    result->light_pos[1] = 0.0f;
+    result->light_pos[2] = 0.0f;
+    if (data->scene && data->scene->nodes_count > 0) {
+        for (cgltf_size ni = 0; ni < data->scene->nodes_count; ++ni) {
+            if (FindFirstSceneLight(data->scene->nodes[ni], result->light_pos)) {
+                result->has_light = true;
                 break;
             }
         }
-        if (prim->indices) {
-            total_indices += (uint32_t)prim->indices->count;
-        } else {
-            // Non-indexed: synthesize sequential indices
+    } else {
+        for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
+            if (data->nodes[ni].light) {
+                float m[16] = {};
+                cgltf_node_transform_world(&data->nodes[ni], m);
+                result->light_pos[0] = m[12];
+                result->light_pos[1] = m[13];
+                result->light_pos[2] = m[14];
+                result->has_light = true;
+                break;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Count total vertices and indices across all mesh nodes/primitives
+    // ---------------------------------------------------------------------------
+    uint32_t total_verts   = 0;
+    uint32_t total_indices = 0;
+    for (int ni = 0; ni < mesh_node_count; ++ni) {
+        cgltf_mesh* src_mesh = mesh_nodes[ni]->mesh;
+        if (!src_mesh) continue;
+        for (cgltf_size pi = 0; pi < src_mesh->primitives_count; ++pi) {
+            cgltf_primitive* prim = &src_mesh->primitives[pi];
+            if (prim->type != cgltf_primitive_type_triangles) continue;
+
+            // Find POSITION accessor to get vertex count
             for (cgltf_size ai = 0; ai < prim->attributes_count; ++ai) {
                 if (prim->attributes[ai].type == cgltf_attribute_type_position) {
-                    total_indices += (uint32_t)prim->attributes[ai].data->count;
+                    total_verts += (uint32_t)prim->attributes[ai].data->count;
                     break;
+                }
+            }
+
+            if (prim->indices) {
+                total_indices += (uint32_t)prim->indices->count;
+            } else {
+                // Non-indexed: synthesize sequential indices
+                for (cgltf_size ai = 0; ai < prim->attributes_count; ++ai) {
+                    if (prim->attributes[ai].type == cgltf_attribute_type_position) {
+                        total_indices += (uint32_t)prim->attributes[ai].data->count;
+                        break;
+                    }
                 }
             }
         }
     }
 
     if (total_verts == 0 || total_indices == 0) {
+        delete[] mesh_nodes;
         strncpy_s(result->error, "mesh has no usable triangle primitives", _TRUNCATE);
         cgltf_free(data);
         return result;
@@ -517,76 +637,108 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
     uint32_t idx_offset   = 0;
 
     // ---------------------------------------------------------------------------
-    // Copy vertex data and indices, building one MaterialSlot per primitive
+    // Copy vertex data and indices, building one MaterialSlot per primitive.
+    // Node world transforms are baked into imported vertex data.
     // ---------------------------------------------------------------------------
-    for (cgltf_size pi = 0; pi < src_mesh->primitives_count; ++pi) {
-        cgltf_primitive* prim = &src_mesh->primitives[pi];
-        if (prim->type != cgltf_primitive_type_triangles) continue;
+    for (int ni = 0; ni < mesh_node_count; ++ni) {
+        cgltf_node* src_node = mesh_nodes[ni];
+        cgltf_mesh* src_mesh = src_node ? src_node->mesh : nullptr;
+        if (!src_mesh) continue;
 
-        // Find accessors for this primitive
-        const cgltf_accessor* pos_acc    = nullptr;
-        const cgltf_accessor* norm_acc   = nullptr;
-        const cgltf_accessor* uv_acc     = nullptr;
+        float node_world[16] = {};
+        cgltf_node_transform_world(src_node, node_world);
 
-        for (cgltf_size ai = 0; ai < prim->attributes_count; ++ai) {
-            switch (prim->attributes[ai].type) {
-                case cgltf_attribute_type_position: pos_acc  = prim->attributes[ai].data; break;
-                case cgltf_attribute_type_normal:   norm_acc = prim->attributes[ai].data; break;
-                case cgltf_attribute_type_texcoord: uv_acc   = prim->attributes[ai].data; break;
-                default: break;
+        for (cgltf_size pi = 0; pi < src_mesh->primitives_count; ++pi) {
+            cgltf_primitive* prim = &src_mesh->primitives[pi];
+            if (prim->type != cgltf_primitive_type_triangles) continue;
+
+            // Find accessors for this primitive
+            const cgltf_accessor* pos_acc    = nullptr;
+            const cgltf_accessor* norm_acc   = nullptr;
+            const cgltf_accessor* uv_acc     = nullptr;
+
+            for (cgltf_size ai = 0; ai < prim->attributes_count; ++ai) {
+                switch (prim->attributes[ai].type) {
+                    case cgltf_attribute_type_position: pos_acc  = prim->attributes[ai].data; break;
+                    case cgltf_attribute_type_normal:   norm_acc = prim->attributes[ai].data; break;
+                    case cgltf_attribute_type_texcoord: uv_acc   = prim->attributes[ai].data; break;
+                    default: break;
+                }
             }
-        }
-        if (!pos_acc) continue;
+            if (!pos_acc) continue;
 
-        uint32_t prim_vert_count = (uint32_t)pos_acc->count;
+            uint32_t prim_vert_count = (uint32_t)pos_acc->count;
 
-        // Copy vertices
-        for (uint32_t vi = 0; vi < prim_vert_count; ++vi) {
-            rev::mesh::Vertex v = {};
-            ReadVec3(pos_acc, vi, v.pos);
-            if (norm_acc) ReadVec3(norm_acc, vi, v.normal);
-            if (uv_acc)   ReadVec2(uv_acc,   vi, v.uv);
-            rev::mesh::SetVertex(mesh, vert_offset + vi, v);
-        }
+            // Copy vertices
+            for (uint32_t vi = 0; vi < prim_vert_count; ++vi) {
+                rev::mesh::Vertex v = {};
+                float local_pos[3] = {};
+                ReadVec3(pos_acc, vi, local_pos);
+                TransformPoint(node_world, local_pos, v.pos);
 
-        // Copy indices (offset by vert_offset)
-        uint32_t prim_idx_start = idx_offset;
-        if (prim->indices) {
-            uint32_t idx_count = (uint32_t)prim->indices->count;
-            for (uint32_t ii = 0; ii < idx_count; ++ii) {
-                uint32_t local_idx = (uint32_t)cgltf_accessor_read_index(prim->indices, ii);
-                rev::mesh::SetIndex(mesh, idx_offset + ii, vert_offset + local_idx);
+                if (norm_acc) {
+                    float local_nrm[3] = {};
+                    ReadVec3(norm_acc, vi, local_nrm);
+                    TransformVector(node_world, local_nrm, v.normal);
+                }
+                if (uv_acc) ReadVec2(uv_acc, vi, v.uv);
+                rev::mesh::SetVertex(mesh, vert_offset + vi, v);
             }
-            idx_offset += idx_count;
-        } else {
-            // Non-indexed: sequential
-            for (uint32_t ii = 0; ii < prim_vert_count; ++ii) {
-                rev::mesh::SetIndex(mesh, idx_offset + ii, vert_offset + ii);
+
+            // Copy indices (offset by vert_offset)
+            uint32_t prim_idx_start = idx_offset;
+            if (prim->indices) {
+                uint32_t idx_count = (uint32_t)prim->indices->count;
+                for (uint32_t ii = 0; ii < idx_count; ++ii) {
+                    uint32_t local_idx = (uint32_t)cgltf_accessor_read_index(prim->indices, ii);
+                    rev::mesh::SetIndex(mesh, idx_offset + ii, vert_offset + local_idx);
+                }
+                idx_offset += idx_count;
+            } else {
+                // Non-indexed: sequential
+                for (uint32_t ii = 0; ii < prim_vert_count; ++ii) {
+                    rev::mesh::SetIndex(mesh, idx_offset + ii, vert_offset + ii);
+                }
+                idx_offset += prim_vert_count;
             }
-            idx_offset += prim_vert_count;
-        }
 
-        // Determine material color for this slot
-        uint32_t slot_color = 0xFFFFFFFF; // white
-        if (prim->material && prim->material->has_pbr_metallic_roughness) {
-            const float* bc = prim->material->pbr_metallic_roughness.base_color_factor;
-            uint8_t r = (uint8_t)(bc[0] * 255.0f);
-            uint8_t g = (uint8_t)(bc[1] * 255.0f);
-            uint8_t b = (uint8_t)(bc[2] * 255.0f);
-            uint8_t a = (uint8_t)(bc[3] * 255.0f);
-            slot_color = (a << 24) | (b << 16) | (g << 8) | r;
-        }
-        uint32_t prim_idx_count = idx_offset - prim_idx_start;
-        rev::mesh::AddMaterialSlot(mesh, prim_idx_start, prim_idx_count, slot_color);
+            // Determine material color for this slot
+            int material_index = MaterialIndexFromPtr(data, prim->material);
+            uint32_t slot_color = 0xFFFFFFFF; // white
+            if (material_index >= 0 && material_index < result->material_count) {
+                Material& mat = result->materials[material_index];
+                uint8_t r = (uint8_t)(mat.base_color[0] * 255.0f);
+                uint8_t g = (uint8_t)(mat.base_color[1] * 255.0f);
+                uint8_t b = (uint8_t)(mat.base_color[2] * 255.0f);
+                uint8_t a = (uint8_t)(mat.base_color[3] * 255.0f);
+                slot_color = (a << 24) | (b << 16) | (g << 8) | r;
+            } else if (prim->material && prim->material->has_pbr_metallic_roughness) {
+                const float* bc = prim->material->pbr_metallic_roughness.base_color_factor;
+                uint8_t r = (uint8_t)(bc[0] * 255.0f);
+                uint8_t g = (uint8_t)(bc[1] * 255.0f);
+                uint8_t b = (uint8_t)(bc[2] * 255.0f);
+                uint8_t a = (uint8_t)(bc[3] * 255.0f);
+                slot_color = (a << 24) | (b << 16) | (g << 8) | r;
+            }
 
-        vert_offset += prim_vert_count;
+            uint32_t prim_idx_count = idx_offset - prim_idx_start;
+            rev::mesh::AddMaterialSlot(mesh, prim_idx_start, prim_idx_count, slot_color, material_index, 0);
 
-        // Fill primary material from first primitive with a material
-        if (pi == 0 || (pi > 0 && result->material.name[0] == '\0')) {
-            FillMaterial(&result->material, prim->material,
-                         data, gltf_path, texture_output_dir);
+            vert_offset += prim_vert_count;
+
+            // Fill primary material from the first primitive that has material.
+            if (result->material.name[0] == '\0' && prim->material) {
+                FillMaterial(&result->material, prim->material,
+                             data, gltf_path, texture_output_dir);
+            }
         }
     }
+
+    // Keep imported light data on the mesh for renderer fallback behavior.
+    mesh->has_imported_light = result->has_light;
+    mesh->imported_light_pos[0] = result->light_pos[0];
+    mesh->imported_light_pos[1] = result->light_pos[1];
+    mesh->imported_light_pos[2] = result->light_pos[2];
 
     result->mesh = mesh;
     result->ok   = true;
@@ -594,6 +746,7 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
     // Extract animations before freeing cgltf data
     result->animations = ExtractAnimations(data, &result->animation_count);
 
+    delete[] mesh_nodes;
     cgltf_free(data);
     return result;
 }
@@ -604,6 +757,12 @@ ImportResult* LoadMesh(const char* gltf_path, const char* texture_output_dir) {
     ImportResult* result = new ImportResult{};
     result->ok = false;
     SetMaterialDefaults(&result->material);
+    result->materials = nullptr;
+    result->material_count = 0;
+    result->animations = nullptr;
+    result->animation_count = 0;
+    result->has_light = false;
+    result->light_pos[0] = result->light_pos[1] = result->light_pos[2] = 0.0f;
 
     if (!gltf_path || !gltf_path[0]) {
         strncpy_s(result->error, "null or empty gltf_path", _TRUNCATE);
@@ -637,6 +796,12 @@ ImportResult* LoadMeshFromMemory(const void* buf, size_t size,
     ImportResult* result = new ImportResult{};
     result->ok = false;
     SetMaterialDefaults(&result->material);
+    result->materials = nullptr;
+    result->material_count = 0;
+    result->animations = nullptr;
+    result->animation_count = 0;
+    result->has_light = false;
+    result->light_pos[0] = result->light_pos[1] = result->light_pos[2] = 0.0f;
 
     if (!buf || size == 0) {
         strncpy_s(result->error, "null or empty buffer", _TRUNCATE);
@@ -672,6 +837,7 @@ ImportResult* LoadMeshFromMemory(const void* buf, size_t size,
 void FreeImportResult(ImportResult* result) {
     if (!result) return;
     if (result->mesh) rev::mesh::DestroyMesh(result->mesh);
+    delete[] result->materials;
     
     // Free animations
     if (result->animations) {

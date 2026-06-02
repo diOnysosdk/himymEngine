@@ -18,8 +18,10 @@ using rev::runtime::ImageCue;
 using rev::runtime::ImageTexture;
 using rev::runtime::TextCue;
 using rev::runtime::TextTexture;
+using rev::runtime::TextEffectFrame;
 using rev::runtime::MusicCue;
 using rev::runtime::ComputeEffectOpacity;
+using rev::runtime::BuildTextEffectFrame;
 using rev::runtime::LoadImageTexture;
 using rev::runtime::LoadImageTextureFromMemory;
 using rev::runtime::RenderTextToTexture;
@@ -47,6 +49,15 @@ using rev::runtime::Mat4Multiply;
 
 // Global debug log file
 static FILE* g_logfile = nullptr;
+static bool g_verbose_logging = false;
+
+static bool IsVerboseLoggingEnabled() {
+    char env[16] = {};
+    DWORD n = GetEnvironmentVariableA("HIMYM_VERBOSE", env, sizeof(env));
+    return (n > 0 && env[0] != '0');
+}
+
+#define LOGV(...) do { if (g_verbose_logging) printf(__VA_ARGS__); } while (0)
 
 // ===== WinMM audio thread for XM playback =====
 static const int kAudioSampleRate = 48000;
@@ -124,15 +135,76 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
 #ifndef GL_TEXTURE0
 #define GL_TEXTURE0 0x84C0
 #endif
+#ifndef GL_CONSTANT_ALPHA
+#define GL_CONSTANT_ALPHA 0x8003
+#endif
+#ifndef GL_ONE_MINUS_CONSTANT_ALPHA
+#define GL_ONE_MINUS_CONSTANT_ALPHA 0x8004
+#endif
 
 // GL 3.3 function pointers (VAO support required for core profile)
 typedef void (APIENTRY *PFNGLGENVERTEXARRAYSPROC)(GLsizei n, GLuint* arrays);
 typedef void (APIENTRY *PFNGLBINDVERTEXARRAYPROC)(GLuint array);
 typedef void (APIENTRY *PFNGLACTIVETEXTUREPROC)(GLenum texture);
+typedef void (APIENTRY *PFNGLBLENDCOLORPROC)(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
 
 static PFNGLGENVERTEXARRAYSPROC glGenVertexArrays = nullptr;
 static PFNGLBINDVERTEXARRAYPROC glBindVertexArray = nullptr;
 static PFNGLACTIVETEXTUREPROC glActiveTexture = nullptr;
+static PFNGLBLENDCOLORPROC glBlendColor = nullptr;
+
+static void ApplySpriteBlendMode(int blend_mode) {
+    switch (blend_mode) {
+        case 1: // Additive
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            break;
+        case 2: // Multiply
+            glBlendFunc(GL_DST_COLOR, GL_ZERO);
+            break;
+        case 3: // Screen
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
+            break;
+        case 0:
+        default: // Alpha
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            break;
+    }
+}
+
+static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
+    float a = opacity;
+    if (a < 0.0f) a = 0.0f;
+    if (a > 1.0f) a = 1.0f;
+
+    bool has_blend_color = (glBlendColor != nullptr);
+    if (has_blend_color) {
+        glBlendColor(0.0f, 0.0f, 0.0f, a);
+    }
+
+    switch (blend_mode) {
+        case 1: // Additive
+            // src * opacity + dst
+            glBlendFunc(has_blend_color ? GL_CONSTANT_ALPHA : GL_SRC_ALPHA, GL_ONE);
+            break;
+        case 2: // Multiply
+            // Classic multiply; opacity contribution is primarily controlled via shader params.
+            glBlendFunc(GL_DST_COLOR, GL_ZERO);
+            break;
+        case 3: // Screen
+            // Classic screen; opacity contribution is primarily controlled via shader params.
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
+            break;
+        case 0:
+        default: // Alpha
+            // src * opacity + dst * (1 - opacity)
+            {
+                GLenum src = has_blend_color ? GL_CONSTANT_ALPHA : GL_SRC_ALPHA;
+                GLenum dst = has_blend_color ? GL_ONE_MINUS_CONSTANT_ALPHA : GL_ONE_MINUS_SRC_ALPHA;
+                glBlendFunc(src, dst);
+            }
+            break;
+    }
+}
 
 // Shader cue data structure (runtime-local; editor uses its own ShaderCue with more fields)
 struct ShaderCue {
@@ -176,6 +248,21 @@ struct ShaderCue {
     int curve_fade_ramp;
 };
 
+struct ShaderProgramState {
+    rev::shader::Program* prog;
+    bool compile_failed;
+    int u_time;
+    int u_resolution;
+    int u_palette_low;
+    int u_palette_mid;
+    int u_palette_high;
+    int u_speed;
+    int u_intensity;
+    int u_warp;
+    int u_exposure_base;
+    int u_fade_base;
+};
+
 // Music cue data structure — provided by rev_runtime (MusicCue using above)
 // Image cue data structure — provided by rev_runtime (ImageCue using above)
 
@@ -209,7 +296,7 @@ bool LoadShaderCue(const char* path, ShaderCue* cue) {
         }
         
         if (in_shader_cues && start[0] != '#' && start[0] != '\0' && start[0] != '\n') {
-            printf("[LoadShaderCue] Parsing line: %s\n", start);
+            LOGV("[LoadShaderCue] Parsing line: %s\n", start);
             
             // Initialize curve fields to -1 (no curve)
             cue->curve_speed = cue->curve_intensity = cue->curve_warp = -1;
@@ -238,7 +325,7 @@ bool LoadShaderCue(const char* path, ShaderCue* cue) {
                 &cue->curve_palette_high_r, &cue->curve_palette_high_g, &cue->curve_palette_high_b,
                 &cue->curve_opacity, &cue->curve_exposure_ramp, &cue->curve_fade_ramp);
             
-            printf("[LoadShaderCue] Parsed %d fields, shader_scene_id=%d\n", parsed, cue->shader_scene_id);
+            LOGV("[LoadShaderCue] Parsed %d fields, shader_scene_id=%d\n", parsed, cue->shader_scene_id);
             
             if (parsed >= 14) {  // At least old format (14 basic fields)
                 found = true;
@@ -306,13 +393,275 @@ int LoadAllShaderCues(const char* path, ShaderCue* cues, int max_cues) {
                 &cue->curve_opacity, &cue->curve_exposure_ramp, &cue->curve_fade_ramp);
             
             if (parsed >= 14) {  // At least old format (14 basic fields)
-                printf("[LoadAllShaderCues] Loaded cue %d: shader_id=%d, time=%.1f-%.1f\n", 
+                LOGV("[LoadAllShaderCues] Loaded cue %d: shader_id=%d, time=%.1f-%.1f\n", 
                     count, cue->shader_scene_id, cue->cue_start, cue->cue_end);
                 count++;
             }
         }
     }
     
+    fclose(f);
+    return count;
+}
+
+// Load ALL mesh cues from cues.txt (supports multiple 3D assets)
+int LoadAllMeshCues(const char* path, MeshCue* cues, int max_cues) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+
+    char line[2048];
+    bool in_mesh_cues = false;
+    int count = 0;
+
+    while (fgets(line, sizeof(line), f) && count < max_cues) {
+        char* s = line;
+        while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+
+        if (strstr(s, "[mesh_cues]")) {
+            in_mesh_cues = true;
+            continue;
+        }
+        if (s[0] == '[' && in_mesh_cues) {
+            break;
+        }
+        if (!in_mesh_cues || s[0] == '#' || s[0] == '\0' || s[0] == '\n') {
+            continue;
+        }
+
+        MeshCue* cue = &cues[count];
+        memset(cue, 0, sizeof(MeshCue));
+        cue->scale[0] = cue->scale[1] = cue->scale[2] = 1.0f;
+        cue->metallic = 0.0f;
+        cue->roughness = 0.5f;
+        cue->curve_pos_x = cue->curve_pos_y = cue->curve_pos_z = -1;
+        cue->curve_rot_x = cue->curve_rot_y = cue->curve_rot_z = -1;
+        cue->curve_scale_x = cue->curve_scale_y = cue->curve_scale_z = -1;
+        cue->curve_color_r = cue->curve_color_g = cue->curve_color_b = cue->curve_color_a = -1;
+        cue->curve_mesh_size = cue->curve_metallic = cue->curve_roughness = -1;
+
+        char* pipe1 = strchr(s, '|');
+        if (!pipe1) continue;
+        size_t key_len = (size_t)(pipe1 - s);
+        if (key_len >= sizeof(cue->asset_key)) key_len = sizeof(cue->asset_key) - 1;
+        strncpy_s(cue->asset_key, s, key_len);
+        cue->asset_key[key_len] = '\0';
+
+        char* pipe2 = strchr(pipe1 + 1, '|');
+        if (!pipe2) continue;
+        size_t path_len = (size_t)(pipe2 - (pipe1 + 1));
+        if (path_len >= sizeof(cue->asset_path)) path_len = sizeof(cue->asset_path) - 1;
+        strncpy_s(cue->asset_path, pipe1 + 1, path_len);
+        cue->asset_path[path_len] = '\0';
+
+        int n = sscanf_s(pipe2 + 1,
+            "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+            &cue->mesh_type,
+            &cue->pos[0], &cue->pos[1], &cue->pos[2],
+            &cue->rot[0], &cue->rot[1], &cue->rot[2],
+            &cue->scale[0], &cue->scale[1], &cue->scale[2],
+            &cue->color[0], &cue->color[1], &cue->color[2], &cue->color[3],
+            &cue->mesh_size, &cue->mesh_param,
+            &cue->cue_start, &cue->cue_end,
+            &cue->layer_order, &cue->effect_type,
+            &cue->fade_in_start, &cue->fade_in_end,
+            &cue->fade_out_start, &cue->fade_out_end,
+            &cue->metallic, &cue->roughness,
+            &cue->curve_pos_x, &cue->curve_pos_y, &cue->curve_pos_z,
+            &cue->curve_rot_x, &cue->curve_rot_y, &cue->curve_rot_z,
+            &cue->curve_scale_x, &cue->curve_scale_y, &cue->curve_scale_z,
+            &cue->curve_color_r, &cue->curve_color_g, &cue->curve_color_b, &cue->curve_color_a,
+            &cue->curve_mesh_size, &cue->curve_metallic, &cue->curve_roughness);
+
+        if (n >= 18) {
+            LOGV("[LoadAllMeshCues] Loaded cue %d: key=%s type=%d time=%.1f-%.1f\n",
+                count, cue->asset_key, cue->mesh_type, cue->cue_start, cue->cue_end);
+            count++;
+        }
+    }
+
+    fclose(f);
+    return count;
+}
+
+// Load ALL text cues from cues.txt
+int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+
+    char line[2048];
+    bool in_section = false;
+    int count = 0;
+
+    while (fgets(line, sizeof(line), f) && count < max_cues) {
+        char* s = line;
+        while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+
+        if (strstr(s, "[text_cues]")) { in_section = true; continue; }
+        if (s[0] == '[' && in_section) { break; }
+        if (!in_section || s[0] == '#' || s[0] == '\0' || s[0] == '\n') continue;
+
+        TextCue* cue = &cues[count];
+        memset(cue, 0, sizeof(TextCue));
+        cue->blend_mode = 0;
+        cue->bake_mode = 0;
+        cue->curve_x = cue->curve_y = cue->curve_size = -1;
+        cue->curve_color_r = cue->curve_color_g = cue->curve_color_b = -1;
+
+        char* pipe1 = strchr(s, '|');
+        if (!pipe1) continue;
+        *pipe1 = '\0';
+
+        char decoded_text[256];
+        const char* src = s;
+        char* dst = decoded_text;
+        while (*src && (dst - decoded_text) < 254) {
+            if (src[0] == '\\' && src[1] == 'n') {
+                *dst++ = '\n';
+                src += 2;
+            } else {
+                *dst++ = *src++;
+            }
+        }
+        *dst = '\0';
+        strncpy_s(cue->text, decoded_text, _TRUNCATE);
+
+        char* pipe2 = strchr(pipe1 + 1, '|');
+        if (!pipe2) continue;
+        *pipe2 = '\0';
+        strncpy_s(cue->font_name, pipe1 + 1, _TRUNCATE);
+
+        int layer_order = 0;
+        int blend_mode = 0;
+        int curve_x = -1, curve_y = -1, curve_size = -1;
+        int curve_color_r = -1, curve_color_g = -1, curve_color_b = -1;
+        int bake_mode = 0;
+        char baked_asset_key[64] = {};
+        char baked_asset_path[512] = {};
+
+        bool parsed_with_bake_mode = true;
+        int parsed = sscanf_s(pipe2 + 1,
+                 "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%63[^|]|%511[^|\r\n]",
+                     &cue->x, &cue->y, &cue->size,
+                     &cue->color.r, &cue->color.g, &cue->color.b,
+                     &cue->effect_type,
+                     &cue->cue_start, &cue->cue_end,
+                     &cue->fade_in_start,  &cue->fade_in_end,
+                     &cue->fade_out_start, &cue->fade_out_end,
+                     &layer_order,
+                     &blend_mode,
+                     &curve_x, &curve_y, &curve_size,
+                     &curve_color_r, &curve_color_g, &curve_color_b,
+                     &bake_mode,
+                     baked_asset_key, (unsigned)_countof(baked_asset_key),
+                     baked_asset_path, (unsigned)_countof(baked_asset_path));
+        if (parsed < 23) {
+            parsed_with_bake_mode = false;
+            parsed = sscanf_s(pipe2 + 1,
+                 "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%63[^|]|%511[^|\r\n]",
+                     &cue->x, &cue->y, &cue->size,
+                     &cue->color.r, &cue->color.g, &cue->color.b,
+                     &cue->effect_type,
+                     &cue->cue_start, &cue->cue_end,
+                     &cue->fade_in_start,  &cue->fade_in_end,
+                     &cue->fade_out_start, &cue->fade_out_end,
+                     &layer_order,
+                     &curve_x, &curve_y, &curve_size,
+                     &curve_color_r, &curve_color_g, &curve_color_b,
+                     baked_asset_key, (unsigned)_countof(baked_asset_key),
+                     baked_asset_path, (unsigned)_countof(baked_asset_path));
+        }
+
+        if (parsed >= 14) {
+            cue->layer_order = layer_order;
+            cue->blend_mode = (parsed_with_bake_mode && parsed >= 15) ? blend_mode : 0;
+            if (parsed_with_bake_mode) {
+                cue->curve_x = (parsed >= 16) ? curve_x : -1;
+                cue->curve_y = (parsed >= 17) ? curve_y : -1;
+                cue->curve_size = (parsed >= 18) ? curve_size : -1;
+                cue->curve_color_r = (parsed >= 19) ? curve_color_r : -1;
+                cue->curve_color_g = (parsed >= 20) ? curve_color_g : -1;
+                cue->curve_color_b = (parsed >= 21) ? curve_color_b : -1;
+            } else {
+                cue->curve_x = (parsed >= 15) ? curve_x : -1;
+                cue->curve_y = (parsed >= 16) ? curve_y : -1;
+                cue->curve_size = (parsed >= 17) ? curve_size : -1;
+                cue->curve_color_r = (parsed >= 18) ? curve_color_r : -1;
+                cue->curve_color_g = (parsed >= 19) ? curve_color_g : -1;
+                cue->curve_color_b = (parsed >= 20) ? curve_color_b : -1;
+            }
+            cue->bake_mode = (parsed_with_bake_mode && parsed >= 22) ? bake_mode : 0;
+            if (parsed_with_bake_mode) {
+                if (parsed >= 23) strncpy_s(cue->baked_asset_key, baked_asset_key, _TRUNCATE);
+                if (parsed >= 24) strncpy_s(cue->baked_asset_path, baked_asset_path, _TRUNCATE);
+            } else {
+                if (parsed >= 21) strncpy_s(cue->baked_asset_key, baked_asset_key, _TRUNCATE);
+                if (parsed >= 22) strncpy_s(cue->baked_asset_path, baked_asset_path, _TRUNCATE);
+            }
+
+            count++;
+        }
+    }
+
+    fclose(f);
+    return count;
+}
+
+// Load ALL image cues from cues.txt
+int LoadAllImageCues(const char* path, ImageCue* cues, int max_cues) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+
+    char line[1024];
+    bool in_section = false;
+    int count = 0;
+
+    while (fgets(line, sizeof(line), f) && count < max_cues) {
+        char* s = line;
+        while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+        if (strstr(s, "[image_cues]")) { in_section = true; continue; }
+        if (s[0] == '[' && in_section)  { break; }
+        if (!in_section || s[0] == '#' || s[0] == '\0' || s[0] == '\n') continue;
+
+        ImageCue* cue = &cues[count];
+        memset(cue, 0, sizeof(ImageCue));
+        cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_opacity = -1;
+
+        char* pipe1 = strchr(s, '|');
+        if (!pipe1) continue;
+        *pipe1 = '\0';
+        strncpy_s(cue->asset_key, s, _TRUNCATE);
+
+        char* pipe2 = strchr(pipe1 + 1, '|');
+        if (!pipe2) continue;
+        *pipe2 = '\0';
+        strncpy_s(cue->asset_path, pipe1 + 1, _TRUNCATE);
+
+        int layer_order = 0;
+        int curve_x = -1, curve_y = -1, curve_scale = -1, curve_opacity = -1;
+        int blend_mode = 0;
+        int scanned = sscanf_s(pipe2 + 1,
+                 "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%d|%d|%d|%d",
+                     &cue->x, &cue->y, &cue->scale, &cue->opacity,
+                     &cue->cue_start, &cue->cue_end,
+                     &layer_order, &cue->effect_type,
+                     &cue->fade_in_start, &cue->fade_in_end,
+                     &cue->fade_out_start, &cue->fade_out_end,
+                     &curve_x, &curve_y, &curve_scale, &curve_opacity,
+                     &blend_mode);
+        if (scanned >= 6) {
+            cue->layer_order = layer_order;
+            cue->curve_x     = (scanned >= 13) ? curve_x     : -1;
+            cue->curve_y     = (scanned >= 14) ? curve_y     : -1;
+            cue->curve_scale = (scanned >= 15) ? curve_scale : -1;
+            cue->curve_opacity = (scanned >= 16) ? curve_opacity : -1;
+            cue->blend_mode  = (scanned >= 17) ? blend_mode  : 0;
+            count++;
+        }
+    }
+
     fclose(f);
     return count;
 }
@@ -940,7 +1289,618 @@ void main()
 
     fragColor = vec4(col, u_fade_base);
 }
-)"
+)",
+
+// Shader 12: Wormhole
+R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_warp;
+
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    float r = length(p);
+    float a = atan(p.y, p.x);
+    
+    vec3 col = vec3(0.0);
+    for (int i = 0; i < 3; i++) {
+        float fi = float(i);
+        float aberration = (fi - 1.0) * 0.08 * u_warp;
+        vec2 offset_p = p * (1.0 + aberration);
+        
+        float r_ch = length(offset_p);
+        float a_ch = atan(offset_p.y, offset_p.x);
+        
+        float d1 = 1.0 / (r_ch + 0.02);
+        float d2 = 1.0 / (r_ch + 0.05);
+        float d3 = 1.0 / (r_ch + 0.10);
+        
+        float tunnel1 = fract(d1 - t * 0.8);
+        float tunnel2 = fract(d2 - t * 0.6);
+        float tunnel3 = fract(d3 - t * 0.4);
+        
+        float spiral = sin(a_ch * 8.0 + d1 * 15.0 - t * 4.0);
+        
+        float pattern = abs(sin(tunnel1 * 40.0 + spiral * 5.0)) * tunnel2;
+        pattern += abs(sin(tunnel2 * 30.0)) * tunnel3 * 0.5;
+        pattern += abs(sin(tunnel3 * 20.0)) * 0.25;
+        
+        if (i == 0) col.r = pattern;
+        else if (i == 1) col.g = pattern;
+        else col.b = pattern;
+    }
+    
+    col *= mix(u_palette_low, mix(u_palette_mid, u_palette_high, col.g), col.r);
+    col += u_palette_high * exp(-r * 10.0) * 2.0;
+    col *= smoothstep(1.5, 0.0, r);
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+
+// Shader 13: DNA Helix
+R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    vec3 col = vec3(0.0);
+    float cam_z = t * 2.0;
+    
+    for (float z = -5.0; z < 10.0; z += 0.2) {
+        float depth = z - cam_z;
+        float depth_fract = fract(depth);
+        depth = floor(depth) + depth_fract;
+        
+        if (depth < -2.0 || depth > 8.0) continue;
+        
+        float scale = 3.0 / (depth + 3.0);
+        
+        float helix_angle = depth * 0.8;
+        vec2 pos1 = vec2(cos(helix_angle), sin(helix_angle)) * 0.4 * scale;
+        vec2 pos2 = vec2(cos(helix_angle + 3.14159), sin(helix_angle + 3.14159)) * 0.4 * scale;
+        
+        float d1 = length(p - pos1);
+        float d2 = length(p - pos2);
+        
+        float helix1 = smoothstep(0.04 * scale, 0.0, d1);
+        float helix2 = smoothstep(0.04 * scale, 0.0, d2);
+        
+        float bar_phase = fract(depth * 1.5);
+        if (bar_phase < 0.1) {
+            vec2 bar_dir = normalize(pos2 - pos1);
+            float bar_proj = dot(p - pos1, bar_dir);
+            float bar_dist = length(p - pos1 - bar_dir * clamp(bar_proj, 0.0, length(pos2 - pos1)));
+            float bar = smoothstep(0.02 * scale, 0.0, bar_dist);
+            col += u_palette_mid * bar * (1.0 - bar_phase * 10.0);
+        }
+        
+        float depth_color = smoothstep(8.0, -2.0, depth);
+        vec3 color1 = mix(u_palette_low, u_palette_high, depth_color);
+        vec3 color2 = mix(u_palette_mid, u_palette_high, depth_color);
+        
+        col += color1 * helix1 * 2.0;
+        col += color2 * helix2 * 2.0;
+        
+        col += color1 * exp(-d1 * 15.0 / scale) * 0.3;
+        col += color2 * exp(-d2 * 15.0 / scale) * 0.3;
+    }
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+
+// Shader 14: Liquid Chrome
+R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float fbm(vec2 p) {
+    float v = 0.0, a = 0.5;
+    for (int i = 0; i < 6; i++) {
+        v += noise(p) * a;
+        p *= 2.17;
+        a *= 0.5;
+    }
+    return v;
+}
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    vec2 fluid = p;
+    fluid.x += fbm(p * 2.0 + vec2(t * 0.3, 0)) * 0.5;
+    fluid.y += fbm(p * 2.0 + vec2(0, t * 0.2)) * 0.5;
+    
+    float n1 = fbm(fluid * 3.0 + vec2(t * 0.1, -t * 0.15));
+    float n2 = fbm(fluid * 5.0 - vec2(t * 0.15, t * 0.1));
+    float n3 = fbm(fluid * 8.0 + vec2(sin(t * 0.3), cos(t * 0.25)) * 2.0);
+    
+    float metal = n1 * 0.5 + n2 * 0.3 + n3 * 0.2;
+    
+    float reflection = abs(sin(metal * 20.0));
+    reflection = pow(reflection, 3.0);
+    
+    float highlight = sin(fluid.x * 5.0 - fluid.y * 3.0 + t * 2.0);
+    highlight = pow(max(highlight, 0.0), 8.0);
+    
+    vec3 base = mix(u_palette_low, u_palette_mid, smoothstep(0.3, 0.7, metal));
+    vec3 col = mix(base, u_palette_high, reflection * 0.6);
+    
+    col += u_palette_high * highlight * 0.8;
+    
+    float spec = pow(max(n3, 0.0), 4.0);
+    col += vec3(1.0) * spec * 0.5 * u_intensity;
+    
+    float edge = 1.0 - pow(length(p) * 0.7, 2.0);
+    col *= edge;
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+
+// Shader 15: Kaleidoscope
+R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1,0)), u.x),
+               mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), u.x), u.y);
+}
+
+vec2 kaleidoscope(vec2 p, float segments) {
+    float a = atan(p.y, p.x);
+    float r = length(p);
+    float segment_angle = 6.28318 / segments;
+    a = mod(a, segment_angle);
+    a = abs(a - segment_angle * 0.5);
+    return vec2(cos(a), sin(a)) * r;
+}
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    
+    float rot = t * 0.2;
+    float s = sin(rot), c = cos(rot);
+    p = vec2(c * p.x - s * p.y, s * p.x + c * p.y);
+    
+    float segments = 8.0 + sin(t * 0.3) * 3.0;
+    vec2 kp = kaleidoscope(p, segments);
+    
+    float zoom = 1.0 + sin(t * 0.5) * 0.5;
+    kp *= zoom;
+    
+    vec2 kp2 = kaleidoscope(kp * 1.5, 6.0);
+    vec2 kp3 = kaleidoscope(kp * 2.5, 12.0);
+    
+    float n1 = noise(kp * 5.0 + vec2(t * 0.1, -t * 0.15));
+    float n2 = noise(kp2 * 8.0 - vec2(t * 0.15, t * 0.1));
+    float n3 = noise(kp3 * 12.0 + vec2(sin(t * 0.2), cos(t * 0.25)));
+    
+    float pattern = n1 * 0.5 + n2 * 0.3 + n3 * 0.2;
+    
+    float rings = abs(sin(length(kp) * 15.0 - t * 2.0));
+    pattern += rings * 0.3;
+    
+    vec3 col = u_palette_low;
+    col = mix(col, u_palette_mid, smoothstep(0.3, 0.5, pattern));
+    col = mix(col, u_palette_high, smoothstep(0.6, 0.9, pattern));
+    
+    col += u_palette_high * pow(pattern, 4.0) * u_intensity;
+    
+    float edge_glow = pow(rings, 8.0);
+    col += u_palette_mid * edge_glow * 0.5;
+    
+    fragColor = vec4(col, 1.0);
+}
+)",
+
+// Shader 16: Fire Shader
+R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1,0)), u.x),
+               mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), u.x), u.y);
+}
+
+float fbm(vec2 p) {
+    float v = 0.0, a = 0.5;
+    for (int i = 0; i < 6; i++) {
+        v += noise(p) * a;
+        p *= 2.13;
+        p.y += u_time * u_speed * 0.3;
+        a *= 0.5;
+    }
+    return v;
+}
+
+void main() {
+    vec2 p = uv;
+    p.x = (p.x * 2.0 - 1.0) * (u_resolution.x / u_resolution.y);
+    float t = u_time * u_speed;
+    
+    vec2 fire_uv = p;
+    fire_uv.y -= t * 0.5;
+    fire_uv.y += sin(p.x * 5.0 + t) * 0.1;
+    
+    float turb1 = fbm(fire_uv * vec2(3.0, 5.0));
+    float turb2 = fbm(fire_uv * vec2(5.0, 8.0) + vec2(23.7, 11.3));
+    
+    float flame = turb1 * 0.7 + turb2 * 0.3;
+    flame = pow(flame, 2.0);
+    
+    float height = smoothstep(1.2, 0.0, p.y);
+    flame *= height;
+    
+    float bottom_intensity = smoothstep(0.4, -0.2, p.y);
+    flame += bottom_intensity * 0.3;
+    
+    vec3 col = vec3(0.0);
+    
+    if (flame > 0.8) {
+        col = mix(u_palette_high, vec3(1.0), (flame - 0.8) * 5.0);
+    } else if (flame > 0.5) {
+        col = mix(u_palette_mid, u_palette_high, (flame - 0.5) * 3.33);
+    } else if (flame > 0.2) {
+        col = mix(u_palette_low, u_palette_mid, (flame - 0.2) * 3.33);
+    } else {
+        col = u_palette_low * (flame * 5.0);
+    }
+    
+    col *= u_intensity;
+    
+    for (int i = 0; i < 16; i++) {
+        float fi = float(i);
+        vec2 ember_seed = vec2(fi * 7.13, fi * 3.71);
+        float ember_x = hash(ember_seed) * 2.0 - 1.0;
+        float ember_phase = fract(hash(ember_seed + 5.5) + t * 0.3);
+        float ember_y = ember_phase * 1.5 - 0.3;
+        
+        vec2 ember_pos = vec2(ember_x * 0.8, ember_y);
+        ember_pos.x += sin(ember_y * 10.0 + t * 2.0) * 0.1;
+        
+        float ember_d = length(p - ember_pos);
+        float ember = smoothstep(0.015, 0.0, ember_d);
+        ember *= smoothstep(0.0, 0.2, ember_phase) * smoothstep(1.0, 0.7, ember_phase);
+        
+        col += u_palette_high * ember * 2.0;
+    }
+    
+    fragColor = vec4(col, 1.0);
+}
+    )"
+    ,
+
+    // Shader 17: Cosmic Nebula Volumetric
+    R"(
+    #version 330 core
+
+    in vec2 uv;
+    out vec4 fragColor;
+
+    uniform float u_time;
+    uniform vec2 u_resolution;
+
+    uniform vec3 u_palette_low;
+    uniform vec3 u_palette_mid;
+    uniform vec3 u_palette_high;
+
+    uniform float u_speed;
+    uniform float u_intensity;
+    uniform float u_warp;
+
+    uniform float u_exposure_base;
+    uniform float u_fade_base;
+
+    #define VOL_STEPS 20
+    #define STAR_LAYERS 3
+    #define PI 3.14159265359
+
+    float hash11(float p)
+    {
+        p = fract(p * 0.1031);
+        p *= p + 33.33;
+        p *= p + p;
+        return fract(p);
+    }
+
+    float hash31(vec3 p)
+    {
+        p = fract(p * 0.1031);
+        p += dot(p, p.yzx + 33.33);
+        return fract((p.x + p.y) * p.z);
+    }
+
+    float hash21(vec2 p)
+    {
+        vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+        p3 += dot(p3, p3.yzx + 33.33);
+        return fract((p3.x + p3.y) * p3.z);
+    }
+
+    mat2 rot(float a)
+    {
+        float s = sin(a);
+        float c = cos(a);
+        return mat2(c, -s, s, c);
+    }
+
+    float noise3(vec3 p)
+    {
+        vec3 i = floor(p);
+        vec3 f = fract(p);
+
+        f = f * f * (3.0 - 2.0 * f);
+
+        float n000 = hash31(i + vec3(0.0, 0.0, 0.0));
+        float n100 = hash31(i + vec3(1.0, 0.0, 0.0));
+        float n010 = hash31(i + vec3(0.0, 1.0, 0.0));
+        float n110 = hash31(i + vec3(1.0, 1.0, 0.0));
+        float n001 = hash31(i + vec3(0.0, 0.0, 1.0));
+        float n101 = hash31(i + vec3(1.0, 0.0, 1.0));
+        float n011 = hash31(i + vec3(0.0, 1.0, 1.0));
+        float n111 = hash31(i + vec3(1.0, 1.0, 1.0));
+
+        float nx00 = mix(n000, n100, f.x);
+        float nx10 = mix(n010, n110, f.x);
+        float nx01 = mix(n001, n101, f.x);
+        float nx11 = mix(n011, n111, f.x);
+
+        float nxy0 = mix(nx00, nx10, f.y);
+        float nxy1 = mix(nx01, nx11, f.y);
+
+        return mix(nxy0, nxy1, f.z);
+    }
+
+    float fbm3(vec3 p)
+    {
+        float v = 0.0;
+        float a = 0.5;
+
+        for (int i = 0; i < 4; i++)
+        {
+            v += noise3(p) * a;
+            p = p * 2.03 + vec3(17.1, 9.2, 11.7);
+            p.xy = rot(0.47) * p.xy;
+            p.yz = rot(0.31) * p.yz;
+            a *= 0.52;
+        }
+
+        return v;
+    }
+
+    float warpedFbm(vec3 p, float t)
+    {
+        vec3 q = p;
+
+        q.x += noise3(p * 1.6 + vec3(0.0, t * 0.10, 0.0)) * 2.0 - 1.0;
+        q.y += noise3(p * 1.8 + vec3(t * 0.08, 4.0, 0.0)) * 2.0 - 1.0;
+        q.z += noise3(p * 1.3 + vec3(0.0, 0.0, t * 0.06)) * 2.0 - 1.0;
+
+        return fbm3(mix(p, q, 0.22 + u_warp * 0.55));
+    }
+
+    float nebulaDensity(vec3 p, float t)
+    {
+        p.xy = rot(t * 0.035 + p.z * 0.18) * p.xy;
+
+        float r = length(p.xy);
+        float a = atan(p.y, p.x);
+
+        float disk = exp(-abs(p.z) * 2.8) * exp(-r * 0.42);
+        float core = exp(-r * 2.8);
+
+        float arms = sin(a * 4.0 + r * 7.5 - t * 0.55);
+        arms = smoothstep(-0.35, 0.95, arms);
+
+        float clouds = warpedFbm(p * 1.15 + vec3(0.0, 0.0, t * 0.08), t);
+        float d = smoothstep(0.40, 0.88, clouds);
+
+        d *= disk * (0.55 + arms * 1.55);
+        d += core * 0.18;
+
+        return clamp(d, 0.0, 1.0);
+    }
+
+    vec3 palette(float x)
+    {
+        vec3 c = mix(u_palette_low, u_palette_mid, smoothstep(0.0, 0.65, x));
+        c = mix(c, u_palette_high, smoothstep(0.55, 1.0, x));
+        return c;
+    }
+
+    float starLayer(vec2 p, float scale, float threshold, float t)
+    {
+        p *= scale;
+
+        vec2 id = floor(p);
+        vec2 gv = fract(p) - 0.5;
+
+        float rnd = hash21(id);
+        vec2 jitter = vec2(hash21(id + 12.7), hash21(id + 78.3)) - 0.5;
+
+        gv -= jitter * 0.75;
+
+        float d = length(gv);
+        float star = smoothstep(0.045, 0.0, d);
+        float flare = smoothstep(0.025, 0.0, abs(gv.x)) * smoothstep(0.30, 0.0, abs(gv.y));
+        flare += smoothstep(0.025, 0.0, abs(gv.y)) * smoothstep(0.30, 0.0, abs(gv.x));
+
+        float twinkle = 0.65 + 0.35 * sin(t * (3.0 + rnd * 7.0) + rnd * 40.0);
+
+        return (star + flare * 0.18) * step(threshold, rnd) * twinkle;
+    }
+
+    float starField(vec2 p, float t)
+    {
+        float s = 0.0;
+
+        s += starLayer(p + vec2(t * 0.003, -t * 0.002), 45.0, 0.965, t);
+        s += starLayer(p + vec2(-t * 0.004, t * 0.003), 85.0, 0.975, t);
+        s += starLayer(p + vec2(t * 0.006, t * 0.004), 135.0, 0.983, t);
+
+        return s;
+    }
+
+    void main()
+    {
+        vec2 aspect = vec2(u_resolution.x / u_resolution.y, 1.0);
+        vec2 p = (uv - 0.5) * aspect;
+
+        float t = u_time * u_speed;
+        float intensity = max(u_intensity, 0.001);
+
+        vec2 pp = p;
+        pp += vec2(
+            noise3(vec3(p * 2.0, t * 0.06)),
+            noise3(vec3(p.yx * 2.0, t * 0.05 + 4.0))
+        ) * 0.06 * u_warp;
+
+        vec3 ro = vec3(0.0, 0.0, -4.2);
+        vec3 rd = normalize(vec3(pp * 1.25, 1.75));
+
+        ro.xz = rot(sin(t * 0.08) * 0.18) * ro.xz;
+        rd.xz = rot(sin(t * 0.08) * 0.18) * rd.xz;
+        rd.xy = rot(sin(t * 0.05) * 0.08) * rd.xy;
+
+        vec4 acc = vec4(0.0);
+
+        float travel = 0.0;
+        float stepSize = 0.18;
+
+        for (int i = 0; i < VOL_STEPS; i++)
+        {
+            vec3 pos = ro + rd * travel;
+
+            float d = nebulaDensity(pos, t);
+            float r = length(pos.xy);
+
+            float glowCore = exp(-r * 3.4 - abs(pos.z) * 1.7);
+            float rim = exp(-abs(r - 1.25) * 3.2) * exp(-abs(pos.z) * 2.1);
+
+            vec3 c = palette(d);
+            c += u_palette_high * glowCore * 2.4;
+            c += u_palette_mid * rim * 0.35;
+
+            float alpha = clamp(d * 0.105, 0.0, 0.22);
+            alpha *= 1.0 - acc.a;
+
+            acc.rgb += c * alpha;
+            acc.a += alpha;
+
+            travel += stepSize;
+
+            if (acc.a > 0.93)
+                break;
+        }
+
+        float stars = starField(p, t);
+        vec3 starCol = mix(u_palette_mid, u_palette_high, clamp(stars, 0.0, 1.0));
+
+        vec3 col = u_palette_low * 0.045;
+        col += acc.rgb * 2.15;
+        col += starCol * stars * 2.4;
+
+        float centerGlow = exp(-length(p) * 3.2);
+        col += u_palette_high * centerGlow * 0.26;
+
+        float dust = noise3(vec3(p * 14.0, t * 0.02));
+        dust = smoothstep(0.68, 0.95, dust);
+        col += u_palette_mid * dust * acc.a * 0.16;
+
+        float vignette = smoothstep(1.25, 0.08, length(p));
+        col *= vignette;
+
+        col *= intensity;
+        col *= max(u_exposure_base, 0.0);
+
+        col = 1.0 - exp(-col);
+        col = pow(col, vec3(0.92));
+
+        fragColor = vec4(col, u_fade_base);
+    }
+    )"
 };
 
 int main(int argc, char* argv[]) {
@@ -964,11 +1924,18 @@ int main(int argc, char* argv[]) {
     freopen_s(&fp, "CONOUT$", "w", stdout);
     freopen_s(&fp, "CONOUT$", "w", stderr);
 
-    // Also log to file for debugging
-    fopen_s(&g_logfile, "intro_debug.log", "w");
+    g_verbose_logging = IsVerboseLoggingEnabled();
+    if (g_verbose_logging) {
+        fopen_s(&g_logfile, "intro_debug.log", "w");
+        if (g_logfile) fprintf(g_logfile, "=== HiMYM Minimal Intro Debug Log ===\n\n");
+    }
 
-    printf("=== HiMYM Minimal Intro ===\n\n");
-    if (g_logfile) fprintf(g_logfile, "=== HiMYM Minimal Intro Debug Log ===\n\n");
+    printf("=== HiMYM Minimal Intro ===\n");
+    if (g_verbose_logging) {
+        printf("Verbose logging: ON (HIMYM_VERBOSE)\n\n");
+    } else {
+        printf("Verbose logging: OFF\n\n");
+    }
 
     // Cues file path: argv[1] takes priority (editor always passes it).
     // Packed standalone build: extract embedded kPackedCuesContent to a temp file —
@@ -1001,7 +1968,7 @@ int main(int argc, char* argv[]) {
     // Load ALL shader cues (multi-scene support)
     ShaderCue shader_cues[16];  // Support up to 16 shader cues
     int shader_cue_count = LoadAllShaderCues(cues_path, shader_cues, 16);
-    printf("Loaded %d shader cue(s)\n", shader_cue_count);
+    LOGV("Loaded %d shader cue(s)\n", shader_cue_count);
     
     // Setup default fallback shader cue
     ShaderCue fallback_cue = {};
@@ -1018,7 +1985,7 @@ int main(int argc, char* argv[]) {
     fallback_cue.cue_end = 999999.0f;  // Always active
     
     if (shader_cue_count == 0) {
-        printf("No shader cues found, using fallback\n");
+        LOGV("No shader cues found, using fallback\n");
         shader_cues[0] = fallback_cue;
         shader_cue_count = 1;
     }
@@ -1026,7 +1993,7 @@ int main(int argc, char* argv[]) {
     // Load curves
     rev::curve::Curve curves[32];
     int curve_count = LoadCurves(cues_path, curves, 32);
-    printf("Loaded %d curves\n", curve_count);
+    LOGV("Loaded %d curves\n", curve_count);
     if (g_logfile) {
         fprintf(g_logfile, "Loaded %d curves\n", curve_count);
         for (int i = 0; i < curve_count; ++i) {
@@ -1039,54 +2006,43 @@ int main(int argc, char* argv[]) {
     MusicCue music_cue = {};
     bool has_music = LoadMusicCue(cues_path, &music_cue);
     
-    // Load image cue
-    ImageCue image_cue = {};
-    bool has_image = LoadImageCue(cues_path, &image_cue);
-    ImageTexture image_tex = {};
-    bool image_loaded = false;
-    
-    printf("Image cue loaded: %s\n", has_image ? "YES" : "NO");
-    if (g_logfile) {
-        fprintf(g_logfile, "Image cue loaded: %s\n", has_image ? "YES" : "NO");
-        fprintf(g_logfile, "Tried to load from: ../../../assets/cues.txt\n");
-        fflush(g_logfile);
-    }
-    if (has_image) {
-        printf("  Key: %s, Path: %s\n", image_cue.asset_key, image_cue.asset_path);
-        if (g_logfile) fprintf(g_logfile, "  Key: %s, Path: %s\n", image_cue.asset_key, image_cue.asset_path);
-        printf("  Pos: (%.2f,%.2f), Scale: %.2f, Time: %.1f-%.1fs\n",
-               image_cue.x, image_cue.y, image_cue.scale, 
-               image_cue.cue_start, image_cue.cue_end);
-        printf("  Curves: X=%d, Y=%d, Scale=%d, Opacity=%d\n",
-               image_cue.curve_x, image_cue.curve_y, image_cue.curve_scale, image_cue.curve_opacity);
-        if (g_logfile) {
-            fprintf(g_logfile, "  Pos: (%.2f,%.2f), Scale: %.2f, Time: %.1f-%.1fs\n",
-                   image_cue.x, image_cue.y, image_cue.scale, 
-                   image_cue.cue_start, image_cue.cue_end);
-            fprintf(g_logfile, "  Curves: X=%d, Y=%d, Scale=%d, Opacity=%d\n",
-                   image_cue.curve_x, image_cue.curve_y, image_cue.curve_scale, image_cue.curve_opacity);
-        }
+    // Load image cues (multi-cue support)
+    const int kMaxImageCues = 32;
+    ImageCue image_cues[kMaxImageCues] = {};
+    ImageTexture image_texes[kMaxImageCues] = {};
+    bool image_loaded[kMaxImageCues] = {};
+    int image_cue_count = LoadAllImageCues(cues_path, image_cues, kMaxImageCues);
+    bool has_image = (image_cue_count > 0);
+    LOGV("Image cues loaded: %d\n", image_cue_count);
+    for (int i = 0; i < image_cue_count; ++i) {
+        LOGV("  [%d] Key: %s, Time: %.1f-%.1fs\n",
+             i, image_cues[i].asset_key, image_cues[i].cue_start, image_cues[i].cue_end);
     }
     
-    // Load text cue
-    TextCue text_cue = {};
-    bool has_text = LoadTextCue(cues_path, &text_cue);
-    TextTexture text_tex = {};
-    bool text_loaded = false;
+    // Load text cues (multi-cue support)
+    const int kMaxTextCues = 32;
+    TextCue text_cues[kMaxTextCues] = {};
+    TextTexture text_texes[kMaxTextCues] = {};
+    bool text_loaded[kMaxTextCues] = {};
+    bool text_force_baked[kMaxTextCues] = {};
+    int text_cue_count = LoadAllTextCues(cues_path, text_cues, kMaxTextCues);
 
-    // Load mesh cue
-    MeshCue mesh_cue = {};
-    mesh_cue.scale[0] = mesh_cue.scale[1] = mesh_cue.scale[2] = 1.0f;
-    bool has_mesh = LoadMeshCue(cues_path, &mesh_cue);
-    printf("Mesh cue loaded: %s\n", has_mesh ? "YES" : "NO");
-    if (has_mesh) {
-        printf("  Key: %s, Type: %d, Size: %.2f\n", mesh_cue.asset_key, mesh_cue.mesh_type, mesh_cue.mesh_size);
+    // Load mesh cues (multi-cue support)
+    const int kMaxMeshCues = 32;
+    MeshCue mesh_cues[kMaxMeshCues] = {};
+    int mesh_cue_count = LoadAllMeshCues(cues_path, mesh_cues, kMaxMeshCues);
+    bool has_mesh = (mesh_cue_count > 0);
+    LOGV("Mesh cues loaded: %d\n", mesh_cue_count);
+    for (int i = 0; i < mesh_cue_count; ++i) {
+        LOGV("  [%d] Key: %s, Type: %d, Size: %.2f, Time: %.1f-%.1f\n",
+               i, mesh_cues[i].asset_key, mesh_cues[i].mesh_type,
+               mesh_cues[i].mesh_size, mesh_cues[i].cue_start, mesh_cues[i].cue_end);
     }
     
-    printf("Text cue loaded: %s\n", has_text ? "YES" : "NO");
-    if (has_text) {
-        printf("  Text: \"%s\", Font: %s, Size: %.0f\n", text_cue.text, text_cue.font_name, text_cue.size);
-        printf("  Time: %.1f-%.1fs\n", text_cue.cue_start, text_cue.cue_end);
+    LOGV("Text cues loaded: %d\n", text_cue_count);
+    for (int i = 0; i < text_cue_count; ++i) {
+        LOGV("  [%d] Text: \"%s\", Font: %s, Time: %.1f-%.1fs\n",
+             i, text_cues[i].text, text_cues[i].font_name, text_cues[i].cue_start, text_cues[i].cue_end);
     }
     
     // Calculate total duration from all cues
@@ -1094,15 +2050,28 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < shader_cue_count; i++) {
         if (shader_cues[i].cue_end > total_duration) total_duration = shader_cues[i].cue_end;
     }
-    if (has_image && image_cue.cue_end > total_duration) total_duration = image_cue.cue_end;
-    if (has_text && text_cue.cue_end > total_duration) total_duration = text_cue.cue_end;
-    if (has_mesh && mesh_cue.cue_end > total_duration) total_duration = mesh_cue.cue_end;
+    for (int i = 0; i < image_cue_count; ++i) {
+        if (image_cues[i].cue_end > total_duration) total_duration = image_cues[i].cue_end;
+    }
+    for (int i = 0; i < text_cue_count; ++i) {
+        if (text_cues[i].cue_end > total_duration) total_duration = text_cues[i].cue_end;
+    }
+    for (int i = 0; i < mesh_cue_count; ++i) {
+        if (mesh_cues[i].cue_end > total_duration) total_duration = mesh_cues[i].cue_end;
+    }
     if (has_music && music_cue.cue_end > total_duration) total_duration = music_cue.cue_end;
     
     // If no cues or all have 0 duration, use default
     if (total_duration <= 0.0f) total_duration = 10.0f;
     
-    printf("Total intro duration: %.1fs\n", total_duration);
+printf("Summary: shaders=%d curves=%d image=%d text=%d mesh=%d music=%s duration=%.1fs\n",
+           shader_cue_count,
+           curve_count,
+           image_cue_count,
+           text_cue_count,
+            mesh_cue_count,
+            has_music ? "yes" : "no",
+            total_duration);
     
     // Create window and OpenGL context
     rev::platform::WindowConfig config;
@@ -1128,27 +2097,67 @@ int main(int argc, char* argv[]) {
     glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)rev::platform::GetProcAddress("glGenVertexArrays");
     glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)rev::platform::GetProcAddress("glBindVertexArray");
     glActiveTexture = (PFNGLACTIVETEXTUREPROC)rev::platform::GetProcAddress("glActiveTexture");
+    glBlendColor = (PFNGLBLENDCOLORPROC)rev::platform::GetProcAddress("glBlendColor");
     
     // Create and bind VAO (required for OpenGL 3.3 core)
     GLuint vao;
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
     
-    // Compile shader for initial cue (first cue that starts at or before time 0)
+    // Shader cue rendering now supports multiple active layers; compile on demand per shader id.
     const int num_shaders = sizeof(fragment_shaders) / sizeof(fragment_shaders[0]);
-    int initial_shader_id = shader_cues[0].shader_scene_id;  // Default to first cue
-    printf("Shader validation: initial shader_id=%d, num_shaders=%d (valid range: 0-%d)\n", 
-           initial_shader_id, num_shaders, num_shaders - 1);
-    if (initial_shader_id < 0 || initial_shader_id >= num_shaders) {
-        printf("ERROR: Invalid shader_scene_id %d (must be 0-%d)\n", initial_shader_id, num_shaders - 1);
-        initial_shader_id = 0;  // Fallback to first shader
-    } else {
-        printf("Using initial shader ID %d\n", initial_shader_id);
+    ShaderProgramState shader_programs[64] = {};
+    if (num_shaders > (int)(sizeof(shader_programs) / sizeof(shader_programs[0]))) {
+        printf("ERROR: Too many shaders (%d), max supported is %zu\n",
+               num_shaders,
+               sizeof(shader_programs) / sizeof(shader_programs[0]));
+        rev::platform::DestroyIntroWindow(window);
+        return -1;
     }
-    const char* selected_frag_shader = fragment_shaders[initial_shader_id];
-    rev::shader::Program* shader = rev::shader::CompileFromSource(vertex_shader, selected_frag_shader);
-    int current_shader_id = initial_shader_id;  // Track which shader is currently compiled
-    if (!shader) {
+
+    auto get_shader_program = [&](int shader_id) -> ShaderProgramState* {
+        if (shader_id < 0 || shader_id >= num_shaders) {
+            return nullptr;
+        }
+        ShaderProgramState& state = shader_programs[shader_id];
+        if (state.prog || state.compile_failed) {
+            return state.prog ? &state : nullptr;
+        }
+
+        state.prog = rev::shader::CompileFromSource(vertex_shader, fragment_shaders[shader_id]);
+        if (!state.prog) {
+            printf("ERROR: Failed to compile shader %d\n", shader_id);
+            state.compile_failed = true;
+            return nullptr;
+        }
+
+        state.u_time = rev::shader::GetUniformLocation(state.prog, "u_time");
+        state.u_resolution = rev::shader::GetUniformLocation(state.prog, "u_resolution");
+        state.u_palette_low = rev::shader::GetUniformLocation(state.prog, "u_palette_low");
+        state.u_palette_mid = rev::shader::GetUniformLocation(state.prog, "u_palette_mid");
+        state.u_palette_high = rev::shader::GetUniformLocation(state.prog, "u_palette_high");
+        state.u_speed = rev::shader::GetUniformLocation(state.prog, "u_speed");
+        state.u_intensity = rev::shader::GetUniformLocation(state.prog, "u_intensity");
+        state.u_warp = rev::shader::GetUniformLocation(state.prog, "u_warp");
+        state.u_exposure_base = rev::shader::GetUniformLocation(state.prog, "u_exposure_base");
+        state.u_fade_base = rev::shader::GetUniformLocation(state.prog, "u_fade_base");
+        return &state;
+    };
+
+    bool has_valid_shader_cue = false;
+    for (int i = 0; i < shader_cue_count; ++i) {
+        int shader_id = shader_cues[i].shader_scene_id;
+        if (shader_id < 0 || shader_id >= num_shaders) {
+            printf("WARNING: Shader cue %d has invalid shader_scene_id %d (valid 0-%d)\n",
+                   i, shader_id, num_shaders - 1);
+            continue;
+        }
+        if (get_shader_program(shader_id)) {
+            has_valid_shader_cue = true;
+        }
+    }
+    if (!has_valid_shader_cue) {
+        printf("ERROR: No valid shader programs available for shader cues\n");
         rev::platform::DestroyIntroWindow(window);
         return -1;
     }
@@ -1158,52 +2167,157 @@ int main(int argc, char* argv[]) {
     if (!sprite_shader) {
         printf("ERROR: Sprite shader failed to compile\n");
     } else {
-        printf("Sprite shader OK\n");
+        LOGV("Sprite shader OK\n");
     }
 
     // Compile mesh shader
     rev::shader::Program* mesh_shader = nullptr;
-    rev::mesh::Mesh* mesh_obj = nullptr;
+    rev::mesh::Mesh* mesh_objs[kMaxMeshCues] = {};
     if (has_mesh) {
         mesh_shader = rev::shader::CompileFromSource(mesh_vertex_shader_src, mesh_fragment_shader_src);
         if (!mesh_shader) {
             printf("ERROR: Mesh shader failed to compile\n");
         } else {
-            printf("Mesh shader OK\n");
+            LOGV("Mesh shader OK\n");
         }
 
-        float size  = mesh_cue.mesh_size  > 0.0f ? mesh_cue.mesh_size  : 1.0f;
-        float param = mesh_cue.mesh_param > 0.0f ? mesh_cue.mesh_param : 16.0f;
-        switch (mesh_cue.mesh_type) {
-            case 0: mesh_obj = rev::mesh::CreateCube(size); break;
-            case 1: mesh_obj = rev::mesh::CreateSphere(size, (int)param); break;
-            case 2: mesh_obj = rev::mesh::CreatePlane(size, param > 0.0f ? param : size); break;
-            case 3: mesh_obj = rev::mesh::CreateTorus(size, param > 0.0f ? param : 0.3f, 32, 16); break;
-            case 4: {
-                // External glTF/GLB — loaded via rev_gltf
+        for (int mi = 0; mi < mesh_cue_count; ++mi) {
+            MeshCue& mesh_cue = mesh_cues[mi];
+            rev::mesh::Mesh* mesh_obj = nullptr;
+            float size  = mesh_cue.mesh_size  > 0.0f ? mesh_cue.mesh_size  : 1.0f;
+            float param = mesh_cue.mesh_param > 0.0f ? mesh_cue.mesh_param : 16.0f;
+            switch (mesh_cue.mesh_type) {
+                case 0: mesh_obj = rev::mesh::CreateCube(size); break;
+                case 1: mesh_obj = rev::mesh::CreateSphere(size, (int)param); break;
+                case 2: mesh_obj = rev::mesh::CreatePlane(size, param > 0.0f ? param : size); break;
+                case 3: mesh_obj = rev::mesh::CreateTorus(size, param > 0.0f ? param : 0.3f, 32, 16); break;
+                case 4: {
+                    // External glTF/GLB — loaded via rev_gltf
 #if defined(REV_GLTF_AVAILABLE)
 #ifdef HIMYM_PACKED_ASSETS
-                {
-                    const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(
-                        mesh_cue.asset_key, kPackedAssets, kPackedAssetCount);
-                    if (pa) {
-                        // Extract textures to current directory (project workspace when launched by editor)
-                        rev::gltf::ImportResult* ir = rev::gltf::LoadMeshFromMemory(pa->data, pa->size, ".");
+                    {
+                        const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(
+                            mesh_cue.asset_key, kPackedAssets, kPackedAssetCount);
+                        if (pa) {
+                            // Extract textures to current directory (project workspace when launched by editor)
+                            rev::gltf::ImportResult* ir = rev::gltf::LoadMeshFromMemory(pa->data, pa->size, ".");
+                            if (ir && ir->ok) {
+                                mesh_obj = ir->mesh;
+                                ir->mesh = nullptr;
+
+                                if (mesh_obj) {
+                                    mesh_obj->has_imported_light = ir->has_light;
+                                    mesh_obj->imported_light_pos[0] = ir->light_pos[0];
+                                    mesh_obj->imported_light_pos[1] = ir->light_pos[1];
+                                    mesh_obj->imported_light_pos[2] = ir->light_pos[2];
+                                }
+
+                                // Load base color texture if present
+                                if (ir->material.base_color_texture[0] != '\0') {
+                                    rev::runtime::ImageTexture tex{};
+                                    if (rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)) {
+                                        mesh_obj->base_color_texture = tex.texture_id;
+                                        LOGV("Loaded mesh texture (packed): %s\n", ir->material.base_color_texture);
+                                    } else {
+                                        LOGV("Failed to load texture (packed): %s\n", ir->material.base_color_texture);
+                                    }
+                                }
+
+                                // Load all glTF material textures and assign per slot.
+                                if (mesh_obj && ir->material_count > 0 && ir->materials) {
+                                    unsigned int* material_textures = new unsigned int[ir->material_count];
+                                    memset(material_textures, 0, sizeof(unsigned int) * ir->material_count);
+                                    for (int mat_i = 0; mat_i < ir->material_count; ++mat_i) {
+                                        const char* tex_path = ir->materials[mat_i].base_color_texture;
+                                        if (tex_path[0] == '\0') continue;
+                                        rev::runtime::ImageTexture tex{};
+                                        if (rev::runtime::LoadImageTexture(tex_path, &tex)) {
+                                            material_textures[mat_i] = tex.texture_id;
+                                        }
+                                    }
+                                    for (uint32_t si = 0; si < mesh_obj->material_slot_count; ++si) {
+                                        rev::mesh::MaterialSlot& slot = mesh_obj->material_slots[si];
+                                        if (slot.material_index >= 0 && slot.material_index < ir->material_count) {
+                                            slot.base_color_texture = material_textures[slot.material_index];
+                                        }
+                                    }
+                                    delete[] material_textures;
+                                }
+
+                                // Transfer animations to mesh
+                                if (ir->animation_count > 0) {
+                                    mesh_obj->animation_data = ir->animations;
+                                    mesh_obj->animation_count = ir->animation_count;
+                                    mesh_obj->current_animation = 0;  // Start first animation
+                                    mesh_obj->animation_time = 0.0f;
+                                    mesh_obj->animation_speed = 1.0f;
+                                    mesh_obj->animation_loop = true;
+                                    ir->animations = nullptr;  // Transfer ownership
+                                    LOGV("glTF loaded (packed): %s with %d animations\n", mesh_cue.asset_key, ir->animation_count);
+                                } else {
+                                    LOGV("glTF loaded (packed): %s\n", mesh_cue.asset_key);
+                                }
+                            } else {
+                                printf("glTF load failed (packed): %s\n", (ir ? ir->error : "null result"));
+                                mesh_obj = rev::mesh::CreateCube(1.0f);
+                            }
+                            if (ir) rev::gltf::FreeImportResult(ir);
+                        } else {
+                            printf("Packed mesh asset not found: %s — using cube fallback\n", mesh_cue.asset_key);
+                            mesh_obj = rev::mesh::CreateCube(1.0f);
+                        }
+                    }
+#else
+                    {
+                        // Extract textures to the same directory as the mesh file
+                        char mesh_dir[512] = {};
+                        strncpy_s(mesh_dir, mesh_cue.asset_path, sizeof(mesh_dir) - 1);
+                        char* last_slash = strrchr(mesh_dir, '\\');
+                        if (!last_slash) last_slash = strrchr(mesh_dir, '/');
+                        if (last_slash) *last_slash = '\0'; else mesh_dir[0] = '\0';
+
+                        rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(mesh_cue.asset_path, mesh_dir[0] ? mesh_dir : ".");
                         if (ir && ir->ok) {
                             mesh_obj = ir->mesh;
                             ir->mesh = nullptr;
-                            
+
+                            if (mesh_obj) {
+                                mesh_obj->has_imported_light = ir->has_light;
+                                mesh_obj->imported_light_pos[0] = ir->light_pos[0];
+                                mesh_obj->imported_light_pos[1] = ir->light_pos[1];
+                                mesh_obj->imported_light_pos[2] = ir->light_pos[2];
+                            }
+
                             // Load base color texture if present
                             if (ir->material.base_color_texture[0] != '\0') {
                                 rev::runtime::ImageTexture tex{};
                                 if (rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)) {
                                     mesh_obj->base_color_texture = tex.texture_id;
-                                    printf("Loaded mesh texture (packed): %s\n", ir->material.base_color_texture);
-                                } else {
-                                    printf("Failed to load texture (packed): %s\n", ir->material.base_color_texture);
+                                    LOGV("Loaded mesh texture: %s\n", ir->material.base_color_texture);
                                 }
                             }
-                            
+
+                            // Load all glTF material textures and assign per slot.
+                            if (mesh_obj && ir->material_count > 0 && ir->materials) {
+                                unsigned int* material_textures = new unsigned int[ir->material_count];
+                                memset(material_textures, 0, sizeof(unsigned int) * ir->material_count);
+                                for (int mat_i = 0; mat_i < ir->material_count; ++mat_i) {
+                                    const char* tex_path = ir->materials[mat_i].base_color_texture;
+                                    if (tex_path[0] == '\0') continue;
+                                    rev::runtime::ImageTexture tex{};
+                                    if (rev::runtime::LoadImageTexture(tex_path, &tex)) {
+                                        material_textures[mat_i] = tex.texture_id;
+                                    }
+                                }
+                                for (uint32_t si = 0; si < mesh_obj->material_slot_count; ++si) {
+                                    rev::mesh::MaterialSlot& slot = mesh_obj->material_slots[si];
+                                    if (slot.material_index >= 0 && slot.material_index < ir->material_count) {
+                                        slot.base_color_texture = material_textures[slot.material_index];
+                                    }
+                                }
+                                delete[] material_textures;
+                            }
+
                             // Transfer animations to mesh
                             if (ir->animation_count > 0) {
                                 mesh_obj->animation_data = ir->animations;
@@ -1213,88 +2327,32 @@ int main(int argc, char* argv[]) {
                                 mesh_obj->animation_speed = 1.0f;
                                 mesh_obj->animation_loop = true;
                                 ir->animations = nullptr;  // Transfer ownership
-                                printf("glTF loaded (packed): %s with %d animations\n", mesh_cue.asset_key, ir->animation_count);
+                                LOGV("glTF loaded: %s with %d animations\n", mesh_cue.asset_path, ir->animation_count);
                             } else {
-                                printf("glTF loaded (packed): %s\n", mesh_cue.asset_key);
+                                LOGV("glTF loaded: %s\n", mesh_cue.asset_path);
                             }
                         } else {
-                            printf("glTF load failed (packed): %s\n", (ir ? ir->error : "null result"));
+                            printf("glTF load failed: %s\n", (ir ? ir->error : "null result"));
                             mesh_obj = rev::mesh::CreateCube(1.0f);
                         }
                         if (ir) rev::gltf::FreeImportResult(ir);
-                    } else {
-                        printf("Packed mesh asset not found: %s — using cube fallback\n", mesh_cue.asset_key);
-                        mesh_obj = rev::mesh::CreateCube(1.0f);
                     }
-                }
-#else
-                {
-                    // Extract textures to the same directory as the mesh file
-                    char mesh_dir[512] = {};
-                    strncpy_s(mesh_dir, mesh_cue.asset_path, sizeof(mesh_dir) - 1);
-                    char* last_slash = strrchr(mesh_dir, '\\');
-                    if (!last_slash) last_slash = strrchr(mesh_dir, '/');
-                    if (last_slash) *last_slash = '\0'; else mesh_dir[0] = '\0';
-                    
-                    rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(mesh_cue.asset_path, mesh_dir[0] ? mesh_dir : ".");
-                    if (ir && ir->ok) {
-                        mesh_obj = ir->mesh;
-                        ir->mesh = nullptr;
-                        
-                        // Load base color texture if present
-                        if (ir->material.base_color_texture[0] != '\0') {
-                            rev::runtime::ImageTexture tex{};
-                            if (rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)) {
-                                mesh_obj->base_color_texture = tex.texture_id;
-                                printf("Loaded mesh texture: %s\n", ir->material.base_color_texture);
-                            }
-                        }
-                        
-                        // Transfer animations to mesh
-                        if (ir->animation_count > 0) {
-                            mesh_obj->animation_data = ir->animations;
-                            mesh_obj->animation_count = ir->animation_count;
-                            mesh_obj->current_animation = 0;  // Start first animation
-                            mesh_obj->animation_time = 0.0f;
-                            mesh_obj->animation_speed = 1.0f;
-                            mesh_obj->animation_loop = true;
-                            ir->animations = nullptr;  // Transfer ownership
-                            printf("glTF loaded: %s with %d animations\n", mesh_cue.asset_path, ir->animation_count);
-                        } else {
-                            printf("glTF loaded: %s\n", mesh_cue.asset_path);
-                        }
-                    } else {
-                        printf("glTF load failed: %s\n", (ir ? ir->error : "null result"));
-                        mesh_obj = rev::mesh::CreateCube(1.0f);
-                    }
-                    if (ir) rev::gltf::FreeImportResult(ir);
-                }
 #endif
 #else
-                printf("mesh_type=4 (glTF) not available in this build — using cube fallback\n");
-                mesh_obj = rev::mesh::CreateCube(1.0f);
+                    printf("mesh_type=4 (glTF) not available in this build — using cube fallback\n");
+                    mesh_obj = rev::mesh::CreateCube(1.0f);
 #endif
-                break;
+                    break;
+                }
+                default: mesh_obj = rev::mesh::CreateCube(1.0f); break;
             }
-            default: mesh_obj = rev::mesh::CreateCube(1.0f); break;
-        }
-        if (mesh_obj) {
-            rev::mesh::UploadToGPU(mesh_obj);
-            printf("Mesh created: type=%d size=%.2f\n", mesh_cue.mesh_type, size);
+            if (mesh_obj) {
+                rev::mesh::UploadToGPU(mesh_obj);
+                mesh_objs[mi] = mesh_obj;
+                LOGV("Mesh created [%d]: type=%d size=%.2f\n", mi, mesh_cue.mesh_type, size);
+            }
         }
     }
-    
-    // Get uniform locations
-    int u_time_loc = rev::shader::GetUniformLocation(shader, "u_time");
-    int u_resolution_loc = rev::shader::GetUniformLocation(shader, "u_resolution");
-    int u_palette_low_loc = rev::shader::GetUniformLocation(shader, "u_palette_low");
-    int u_palette_mid_loc = rev::shader::GetUniformLocation(shader, "u_palette_mid");
-    int u_palette_high_loc = rev::shader::GetUniformLocation(shader, "u_palette_high");
-    int u_speed_loc = rev::shader::GetUniformLocation(shader, "u_speed");
-    int u_intensity_loc = rev::shader::GetUniformLocation(shader, "u_intensity");
-    int u_warp_loc = rev::shader::GetUniformLocation(shader, "u_warp");
-    int u_exposure_base_loc = rev::shader::GetUniformLocation(shader, "u_exposure_base");
-    int u_fade_base_loc = rev::shader::GetUniformLocation(shader, "u_fade_base");
     
     // Load XM music if available
     rev::xm::Player* xm_player = nullptr;
@@ -1305,7 +2363,7 @@ int main(int argc, char* argv[]) {
         if (pa) {
             xm_player = rev::xm::CreatePlayer(pa->data, (long)pa->size);
             if (xm_player)
-                printf("Loaded music (packed): %s\n", music_cue.asset_key);
+                LOGV("Loaded music (packed): %s\n", music_cue.asset_key);
         }
 #else
         char music_path[512];
@@ -1326,76 +2384,103 @@ int main(int argc, char* argv[]) {
             delete[] xm_data;
 
             if (xm_player)
-                printf("Loaded music: %s (start: %.2f, end: %.2f)\n",
+                  LOGV("Loaded music: %s (start: %.2f, end: %.2f)\n",
                        music_cue.asset_key, music_cue.cue_start, music_cue.cue_end);
         }
 #endif
     }
     
     // Load image texture
-    if (has_image && image_cue.asset_key[0] != '\0') {
+    // Load image textures for all image cues
+    for (int ii = 0; ii < image_cue_count; ++ii) {
+        ImageCue& image_cue = image_cues[ii];
+        if (image_cue.asset_key[0] == '\0') continue;
 #ifdef HIMYM_PACKED_ASSETS
-        if (g_logfile) fprintf(g_logfile, "[Packed] Looking up asset: %s (table count=%d)\n", image_cue.asset_key, kPackedAssetCount);
         const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(image_cue.asset_key, kPackedAssets, kPackedAssetCount);
         if (pa) {
-            if (g_logfile) fprintf(g_logfile, "[Packed] Found asset: %s size=%zu, calling LoadImageTextureFromMemory\n", pa->key, pa->size);
-            if (LoadImageTextureFromMemory(pa->data, pa->size, &image_tex)) {
-                image_loaded = true;
-                printf("Image loaded (packed): %s %dx%d\n", image_cue.asset_key, image_tex.width, image_tex.height);
-                if (g_logfile) fprintf(g_logfile, "[Packed] Image loaded: %s %dx%d\n", image_cue.asset_key, image_tex.width, image_tex.height);
+            if (LoadImageTextureFromMemory(pa->data, pa->size, &image_texes[ii])) {
+                image_loaded[ii] = true;
+                LOGV("Image loaded (packed) [%d]: %s %dx%d\n", ii, image_cue.asset_key, image_texes[ii].width, image_texes[ii].height);
             } else {
-                printf("FAILED to load packed image: %s\n", image_cue.asset_key);
-                if (g_logfile) fprintf(g_logfile, "[Packed] FAILED to load image from memory: %s\n", image_cue.asset_key);
+                printf("FAILED to load packed image [%d]: %s\n", ii, image_cue.asset_key);
             }
         } else {
-            printf("Packed asset not found: %s\n", image_cue.asset_key);
-            if (g_logfile) {
-                fprintf(g_logfile, "[Packed] Asset NOT found: %s\n", image_cue.asset_key);
-                fprintf(g_logfile, "[Packed] Available keys (%d):\n", kPackedAssetCount);
-                for (int _i = 0; _i < kPackedAssetCount; ++_i)
-                    fprintf(g_logfile, "  [%d] %s\n", _i, kPackedAssets[_i].key ? kPackedAssets[_i].key : "(null)");
-            }
+            printf("Packed asset not found [%d]: %s\n", ii, image_cue.asset_key);
         }
-        if (g_logfile) fflush(g_logfile);
 #else
-        // asset_path is workspace-root-relative (e.g. "project_assets/logo.png")
-        // Working directory is always workspace root (whether launched from editor or start script)
         char image_path[512];
         strncpy_s(image_path, image_cue.asset_path, _TRUNCATE);
-
-        // Convert forward slashes to backslashes for Windows GDI+
         for (char* p = image_path; *p; ++p) {
             if (*p == '/') *p = '\\';
         }
-
-        printf("\nLoading image texture: %s\n", image_path);
-        if (g_logfile) fprintf(g_logfile, "\nLoading image texture: %s\n", image_path);
-        if (LoadImageTexture(image_path, &image_tex)) {
-            image_loaded = true;
-            printf("Image loaded: %dx%d, will show at %.1f-%.1fs\n",
-                   image_tex.width, image_tex.height,
-                   image_cue.cue_start, image_cue.cue_end);
-            if (g_logfile) fprintf(g_logfile, "Image loaded: %dx%d, will show at %.1f-%.1fs\n",
-                   image_tex.width, image_tex.height,
-                   image_cue.cue_start, image_cue.cue_end);
+        LOGV("Loading image [%d]: %s\n", ii, image_path);
+        if (LoadImageTexture(image_path, &image_texes[ii])) {
+            image_loaded[ii] = true;
+            LOGV("  -> %dx%d, show at %.1f-%.1fs\n",
+                 image_texes[ii].width, image_texes[ii].height,
+                 image_cue.cue_start, image_cue.cue_end);
         } else {
-            printf("FAILED to load image\n");
-            if (g_logfile) fprintf(g_logfile, "FAILED to load image from: %s\n", image_path);
+            printf("FAILED to load image [%d]: %s\n", ii, image_path);
         }
 #endif
     }
     
-    // Render text to texture
-    if (has_text && text_cue.text[0] != '\0') {
-        printf("\nRendering text: \"%s\"\n", text_cue.text);
-        if (RenderTextToTexture(text_cue.text, text_cue.font_name, text_cue.size,
-                                text_cue.color.r, text_cue.color.g, text_cue.color.b, &text_tex)) {
-            text_loaded = true;
-            printf("Text rendered: %dx%d, will show at %.1f-%.1fs\n",
-                   text_tex.width, text_tex.height,
-                   text_cue.cue_start, text_cue.cue_end);
+    // Prepare text textures for all text cues
+    for (int ti = 0; ti < text_cue_count; ++ti) {
+        TextCue& text_cue = text_cues[ti];
+        if (text_cue.text[0] == '\0') {
+            continue;
+        }
+
+        LOGV("\nPreparing text cue [%d]: \"%s\"\n", ti, text_cue.text);
+        text_force_baked[ti] = (text_cue.bake_mode == 1);
+
+        if (text_cue.effect_type <= 2 || text_force_baked[ti]) {
+            bool baked_loaded = false;
+            if (text_cue.baked_asset_key[0] != '\0') {
+#ifdef HIMYM_PACKED_ASSETS
+                const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(text_cue.baked_asset_key, kPackedAssets, kPackedAssetCount);
+                if (pa && LoadImageTextureFromMemory(pa->data, pa->size, &text_texes[ti])) {
+                    baked_loaded = true;
+                    LOGV("Text baked image loaded (packed): %s %dx%d\n",
+                         text_cue.baked_asset_key, text_texes[ti].width, text_texes[ti].height);
+                }
+#else
+                if (text_cue.baked_asset_path[0] != '\0') {
+                    char baked_path[512] = {};
+                    strncpy_s(baked_path, text_cue.baked_asset_path, _TRUNCATE);
+                    for (char* p = baked_path; *p; ++p) {
+                        if (*p == '/') *p = '\\';
+                    }
+                    if (LoadImageTexture(baked_path, &text_texes[ti])) {
+                        baked_loaded = true;
+                        LOGV("Text baked image loaded: %s %dx%d\n",
+                             baked_path, text_texes[ti].width, text_texes[ti].height);
+                    }
+                }
+#endif
+            }
+
+            if (!baked_loaded) {
+                if (RenderTextToTexture(text_cue.text, text_cue.font_name, text_cue.size,
+                                        text_cue.color.r, text_cue.color.g, text_cue.color.b, &text_texes[ti])) {
+                    LOGV("Text rendered (fallback): %dx%d, will show at %.1f-%.1fs\n",
+                         text_texes[ti].width, text_texes[ti].height,
+                         text_cue.cue_start, text_cue.cue_end);
+                    baked_loaded = true;
+                } else {
+                    printf("FAILED to render text cue %d\n", ti);
+                }
+            }
+
+            text_loaded[ti] = baked_loaded;
+            if (text_force_baked[ti]) {
+                LOGV("Text cue [%d] uses forced baked mode\n", ti);
+            }
         } else {
-            printf("FAILED to render text\n");
+            // Dynamic effects (line-by-line/typewriter/sandstorm) are rasterized per frame.
+            text_loaded[ti] = true;
+            LOGV("Text cue [%d] effect mode %d renders dynamically per frame\n", ti, text_cue.effect_type);
         }
     }
     
@@ -1418,7 +2503,7 @@ int main(int argc, char* argv[]) {
 
         if (waveOutOpen(&audio_state->wave_out, WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL) == MMSYSERR_NOERROR) {
             audio_thread = CreateThread(nullptr, 0, AudioThreadProc, audio_state, 0, nullptr);
-            printf("Audio started: %d Hz stereo\n", kAudioSampleRate);
+            LOGV("Audio started: %d Hz stereo\n", kAudioSampleRate);
         } else {
             printf("ERROR: waveOutOpen failed\n");
             delete audio_state;
@@ -1435,57 +2520,6 @@ int main(int argc, char* argv[]) {
         float time = static_cast<float>(current_time - start_time);
         float dt = static_cast<float>(current_time - prev_time);
         prev_time = current_time;
-        
-        // Find active shader cue based on current time
-        ShaderCue* active_cue = nullptr;
-        int active_shader_id = -1;
-        for (int i = 0; i < shader_cue_count; i++) {
-            if (time >= shader_cues[i].cue_start && time < shader_cues[i].cue_end) {
-                active_cue = &shader_cues[i];
-                active_shader_id = shader_cues[i].shader_scene_id;
-                break;
-            }
-        }
-        
-        // If no active cue found, use the last cue if we're past all cues
-        if (!active_cue && shader_cue_count > 0) {
-            float max_cue_end = 0.0f;
-            int last_cue_index = 0;
-            for (int i = 0; i < shader_cue_count; i++) {
-                if (shader_cues[i].cue_end > max_cue_end) {
-                    max_cue_end = shader_cues[i].cue_end;
-                    last_cue_index = i;
-                }
-            }
-            active_cue = &shader_cues[last_cue_index];
-            active_shader_id = active_cue->shader_scene_id;
-        }
-        
-        // Switch shader if needed
-        if (active_shader_id >= 0 && active_shader_id != current_shader_id) {
-            if (active_shader_id >= 0 && active_shader_id < num_shaders) {
-                printf("[%.1fs] SHADER SWITCH: %d -> %d\n", time, current_shader_id, active_shader_id);
-                rev::shader::DestroyProgram(shader);
-                shader = rev::shader::CompileFromSource(vertex_shader, fragment_shaders[active_shader_id]);
-                if (shader) {
-                    current_shader_id = active_shader_id;
-                } else {
-                    printf("ERROR: Failed to compile shader %d, reverting\n", active_shader_id);
-                    shader = rev::shader::CompileFromSource(vertex_shader, fragment_shaders[current_shader_id]);
-                }
-            }
-        }
-        
-        // Image activation/deactivation logging
-        static bool image_was_active = false;
-        bool image_active_now = (image_loaded && time >= image_cue.cue_start && time <= image_cue.cue_end);
-        if (image_active_now && !image_was_active) {
-            printf("[%.1fs] IMAGE ON (sprite_shader=%p, layer_order=%d)\n", time, sprite_shader, image_cue.layer_order);
-            image_was_active = true;
-        } else if (!image_active_now && image_was_active) {
-            printf("[%.1fs] IMAGE OFF\n", time);
-            image_was_active = false;
-        }
         
         // Clear the full physical window (letterbox bars go black too)
         int ww = window->win_width  > 0 ? window->win_width  : config.width;
@@ -1517,141 +2551,193 @@ int main(int argc, char* argv[]) {
         glDisable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
 
-        // Use shader and set uniforms
-        rev::shader::Use(shader);
-        rev::shader::SetFloat(shader, u_time_loc, time);
-        rev::shader::SetVec2(shader, u_resolution_loc, 
-                            static_cast<float>(config.width), 
-                            static_cast<float>(config.height));
-        
-        // Evaluate shader curves (use active cue based on current time)
-        float elapsed_time = active_cue ? (time - active_cue->cue_start) : 0.0f;
-        float anim_palette_low[3] = {active_cue ? active_cue->palette_low[0] : 0.1f, 
-                                      active_cue ? active_cue->palette_low[1] : 0.3f, 
-                                      active_cue ? active_cue->palette_low[2] : 0.8f};
-        float anim_palette_mid[3] = {active_cue ? active_cue->palette_mid[0] : 0.8f, 
-                                      active_cue ? active_cue->palette_mid[1] : 0.4f, 
-                                      active_cue ? active_cue->palette_mid[2] : 0.2f};
-        float anim_palette_high[3] = {active_cue ? active_cue->palette_high[0] : 1.0f, 
-                                       active_cue ? active_cue->palette_high[1] : 0.9f, 
-                                       active_cue ? active_cue->palette_high[2] : 0.7f};
-        float anim_speed = active_cue ? active_cue->speed : 1.0f;
-        float anim_intensity = active_cue ? active_cue->intensity : 1.0f;
-        float anim_warp = active_cue ? active_cue->warp : 0.5f;
-        float anim_exposure = active_cue ? active_cue->exposure_base : 0.76f;
-        float anim_fade = active_cue ? active_cue->fade_base : 1.0f;
-        
-        if (active_cue && elapsed_time >= 0.0f) {
-            if (active_cue->curve_palette_low_r >= 0 && active_cue->curve_palette_low_r < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_palette_low_r].duration;
-                anim_palette_low[0] = rev::curve::Evaluate(curves[active_cue->curve_palette_low_r], t);
+        // Build active shader layer list (supports stacked shader compositing).
+        struct ActiveShaderLayer { int cue_index; int layer_order; int layer_role; };
+        ActiveShaderLayer active_layers[16];
+        int active_layer_count = 0;
+        for (int i = 0; i < shader_cue_count && active_layer_count < 16; ++i) {
+            const ShaderCue& cue = shader_cues[i];
+            float cue_end = cue.cue_end;
+            if (cue_end < 0.0f) cue_end = total_duration;
+            if (time >= cue.cue_start && time <= cue_end) {
+                active_layers[active_layer_count++] = { i, cue.layer_order, cue.layer_role };
             }
-            if (active_cue->curve_palette_low_g >= 0 && active_cue->curve_palette_low_g < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_palette_low_g].duration;
-                anim_palette_low[1] = rev::curve::Evaluate(curves[active_cue->curve_palette_low_g], t);
-            }
-            if (active_cue->curve_palette_low_b >= 0 && active_cue->curve_palette_low_b < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_palette_low_b].duration;
-                anim_palette_low[2] = rev::curve::Evaluate(curves[active_cue->curve_palette_low_b], t);
-            }
-            if (active_cue->curve_palette_mid_r >= 0 && active_cue->curve_palette_mid_r < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_palette_mid_r].duration;
-                anim_palette_mid[0] = rev::curve::Evaluate(curves[active_cue->curve_palette_mid_r], t);
-            }
-            if (active_cue->curve_palette_mid_g >= 0 && active_cue->curve_palette_mid_g < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_palette_mid_g].duration;
-                anim_palette_mid[1] = rev::curve::Evaluate(curves[active_cue->curve_palette_mid_g], t);
-            }
-            if (active_cue->curve_palette_mid_b >= 0 && active_cue->curve_palette_mid_b < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_palette_mid_b].duration;
-                anim_palette_mid[2] = rev::curve::Evaluate(curves[active_cue->curve_palette_mid_b], t);
-            }
-            if (active_cue->curve_palette_high_r >= 0 && active_cue->curve_palette_high_r < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_palette_high_r].duration;
-                anim_palette_high[0] = rev::curve::Evaluate(curves[active_cue->curve_palette_high_r], t);
-            }
-            if (active_cue->curve_palette_high_g >= 0 && active_cue->curve_palette_high_g < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_palette_high_g].duration;
-                anim_palette_high[1] = rev::curve::Evaluate(curves[active_cue->curve_palette_high_g], t);
-            }
-            if (active_cue->curve_palette_high_b >= 0 && active_cue->curve_palette_high_b < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_palette_high_b].duration;
-                anim_palette_high[2] = rev::curve::Evaluate(curves[active_cue->curve_palette_high_b], t);
-            }
-            if (active_cue->curve_speed >= 0 && active_cue->curve_speed < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_speed].duration;
-                anim_speed = rev::curve::Evaluate(curves[active_cue->curve_speed], t);
-            }
-            if (active_cue->curve_intensity >= 0 && active_cue->curve_intensity < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_intensity].duration;
-                anim_intensity = rev::curve::Evaluate(curves[active_cue->curve_intensity], t);
-            }
-            if (active_cue->curve_warp >= 0 && active_cue->curve_warp < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_warp].duration;
-                anim_warp = rev::curve::Evaluate(curves[active_cue->curve_warp], t);
-            }
-            if (active_cue->curve_exposure >= 0 && active_cue->curve_exposure < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_exposure].duration;
-                anim_exposure = rev::curve::Evaluate(curves[active_cue->curve_exposure], t);
-            }
-            if (active_cue->curve_fade >= 0 && active_cue->curve_fade < curve_count) {
-                float t = elapsed_time / curves[active_cue->curve_fade].duration;
-                anim_fade = rev::curve::Evaluate(curves[active_cue->curve_fade], t);
-            }
-            // Note: exposure_ramp, fade_ramp, opacity curves not used in runtime shaders yet
         }
-        
-        // Set palette and parameter uniforms (using animated values)
-        if (u_palette_low_loc >= 0)
-            rev::shader::SetVec3(shader, u_palette_low_loc, anim_palette_low[0], anim_palette_low[1], anim_palette_low[2]);
-        if (u_palette_mid_loc >= 0)
-            rev::shader::SetVec3(shader, u_palette_mid_loc, anim_palette_mid[0], anim_palette_mid[1], anim_palette_mid[2]);
-        if (u_palette_high_loc >= 0)
-            rev::shader::SetVec3(shader, u_palette_high_loc, anim_palette_high[0], anim_palette_high[1], anim_palette_high[2]);
-        if (u_speed_loc >= 0)
-            rev::shader::SetFloat(shader, u_speed_loc, anim_speed);
-        if (u_intensity_loc >= 0)
-            rev::shader::SetFloat(shader, u_intensity_loc, anim_intensity);
-        if (u_warp_loc >= 0)
-            rev::shader::SetFloat(shader, u_warp_loc, anim_warp);
-        if (u_exposure_base_loc >= 0)
-            rev::shader::SetFloat(shader, u_exposure_base_loc, anim_exposure);
-        if (u_fade_base_loc >= 0)
-            rev::shader::SetFloat(shader, u_fade_base_loc, anim_fade);
-        
-        // Draw fullscreen quad (shader background)
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        // Stable sort by layer_order, then role. Lower values draw first (further back).
+        for (int i = 0; i < active_layer_count - 1; ++i) {
+            for (int j = 0; j < active_layer_count - i - 1; ++j) {
+                const ActiveShaderLayer& a = active_layers[j];
+                const ActiveShaderLayer& b = active_layers[j + 1];
+                if ((a.layer_order > b.layer_order) ||
+                    (a.layer_order == b.layer_order && a.layer_role > b.layer_role)) {
+                    ActiveShaderLayer tmp = active_layers[j];
+                    active_layers[j] = active_layers[j + 1];
+                    active_layers[j + 1] = tmp;
+                }
+            }
+        }
+
+        if (active_layer_count > 0) {
+            glDisable(GL_BLEND);
+
+            for (int li = 0; li < active_layer_count; ++li) {
+                const ShaderCue& cue = shader_cues[active_layers[li].cue_index];
+                ShaderProgramState* shader_state = get_shader_program(cue.shader_scene_id);
+                if (!shader_state) {
+                    continue;
+                }
+
+                float elapsed_time = time - cue.cue_start;
+                float anim_palette_low[3] = {cue.palette_low[0], cue.palette_low[1], cue.palette_low[2]};
+                float anim_palette_mid[3] = {cue.palette_mid[0], cue.palette_mid[1], cue.palette_mid[2]};
+                float anim_palette_high[3] = {cue.palette_high[0], cue.palette_high[1], cue.palette_high[2]};
+                float anim_speed = cue.speed;
+                float anim_intensity = cue.intensity;
+                float anim_warp = cue.warp;
+                float anim_exposure = cue.exposure_base;
+                float anim_fade = cue.fade_base;
+                float anim_opacity = cue.opacity;
+
+                if (elapsed_time >= 0.0f) {
+                    if (cue.curve_palette_low_r >= 0 && cue.curve_palette_low_r < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_palette_low_r].duration;
+                        anim_palette_low[0] = rev::curve::Evaluate(curves[cue.curve_palette_low_r], t);
+                    }
+                    if (cue.curve_palette_low_g >= 0 && cue.curve_palette_low_g < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_palette_low_g].duration;
+                        anim_palette_low[1] = rev::curve::Evaluate(curves[cue.curve_palette_low_g], t);
+                    }
+                    if (cue.curve_palette_low_b >= 0 && cue.curve_palette_low_b < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_palette_low_b].duration;
+                        anim_palette_low[2] = rev::curve::Evaluate(curves[cue.curve_palette_low_b], t);
+                    }
+                    if (cue.curve_palette_mid_r >= 0 && cue.curve_palette_mid_r < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_palette_mid_r].duration;
+                        anim_palette_mid[0] = rev::curve::Evaluate(curves[cue.curve_palette_mid_r], t);
+                    }
+                    if (cue.curve_palette_mid_g >= 0 && cue.curve_palette_mid_g < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_palette_mid_g].duration;
+                        anim_palette_mid[1] = rev::curve::Evaluate(curves[cue.curve_palette_mid_g], t);
+                    }
+                    if (cue.curve_palette_mid_b >= 0 && cue.curve_palette_mid_b < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_palette_mid_b].duration;
+                        anim_palette_mid[2] = rev::curve::Evaluate(curves[cue.curve_palette_mid_b], t);
+                    }
+                    if (cue.curve_palette_high_r >= 0 && cue.curve_palette_high_r < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_palette_high_r].duration;
+                        anim_palette_high[0] = rev::curve::Evaluate(curves[cue.curve_palette_high_r], t);
+                    }
+                    if (cue.curve_palette_high_g >= 0 && cue.curve_palette_high_g < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_palette_high_g].duration;
+                        anim_palette_high[1] = rev::curve::Evaluate(curves[cue.curve_palette_high_g], t);
+                    }
+                    if (cue.curve_palette_high_b >= 0 && cue.curve_palette_high_b < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_palette_high_b].duration;
+                        anim_palette_high[2] = rev::curve::Evaluate(curves[cue.curve_palette_high_b], t);
+                    }
+                    if (cue.curve_speed >= 0 && cue.curve_speed < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_speed].duration;
+                        anim_speed = rev::curve::Evaluate(curves[cue.curve_speed], t);
+                    }
+                    if (cue.curve_intensity >= 0 && cue.curve_intensity < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_intensity].duration;
+                        anim_intensity = rev::curve::Evaluate(curves[cue.curve_intensity], t);
+                    }
+                    if (cue.curve_warp >= 0 && cue.curve_warp < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_warp].duration;
+                        anim_warp = rev::curve::Evaluate(curves[cue.curve_warp], t);
+                    }
+                    if (cue.curve_exposure >= 0 && cue.curve_exposure < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_exposure].duration;
+                        anim_exposure = rev::curve::Evaluate(curves[cue.curve_exposure], t);
+                    }
+                    if (cue.curve_fade >= 0 && cue.curve_fade < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_fade].duration;
+                        anim_fade = rev::curve::Evaluate(curves[cue.curve_fade], t);
+                    }
+                    if (cue.curve_opacity >= 0 && cue.curve_opacity < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_opacity].duration;
+                        anim_opacity = rev::curve::Evaluate(curves[cue.curve_opacity], t);
+                    }
+                }
+
+                // If the shader uses fade as alpha/intensity, fold layer opacity in there too.
+                anim_fade *= anim_opacity;
+
+                if (li == 0) {
+                    glDisable(GL_BLEND);
+                } else {
+                    glEnable(GL_BLEND);
+                    ApplyShaderLayerBlendMode(cue.blend_mode, anim_opacity);
+                }
+
+                rev::shader::Use(shader_state->prog);
+                if (shader_state->u_time >= 0) {
+                    rev::shader::SetFloat(shader_state->prog, shader_state->u_time, time);
+                }
+                if (shader_state->u_resolution >= 0) {
+                    rev::shader::SetVec2(shader_state->prog, shader_state->u_resolution,
+                                         static_cast<float>(config.width),
+                                         static_cast<float>(config.height));
+                }
+                if (shader_state->u_palette_low >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->u_palette_low,
+                                         anim_palette_low[0], anim_palette_low[1], anim_palette_low[2]);
+                }
+                if (shader_state->u_palette_mid >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->u_palette_mid,
+                                         anim_palette_mid[0], anim_palette_mid[1], anim_palette_mid[2]);
+                }
+                if (shader_state->u_palette_high >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->u_palette_high,
+                                         anim_palette_high[0], anim_palette_high[1], anim_palette_high[2]);
+                }
+                if (shader_state->u_speed >= 0) {
+                    rev::shader::SetFloat(shader_state->prog, shader_state->u_speed, anim_speed);
+                }
+                if (shader_state->u_intensity >= 0) {
+                    rev::shader::SetFloat(shader_state->prog, shader_state->u_intensity, anim_intensity);
+                }
+                if (shader_state->u_warp >= 0) {
+                    rev::shader::SetFloat(shader_state->prog, shader_state->u_warp, anim_warp);
+                }
+                if (shader_state->u_exposure_base >= 0) {
+                    rev::shader::SetFloat(shader_state->prog, shader_state->u_exposure_base, anim_exposure);
+                }
+                if (shader_state->u_fade_base >= 0) {
+                    rev::shader::SetFloat(shader_state->prog, shader_state->u_fade_base, anim_fade);
+                }
+
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            }
+
+            glDisable(GL_BLEND);
+        }
         
         // --- Unified layered draw pass ---
         // Collect active image/text/mesh cues, sort by layer_order, draw in order.
         {
-            struct DrawEntry { int type; int layer; }; // 0=image 1=text 2=mesh
-            DrawEntry entries[3]; int ne = 0;
+            struct DrawEntry { int type; int layer; int cue_idx; }; // 0=image 1=text 2=mesh
+            DrawEntry entries[kMaxImageCues + kMaxTextCues + kMaxMeshCues]; int ne = 0;
 
-            bool img_active = sprite_shader && image_loaded
-                              && time >= image_cue.cue_start && time <= image_cue.cue_end;
-            bool txt_active = sprite_shader && text_loaded
-                              && time >= text_cue.cue_start  && time <= text_cue.cue_end;
-            bool msh_active = mesh_shader && mesh_obj && has_mesh
-                              && time >= mesh_cue.cue_start && time <= mesh_cue.cue_end;
-
-            static bool logged_layer_info = false;
-            if (img_active && !logged_layer_info) {
-                printf("[LAYER] Image entry: type=0, layer_order=%d\n", image_cue.layer_order);
-                logged_layer_info = true;
+            for (int ii = 0; ii < image_cue_count; ++ii) {
+                ImageCue& icue = image_cues[ii];
+                bool img_active = sprite_shader && image_loaded[ii]
+                                  && time >= icue.cue_start && time <= icue.cue_end;
+                if (img_active) entries[ne++] = {0, icue.layer_order, ii};
             }
-
-            if (img_active) entries[ne++] = {0, image_cue.layer_order};
-            if (txt_active) entries[ne++] = {1, text_cue.layer_order};
-            if (msh_active) entries[ne++] = {2, mesh_cue.layer_order};
-
-            static bool logged_entry_count = false;
-            if (!logged_entry_count && ne > 0) {
-                printf("[LAYER] Total entries to draw: %d\n", ne);
-                for (int i = 0; i < ne; i++) {
-                    printf("[LAYER]   Entry %d: type=%d layer=%d\n", i, entries[i].type, entries[i].layer);
-                }
-                logged_entry_count = true;
+            for (int ti = 0; ti < text_cue_count; ++ti) {
+                TextCue& text_cue = text_cues[ti];
+                bool txt_active = sprite_shader && text_loaded[ti]
+                                  && time >= text_cue.cue_start && time <= text_cue.cue_end;
+                if (txt_active) entries[ne++] = {1, text_cue.layer_order, ti};
+            }
+            for (int mi = 0; mi < mesh_cue_count; ++mi) {
+                MeshCue& mesh_cue = mesh_cues[mi];
+                bool msh_active = mesh_shader && mesh_objs[mi] && has_mesh
+                                  && time >= mesh_cue.cue_start && time <= mesh_cue.cue_end;
+                if (msh_active) entries[ne++] = {2, mesh_cue.layer_order, mi};
             }
 
             // Bubble sort ascending (lower layer_order draws first = further back)
@@ -1661,60 +2747,35 @@ int main(int argc, char* argv[]) {
                         DrawEntry tmp = entries[j]; entries[j] = entries[j+1]; entries[j+1] = tmp;
                     }
 
-            static bool logged_sorted = false;
-            if (!logged_sorted && ne > 0) {
-                printf("[LAYER] AFTER SORT:\n");
-                for (int i = 0; i < ne; i++) {
-                    const char* type_name = (entries[i].type == 0 ? "IMAGE" : entries[i].type == 1 ? "TEXT" : "MESH");
-                    printf("[LAYER]   Index %d: %s layer=%d\n", i, type_name, entries[i].layer);
-                }
-                logged_sorted = true;
-            }
-
             bool blend_on = false, depth_on = false;
 
             for (int ei = 0; ei < ne; ei++) {
-                static bool logged_draw = false;
-                if (!logged_draw && entries[ei].type == 0) {
-                    printf("[DRAW] Drawing image sprite at index %d/%d, layer=%d\n", ei, ne, entries[ei].layer);
-                    logged_draw = true;
-                }
-                
                 if (entries[ei].type == 0) {
                     // Image sprite
+                    int img_idx = entries[ei].cue_idx;
+                    ImageCue& image_cue = image_cues[img_idx];
+                    ImageTexture& image_tex = image_texes[img_idx];
+
                     if (!blend_on) {
-                        static bool logged_state_change = false;
-                        if (!logged_state_change) {
-                            printf("[STATE] Switching to sprite mode: disabling depth test, enabling blend\n");
-                            logged_state_change = true;
-                        }
                         glDisable(GL_DEPTH_TEST);
-                        glDepthMask(GL_FALSE);  // Disable depth writes for sprites
+                        glDepthMask(GL_FALSE);
                         glEnable(GL_BLEND);
-                        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                         blend_on = true; depth_on = false;
                     }
+                    ApplySpriteBlendMode(image_cue.blend_mode);
                     rev::shader::Use(sprite_shader);
-                    
+
                     // Evaluate curves for animation
                     float anim_x = image_cue.x;
                     float anim_y = image_cue.y;
                     float anim_scale = image_cue.scale;
                     float anim_opacity = image_cue.opacity;
-                    
+
                     float elapsed_time = time - image_cue.cue_start;
                     if (elapsed_time >= 0.0f) {
                         if (image_cue.curve_x >= 0 && image_cue.curve_x < curve_count) {
                             float t = elapsed_time / curves[image_cue.curve_x].duration;
                             anim_x = rev::curve::Evaluate(curves[image_cue.curve_x], t);
-                            
-                            // Debug logging (first 5 frames only)
-                            static int log_count = 0;
-                            if (g_logfile && log_count < 5) {
-                                fprintf(g_logfile, "[Frame %d] time=%.2f, elapsed=%.2f, t=%.3f, anim_x=%.3f (base=%.3f)\n",
-                                    log_count, time, elapsed_time, t, anim_x, image_cue.x);
-                                log_count++;
-                            }
                         }
                         if (image_cue.curve_y >= 0 && image_cue.curve_y < curve_count) {
                             float t = elapsed_time / curves[image_cue.curve_y].duration;
@@ -1729,7 +2790,7 @@ int main(int argc, char* argv[]) {
                             anim_opacity = rev::curve::Evaluate(curves[image_cue.curve_opacity], t);
                         }
                     }
-                    
+
                     float w = (image_tex.width  * anim_scale) / (float)config.width  * 2.0f;
                     float h = (image_tex.height * anim_scale) / (float)config.height * 2.0f;
                     float x =  (anim_x * 2.0f - 1.0f);
@@ -1751,15 +2812,20 @@ int main(int argc, char* argv[]) {
 
                 } else if (entries[ei].type == 1) {
                     // Text sprite
+                    int text_idx = entries[ei].cue_idx;
+                    TextCue& text_cue = text_cues[text_idx];
+                    TextTexture& base_text_tex = text_texes[text_idx];
+                    bool force_baked = text_force_baked[text_idx];
+
                     if (!blend_on) {
                         glDisable(GL_DEPTH_TEST);
                         glDepthMask(GL_FALSE);  // Disable depth writes for sprites
                         glEnable(GL_BLEND);
-                        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                         blend_on = true; depth_on = false;
                     }
+                    ApplySpriteBlendMode(text_cue.blend_mode);
                     rev::shader::Use(sprite_shader);
-                    
+
                     // Curve evaluation for text
                     float elapsed_time = time - text_cue.cue_start;
                     float anim_text_x = text_cue.x;
@@ -1768,7 +2834,7 @@ int main(int argc, char* argv[]) {
                     float anim_text_color_r = text_cue.color.r;
                     float anim_text_color_g = text_cue.color.g;
                     float anim_text_color_b = text_cue.color.b;
-                    
+
                     if (elapsed_time >= 0.0f) {
                         if (text_cue.curve_x >= 0 && text_cue.curve_x < curve_count) {
                             float t = elapsed_time / curves[text_cue.curve_x].duration;
@@ -1778,8 +2844,6 @@ int main(int argc, char* argv[]) {
                             float t = elapsed_time / curves[text_cue.curve_y].duration;
                             anim_text_y = rev::curve::Evaluate(curves[text_cue.curve_y], t);
                         }
-                        // Note: Size and color curves would require re-rendering text texture
-                        // Currently using base text_tex rendered at load time
                         if (text_cue.curve_size >= 0 && text_cue.curve_size < curve_count) {
                             float t = elapsed_time / curves[text_cue.curve_size].duration;
                             anim_text_size = rev::curve::Evaluate(curves[text_cue.curve_size], t);
@@ -1797,15 +2861,40 @@ int main(int argc, char* argv[]) {
                             anim_text_color_b = rev::curve::Evaluate(curves[text_cue.curve_color_b], t);
                         }
                     }
-                    
+
+                    TextEffectFrame fx = {};
+                    if (!BuildTextEffectFrame(&text_cue, time, &fx)) {
+                        continue;
+                    }
+
+                    TextTexture frame_text_tex = base_text_tex;
+                    bool has_frame_text = (frame_text_tex.texture_id != 0);
+                    bool frame_tex_transient = false;
+
+                    if (text_cue.effect_type >= 3 && !force_baked) {
+                        frame_text_tex = {};
+                        if (!RenderTextToTexture(
+                                fx.text, text_cue.font_name, anim_text_size,
+                                anim_text_color_r, anim_text_color_g, anim_text_color_b,
+                                &frame_text_tex)) {
+                            continue;
+                        }
+                        has_frame_text = true;
+                        frame_tex_transient = true;
+                    }
+
+                    if (!has_frame_text) {
+                        continue;
+                    }
+
                     float size_scale = anim_text_size / text_cue.size;  // Scale based on size curve
-                    float w = ((float)text_tex.width  * size_scale) / (float)config.width  * 2.0f;
-                    float h = ((float)text_tex.height * size_scale) / (float)config.height * 2.0f;
-                    float x =  (anim_text_x * 2.0f - 1.0f);
-                    float y = -((anim_text_y * 2.0f) - 1.0f);
+                    float w = ((float)frame_text_tex.width  * size_scale) / (float)config.width  * 2.0f;
+                    float h = ((float)frame_text_tex.height * size_scale) / (float)config.height * 2.0f;
+                    float x =  ((anim_text_x + fx.offset_x) * 2.0f - 1.0f);
+                    float y = -(((anim_text_y + fx.offset_y) * 2.0f) - 1.0f);
                     float opacity = ComputeEffectOpacity(text_cue.effect_type,
                         text_cue.fade_in_start, text_cue.fade_in_end,
-                        text_cue.fade_out_start, text_cue.fade_out_end, time);
+                        text_cue.fade_out_start, text_cue.fade_out_end, time) * fx.opacity_mul;
                     int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
                     int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                     int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
@@ -1817,17 +2906,22 @@ int main(int argc, char* argv[]) {
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa, opacity);
                     if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, anim_text_color_r, anim_text_color_g, anim_text_color_b);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, text_tex.texture_id);
+                    glBindTexture(GL_TEXTURE_2D, frame_text_tex.texture_id);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+                    if (frame_tex_transient && frame_text_tex.texture_id != 0) {
+                        glDeleteTextures(1, &frame_text_tex.texture_id);
+                    }
 
                 } else {
                     // 3D mesh
-                    static bool logged_mesh_draw = false;
-                    if (!logged_mesh_draw) {
-                        printf("[DRAW] Drawing 3D mesh at index %d/%d, layer=%d (enabling depth test)\n", ei, ne, entries[ei].layer);
-                        logged_mesh_draw = true;
+                    int mesh_idx = entries[ei].cue_idx;
+                    MeshCue& mesh_cue = mesh_cues[mesh_idx];
+                    rev::mesh::Mesh* mesh_obj = mesh_objs[mesh_idx];
+                    if (!mesh_obj) {
+                        continue;
                     }
-                    
+
                     if (blend_on) { glDisable(GL_BLEND); blend_on = false; }
                     if (!depth_on) {
                         glEnable(0x0B71);        // GL_DEPTH_TEST
@@ -1934,7 +3028,21 @@ int main(int argc, char* argv[]) {
                         }
                     }
 #endif
-                    
+
+                    // Apply mesh_size curve as a uniform scale factor relative to authored base size.
+                    // This makes curve_mesh_size visible for pre-created procedural meshes and glTF meshes.
+                    if (anim_mesh_size > 0.0f) {
+                        float base_size = (mesh_cue.mesh_size > 0.0f) ? mesh_cue.mesh_size : 1.0f;
+                        float mesh_size_scale = anim_mesh_size / base_size;
+                        if (mesh_size_scale < 0.0001f) {
+                            mesh_size_scale = 0.0001f;
+                        }
+                        anim_scale[0] *= mesh_size_scale;
+                        anim_scale[1] *= mesh_size_scale;
+                        anim_scale[2] *= mesh_size_scale;
+                    }
+
+
                     float aspect = (float)config.width / (float)config.height;
                     float eye[3]    = {0.0f, 0.0f, 5.0f};
                     float center[3] = {0.0f, 0.0f, 0.0f};
@@ -1951,6 +3059,11 @@ int main(int argc, char* argv[]) {
                         glUniformMatrix4fv_fn(rev::shader::GetUniformLocation(mesh_shader,"u_projection"),1,0,proj_mat);
                     }
                     float light_pos[3] = {3.0f, 5.0f, 4.0f};
+                    if (mesh_obj->has_imported_light) {
+                        light_pos[0] = mesh_obj->imported_light_pos[0];
+                        light_pos[1] = mesh_obj->imported_light_pos[1];
+                        light_pos[2] = mesh_obj->imported_light_pos[2];
+                    }
                     int loc_light = rev::shader::GetUniformLocation(mesh_shader, "u_light_pos");
                     int loc_vpos  = rev::shader::GetUniformLocation(mesh_shader, "u_view_pos");
                     int loc_color = rev::shader::GetUniformLocation(mesh_shader, "u_color");
@@ -1974,16 +3087,31 @@ int main(int argc, char* argv[]) {
                     
                     // Bind texture if available
                     int loc_has_tex = rev::shader::GetUniformLocation(mesh_shader, "u_has_texture");
-                    if (mesh_obj->base_color_texture != 0) {
-                        glBindTexture(0x0DE1, mesh_obj->base_color_texture); // GL_TEXTURE_2D = 0x0DE1
-                        int loc_tex = rev::shader::GetUniformLocation(mesh_shader, "u_base_color_texture");
-                        if (loc_tex >= 0) rev::shader::SetInt(mesh_shader, loc_tex, 0);
-                        if (loc_has_tex >= 0) rev::shader::SetInt(mesh_shader, loc_has_tex, 1);
-                    } else {
-                        if (loc_has_tex >= 0) rev::shader::SetInt(mesh_shader, loc_has_tex, 0);
+                    int loc_tex = rev::shader::GetUniformLocation(mesh_shader, "u_base_color_texture");
+                    bool rendered_slot = false;
+                    for (uint32_t si = 0; si < mesh_obj->material_slot_count; ++si) {
+                        unsigned int tex_id = mesh_obj->material_slots[si].base_color_texture;
+                        if (tex_id == 0) tex_id = mesh_obj->base_color_texture;
+                        if (tex_id != 0) {
+                            glBindTexture(0x0DE1, tex_id); // GL_TEXTURE_2D = 0x0DE1
+                            if (loc_tex >= 0) rev::shader::SetInt(mesh_shader, loc_tex, 0);
+                            if (loc_has_tex >= 0) rev::shader::SetInt(mesh_shader, loc_has_tex, 1);
+                        } else if (loc_has_tex >= 0) {
+                            rev::shader::SetInt(mesh_shader, loc_has_tex, 0);
+                        }
+                        rev::mesh::Render(mesh_obj, (int)si);
+                        rendered_slot = true;
                     }
-                    
-                    rev::mesh::Render(mesh_obj, -1);
+                    if (!rendered_slot) {
+                        if (mesh_obj->base_color_texture != 0) {
+                            glBindTexture(0x0DE1, mesh_obj->base_color_texture);
+                            if (loc_tex >= 0) rev::shader::SetInt(mesh_shader, loc_tex, 0);
+                            if (loc_has_tex >= 0) rev::shader::SetInt(mesh_shader, loc_has_tex, 1);
+                        } else if (loc_has_tex >= 0) {
+                            rev::shader::SetInt(mesh_shader, loc_has_tex, 0);
+                        }
+                        rev::mesh::Render(mesh_obj, -1);
+                    }
                 }
             }
 
@@ -2016,13 +3144,33 @@ int main(int argc, char* argv[]) {
     if (sprite_shader) {
         rev::shader::DestroyProgram(sprite_shader);
     }
+    for (int ii = 0; ii < image_cue_count; ++ii) {
+        if (image_texes[ii].texture_id != 0) {
+            glDeleteTextures(1, &image_texes[ii].texture_id);
+            image_texes[ii].texture_id = 0;
+        }
+    }
+    for (int ti = 0; ti < text_cue_count; ++ti) {
+        if (text_texes[ti].texture_id != 0) {
+            glDeleteTextures(1, &text_texes[ti].texture_id);
+            text_texes[ti].texture_id = 0;
+        }
+    }
     if (mesh_shader) {
         rev::shader::DestroyProgram(mesh_shader);
     }
-    if (mesh_obj) {
-        rev::mesh::DestroyMesh(mesh_obj);
+    for (int mi = 0; mi < mesh_cue_count; ++mi) {
+        if (mesh_objs[mi]) {
+            rev::mesh::DestroyMesh(mesh_objs[mi]);
+            mesh_objs[mi] = nullptr;
+        }
     }
-    rev::shader::DestroyProgram(shader);
+    for (int i = 0; i < num_shaders; ++i) {
+        if (shader_programs[i].prog) {
+            rev::shader::DestroyProgram(shader_programs[i].prog);
+            shader_programs[i].prog = nullptr;
+        }
+    }
     rev::platform::DestroyIntroWindow(window);
     
     // Clean up curves
