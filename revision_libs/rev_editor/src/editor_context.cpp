@@ -530,9 +530,9 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->project->scene_count = 0;
     editor->project->scene_capacity = 0;
     
-    // Allocate fixed curve array (max 32 curves)
-    editor->project->curves = new rev::curve::Curve[32];
-    for (int i = 0; i < 32; ++i) {
+    // Allocate fixed curve array (max kMaxCurves curves)
+    editor->project->curves = new rev::curve::Curve[rev::runtime::kMaxCurves];
+    for (int i = 0; i < rev::runtime::kMaxCurves; ++i) {
         editor->project->curves[i].points = nullptr;
         editor->project->curves[i].point_count = 0;
         editor->project->curves[i].capacity = 0;
@@ -670,11 +670,15 @@ bool LoadProject(EditorContext* editor, const char* path) {
     MeshCue current_mesh_cue = {};
     current_mesh_cue.scale[0] = current_mesh_cue.scale[1] = current_mesh_cue.scale[2] = 1.0f;
     current_mesh_cue.roughness = 0.5f;
+    current_mesh_cue.fov_deg = 45.0f;
+    current_mesh_cue.cull_mode = 0;
+    current_mesh_cue.use_imported_light = 0;
+    current_mesh_cue.use_imported_camera = 0;
     current_mesh_cue.curve_pos_x = current_mesh_cue.curve_pos_y = current_mesh_cue.curve_pos_z = -1;
     current_mesh_cue.curve_rot_x = current_mesh_cue.curve_rot_y = current_mesh_cue.curve_rot_z = -1;
     current_mesh_cue.curve_scale_x = current_mesh_cue.curve_scale_y = current_mesh_cue.curve_scale_z = -1;
     current_mesh_cue.curve_color_r = current_mesh_cue.curve_color_g = current_mesh_cue.curve_color_b = current_mesh_cue.curve_color_a = -1;
-    current_mesh_cue.curve_mesh_size = current_mesh_cue.curve_metallic = current_mesh_cue.curve_roughness = -1;
+    current_mesh_cue.curve_mesh_size = current_mesh_cue.curve_metallic = current_mesh_cue.curve_roughness = current_mesh_cue.curve_fov = -1;
     rev::curve::Curve* current_curve = nullptr;
     
     char scene_name[64] = {};
@@ -1209,6 +1213,10 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"metallic\": %f", &current_mesh_cue.metallic);
             } else if (strstr(start, "\"roughness\":")) {
                 sscanf_s(start, "\"roughness\": %f", &current_mesh_cue.roughness);
+            } else if (strstr(start, "\"fov_deg\":")) {
+                sscanf_s(start, "\"fov_deg\": %f", &current_mesh_cue.fov_deg);
+            } else if (strstr(start, "\"cull_mode\":")) {
+                sscanf_s(start, "\"cull_mode\": %d", &current_mesh_cue.cull_mode);
             } else if (strstr(start, "\"effect_type\":")) {
                 sscanf_s(start, "\"effect_type\": %d", &current_mesh_cue.effect_type);
             } else if (strstr(start, "\"cue_start\":")) {
@@ -1257,16 +1265,30 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_metallic\": %d", &current_mesh_cue.curve_metallic);
             } else if (strstr(start, "\"curve_roughness\":")) {
                 sscanf_s(start, "\"curve_roughness\": %d", &current_mesh_cue.curve_roughness);
+            } else if (strstr(start, "\"curve_fov\":")) {
+                sscanf_s(start, "\"curve_fov\": %d", &current_mesh_cue.curve_fov);
+            } else if (strstr(start, "\"use_imported_light\":")) {
+                if (sscanf_s(start, "\"use_imported_light\": %d", &current_mesh_cue.use_imported_light) != 1) {
+                    current_mesh_cue.use_imported_light = (strstr(start, "true") != nullptr) ? 1 : 0;
+                }
+            } else if (strstr(start, "\"use_imported_camera\":")) {
+                if (sscanf_s(start, "\"use_imported_camera\": %d", &current_mesh_cue.use_imported_camera) != 1) {
+                    current_mesh_cue.use_imported_camera = (strstr(start, "true") != nullptr) ? 1 : 0;
+                }
             } else if (start[0] == '}' && current_mesh_cue.asset_key[0] != '\0') {
                 AddMeshCue(current_scene, current_mesh_cue);
                 MeshCue blank = {};
                 blank.scale[0] = blank.scale[1] = blank.scale[2] = 1.0f;
                 blank.roughness = 0.5f;
+                blank.fov_deg = 45.0f;
+                blank.cull_mode = 0;
+                blank.use_imported_light = 0;
+                blank.use_imported_camera = 0;
                 blank.curve_pos_x = blank.curve_pos_y = blank.curve_pos_z = -1;
                 blank.curve_rot_x = blank.curve_rot_y = blank.curve_rot_z = -1;
                 blank.curve_scale_x = blank.curve_scale_y = blank.curve_scale_z = -1;
                 blank.curve_color_r = blank.curve_color_g = blank.curve_color_b = blank.curve_color_a = -1;
-                blank.curve_mesh_size = blank.curve_metallic = blank.curve_roughness = -1;
+                blank.curve_mesh_size = blank.curve_metallic = blank.curve_roughness = blank.curve_fov = -1;
                 current_mesh_cue = blank;
             }
         }
@@ -1274,7 +1296,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
         // Parse curve data
         if (in_curves && !in_curve_points) {
             // Create new curve if we haven't yet for this curve object
-            if (!current_curve && editor->project->curve_count < 32) {
+            if (!current_curve && editor->project->curve_count < rev::runtime::kMaxCurves) {
                 if (strstr(start, "\"wrap_mode\":") || strstr(start, "\"points\":")) {
                     current_curve = &editor->project->curves[editor->project->curve_count++];
                     *current_curve = rev::curve::CreateCurve();
@@ -1618,6 +1640,8 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"mesh_param\": %.3f,\n", cue->mesh_param);
             fprintf(f, "          \"metallic\": %.3f,\n",   cue->metallic);
             fprintf(f, "          \"roughness\": %.3f,\n",  cue->roughness);
+            fprintf(f, "          \"fov_deg\": %.3f,\n",    cue->fov_deg);
+            fprintf(f, "          \"cull_mode\": %d,\n",    cue->cull_mode);
             fprintf(f, "          \"effect_type\": %d,\n",  cue->effect_type);
             fprintf(f, "          \"cue_start\": %.3f,\n",  cue->cue_start);
             fprintf(f, "          \"cue_end\": %.3f,\n",    cue->cue_end);
@@ -1641,7 +1665,10 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"curve_color_a\": %d,\n", cue->curve_color_a);
             fprintf(f, "          \"curve_mesh_size\": %d,\n", cue->curve_mesh_size);
             fprintf(f, "          \"curve_metallic\": %d,\n", cue->curve_metallic);
-            fprintf(f, "          \"curve_roughness\": %d\n", cue->curve_roughness);
+            fprintf(f, "          \"curve_roughness\": %d,\n", cue->curve_roughness);
+            fprintf(f, "          \"curve_fov\": %d,\n", cue->curve_fov);
+            fprintf(f, "          \"use_imported_light\": %d,\n", cue->use_imported_light);
+            fprintf(f, "          \"use_imported_camera\": %d\n", cue->use_imported_camera);
             fprintf(f, "        }%s\n", (i < scene->mesh_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ]\n");
@@ -2754,7 +2781,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 
     // [mesh_cues] section
     fprintf(f, "[mesh_cues]\n");
-    fprintf(f, "# asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness|curve_pos_x|curve_pos_y|curve_pos_z|curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|curve_color_r|curve_color_g|curve_color_b|curve_color_a|curve_mesh_size|curve_metallic|curve_roughness\n");
+    fprintf(f, "# asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness|curve_pos_x|curve_pos_y|curve_pos_z|curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|curve_color_r|curve_color_g|curve_color_b|curve_color_a|curve_mesh_size|curve_metallic|curve_roughness|fov_deg|cull_mode|curve_fov|use_imported_light|use_imported_camera\n");
 
     // Packed runtime resolves mesh assets by key. Ensure keys are unique in export,
     // even when authored cues reused defaults like "mesh_0" in multiple scenes.
@@ -2801,7 +2828,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 used_mesh_key_count++;
             }
 
-            fprintf(f, "%s|%s|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d\n",
+            fprintf(f, "%s|%s|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%d|%d|%d|%d\n",
                 export_asset_key, cue->asset_path, cue->mesh_type,
                 cue->pos[0],   cue->pos[1],   cue->pos[2],
                 cue->rot[0],   cue->rot[1],   cue->rot[2],
@@ -2815,7 +2842,9 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->curve_rot_x, cue->curve_rot_y, cue->curve_rot_z,
                 cue->curve_scale_x, cue->curve_scale_y, cue->curve_scale_z,
                 cue->curve_color_r, cue->curve_color_g, cue->curve_color_b, cue->curve_color_a,
-                cue->curve_mesh_size, cue->curve_metallic, cue->curve_roughness
+                cue->curve_mesh_size, cue->curve_metallic, cue->curve_roughness,
+                cue->fov_deg, cue->cull_mode, cue->curve_fov,
+                cue->use_imported_light, cue->use_imported_camera
             );
         }
     }
@@ -3958,8 +3987,7 @@ void RenderPreviewFrame(EditorContext* editor) {
         float center3[3]   = {0.0f, 0.0f, 0.0f};
         float up3[3]       = {0.0f, 1.0f, 0.0f};
         float light_pos[3] = {3.0f, 5.0f, 4.0f};
-        float view_mat[16], proj_mat[16];
-        rev::runtime::Mat4Perspective(proj_mat, 3.14159265f * 0.25f, mesh_aspect, 0.1f, 100.0f);
+        float view_mat[16];
         rev::runtime::Mat4LookAt(view_mat, eye, center3, up3);
 
         // Upload view/proj/lighting once if we have a mesh shader
@@ -3977,7 +4005,6 @@ void RenderPreviewFrame(EditorContext* editor) {
             rev::shader::Use(mesh_prog);
             if (glUniformMatrix4fv) {
                 glUniformMatrix4fv(mp_view, 1, 0, view_mat);
-                glUniformMatrix4fv(mp_proj, 1, 0, proj_mat);
             }
             rev::shader::SetVec3(mesh_prog, mp_light, light_pos[0], light_pos[1], light_pos[2]);
             rev::shader::SetVec3(mesh_prog, mp_vpos, eye[0], eye[1], eye[2]);
@@ -4070,6 +4097,7 @@ void RenderPreviewFrame(EditorContext* editor) {
 
         for (int idx = 0; idx < item_count; idx++) {
             DrawItem& item = items[idx];
+            glDisable(GL_CULL_FACE);
 
             if (item.type == 0 || item.type == 1 || item.type == 3) {
                 // Sprite (image, text, or scroll text)
@@ -4419,6 +4447,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                 float anim_metallic = cue->metallic;
                 float anim_roughness = cue->roughness;
                 float anim_mesh_size = cue->mesh_size;
+                float anim_fov = (cue->fov_deg > 0.0f) ? cue->fov_deg : 45.0f;
                 
                 // Calculate elapsed time from cue start for curve evaluation (convert scene-relative to absolute)
                 float absolute_cue_start = item.scene_start_time + cue->cue_start;
@@ -4510,11 +4539,21 @@ void RenderPreviewFrame(EditorContext* editor) {
                         float t = elapsed_time / curve->duration;
                         anim_mesh_size = rev::curve::Evaluate(*curve, t);
                     }
+                    if (cue->curve_fov >= 0 && cue->curve_fov < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_fov];
+                        float t = elapsed_time / curve->duration;
+                        anim_fov = rev::curve::Evaluate(*curve, t);
+                    }
                 }
 
                 float model[16];
                 rev::runtime::Mat4Model(model, anim_pos, anim_rot, anim_scale);  // Use animated transform
                 if (glUniformMatrix4fv) glUniformMatrix4fv(mp_model, 1, 0, model);
+                float proj_mat[16];
+                if (anim_fov < 1.0f) anim_fov = 1.0f;
+                if (anim_fov > 170.0f) anim_fov = 170.0f;
+                rev::runtime::Mat4Perspective(proj_mat, anim_fov * 3.14159265f / 180.0f, mesh_aspect, 0.1f, 100.0f);
+                if (glUniformMatrix4fv) glUniformMatrix4fv(mp_proj, 1, 0, proj_mat);
                 if (glUniform4fv_fn) {
                     float col[4] = {anim_color[0], anim_color[1], anim_color[2], anim_color[3]*opacity};
                     glUniform4fv_fn(mp_col, 1, col);
@@ -4523,6 +4562,13 @@ void RenderPreviewFrame(EditorContext* editor) {
                 if (mp_rough >= 0) rev::shader::SetFloat(mesh_prog, mp_rough, anim_roughness);
 
                 float cue_col[4] = {anim_color[0], anim_color[1], anim_color[2], anim_color[3] * opacity};
+                if (cue->cull_mode == 1) {
+                    glEnable(GL_CULL_FACE);
+                    glCullFace(GL_BACK);
+                } else if (cue->cull_mode == 2) {
+                    glEnable(GL_CULL_FACE);
+                    glCullFace(GL_FRONT);
+                }
 
                 bool mesh_needs_blend = (cue_col[3] < 0.999f);
 
@@ -4623,12 +4669,85 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 }
 
                                 float draw_light[3] = {3.0f, 5.0f, 4.0f};
-                                if (cached->has_imported_light) {
-                                    draw_light[0] = cached->imported_light_pos[0];
-                                    draw_light[1] = cached->imported_light_pos[1];
-                                    draw_light[2] = cached->imported_light_pos[2];
+                                if (cue->use_imported_light && cached->has_imported_light) {
+                                    const float* light_delta = nullptr;
+                                    if (node_delta_mats && cached->imported_light_node_index >= 0 &&
+                                        cached->imported_light_node_index < (int)cached->imported_node_count) {
+                                        light_delta = &node_delta_mats[cached->imported_light_node_index * 16];
+                                    }
+                                    if (light_delta) {
+                                        const float* base_light = cached->imported_light_pos;
+                                        draw_light[0] = light_delta[0] * base_light[0] + light_delta[4] * base_light[1] + light_delta[8]  * base_light[2] + light_delta[12];
+                                        draw_light[1] = light_delta[1] * base_light[0] + light_delta[5] * base_light[1] + light_delta[9]  * base_light[2] + light_delta[13];
+                                        draw_light[2] = light_delta[2] * base_light[0] + light_delta[6] * base_light[1] + light_delta[10] * base_light[2] + light_delta[14];
+                                    } else {
+                                        draw_light[0] = cached->imported_light_pos[0];
+                                        draw_light[1] = cached->imported_light_pos[1];
+                                        draw_light[2] = cached->imported_light_pos[2];
+                                    }
                                 }
                                 if (mp_light >= 0) rev::shader::SetVec3(mesh_prog, mp_light, draw_light[0], draw_light[1], draw_light[2]);
+
+                                float camera_eye[3] = {0.0f, 0.0f, 5.0f};
+                                float camera_center[3] = {0.0f, 0.0f, 0.0f};
+                                float camera_up[3] = {0.0f, 1.0f, 0.0f};
+                                float camera_fov_deg = anim_fov;
+                                if (cue->use_imported_camera && cached->has_imported_camera) {
+                                    if (cached->imported_camera_node_index >= 0 &&
+                                        cached->imported_camera_node_index < (int)cached->imported_node_count) {
+                                        float camera_world[16] = {};
+                                        const float* base_world = cached->imported_nodes[cached->imported_camera_node_index].base_world;
+                                        if (node_delta_mats) {
+                                            const float* camera_delta = &node_delta_mats[cached->imported_camera_node_index * 16];
+                                            rev::runtime::Mat4Multiply(camera_world, camera_delta, base_world);
+                                        } else {
+                                            memcpy(camera_world, base_world, sizeof(camera_world));
+                                        }
+
+                                        camera_eye[0] = camera_world[12];
+                                        camera_eye[1] = camera_world[13];
+                                        camera_eye[2] = camera_world[14];
+
+                                        float forward[3] = {-camera_world[8], -camera_world[9], -camera_world[10]};
+                                        float forward_len = sqrtf(forward[0] * forward[0] + forward[1] * forward[1] + forward[2] * forward[2]);
+                                        if (forward_len > 0.000001f) {
+                                            forward[0] /= forward_len;
+                                            forward[1] /= forward_len;
+                                            forward[2] /= forward_len;
+                                        }
+
+                                        camera_up[0] = camera_world[4];
+                                        camera_up[1] = camera_world[5];
+                                        camera_up[2] = camera_world[6];
+                                        float up_len = sqrtf(camera_up[0] * camera_up[0] + camera_up[1] * camera_up[1] + camera_up[2] * camera_up[2]);
+                                        if (up_len > 0.000001f) {
+                                            camera_up[0] /= up_len;
+                                            camera_up[1] /= up_len;
+                                            camera_up[2] /= up_len;
+                                        }
+
+                                        camera_center[0] = camera_eye[0] + forward[0];
+                                        camera_center[1] = camera_eye[1] + forward[1];
+                                        camera_center[2] = camera_eye[2] + forward[2];
+                                    } else {
+                                        camera_eye[0] = cached->imported_camera_pos[0];
+                                        camera_eye[1] = cached->imported_camera_pos[1];
+                                        camera_eye[2] = cached->imported_camera_pos[2];
+                                        camera_center[0] = cached->imported_camera_target[0];
+                                        camera_center[1] = cached->imported_camera_target[1];
+                                        camera_center[2] = cached->imported_camera_target[2];
+                                    }
+                                    camera_fov_deg = cached->imported_camera_fov_deg;
+                                }
+                                if (camera_fov_deg < 1.0f) camera_fov_deg = 1.0f;
+                                if (camera_fov_deg > 170.0f) camera_fov_deg = 170.0f;
+                                rev::runtime::Mat4LookAt(view_mat, camera_eye, camera_center, camera_up);
+                                rev::runtime::Mat4Perspective(proj_mat, camera_fov_deg * 3.14159265f / 180.0f, mesh_aspect, 0.1f, 100.0f);
+                                if (glUniformMatrix4fv) {
+                                    glUniformMatrix4fv(mp_view, 1, 0, view_mat);
+                                    glUniformMatrix4fv(mp_proj, 1, 0, proj_mat);
+                                }
+                                if (mp_vpos >= 0) rev::shader::SetVec3(mesh_prog, mp_vpos, camera_eye[0], camera_eye[1], camera_eye[2]);
 
                                 int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
                                 int loc_tex = rev::shader::GetUniformLocation(mesh_prog, "u_base_color_texture");
@@ -4785,39 +4904,105 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     entry.mesh = mesh;
                                     entry.last_write_time = current_file_time;
                                 }
-                                
-                                float draw_light[3] = {3.0f, 5.0f, 4.0f};
-                                if (mesh->has_imported_light) {
-                                    draw_light[0] = mesh->imported_light_pos[0];
-                                    draw_light[1] = mesh->imported_light_pos[1];
-                                    draw_light[2] = mesh->imported_light_pos[2];
-                                }
-                                if (mp_light >= 0) rev::shader::SetVec3(mesh_prog, mp_light, draw_light[0], draw_light[1], draw_light[2]);
 
                                 float* node_delta_mats = nullptr;
                                 if (mesh->animation_data && mesh->animation_count > 0 && mesh->imported_nodes && mesh->imported_node_count > 0) {
                                     rev::gltf::Animation* anims = (rev::gltf::Animation*)mesh->animation_data;
-                                    if (anims) {
-                                        float absolute_anim_start = absolute_cue_start;
-                                        float absolute_fade_in_start = item.scene_start_time + cue->fade_in_start;
-                                        if (absolute_fade_in_start > absolute_anim_start) {
-                                            absolute_anim_start = absolute_fade_in_start;
-                                        }
-                                        float anim_time = editor->current_time - absolute_anim_start;
-                                        if (anim_time < 0.0f) anim_time = 0.0f;
-                                        node_delta_mats = new float[mesh->imported_node_count * 16];
-                                        if (!rev::gltf::BuildAnimatedNodeDeltaMatricesAll(mesh,
-                                                                                          anims,
-                                                                                          mesh->animation_count,
-                                                                                          anim_time,
-                                                                                          mesh->animation_loop,
-                                                                                          node_delta_mats,
-                                                                                          (int)mesh->imported_node_count)) {
-                                            delete[] node_delta_mats;
-                                            node_delta_mats = nullptr;
-                                        }
+                                    float absolute_anim_start = absolute_cue_start;
+                                    float absolute_fade_in_start = item.scene_start_time + cue->fade_in_start;
+                                    if (absolute_fade_in_start > absolute_anim_start) {
+                                        absolute_anim_start = absolute_fade_in_start;
+                                    }
+                                    float anim_time = editor->current_time - absolute_anim_start;
+                                    if (anim_time < 0.0f) anim_time = 0.0f;
+                                    node_delta_mats = new float[mesh->imported_node_count * 16];
+                                    if (!rev::gltf::BuildAnimatedNodeDeltaMatricesAll(mesh,
+                                                                                      anims,
+                                                                                      mesh->animation_count,
+                                                                                      anim_time,
+                                                                                      mesh->animation_loop,
+                                                                                      node_delta_mats,
+                                                                                      (int)mesh->imported_node_count)) {
+                                        delete[] node_delta_mats;
+                                        node_delta_mats = nullptr;
                                     }
                                 }
+                                
+                                float draw_light[3] = {3.0f, 5.0f, 4.0f};
+                                if (cue->use_imported_light && mesh->has_imported_light) {
+                                    const float* light_delta = nullptr;
+                                    if (node_delta_mats && mesh->imported_light_node_index >= 0 &&
+                                        mesh->imported_light_node_index < (int)mesh->imported_node_count) {
+                                        light_delta = &node_delta_mats[mesh->imported_light_node_index * 16];
+                                    }
+                                    if (light_delta) {
+                                        const float* base_light = mesh->imported_light_pos;
+                                        draw_light[0] = light_delta[0] * base_light[0] + light_delta[4] * base_light[1] + light_delta[8]  * base_light[2] + light_delta[12];
+                                        draw_light[1] = light_delta[1] * base_light[0] + light_delta[5] * base_light[1] + light_delta[9]  * base_light[2] + light_delta[13];
+                                        draw_light[2] = light_delta[2] * base_light[0] + light_delta[6] * base_light[1] + light_delta[10] * base_light[2] + light_delta[14];
+                                    } else {
+                                        draw_light[0] = mesh->imported_light_pos[0];
+                                        draw_light[1] = mesh->imported_light_pos[1];
+                                        draw_light[2] = mesh->imported_light_pos[2];
+                                    }
+                                }
+                                if (cue->use_imported_camera && mesh->has_imported_camera) {
+                                    if (mesh->imported_camera_node_index >= 0 &&
+                                        mesh->imported_camera_node_index < (int)mesh->imported_node_count) {
+                                        float camera_world[16] = {};
+                                        const float* base_world = mesh->imported_nodes[mesh->imported_camera_node_index].base_world;
+                                        if (node_delta_mats) {
+                                            const float* camera_delta = &node_delta_mats[mesh->imported_camera_node_index * 16];
+                                            rev::runtime::Mat4Multiply(camera_world, camera_delta, base_world);
+                                        } else {
+                                            memcpy(camera_world, base_world, sizeof(camera_world));
+                                        }
+
+                                        eye[0] = camera_world[12];
+                                        eye[1] = camera_world[13];
+                                        eye[2] = camera_world[14];
+
+                                        float forward[3] = {-camera_world[8], -camera_world[9], -camera_world[10]};
+                                        float forward_len = sqrtf(forward[0] * forward[0] + forward[1] * forward[1] + forward[2] * forward[2]);
+                                        if (forward_len > 0.000001f) {
+                                            forward[0] /= forward_len;
+                                            forward[1] /= forward_len;
+                                            forward[2] /= forward_len;
+                                        }
+
+                                        up3[0] = camera_world[4];
+                                        up3[1] = camera_world[5];
+                                        up3[2] = camera_world[6];
+                                        float up_len = sqrtf(up3[0] * up3[0] + up3[1] * up3[1] + up3[2] * up3[2]);
+                                        if (up_len > 0.000001f) {
+                                            up3[0] /= up_len;
+                                            up3[1] /= up_len;
+                                            up3[2] /= up_len;
+                                        }
+
+                                        center3[0] = eye[0] + forward[0];
+                                        center3[1] = eye[1] + forward[1];
+                                        center3[2] = eye[2] + forward[2];
+                                    } else {
+                                        eye[0] = mesh->imported_camera_pos[0];
+                                        eye[1] = mesh->imported_camera_pos[1];
+                                        eye[2] = mesh->imported_camera_pos[2];
+                                        center3[0] = mesh->imported_camera_target[0];
+                                        center3[1] = mesh->imported_camera_target[1];
+                                        center3[2] = mesh->imported_camera_target[2];
+                                    }
+                                    anim_fov = mesh->imported_camera_fov_deg;
+                                }
+                                if (anim_fov < 1.0f) anim_fov = 1.0f;
+                                if (anim_fov > 170.0f) anim_fov = 170.0f;
+                                rev::runtime::Mat4LookAt(view_mat, eye, center3, up3);
+                                float proj_mat[16];
+                                rev::runtime::Mat4Perspective(proj_mat, anim_fov * 3.14159265f / 180.0f, mesh_aspect, 0.1f, 100.0f);
+                                if (glUniformMatrix4fv) {
+                                    glUniformMatrix4fv(mp_view, 1, 0, view_mat);
+                                    glUniformMatrix4fv(mp_proj, 1, 0, proj_mat);
+                                }
+                                if (mp_light >= 0) rev::shader::SetVec3(mesh_prog, mp_light, draw_light[0], draw_light[1], draw_light[2]);
 
                                 int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
                                 int loc_tex = rev::shader::GetUniformLocation(mesh_prog, "u_base_color_texture");
@@ -4920,6 +5105,7 @@ void RenderPreviewFrame(EditorContext* editor) {
         }
 
         if (blend_on) glDisable(GL_BLEND);
+        glDisable(GL_CULL_FACE);
         if (depth_on) {
             if (glDepthMask_fn) glDepthMask_fn(1); // GL_TRUE
             glDisable(0x0B71); // GL_DEPTH_TEST

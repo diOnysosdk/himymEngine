@@ -20,6 +20,15 @@ The active HiMYM runtime/editor pipeline also includes a glTF path used by mesh 
   - Final mesh alpha composes cue fade alpha, slot/material alpha, and sampled texture alpha.
   - Mesh transparency is not inferred from texture presence alone.
   - Mixed opaque/transparent meshes render in two phases: opaque slots first (depth write on, blend off), then transparent slots (depth write off, blend on).
+- Per-cue camera/render state:
+  - `MeshCue.fov_deg` controls the projection used for that cue in both editor preview and `minimal_intro`; default remains 45 degrees when missing.
+  - `MeshCue.cull_mode` is authored per cue (`off`, `back`, `front`) and must be applied in both preview and runtime so imported meshes preview the same way they export.
+  - Imported glTF camera playback (`MeshCue.use_imported_camera`) uses the camera node world transform each frame:
+    - position from animated node translation
+    - forward from camera node `-Z`
+    - up from camera node `+Y`
+    This avoids fixed-world-up drift and keeps pitch/yaw/roll fidelity aligned with authored glTF animation.
+  - Animated imported-node deltas are evaluated from one active animation track (`current_animation`, fallback index 0), not by sequentially applying every animation in the file.
 
 This contract exists to keep runtime and editor preview visually aligned for imported multi-object, multi-material assets.
 

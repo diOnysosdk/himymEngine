@@ -11,11 +11,14 @@ Current HiMYM runtime/editor behavior for imported meshes relies on these APIs a
 - `rev::gltf::ImportResult`:
     - Primary mesh (`mesh`) plus full material table (`materials`, `material_count`)
     - Optional imported light (`has_light`, `light_pos`)
+    - Optional imported camera metadata (`has_camera`, `camera_pos`, `camera_target`, `camera_fov_deg`, `camera_node_index`)
 - `rev::mesh::MaterialSlot`:
     - Material mapping via `material_index`
     - Per-slot texture binding via `base_color_texture`
 - `rev::mesh::Mesh`:
     - Imported-light fallback fields (`has_imported_light`, `imported_light_pos`)
+    - Imported-camera fields (`has_imported_camera`, `imported_camera_*`, `imported_camera_node_index`)
+    - Imported node transform table (`imported_nodes`) with base-world transforms for animation delta composition
 
 Render contract for imported meshes:
 
@@ -29,6 +32,13 @@ Layered draw GL-state contract (runtime):
 - In the unified layered pass, image/text draws must bind the fullscreen quad VAO before `glDrawArrays`.
 - Per-frame depth clear must occur with depth writes enabled (`glDepthMask(GL_TRUE)`), then overlays may disable depth writes.
 - When control returns to mesh draws after overlay draws, runtime must restore both `GL_DEPTH_TEST` and depth writes.
+
+Imported camera animation contract (runtime + preview):
+
+- When `use_imported_camera` is enabled and a valid imported camera node exists, camera view is derived from the animated camera node world matrix.
+- Eye position is matrix translation; look direction is camera local `-Z`; up vector is camera local `+Y`.
+- Camera FOV uses imported glTF camera FOV when present.
+- Node animation deltas are evaluated from one active animation track (`current_animation`, fallback index `0`) to avoid multi-track overwrite artifacts.
 
 These additions keep runtime and preview behavior aligned for mixed textured + color-only glTF material slots.
 

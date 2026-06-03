@@ -8,7 +8,6 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
-#include <cstdlib>
 #include <cstddef>
 
 // Windows only (matches the rest of the framework)
@@ -648,7 +647,7 @@ static int MaterialIndexFromPtr(const cgltf_data* data, const cgltf_material* ma
     if (!data || !mat || !data->materials) return -1;
     ptrdiff_t idx = mat - data->materials;
     if (idx < 0 || (cgltf_size)idx >= data->materials_count) return -1;
-    return (int)idx;
+        return (int)idx; // Return the index of the material
 }
 
 static void TransformPoint(const float m[16], const float in[3], float out[3]) {
@@ -679,7 +678,7 @@ static void GatherSceneMeshNodes(cgltf_node* node, cgltf_node** out_nodes, int m
     }
 }
 
-static bool FindFirstSceneLight(cgltf_node* node, float out_pos[3]) {
+static bool FindFirstSceneLight(const cgltf_data* data, cgltf_node* node, float out_pos[3], int* out_node_index) {
     if (!node) return false;
     if (node->light) {
         float m[16] = {};
@@ -687,10 +686,47 @@ static bool FindFirstSceneLight(cgltf_node* node, float out_pos[3]) {
         out_pos[0] = m[12];
         out_pos[1] = m[13];
         out_pos[2] = m[14];
+        if (out_node_index && data) {
+            *out_node_index = (int)cgltf_node_index(data, node);
+        }
         return true;
     }
     for (cgltf_size ci = 0; ci < node->children_count; ++ci) {
-        if (FindFirstSceneLight(node->children[ci], out_pos)) {
+        if (FindFirstSceneLight(data, node->children[ci], out_pos, out_node_index)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool FindFirstSceneCamera(const cgltf_data* data, cgltf_node* node, float out_pos[3], float out_target[3], float* out_fov_deg, int* out_node_index) {
+    if (!node) return false;
+    if (node->camera) {
+        float m[16] = {};
+        cgltf_node_transform_world(node, m);
+        out_pos[0] = m[12];
+        out_pos[1] = m[13];
+        out_pos[2] = m[14];
+
+        float forward[3] = {0.0f, 0.0f, -1.0f};
+        TransformVector(m, forward, forward);
+        out_target[0] = out_pos[0] + forward[0];
+        out_target[1] = out_pos[1] + forward[1];
+        out_target[2] = out_pos[2] + forward[2];
+
+        if (out_fov_deg) {
+            *out_fov_deg = 45.0f;
+            if (node->camera->type == cgltf_camera_type_perspective) {
+                *out_fov_deg = node->camera->data.perspective.yfov * 180.0f / 3.14159265f;
+            }
+        }
+        if (out_node_index && data) {
+            *out_node_index = (int)cgltf_node_index(data, node);
+        }
+        return true;
+    }
+    for (cgltf_size ci = 0; ci < node->children_count; ++ci) {
+        if (FindFirstSceneCamera(data, node->children[ci], out_pos, out_target, out_fov_deg, out_node_index)) {
             return true;
         }
     }
@@ -748,9 +784,10 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
     result->light_pos[0] = 0.0f;
     result->light_pos[1] = 0.0f;
     result->light_pos[2] = 0.0f;
+        result->light_node_index = -1; // Initialize light node index
     if (data->scene && data->scene->nodes_count > 0) {
         for (cgltf_size ni = 0; ni < data->scene->nodes_count; ++ni) {
-            if (FindFirstSceneLight(data->scene->nodes[ni], result->light_pos)) {
+            if (FindFirstSceneLight(data, data->scene->nodes[ni], result->light_pos, &result->light_node_index)) {
                 result->has_light = true;
                 break;
             }
@@ -763,7 +800,33 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
                 result->light_pos[0] = m[12];
                 result->light_pos[1] = m[13];
                 result->light_pos[2] = m[14];
+                result->light_node_index = (int)ni;
                 result->has_light = true;
+                break;
+            }
+        }
+    }
+
+    result->has_camera = false;
+    result->camera_pos[0] = 0.0f;
+    result->camera_pos[1] = 0.0f;
+    result->camera_pos[2] = 5.0f;
+    result->camera_target[0] = 0.0f;
+    result->camera_target[1] = 0.0f;
+    result->camera_target[2] = 0.0f;
+    result->camera_fov_deg = 45.0f;
+    result->camera_node_index = -1;
+    if (data->scene && data->scene->nodes_count > 0) {
+        for (cgltf_size ni = 0; ni < data->scene->nodes_count; ++ni) {
+            if (FindFirstSceneCamera(data, data->scene->nodes[ni], result->camera_pos, result->camera_target, &result->camera_fov_deg, &result->camera_node_index)) {
+                result->has_camera = true;
+                break;
+            }
+        }
+    } else {
+        for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
+            if (FindFirstSceneCamera(data, &data->nodes[ni], result->camera_pos, result->camera_target, &result->camera_fov_deg, &result->camera_node_index)) {
+                result->has_camera = true;
                 break;
             }
         }
@@ -926,6 +989,16 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
     mesh->imported_light_pos[0] = result->light_pos[0];
     mesh->imported_light_pos[1] = result->light_pos[1];
     mesh->imported_light_pos[2] = result->light_pos[2];
+    mesh->imported_light_node_index = result->light_node_index;
+    mesh->has_imported_camera = result->has_camera;
+    mesh->imported_camera_pos[0] = result->camera_pos[0];
+    mesh->imported_camera_pos[1] = result->camera_pos[1];
+    mesh->imported_camera_pos[2] = result->camera_pos[2];
+    mesh->imported_camera_target[0] = result->camera_target[0];
+    mesh->imported_camera_target[1] = result->camera_target[1];
+    mesh->imported_camera_target[2] = result->camera_target[2];
+    mesh->imported_camera_fov_deg = result->camera_fov_deg;
+    mesh->imported_camera_node_index = result->camera_node_index;
     if (data->nodes_count > 0) {
         mesh->imported_node_count = (uint32_t)data->nodes_count;
         mesh->imported_nodes = new rev::mesh::ImportedNode[mesh->imported_node_count];
@@ -972,6 +1045,16 @@ ImportResult* LoadMesh(const char* gltf_path, const char* texture_output_dir) {
     result->animation_count = 0;
     result->has_light = false;
     result->light_pos[0] = result->light_pos[1] = result->light_pos[2] = 0.0f;
+    result->light_node_index = -1;
+    result->has_camera = false;
+    result->camera_pos[0] = 0.0f;
+    result->camera_pos[1] = 0.0f;
+    result->camera_pos[2] = 5.0f;
+    result->camera_target[0] = 0.0f;
+    result->camera_target[1] = 0.0f;
+    result->camera_target[2] = 0.0f;
+    result->camera_fov_deg = 45.0f;
+    result->camera_node_index = -1;
 
     if (!gltf_path || !gltf_path[0]) {
         strncpy_s(result->error, "null or empty gltf_path", _TRUNCATE);
@@ -1011,6 +1094,16 @@ ImportResult* LoadMeshFromMemory(const void* buf, size_t size,
     result->animation_count = 0;
     result->has_light = false;
     result->light_pos[0] = result->light_pos[1] = result->light_pos[2] = 0.0f;
+    result->light_node_index = -1;
+    result->has_camera = false;
+    result->camera_pos[0] = 0.0f;
+    result->camera_pos[1] = 0.0f;
+    result->camera_pos[2] = 5.0f;
+    result->camera_target[0] = 0.0f;
+    result->camera_target[1] = 0.0f;
+    result->camera_target[2] = 0.0f;
+    result->camera_fov_deg = 45.0f;
+    result->camera_node_index = -1;
 
     if (!buf || size == 0) {
         strncpy_s(result->error, "null or empty buffer", _TRUNCATE);
@@ -1276,27 +1369,33 @@ bool BuildAnimatedNodeDeltaMatricesAll(const rev::mesh::Mesh* mesh,
     unsigned char* computed = new unsigned char[mesh->imported_node_count];
     memset(computed, 0, mesh->imported_node_count);
 
+    // Use one active track for evaluation. Combining all tracks by overwriting
+    // channels causes incorrect transforms when files contain multiple actions.
+    const Animation* active_anim = nullptr;
+    if (anims && animation_count > 0) {
+        int active_index = mesh->current_animation;
+        if (active_index < 0 || active_index >= animation_count) active_index = 0;
+        active_anim = &anims[active_index];
+    }
+
     for (uint32_t ni = 0; ni < mesh->imported_node_count; ++ni) {
         const rev::mesh::ImportedNode& node = mesh->imported_nodes[ni];
         float translation[3] = { node.base_translation[0], node.base_translation[1], node.base_translation[2] };
         float rotation[4] = { node.base_rotation[0], node.base_rotation[1], node.base_rotation[2], node.base_rotation[3] };
         float scale[3] = { node.base_scale[0], node.base_scale[1], node.base_scale[2] };
 
-        if (anims && animation_count > 0) {
-            for (int ai = 0; ai < animation_count; ++ai) {
-                const Animation& anim = anims[ai];
-                float anim_time = time;
-                if (anim.duration > 0.0f) {
-                    if (loop) {
-                        anim_time = fmodf(anim_time, anim.duration);
-                        if (anim_time < 0.0f) anim_time += anim.duration;
-                    } else {
-                        if (anim_time < 0.0f) anim_time = 0.0f;
-                        if (anim_time > anim.duration) anim_time = anim.duration;
-                    }
+        if (active_anim) {
+            float anim_time = time;
+            if (active_anim->duration > 0.0f) {
+                if (loop) {
+                    anim_time = fmodf(anim_time, active_anim->duration);
+                    if (anim_time < 0.0f) anim_time += active_anim->duration;
+                } else {
+                    if (anim_time < 0.0f) anim_time = 0.0f;
+                    if (anim_time > active_anim->duration) anim_time = active_anim->duration;
                 }
-                EvaluateAnimationNodeLocalTransform(&anim, (int)ni, anim_time, translation, rotation, scale);
             }
+            EvaluateAnimationNodeLocalTransform(active_anim, (int)ni, anim_time, translation, rotation, scale);
         }
 
         ComposeMatrixFromTRS(&local_matrices[ni * 16], translation, rotation, scale);

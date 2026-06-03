@@ -190,6 +190,10 @@ No lib should link another lib unless it genuinely uses its types or functions.
 - Preserve per-material-slot behavior:
     - Slot texture binding and slot color/alpha modulation must both be honored.
     - Color-only slots are first-class and must render without texture fallback artifacts.
+- Preserve imported camera orientation semantics in both runtime and preview:
+    - derive eye/forward/up from the animated camera node world matrix (translation, `-Z`, `+Y`)
+    - avoid fixed world-up assumptions for imported camera playback
+    - evaluate one active animation track for node delta matrices (do not stack all tracks implicitly)
 
 ## Documentation Parity Rule
 
