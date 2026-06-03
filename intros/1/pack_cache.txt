@@ -1,5 +1,3 @@
 logo.png|intros/1/project_assets/logo.png|7E29A2E2
-thelogo2mini.png|intros/1/project_assets/thelogo2mini.png|F2313569
-text_s00_c00.png|intros/1/project_assets/text_s00_c00.png|20DD5949
-track01.xm|intros/1/project_assets/track01.xm|3A27699E
-mesh_0|intros/1/project_assets/world.glb|AC349E1D
+mesh_0|intros/1/project_assets/cwar.glb|B44E72EC
+mesh_0_s01_c00|intros/1/project_assets/dropbox.glb|BCF8D168

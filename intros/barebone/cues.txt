@@ -1,0 +1,58 @@
+[shader_cues]
+# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order|curve_speed|curve_intensity|curve_warp|curve_exposure|curve_fade|curve_palette_low_r|curve_palette_low_g|curve_palette_low_b|curve_palette_mid_r|curve_palette_mid_g|curve_palette_mid_b|curve_palette_high_r|curve_palette_high_g|curve_palette_high_b|curve_opacity|curve_exposure_ramp|curve_fade_ramp
+0|0.000|0.000|0.000|0.036|0.000|0.085|0.109|0.040|0.162|1.710|2.000|0.332|0.760|0.020|1.000|-0.040|0.000|60.000|0.500|0.500|0|1.000|0|0|-1|-1|-1|-1|-1|-1|-1|-1|0|1|2|3|4|5|-1|-1|-1
+18|0.100|0.300|0.800|0.800|0.400|0.200|1.000|0.900|0.700|0.413|1.000|0.255|0.760|0.020|1.000|-0.040|0.000|60.000|0.500|0.500|0|1.000|1|0|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1
+
+[image_cues]
+# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity|blend_mode
+
+[text_cues]
+# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path
+
+[scroll_text_cues]
+# text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path
+
+[music_cues]
+# asset_key|asset_path|cue_start|cue_end
+
+[mesh_cues]
+# asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness|curve_pos_x|curve_pos_y|curve_pos_z|curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|curve_color_r|curve_color_g|curve_color_b|curve_color_a|curve_mesh_size|curve_metallic|curve_roughness
+mesh_0|intros/barebone/project_assets/world.glb|4|0.000|-2.880|0.980|0.000|0.000|0.000|1.000|1.000|1.000|1.000|1.000|1.000|1.000|1.000|16.000|0.000|60.000|0|0|0.000|0.000|0.000|0.000|0.000|0.500|-1|6|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1
+mesh_1|intros/barebone/project_assets/war.glb|4|-3.000|0.000|2.660|52.000|0.000|0.000|0.500|0.500|0.500|1.000|1.000|1.000|1.000|1.000|16.000|20.000|60.000|1|0|0.000|0.000|0.000|0.000|0.000|0.500|7|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1
+
+[curves]
+# curve_id|wrap_mode|duration|point_count
+0|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|0.036|0.500|0.500|linear
+1|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|0.000|0.500|0.500|linear
+2|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|0.085|0.500|0.500|linear
+3|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|0.109|0.500|0.500|linear
+4|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|0.040|0.500|0.500|linear
+5|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|0.162|0.500|0.500|linear
+6|clamp|30.000|4
+  0.000|-2.880|0.500|0.500|ease_in_out
+  0.800|0.000|0.500|0.500|ease_in_out
+  0.950|3.000|0.500|0.500|ease_in_out
+  1.000|3.000|0.500|0.500|ease_in_out
+7|clamp|5.000|4
+  0.000|-3.000|0.500|0.500|ease_in_out
+  0.200|0.000|0.500|0.500|ease_in
+  0.800|0.000|0.500|0.500|ease_out
+  1.000|3.000|0.500|0.500|ease_in_out
+
+[metadata]
+total_duration=60.000
+scene_count=1
+intro_loop=0
+music_loop=0

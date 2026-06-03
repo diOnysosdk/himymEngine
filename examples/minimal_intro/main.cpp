@@ -2741,6 +2741,16 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d scroll=%d mesh=%d music=%
                     float anim_mesh_size = mesh_cue.mesh_size;
                     float anim_metallic = mesh_cue.metallic;
                     float anim_roughness = mesh_cue.roughness;
+
+                    // Keep built-in mesh animation in sync with visibility when fade-in starts later than cue start.
+                    float animation_start_time = mesh_cue.cue_start;
+                    if (mesh_cue.fade_in_start > animation_start_time) {
+                        animation_start_time = mesh_cue.fade_in_start;
+                    }
+                    float animation_elapsed_time = time - animation_start_time;
+                    if (animation_elapsed_time < 0.0f) {
+                        animation_elapsed_time = 0.0f;
+                    }
                     
                     // Curve evaluation for mesh
                     float elapsed_time = time - mesh_cue.cue_start;
@@ -2817,7 +2827,11 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d scroll=%d mesh=%d music=%
                     if (mesh_obj->current_animation >= 0) {
                         rev::gltf::Animation* anims = (rev::gltf::Animation*)mesh_obj->animation_data;
                         if (anims && (!mesh_obj->imported_nodes || mesh_obj->imported_node_count == 0)) {
-                            rev::gltf::UpdateMeshAnimation(mesh_obj, dt);
+                            if (time < animation_start_time) {
+                                mesh_obj->animation_time = 0.0f;
+                            } else {
+                                rev::gltf::UpdateMeshAnimation(mesh_obj, dt);
+                            }
                             float translation[3], rotation[4], scale[3];
                             rev::gltf::EvaluateAnimation(&anims[mesh_obj->current_animation],
                                                         mesh_obj->animation_time,
@@ -2858,8 +2872,7 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d scroll=%d mesh=%d music=%
                     if (mesh_obj->animation_data && mesh_obj->animation_count > 0 &&
                         mesh_obj->imported_nodes && mesh_obj->imported_node_count > 0) {
                         rev::gltf::Animation* anims = (rev::gltf::Animation*)mesh_obj->animation_data;
-                        float anim_time = time - mesh_cue.cue_start;
-                        if (anim_time < 0.0f) anim_time = 0.0f;
+                        float anim_time = animation_elapsed_time;
                         node_delta_mats = new float[mesh_obj->imported_node_count * 16];
                         if (!rev::gltf::BuildAnimatedNodeDeltaMatricesAll(mesh_obj,
                                                                          anims,

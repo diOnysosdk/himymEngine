@@ -1,0 +1,2 @@
+mesh_0|intros/barebone/project_assets/world.glb|AC349E1D
+mesh_1|intros/barebone/project_assets/war.glb|50B3696D

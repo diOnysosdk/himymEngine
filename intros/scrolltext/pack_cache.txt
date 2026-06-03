@@ -1,0 +1,1 @@
+scroll_s00_c00.png|intros/scrolltext/project_assets/scroll_s00_c00.png|35EA7963

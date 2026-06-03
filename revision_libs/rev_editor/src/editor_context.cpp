@@ -4567,7 +4567,12 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     rev::gltf::Animation* anims = (rev::gltf::Animation*)cached->animation_data;
                                     if (anims && (!cached->imported_nodes || cached->imported_node_count == 0)) {
                                         // Calculate animation time relative to cue start time
-                                        float anim_time = editor->current_time - absolute_cue_start;
+                                        float absolute_anim_start = absolute_cue_start;
+                                        float absolute_fade_in_start = item.scene_start_time + cue->fade_in_start;
+                                        if (absolute_fade_in_start > absolute_anim_start) {
+                                            absolute_anim_start = absolute_fade_in_start;
+                                        }
+                                        float anim_time = editor->current_time - absolute_anim_start;
                                         
                                         // Handle looping
                                         if (cached->animation_loop && anims[cached->current_animation].duration > 0.0f) {
@@ -4596,7 +4601,12 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         if (glUniformMatrix4fv) glUniformMatrix4fv(mp_model, 1, 0, model);
                                     }
                                     if (anims && cached->animation_count > 0 && cached->imported_nodes && cached->imported_node_count > 0) {
-                                        float anim_time = editor->current_time - absolute_cue_start;
+                                        float absolute_anim_start = absolute_cue_start;
+                                        float absolute_fade_in_start = item.scene_start_time + cue->fade_in_start;
+                                        if (absolute_fade_in_start > absolute_anim_start) {
+                                            absolute_anim_start = absolute_fade_in_start;
+                                        }
+                                        float anim_time = editor->current_time - absolute_anim_start;
                                         if (anim_time < 0.0f) anim_time = 0.0f;
                                         node_delta_mats = new float[cached->imported_node_count * 16];
                                         if (!rev::gltf::BuildAnimatedNodeDeltaMatricesAll(cached,
@@ -4788,7 +4798,12 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 if (mesh->animation_data && mesh->animation_count > 0 && mesh->imported_nodes && mesh->imported_node_count > 0) {
                                     rev::gltf::Animation* anims = (rev::gltf::Animation*)mesh->animation_data;
                                     if (anims) {
-                                        float anim_time = editor->current_time - absolute_cue_start;
+                                        float absolute_anim_start = absolute_cue_start;
+                                        float absolute_fade_in_start = item.scene_start_time + cue->fade_in_start;
+                                        if (absolute_fade_in_start > absolute_anim_start) {
+                                            absolute_anim_start = absolute_fade_in_start;
+                                        }
+                                        float anim_time = editor->current_time - absolute_anim_start;
                                         if (anim_time < 0.0f) anim_time = 0.0f;
                                         node_delta_mats = new float[mesh->imported_node_count * 16];
                                         if (!rev::gltf::BuildAnimatedNodeDeltaMatricesAll(mesh,
