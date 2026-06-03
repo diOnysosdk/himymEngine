@@ -342,6 +342,65 @@ static bool BakeTextCueToPng(const TextCue* cue, const char* output_path) {
     return bitmap.Save(wpath, &png_clsid, nullptr) == Gdiplus::Ok;
 }
 
+static bool BakeScrollTextCueToPng(const ScrollTextCue* cue, const char* output_path) {
+    if (!cue || !output_path || cue->text[0] == '\0' || cue->font_name[0] == '\0') return false;
+
+    char bake_text[1024] = {};
+    if (cue->direction == 0 || cue->direction == 1) {
+        snprintf(bake_text, sizeof(bake_text), "%s   %s", cue->text, cue->text);
+    } else {
+        strncpy_s(bake_text, sizeof(bake_text), cue->text, _TRUNCATE);
+    }
+
+    wchar_t wtext[1024] = {};
+    wchar_t wfont[64] = {};
+    wchar_t wpath[512] = {};
+    MultiByteToWideChar(CP_UTF8, 0, bake_text, -1, wtext, (int)_countof(wtext));
+    MultiByteToWideChar(CP_UTF8, 0, cue->font_name, -1, wfont, (int)_countof(wfont));
+    MultiByteToWideChar(CP_UTF8, 0, output_path, -1, wpath, (int)_countof(wpath));
+
+    float bake_size = cue->size;
+    if (bake_size < 4.0f) bake_size = 4.0f;
+
+    Gdiplus::Bitmap temp_bitmap(1, 1, PixelFormat32bppARGB);
+    Gdiplus::Graphics temp_g(&temp_bitmap);
+    Gdiplus::Font font_obj(wfont, (Gdiplus::REAL)bake_size,
+                           Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::StringFormat format;
+    format.SetAlignment(Gdiplus::StringAlignmentNear);
+    format.SetLineAlignment(Gdiplus::StringAlignmentNear);
+    format.SetTrimming(Gdiplus::StringTrimmingNone);
+
+    Gdiplus::RectF layout(0.0f, 0.0f, 16384.0f, 4096.0f);
+    Gdiplus::RectF bounds;
+    temp_g.MeasureString(wtext, -1, &font_obj, layout, &format, &bounds);
+
+    int width  = (int)(bounds.Width * ((cue->spacing > 0.01f) ? cue->spacing : 0.01f)) + 32;
+    int height = (int)(bounds.Height) + 32;
+    if (width < 8) width = 8;
+    if (height < 8) height = 8;
+
+    Gdiplus::Bitmap bitmap(width, height, PixelFormat32bppARGB);
+    Gdiplus::Graphics gfx(&bitmap);
+    gfx.Clear(Gdiplus::Color(0, 0, 0, 0));
+    gfx.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
+    gfx.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
+    gfx.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
+    gfx.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    Gdiplus::SolidBrush brush(Gdiplus::Color(
+        255,
+        (BYTE)(cue->color.r * 255.0f),
+        (BYTE)(cue->color.g * 255.0f),
+        (BYTE)(cue->color.b * 255.0f)));
+
+    Gdiplus::RectF draw_rect(8.0f, 8.0f, (float)width - 16.0f, (float)height - 16.0f);
+    gfx.DrawString(wtext, -1, &font_obj, draw_rect, &format, &brush);
+
+    CLSID png_clsid = {};
+    if (!GetPngEncoderClsid(&png_clsid)) return false;
+    return bitmap.Save(wpath, &png_clsid, nullptr) == Gdiplus::Ok;
+}
+
 static bool IsFileReadableWithRetry(const char* path, int max_attempts, int sleep_ms) {
     if (!path || path[0] == '\0') return false;
     if (max_attempts < 1) max_attempts = 1;
@@ -375,7 +434,7 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->timeline_scroll = 0.0f;
     editor->selected_scene_index = -1;
     editor->selected_cue_index = -1;
-    editor->selected_cue_type = 0;
+    editor->selected_cue_type = CueTypeShader;
     editor->current_time = 0.0f;
     editor->playing = false;
     editor->show_preview = true;
@@ -397,6 +456,31 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->image_modal_request_open = false;
     editor->text_modal_open = false;
     editor->text_modal_request_open = false;
+    editor->scroll_text_modal_open = false;
+    editor->scroll_text_modal_request_open = false;
+    memset(&editor->editing_scroll_text, 0, sizeof(editor->editing_scroll_text));
+    strncpy_s(editor->editing_scroll_text.font_name, sizeof(editor->editing_scroll_text.font_name), "Arial", _TRUNCATE);
+    editor->editing_scroll_text.size = 40.0f;
+    editor->editing_scroll_text.color = {1.0f, 1.0f, 1.0f};
+    editor->editing_scroll_text.opacity = 1.0f;
+    editor->editing_scroll_text.speed = 0.25f;
+    editor->editing_scroll_text.wrap_gap = 0.2f;
+    editor->editing_scroll_text.spacing = 1.0f;
+    editor->editing_scroll_text.wave_freq = 1.0f;
+    editor->editing_scroll_text.jitter_freq = 1.0f;
+    editor->editing_scroll_text.bake_mode = 0;
+    editor->editing_scroll_text.curve_x = -1;
+    editor->editing_scroll_text.curve_y = -1;
+    editor->editing_scroll_text.curve_speed = -1;
+    editor->editing_scroll_text.curve_size = -1;
+    editor->editing_scroll_text.curve_opacity = -1;
+    editor->editing_scroll_text.curve_color_r = -1;
+    editor->editing_scroll_text.curve_color_g = -1;
+    editor->editing_scroll_text.curve_color_b = -1;
+    editor->editing_scroll_text.curve_wave_amp = -1;
+    editor->editing_scroll_text.curve_wave_freq = -1;
+    editor->editing_scroll_text.curve_jitter_amp = -1;
+    editor->editing_scroll_text.curve_jitter_freq = -1;
     editor->installed_fonts = nullptr;
     editor->installed_font_count = 0;
     editor->mesh_modal_open = false;
@@ -484,6 +568,7 @@ void DestroyEditor(EditorContext* editor) {
             delete[] scene->shader_cues;
             delete[] scene->image_cues;
             delete[] scene->text_cues;
+            delete[] scene->scroll_text_cues;
             delete[] scene->music_cues;
             delete[] scene->mesh_cues;
         }
@@ -533,6 +618,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
     bool in_shader_cues = false;
     bool in_image_cues = false;
     bool in_text_cues = false;
+    bool in_scroll_text_cues = false;
     bool in_music_cues = false;
     bool in_mesh_cues = false;
     bool in_curves = false;
@@ -557,6 +643,29 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_text_cue.curve_color_b = -1;
     current_text_cue.blend_mode = 0;
     current_text_cue.bake_mode = 0;
+    ScrollTextCue current_scroll_text_cue = {};
+    strncpy_s(current_scroll_text_cue.font_name, sizeof(current_scroll_text_cue.font_name), "Arial", _TRUNCATE);
+    current_scroll_text_cue.size = 40.0f;
+    current_scroll_text_cue.color = {1.0f, 1.0f, 1.0f};
+    current_scroll_text_cue.opacity = 1.0f;
+    current_scroll_text_cue.wrap_gap = 0.2f;
+    current_scroll_text_cue.speed = 0.25f;
+    current_scroll_text_cue.spacing = 1.0f;
+    current_scroll_text_cue.wave_freq = 1.0f;
+    current_scroll_text_cue.jitter_freq = 1.0f;
+    current_scroll_text_cue.bake_mode = 0;
+    current_scroll_text_cue.curve_x = -1;
+    current_scroll_text_cue.curve_y = -1;
+    current_scroll_text_cue.curve_speed = -1;
+    current_scroll_text_cue.curve_size = -1;
+    current_scroll_text_cue.curve_opacity = -1;
+    current_scroll_text_cue.curve_color_r = -1;
+    current_scroll_text_cue.curve_color_g = -1;
+    current_scroll_text_cue.curve_color_b = -1;
+    current_scroll_text_cue.curve_wave_amp = -1;
+    current_scroll_text_cue.curve_wave_freq = -1;
+    current_scroll_text_cue.curve_jitter_amp = -1;
+    current_scroll_text_cue.curve_jitter_freq = -1;
     MusicCue current_music_cue = {};
     MeshCue current_mesh_cue = {};
     current_mesh_cue.scale[0] = current_mesh_cue.scale[1] = current_mesh_cue.scale[2] = 1.0f;
@@ -620,6 +729,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_shader_cues = false;
             in_image_cues = false;
             in_text_cues = false;
+            in_scroll_text_cues = false;
             in_music_cues = false;
             in_mesh_cues = false;
         }
@@ -629,27 +739,38 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_shader_cues = true;
             in_image_cues = false;
             in_text_cues = false;
+            in_scroll_text_cues = false;
             in_music_cues = false;
         } else if (strstr(start, "\"image_cues\":")) {
             in_shader_cues = false;
             in_image_cues = true;
             in_text_cues = false;
+            in_scroll_text_cues = false;
             in_music_cues = false;
         } else if (strstr(start, "\"text_cues\":")) {
             in_shader_cues = false;
             in_image_cues = false;
             in_text_cues = true;
+            in_scroll_text_cues = false;
+            in_music_cues = false;
+        } else if (strstr(start, "\"scroll_text_cues\":")) {
+            in_shader_cues = false;
+            in_image_cues = false;
+            in_text_cues = false;
+            in_scroll_text_cues = true;
             in_music_cues = false;
         } else if (strstr(start, "\"music_cues\":")) {
             in_shader_cues = false;
             in_image_cues = false;
             in_text_cues = false;
+            in_scroll_text_cues = false;
             in_music_cues = true;
             in_mesh_cues = false;
         } else if (strstr(start, "\"mesh_cues\":")) {
             in_shader_cues = false;
             in_image_cues = false;
             in_text_cues = false;
+            in_scroll_text_cues = false;
             in_music_cues = false;
             in_mesh_cues = true;
         } else if (strstr(start, "\"curves\":")) {
@@ -920,6 +1041,129 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 current_text_cue.curve_color_b = -1;
                 current_text_cue.blend_mode = 0;
                 current_text_cue.bake_mode = 0;
+            }
+        }
+
+        // Parse scroll text cue fields
+        if (in_scroll_text_cues && current_scene) {
+            if (strstr(start, "\"text\":")) {
+                ParseJsonStringValue(start, current_scroll_text_cue.text, sizeof(current_scroll_text_cue.text));
+            } else if (strstr(start, "\"font_name\":")) {
+                ParseJsonStringValue(start, current_scroll_text_cue.font_name, sizeof(current_scroll_text_cue.font_name));
+            } else if (strstr(start, "\"x\":")) {
+                sscanf_s(start, "\"x\": %f", &current_scroll_text_cue.x);
+            } else if (strstr(start, "\"y\":")) {
+                sscanf_s(start, "\"y\": %f", &current_scroll_text_cue.y);
+            } else if (strstr(start, "\"size\":")) {
+                sscanf_s(start, "\"size\": %f", &current_scroll_text_cue.size);
+            } else if (strstr(start, "\"color\":")) {
+                sscanf_s(start, "\"color\": [%f, %f, %f]",
+                    &current_scroll_text_cue.color.r, &current_scroll_text_cue.color.g, &current_scroll_text_cue.color.b);
+            } else if (strstr(start, "\"cue_start\":")) {
+                sscanf_s(start, "\"cue_start\": %f", &current_scroll_text_cue.cue_start);
+            } else if (strstr(start, "\"cue_end\":")) {
+                sscanf_s(start, "\"cue_end\": %f", &current_scroll_text_cue.cue_end);
+            } else if (strstr(start, "\"fade_in_start\":")) {
+                sscanf_s(start, "\"fade_in_start\": %f", &current_scroll_text_cue.fade_in_start);
+            } else if (strstr(start, "\"fade_in_end\":")) {
+                sscanf_s(start, "\"fade_in_end\": %f", &current_scroll_text_cue.fade_in_end);
+            } else if (strstr(start, "\"fade_out_start\":")) {
+                sscanf_s(start, "\"fade_out_start\": %f", &current_scroll_text_cue.fade_out_start);
+            } else if (strstr(start, "\"fade_out_end\":")) {
+                sscanf_s(start, "\"fade_out_end\": %f", &current_scroll_text_cue.fade_out_end);
+            } else if (strstr(start, "\"opacity\":")) {
+                sscanf_s(start, "\"opacity\": %f", &current_scroll_text_cue.opacity);
+            } else if (strstr(start, "\"layer_order\":")) {
+                sscanf_s(start, "\"layer_order\": %d", &current_scroll_text_cue.layer_order);
+            } else if (strstr(start, "\"blend_mode\":")) {
+                sscanf_s(start, "\"blend_mode\": %d", &current_scroll_text_cue.blend_mode);
+            } else if (strstr(start, "\"style_id\":")) {
+                sscanf_s(start, "\"style_id\": %d", &current_scroll_text_cue.style_id);
+            } else if (strstr(start, "\"direction\":")) {
+                sscanf_s(start, "\"direction\": %d", &current_scroll_text_cue.direction);
+            } else if (strstr(start, "\"loop_mode\":")) {
+                sscanf_s(start, "\"loop_mode\": %d", &current_scroll_text_cue.loop_mode);
+            } else if (strstr(start, "\"speed\":")) {
+                sscanf_s(start, "\"speed\": %f", &current_scroll_text_cue.speed);
+            } else if (strstr(start, "\"wrap_gap\":")) {
+                sscanf_s(start, "\"wrap_gap\": %f", &current_scroll_text_cue.wrap_gap);
+            } else if (strstr(start, "\"spacing\":")) {
+                sscanf_s(start, "\"spacing\": %f", &current_scroll_text_cue.spacing);
+            } else if (strstr(start, "\"slant_deg\":")) {
+                sscanf_s(start, "\"slant_deg\": %f", &current_scroll_text_cue.slant_deg);
+            } else if (strstr(start, "\"wave_amp\":")) {
+                sscanf_s(start, "\"wave_amp\": %f", &current_scroll_text_cue.wave_amp);
+            } else if (strstr(start, "\"wave_freq\":")) {
+                sscanf_s(start, "\"wave_freq\": %f", &current_scroll_text_cue.wave_freq);
+            } else if (strstr(start, "\"jitter_amp\":")) {
+                sscanf_s(start, "\"jitter_amp\": %f", &current_scroll_text_cue.jitter_amp);
+            } else if (strstr(start, "\"jitter_freq\":")) {
+                sscanf_s(start, "\"jitter_freq\": %f", &current_scroll_text_cue.jitter_freq);
+            } else if (strstr(start, "\"glow\":")) {
+                sscanf_s(start, "\"glow\": %f", &current_scroll_text_cue.glow);
+            } else if (strstr(start, "\"shadow\":")) {
+                sscanf_s(start, "\"shadow\": %f", &current_scroll_text_cue.shadow);
+            } else if (strstr(start, "\"outline\":")) {
+                sscanf_s(start, "\"outline\": %f", &current_scroll_text_cue.outline);
+            } else if (strstr(start, "\"chroma_shift\":")) {
+                sscanf_s(start, "\"chroma_shift\": %f", &current_scroll_text_cue.chroma_shift);
+            } else if (strstr(start, "\"distortion\":")) {
+                sscanf_s(start, "\"distortion\": %f", &current_scroll_text_cue.distortion);
+            } else if (strstr(start, "\"bake_mode\":")) {
+                sscanf_s(start, "\"bake_mode\": %d", &current_scroll_text_cue.bake_mode);
+            } else if (strstr(start, "\"baked_asset_key\":")) {
+                ParseJsonStringValue(start, current_scroll_text_cue.baked_asset_key, sizeof(current_scroll_text_cue.baked_asset_key));
+            } else if (strstr(start, "\"baked_asset_path\":")) {
+                ParseJsonStringValue(start, current_scroll_text_cue.baked_asset_path, sizeof(current_scroll_text_cue.baked_asset_path));
+            } else if (strstr(start, "\"curve_x\":")) {
+                sscanf_s(start, "\"curve_x\": %d", &current_scroll_text_cue.curve_x);
+            } else if (strstr(start, "\"curve_y\":")) {
+                sscanf_s(start, "\"curve_y\": %d", &current_scroll_text_cue.curve_y);
+            } else if (strstr(start, "\"curve_speed\":")) {
+                sscanf_s(start, "\"curve_speed\": %d", &current_scroll_text_cue.curve_speed);
+            } else if (strstr(start, "\"curve_size\":")) {
+                sscanf_s(start, "\"curve_size\": %d", &current_scroll_text_cue.curve_size);
+            } else if (strstr(start, "\"curve_opacity\":")) {
+                sscanf_s(start, "\"curve_opacity\": %d", &current_scroll_text_cue.curve_opacity);
+            } else if (strstr(start, "\"curve_color_r\":")) {
+                sscanf_s(start, "\"curve_color_r\": %d", &current_scroll_text_cue.curve_color_r);
+            } else if (strstr(start, "\"curve_color_g\":")) {
+                sscanf_s(start, "\"curve_color_g\": %d", &current_scroll_text_cue.curve_color_g);
+            } else if (strstr(start, "\"curve_color_b\":")) {
+                sscanf_s(start, "\"curve_color_b\": %d", &current_scroll_text_cue.curve_color_b);
+            } else if (strstr(start, "\"curve_wave_amp\":")) {
+                sscanf_s(start, "\"curve_wave_amp\": %d", &current_scroll_text_cue.curve_wave_amp);
+            } else if (strstr(start, "\"curve_wave_freq\":")) {
+                sscanf_s(start, "\"curve_wave_freq\": %d", &current_scroll_text_cue.curve_wave_freq);
+            } else if (strstr(start, "\"curve_jitter_amp\":")) {
+                sscanf_s(start, "\"curve_jitter_amp\": %d", &current_scroll_text_cue.curve_jitter_amp);
+            } else if (strstr(start, "\"curve_jitter_freq\":")) {
+                sscanf_s(start, "\"curve_jitter_freq\": %d", &current_scroll_text_cue.curve_jitter_freq);
+            } else if (start[0] == '}' && current_scroll_text_cue.text[0] != '\0') {
+                AddScrollTextCue(current_scene, current_scroll_text_cue);
+                memset(&current_scroll_text_cue, 0, sizeof(current_scroll_text_cue));
+                strncpy_s(current_scroll_text_cue.font_name, sizeof(current_scroll_text_cue.font_name), "Arial", _TRUNCATE);
+                current_scroll_text_cue.size = 40.0f;
+                current_scroll_text_cue.color = {1.0f, 1.0f, 1.0f};
+                current_scroll_text_cue.opacity = 1.0f;
+                current_scroll_text_cue.wrap_gap = 0.2f;
+                current_scroll_text_cue.speed = 0.25f;
+                current_scroll_text_cue.spacing = 1.0f;
+                current_scroll_text_cue.wave_freq = 1.0f;
+                current_scroll_text_cue.jitter_freq = 1.0f;
+                current_scroll_text_cue.bake_mode = 0;
+                current_scroll_text_cue.curve_x = -1;
+                current_scroll_text_cue.curve_y = -1;
+                current_scroll_text_cue.curve_speed = -1;
+                current_scroll_text_cue.curve_size = -1;
+                current_scroll_text_cue.curve_opacity = -1;
+                current_scroll_text_cue.curve_color_r = -1;
+                current_scroll_text_cue.curve_color_g = -1;
+                current_scroll_text_cue.curve_color_b = -1;
+                current_scroll_text_cue.curve_wave_amp = -1;
+                current_scroll_text_cue.curve_wave_freq = -1;
+                current_scroll_text_cue.curve_jitter_amp = -1;
+                current_scroll_text_cue.curve_jitter_freq = -1;
             }
         }
 
@@ -1273,6 +1517,69 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "        }%s\n", (i < scene->text_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
+
+        // Scroll text cues
+        fprintf(f, "      \"scroll_text_cues\": [\n");
+        for (int i = 0; i < scene->scroll_text_cue_count; ++i) {
+            ScrollTextCue* cue = &scene->scroll_text_cues[i];
+            char escaped_text[1024] = {};
+            char escaped_font[128] = {};
+            char escaped_baked_key[128] = {};
+            char escaped_baked_path[1024] = {};
+            JsonEscapeString(cue->text, escaped_text, sizeof(escaped_text));
+            JsonEscapeString(cue->font_name, escaped_font, sizeof(escaped_font));
+            JsonEscapeString(cue->baked_asset_key, escaped_baked_key, sizeof(escaped_baked_key));
+            JsonEscapeString(cue->baked_asset_path, escaped_baked_path, sizeof(escaped_baked_path));
+            fprintf(f, "        {\n");
+            fprintf(f, "          \"text\": \"%s\",\n", escaped_text);
+            fprintf(f, "          \"font_name\": \"%s\",\n", escaped_font);
+            fprintf(f, "          \"x\": %.3f,\n", cue->x);
+            fprintf(f, "          \"y\": %.3f,\n", cue->y);
+            fprintf(f, "          \"size\": %.3f,\n", cue->size);
+            fprintf(f, "          \"color\": [%.3f, %.3f, %.3f],\n", cue->color.r, cue->color.g, cue->color.b);
+            fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
+            fprintf(f, "          \"cue_end\": %.3f,\n", cue->cue_end);
+            fprintf(f, "          \"fade_in_start\": %.3f,\n", cue->fade_in_start);
+            fprintf(f, "          \"fade_in_end\": %.3f,\n", cue->fade_in_end);
+            fprintf(f, "          \"fade_out_start\": %.3f,\n", cue->fade_out_start);
+            fprintf(f, "          \"fade_out_end\": %.3f,\n", cue->fade_out_end);
+            fprintf(f, "          \"opacity\": %.3f,\n", cue->opacity);
+            fprintf(f, "          \"layer_order\": %d,\n", cue->layer_order);
+            fprintf(f, "          \"blend_mode\": %d,\n", cue->blend_mode);
+            fprintf(f, "          \"style_id\": %d,\n", cue->style_id);
+            fprintf(f, "          \"direction\": %d,\n", cue->direction);
+            fprintf(f, "          \"loop_mode\": %d,\n", cue->loop_mode);
+            fprintf(f, "          \"speed\": %.3f,\n", cue->speed);
+            fprintf(f, "          \"wrap_gap\": %.3f,\n", cue->wrap_gap);
+            fprintf(f, "          \"spacing\": %.3f,\n", cue->spacing);
+            fprintf(f, "          \"slant_deg\": %.3f,\n", cue->slant_deg);
+            fprintf(f, "          \"wave_amp\": %.3f,\n", cue->wave_amp);
+            fprintf(f, "          \"wave_freq\": %.3f,\n", cue->wave_freq);
+            fprintf(f, "          \"jitter_amp\": %.3f,\n", cue->jitter_amp);
+            fprintf(f, "          \"jitter_freq\": %.3f,\n", cue->jitter_freq);
+            fprintf(f, "          \"glow\": %.3f,\n", cue->glow);
+            fprintf(f, "          \"shadow\": %.3f,\n", cue->shadow);
+            fprintf(f, "          \"outline\": %.3f,\n", cue->outline);
+            fprintf(f, "          \"chroma_shift\": %.3f,\n", cue->chroma_shift);
+            fprintf(f, "          \"distortion\": %.3f,\n", cue->distortion);
+            fprintf(f, "          \"bake_mode\": %d,\n", cue->bake_mode);
+            fprintf(f, "          \"curve_x\": %d,\n", cue->curve_x);
+            fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
+            fprintf(f, "          \"curve_speed\": %d,\n", cue->curve_speed);
+            fprintf(f, "          \"curve_size\": %d,\n", cue->curve_size);
+            fprintf(f, "          \"curve_opacity\": %d,\n", cue->curve_opacity);
+            fprintf(f, "          \"curve_color_r\": %d,\n", cue->curve_color_r);
+            fprintf(f, "          \"curve_color_g\": %d,\n", cue->curve_color_g);
+            fprintf(f, "          \"curve_color_b\": %d,\n", cue->curve_color_b);
+            fprintf(f, "          \"curve_wave_amp\": %d,\n", cue->curve_wave_amp);
+            fprintf(f, "          \"curve_wave_freq\": %d,\n", cue->curve_wave_freq);
+            fprintf(f, "          \"curve_jitter_amp\": %d,\n", cue->curve_jitter_amp);
+            fprintf(f, "          \"curve_jitter_freq\": %d,\n", cue->curve_jitter_freq);
+            fprintf(f, "          \"baked_asset_key\": \"%s\",\n", escaped_baked_key);
+            fprintf(f, "          \"baked_asset_path\": \"%s\"\n", escaped_baked_path);
+            fprintf(f, "        }%s\n", (i < scene->scroll_text_cue_count - 1) ? "," : "");
+        }
+        fprintf(f, "      ],\n");
         
         // Music cues
         fprintf(f, "      \"music_cues\": [\n");
@@ -1425,6 +1732,7 @@ bool NewProject(EditorContext* editor) {
         delete[] scene->shader_cues;
         delete[] scene->image_cues;
         delete[] scene->text_cues;
+        delete[] scene->scroll_text_cues;
         delete[] scene->music_cues;
         delete[] scene->mesh_cues;
     }
@@ -1581,6 +1889,10 @@ void RenderUI(EditorContext* editor) {
     
     if (editor->text_modal_open || editor->text_modal_request_open) {
         RenderTextModal(editor);
+    }
+
+    if (editor->scroll_text_modal_open || editor->scroll_text_modal_request_open) {
+        RenderScrollTextModal(editor);
     }
 
     if (editor->mesh_modal_open || editor->mesh_modal_request_open) {
@@ -1805,7 +2117,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     NewProject(editor);
     
     char line[1024];
-    enum Section { NONE, SHADER_CUES, IMAGE_CUES, TEXT_CUES, MUSIC_CUES, CURVES, METADATA };
+    enum Section { NONE, SHADER_CUES, IMAGE_CUES, TEXT_CUES, SCROLL_TEXT_CUES, MUSIC_CUES, CURVES, METADATA };
     Section current_section = NONE;
     
     float total_duration = 10.0f; // Default
@@ -1822,6 +2134,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         if (strstr(start, "[shader_cues]")) { current_section = SHADER_CUES; continue; }
         if (strstr(start, "[image_cues]")) { current_section = IMAGE_CUES; continue; }
         if (strstr(start, "[text_cues]")) { current_section = TEXT_CUES; continue; }
+        if (strstr(start, "[scroll_text_cues]")) { current_section = SCROLL_TEXT_CUES; continue; }
         if (strstr(start, "[music_cues]")) { current_section = MUSIC_CUES; continue; }
         if (strstr(start, "[curves]")) { current_section = CURVES; continue; }
         if (strstr(start, "[metadata]")) { current_section = METADATA; continue; }
@@ -1992,6 +2305,106 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             continue;
         }
 
+        // Parse scroll text cues:
+        // text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path
+        if (current_section == SCROLL_TEXT_CUES) {
+            char* p1 = strchr(start, '|');
+            if (!p1) continue;
+            ScrollTextCue cue = {};
+            cue.opacity = 1.0f;
+            cue.size = 40.0f;
+            cue.speed = 0.25f;
+            cue.wrap_gap = 0.2f;
+            cue.spacing = 1.0f;
+            cue.wave_freq = 1.0f;
+            cue.jitter_freq = 1.0f;
+            cue.curve_x = cue.curve_y = cue.curve_speed = cue.curve_size = cue.curve_opacity = -1;
+            cue.curve_color_r = cue.curve_color_g = cue.curve_color_b = -1;
+            cue.curve_wave_amp = cue.curve_wave_freq = cue.curve_jitter_amp = cue.curve_jitter_freq = -1;
+
+            size_t text_len = (size_t)(p1 - start);
+            if (text_len >= sizeof(cue.text)) text_len = sizeof(cue.text) - 1;
+            char encoded_text[512] = {};
+            strncpy_s(encoded_text, sizeof(encoded_text), start, text_len);
+            JsonUnescapeString(encoded_text, cue.text, sizeof(cue.text));
+
+            char* p2 = strchr(p1 + 1, '|');
+            if (!p2) continue;
+            size_t font_len = (size_t)(p2 - (p1 + 1));
+            if (font_len >= sizeof(cue.font_name)) font_len = sizeof(cue.font_name) - 1;
+            strncpy_s(cue.font_name, p1 + 1, font_len);
+
+            char baked_key[64] = {};
+            char baked_path[512] = {};
+
+            int parsed = sscanf_s(p2 + 1,
+                "%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%f|%d|%63[^|]|%511[^|\r\n]",
+                &cue.x, &cue.y, &cue.size,
+                &cue.color.r, &cue.color.g, &cue.color.b,
+                &cue.cue_start, &cue.cue_end,
+                &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end,
+                &cue.layer_order, &cue.blend_mode, &cue.style_id, &cue.direction,
+                &cue.speed, &cue.spacing, &cue.wave_amp, &cue.wave_freq,
+                &cue.glow, &cue.opacity, &cue.wrap_gap, &cue.slant_deg,
+                &cue.jitter_amp, &cue.jitter_freq, &cue.shadow, &cue.outline,
+                &cue.curve_x, &cue.curve_y, &cue.curve_speed, &cue.curve_size, &cue.curve_opacity,
+                &cue.curve_color_r, &cue.curve_color_g, &cue.curve_color_b,
+                &cue.curve_wave_amp, &cue.curve_wave_freq, &cue.curve_jitter_amp, &cue.curve_jitter_freq,
+                &cue.loop_mode, &cue.chroma_shift, &cue.distortion,
+                &cue.bake_mode,
+                baked_key, (unsigned)_countof(baked_key),
+                baked_path, (unsigned)_countof(baked_path));
+
+            if (parsed >= 45) strncpy_s(cue.baked_asset_key, baked_key, _TRUNCATE);
+            if (parsed >= 46) strncpy_s(cue.baked_asset_path, baked_path, _TRUNCATE);
+
+            if (parsed < 44) {
+                parsed = sscanf_s(p2 + 1,
+                    "%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%f|%d|%63[^|]|%511[^|\r\n]",
+                    &cue.x, &cue.y, &cue.size,
+                    &cue.color.r, &cue.color.g, &cue.color.b,
+                    &cue.cue_start, &cue.cue_end,
+                    &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end,
+                    &cue.layer_order, &cue.blend_mode, &cue.style_id, &cue.direction,
+                    &cue.speed, &cue.spacing, &cue.wave_amp, &cue.wave_freq,
+                    &cue.glow, &cue.opacity, &cue.wrap_gap, &cue.slant_deg,
+                    &cue.jitter_amp, &cue.jitter_freq, &cue.shadow, &cue.outline,
+                    &cue.curve_x, &cue.curve_y, &cue.curve_speed, &cue.curve_size, &cue.curve_opacity,
+                    &cue.curve_color_r, &cue.curve_color_g, &cue.curve_color_b,
+                    &cue.loop_mode, &cue.chroma_shift, &cue.distortion,
+                    &cue.bake_mode,
+                    baked_key, (unsigned)_countof(baked_key),
+                    baked_path, (unsigned)_countof(baked_path));
+                if (parsed >= 40) strncpy_s(cue.baked_asset_key, baked_key, _TRUNCATE);
+                if (parsed >= 41) strncpy_s(cue.baked_asset_path, baked_path, _TRUNCATE);
+            }
+
+            if (parsed < 39) {
+                parsed = sscanf_s(p2 + 1,
+                    "%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%f",
+                    &cue.x, &cue.y, &cue.size,
+                    &cue.color.r, &cue.color.g, &cue.color.b,
+                    &cue.cue_start, &cue.cue_end,
+                    &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end,
+                    &cue.layer_order, &cue.blend_mode, &cue.style_id, &cue.direction,
+                    &cue.speed, &cue.spacing, &cue.wave_amp, &cue.wave_freq,
+                    &cue.glow, &cue.opacity, &cue.wrap_gap, &cue.slant_deg,
+                    &cue.jitter_amp, &cue.jitter_freq, &cue.shadow, &cue.outline,
+                    &cue.curve_x, &cue.curve_y, &cue.curve_speed, &cue.curve_size, &cue.curve_opacity,
+                    &cue.curve_color_r, &cue.curve_color_g, &cue.curve_color_b,
+                    &cue.loop_mode, &cue.chroma_shift, &cue.distortion);
+            }
+
+            if (parsed >= 8) {
+                if (editor->project->scene_count == 0) {
+                    AddScene(editor, "Imported Scene", total_duration);
+                }
+                AddScrollTextCue(&editor->project->scenes[0], cue);
+                printf("[ImportFromCues] Imported scroll text cue: %s\n", cue.text);
+            }
+            continue;
+        }
+
         // Parse music cues: asset_key|asset_path|cue_start|cue_end
         if (current_section == MUSIC_CUES) {
             MusicCue cue = {};
@@ -2127,6 +2540,10 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             ImageCue* cue = &scene->image_cues[cue_idx];
             float abs_start = scene_start + cue->cue_start;
             float abs_end = (cue->cue_end < 0.0f) ? (scene_start + scene->duration) : (scene_start + cue->cue_end);
+            float abs_fade_in_start  = scene_start + cue->fade_in_start;
+            float abs_fade_in_end    = scene_start + cue->fade_in_end;
+            float abs_fade_out_start = scene_start + cue->fade_out_start;
+            float abs_fade_out_end   = scene_start + cue->fade_out_end;
             
             // Construct workspace-root-relative path: rel_assets_prefix/asset_key
             char full_path[640];
@@ -2135,7 +2552,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d\n",
                 cue->asset_key, full_path, cue->x, cue->y, cue->scale, cue->opacity,
                 abs_start, abs_end, cue->layer_order,
-                cue->effect_type, cue->fade_in_start, cue->fade_in_end, cue->fade_out_start, cue->fade_out_end,
+                cue->effect_type, abs_fade_in_start, abs_fade_in_end, abs_fade_out_start, abs_fade_out_end,
                 cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_opacity,
                 cue->blend_mode
             );
@@ -2223,6 +2640,92 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     }
     
     fprintf(f, "\n");
+
+    // [scroll_text_cues] section
+    fprintf(f, "[scroll_text_cues]\n");
+    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path\n");
+
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        SceneBlock* scene = &editor->project->scenes[scene_idx];
+        float scene_start = 0.0f;
+        for (int i = 0; i < scene_idx; ++i) {
+            scene_start += editor->project->scenes[i].duration;
+        }
+
+        for (int cue_idx = 0; cue_idx < scene->scroll_text_cue_count; ++cue_idx) {
+            ScrollTextCue* cue = &scene->scroll_text_cues[cue_idx];
+            float abs_start = scene_start + cue->cue_start;
+            float abs_end = scene_start + cue->cue_end;
+            float abs_fade_in_start = scene_start + cue->fade_in_start;
+            float abs_fade_in_end = scene_start + cue->fade_in_end;
+            float abs_fade_out_start = scene_start + cue->fade_out_start;
+            float abs_fade_out_end = scene_start + cue->fade_out_end;
+
+            char encoded_text[512] = {};
+            const char* src = cue->text;
+            char* dst = encoded_text;
+            while (*src && (dst - encoded_text) < 510) {
+                if (*src == '\n') {
+                    *dst++ = '\\';
+                    *dst++ = 'n';
+                } else {
+                    *dst++ = *src;
+                }
+                src++;
+            }
+            *dst = '\0';
+
+            char baked_asset_key[64] = {};
+            char baked_asset_path[512] = {};
+            if (cue->bake_mode == 1 && cue->text[0] != '\0') {
+                snprintf(baked_asset_key, sizeof(baked_asset_key), "scroll_s%02d_c%02d.png", scene_idx, cue_idx);
+
+                char baked_abs_path[640] = {};
+                snprintf(baked_abs_path, sizeof(baked_abs_path), "%s\\%s", editor->project->assets_path, baked_asset_key);
+
+                if (BakeScrollTextCueToPng(cue, baked_abs_path)) {
+                    if (IsFileReadableWithRetry(baked_abs_path, 60, 25)) {
+                        snprintf(baked_asset_path, sizeof(baked_asset_path), "%s/%s", rel_assets_prefix, baked_asset_key);
+                        strncpy_s(cue->baked_asset_key, sizeof(cue->baked_asset_key), baked_asset_key, _TRUNCATE);
+                        strncpy_s(cue->baked_asset_path, sizeof(cue->baked_asset_path), baked_asset_path, _TRUNCATE);
+                    } else {
+                        printf("[ExportProject] WARNING: baked scroll text exists but is not readable yet: %s\n", baked_abs_path);
+                        cue->baked_asset_key[0] = '\0';
+                        cue->baked_asset_path[0] = '\0';
+                    }
+                } else {
+                    cue->baked_asset_key[0] = '\0';
+                    cue->baked_asset_path[0] = '\0';
+                }
+            }
+
+            if (baked_asset_key[0] == '\0' && cue->baked_asset_key[0] != '\0') {
+                strncpy_s(baked_asset_key, sizeof(baked_asset_key), cue->baked_asset_key, _TRUNCATE);
+            }
+            if (baked_asset_path[0] == '\0' && cue->baked_asset_path[0] != '\0') {
+                strncpy_s(baked_asset_path, sizeof(baked_asset_path), cue->baked_asset_path, _TRUNCATE);
+            }
+
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%.3f|%d|%s|%s\n",
+                encoded_text, cue->font_name,
+                cue->x, cue->y, cue->size,
+                cue->color.r, cue->color.g, cue->color.b,
+                abs_start, abs_end,
+                abs_fade_in_start, abs_fade_in_end, abs_fade_out_start, abs_fade_out_end,
+                cue->layer_order, cue->blend_mode, cue->style_id, cue->direction,
+                cue->speed, cue->spacing, cue->wave_amp, cue->wave_freq,
+                cue->glow, cue->opacity, cue->wrap_gap, cue->slant_deg,
+                cue->jitter_amp, cue->jitter_freq, cue->shadow, cue->outline,
+                cue->curve_x, cue->curve_y, cue->curve_speed, cue->curve_size, cue->curve_opacity,
+                cue->curve_color_r, cue->curve_color_g, cue->curve_color_b,
+                cue->curve_wave_amp, cue->curve_wave_freq, cue->curve_jitter_amp, cue->curve_jitter_freq,
+                cue->loop_mode, cue->chroma_shift, cue->distortion,
+                cue->bake_mode,
+                baked_asset_key, baked_asset_path);
+        }
+    }
+
+    fprintf(f, "\n");
     
     // [music_cues] section
     fprintf(f, "[music_cues]\n");
@@ -2253,6 +2756,11 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     fprintf(f, "[mesh_cues]\n");
     fprintf(f, "# asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness|curve_pos_x|curve_pos_y|curve_pos_z|curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|curve_color_r|curve_color_g|curve_color_b|curve_color_a|curve_mesh_size|curve_metallic|curve_roughness\n");
 
+    // Packed runtime resolves mesh assets by key. Ensure keys are unique in export,
+    // even when authored cues reused defaults like "mesh_0" in multiple scenes.
+    char used_mesh_keys[512][64] = {};
+    int used_mesh_key_count = 0;
+
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
         float scene_start = 0.0f;
@@ -2270,8 +2778,31 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             float abs_fade_out_start  = scene_start + cue->fade_out_start;
             float abs_fade_out_end    = scene_start + cue->fade_out_end;
 
+            char export_asset_key[64] = {};
+            if (cue->asset_key[0]) {
+                strncpy_s(export_asset_key, sizeof(export_asset_key), cue->asset_key, _TRUNCATE);
+            } else {
+                snprintf(export_asset_key, sizeof(export_asset_key), "mesh_s%02d_c%02d", scene_idx, cue_idx);
+            }
+
+            bool duplicate_key = false;
+            for (int k = 0; k < used_mesh_key_count; ++k) {
+                if (strcmp(used_mesh_keys[k], export_asset_key) == 0) {
+                    duplicate_key = true;
+                    break;
+                }
+            }
+            if (duplicate_key) {
+                snprintf(export_asset_key, sizeof(export_asset_key), "%s_s%02d_c%02d", cue->asset_key[0] ? cue->asset_key : "mesh", scene_idx, cue_idx);
+            }
+
+            if (used_mesh_key_count < (int)(sizeof(used_mesh_keys) / sizeof(used_mesh_keys[0]))) {
+                strncpy_s(used_mesh_keys[used_mesh_key_count], sizeof(used_mesh_keys[used_mesh_key_count]), export_asset_key, _TRUNCATE);
+                used_mesh_key_count++;
+            }
+
             fprintf(f, "%s|%s|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d\n",
-                cue->asset_key, cue->asset_path, cue->mesh_type,
+                export_asset_key, cue->asset_path, cue->mesh_type,
                 cue->pos[0],   cue->pos[1],   cue->pos[2],
                 cue->rot[0],   cue->rot[1],   cue->rot[2],
                 cue->scale[0], cue->scale[1], cue->scale[2],
@@ -2550,6 +3081,10 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
     scene->text_cues = nullptr;
     scene->text_cue_count = 0;
     scene->text_cue_capacity = 0;
+
+    scene->scroll_text_cues = nullptr;
+    scene->scroll_text_cue_count = 0;
+    scene->scroll_text_cue_capacity = 0;
     
     scene->music_cues = nullptr;
     scene->music_cue_count = 0;
@@ -2578,6 +3113,7 @@ void DeleteScene(EditorContext* editor, int scene_index) {
     delete[] scene->shader_cues;
     delete[] scene->image_cues;
     delete[] scene->text_cues;
+    delete[] scene->scroll_text_cues;
     delete[] scene->music_cues;
     delete[] scene->mesh_cues;
     
@@ -2684,6 +3220,27 @@ int AddTextCue(SceneBlock* scene, const TextCue& cue) {
     return index;
 }
 
+int AddScrollTextCue(SceneBlock* scene, const ScrollTextCue& cue) {
+    if (!scene) return -1;
+
+    if (scene->scroll_text_cue_count >= scene->scroll_text_cue_capacity) {
+        int new_capacity = scene->scroll_text_cue_capacity == 0 ? 4 : scene->scroll_text_cue_capacity * 2;
+        ScrollTextCue* new_cues = new ScrollTextCue[new_capacity];
+
+        for (int i = 0; i < scene->scroll_text_cue_count; ++i) {
+            new_cues[i] = scene->scroll_text_cues[i];
+        }
+
+        delete[] scene->scroll_text_cues;
+        scene->scroll_text_cues = new_cues;
+        scene->scroll_text_cue_capacity = new_capacity;
+    }
+
+    int index = scene->scroll_text_cue_count++;
+    scene->scroll_text_cues[index] = cue;
+    return index;
+}
+
 int AddMusicCue(SceneBlock* scene, const MusicCue& cue) {
     if (!scene) return -1;
     
@@ -2730,6 +3287,15 @@ void DeleteTextCue(SceneBlock* scene, int cue_index) {
         scene->text_cues[i] = scene->text_cues[i + 1];
     }
     scene->text_cue_count--;
+}
+
+void DeleteScrollTextCue(SceneBlock* scene, int cue_index) {
+    if (!scene || cue_index < 0 || cue_index >= scene->scroll_text_cue_count) return;
+
+    for (int i = cue_index; i < scene->scroll_text_cue_count - 1; ++i) {
+        scene->scroll_text_cues[i] = scene->scroll_text_cues[i + 1];
+    }
+    scene->scroll_text_cue_count--;
 }
 
 void DeleteMusicCue(SceneBlock* scene, int cue_index) {
@@ -3368,7 +3934,7 @@ void RenderPreviewFrame(EditorContext* editor) {
     }
 
     // --- Unified layered draw pass ---
-    // Collect all active image/text/mesh cues across all scenes, sort by
+    // Collect all active image/text/scroll/mesh cues across all scenes, sort by
     // layer_order (ascending = drawn first = further back), draw in order.
     if (editor->project && (editor->sprite_shader || editor->mesh_shader)) {
         auto* sprite_prog = editor->sprite_shader ? (rev::shader::Program*)editor->sprite_shader : nullptr;
@@ -3423,7 +3989,7 @@ void RenderPreviewFrame(EditorContext* editor) {
         int sp_sz  = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_size")     : -1;
         int sp_opa = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_opacity")  : -1;
 
-        // Build unified draw list: type 0=image 1=text 2=mesh
+        // Build unified draw list: type 0=image 1=text 2=mesh 3=scroll text
         struct DrawItem { int type; void* cue; int layer_order; float scene_start_time; };
         static const int kMaxItems = 512;
         DrawItem items[kMaxItems];
@@ -3457,6 +4023,17 @@ void RenderPreviewFrame(EditorContext* editor) {
                 if (time_in_range && cue->text[0])
                     items[item_count++] = { 1, cue, cue->layer_order, item_scene_start };
             }
+            for (int i = 0; i < scene->scroll_text_cue_count && item_count < kMaxItems; i++) {
+                ScrollTextCue* cue = &scene->scroll_text_cues[i];
+                float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                float absolute_start = item_scene_start + cue->cue_start;
+                float absolute_end = item_scene_start + end;
+                bool time_in_range = is_last_scene
+                    ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
+                    : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
+                if (time_in_range && cue->text[0])
+                    items[item_count++] = { 3, cue, cue->layer_order, item_scene_start };
+            }
             for (int i = 0; i < scene->mesh_cue_count && item_count < kMaxItems; i++) {
                 MeshCue* cue = &scene->mesh_cues[i];
                 float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
@@ -3474,12 +4051,12 @@ void RenderPreviewFrame(EditorContext* editor) {
         }
 
         // Stable bubble sort by layer_order ascending
-        // Tie-break rule for same layer: mesh behind image behind text.
+        // Tie-break rule for same layer: mesh behind image behind text/scroll.
         auto draw_priority = [](int type) {
-            // type: 0=image, 1=text, 2=mesh
+            // type: 0=image, 1=text, 2=mesh, 3=scroll text
             if (type == 2) return 0; // mesh first (back)
             if (type == 0) return 1; // image middle
-            return 2;                // text front
+            return 2;                // text/scroll front
         };
         for (int i = 0; i < item_count - 1; i++)
             for (int j = 0; j < item_count - i - 1; j++)
@@ -3494,8 +4071,8 @@ void RenderPreviewFrame(EditorContext* editor) {
         for (int idx = 0; idx < item_count; idx++) {
             DrawItem& item = items[idx];
 
-            if (item.type == 0 || item.type == 1) {
-                // Sprite (image or text)
+            if (item.type == 0 || item.type == 1 || item.type == 3) {
+                // Sprite (image, text, or scroll text)
                 if (!sprite_prog) continue;
                 
                 // When switching from mesh to sprite, rebind dummy VAO for gl_VertexID rendering
@@ -3519,8 +4096,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                 int sprite_blend_mode = 0;
                 if (item.type == 0) {
                     sprite_blend_mode = ((ImageCue*)item.cue)->blend_mode;
-                } else {
+                } else if (item.type == 1) {
                     sprite_blend_mode = ((TextCue*)item.cue)->blend_mode;
+                } else {
+                    sprite_blend_mode = ((ScrollTextCue*)item.cue)->blend_mode;
                 }
                 ApplySpriteBlendMode(sprite_blend_mode);
                 
@@ -3576,8 +4155,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                     pos_y  = -((anim_y * 2.0f) - 1.0f);
                     opacity = anim_opacity * rev::runtime::ComputeEffectOpacity(
                         cue->effect_type, cue->fade_in_start, cue->fade_in_end,
-                        cue->fade_out_start, cue->fade_out_end, editor->current_time);
-                } else {
+                        cue->fade_out_start, cue->fade_out_end, editor->current_time - item.scene_start_time);
+                } else if (item.type == 1) {
                     TextCue* cue = (TextCue*)item.cue;
                     
                     // Evaluate curves for animation
@@ -3625,7 +4204,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                     }
                     
                         rev::runtime::TextEffectFrame fx = {};
-                        if (!rev::runtime::BuildTextEffectFrame(cue, editor->current_time, &fx)) continue;
+                        float scene_time = editor->current_time - item.scene_start_time;
+                        if (!rev::runtime::BuildTextEffectFrame(cue, scene_time, &fx)) continue;
 
                         rev::runtime::TextTexture rt_txt{};
                         if (!rev::runtime::RenderTextToTexture(
@@ -3638,7 +4218,173 @@ void RenderPreviewFrame(EditorContext* editor) {
                         pos_y  = -(((anim_y + fx.offset_y) * 2.0f) - 1.0f);
                         opacity = rev::runtime::ComputeEffectOpacity(
                         cue->effect_type, cue->fade_in_start, cue->fade_in_end,
-                        cue->fade_out_start, cue->fade_out_end, editor->current_time) * fx.opacity_mul;
+                        cue->fade_out_start, cue->fade_out_end, scene_time) * fx.opacity_mul;
+                } else {
+                    ScrollTextCue* cue = (ScrollTextCue*)item.cue;
+
+                    float anim_x = cue->x;
+                    float anim_y = cue->y;
+                    float anim_speed = cue->speed;
+                    float anim_size = cue->size;
+                    float anim_opacity = cue->opacity;
+                    float anim_color_r = cue->color.r;
+                    float anim_color_g = cue->color.g;
+                    float anim_color_b = cue->color.b;
+                    float anim_wave_amp = cue->wave_amp;
+                    float anim_wave_freq = cue->wave_freq;
+                    float anim_jitter_amp = cue->jitter_amp;
+                    float anim_jitter_freq = cue->jitter_freq;
+
+                    float absolute_cue_start = item.scene_start_time + cue->cue_start;
+                    float elapsed_time = editor->current_time - absolute_cue_start;
+                    if (elapsed_time < 0.0f) elapsed_time = 0.0f;
+
+                    if (cue->curve_x >= 0 && cue->curve_x < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_x];
+                        float t = elapsed_time / curve->duration;
+                        anim_x = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_y >= 0 && cue->curve_y < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_y];
+                        float t = elapsed_time / curve->duration;
+                        anim_y = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_speed >= 0 && cue->curve_speed < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_speed];
+                        float t = elapsed_time / curve->duration;
+                        anim_speed = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_size >= 0 && cue->curve_size < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_size];
+                        float t = elapsed_time / curve->duration;
+                        anim_size = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_opacity >= 0 && cue->curve_opacity < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_opacity];
+                        float t = elapsed_time / curve->duration;
+                        anim_opacity = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_color_r >= 0 && cue->curve_color_r < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_color_r];
+                        float t = elapsed_time / curve->duration;
+                        anim_color_r = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_color_g >= 0 && cue->curve_color_g < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_color_g];
+                        float t = elapsed_time / curve->duration;
+                        anim_color_g = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_color_b >= 0 && cue->curve_color_b < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_color_b];
+                        float t = elapsed_time / curve->duration;
+                        anim_color_b = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_wave_amp >= 0 && cue->curve_wave_amp < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_wave_amp];
+                        float t = elapsed_time / curve->duration;
+                        anim_wave_amp = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_wave_freq >= 0 && cue->curve_wave_freq < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_wave_freq];
+                        float t = elapsed_time / curve->duration;
+                        anim_wave_freq = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_jitter_amp >= 0 && cue->curve_jitter_amp < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_jitter_amp];
+                        float t = elapsed_time / curve->duration;
+                        anim_jitter_amp = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_jitter_freq >= 0 && cue->curve_jitter_freq < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_jitter_freq];
+                        float t = elapsed_time / curve->duration;
+                        anim_jitter_freq = rev::curve::Evaluate(*curve, t);
+                    }
+
+                    auto clamp01 = [](float v) {
+                        if (v < 0.0f) return 0.0f;
+                        if (v > 1.0f) return 1.0f;
+                        return v;
+                    };
+
+                    float scene_time = editor->current_time - item.scene_start_time;
+                    float travel = 1.0f + cue->wrap_gap;
+                    if (travel < 0.001f) travel = 0.001f;
+                    float wrapped = elapsed_time * anim_speed;
+                    if (cue->loop_mode == 0) {
+                        float speed_abs = fabsf(anim_speed);
+                        if (speed_abs < 0.0001f) speed_abs = 0.0001f;
+                        float raw_cycle_duration = travel / speed_abs;
+                        float cue_duration = cue->cue_end - cue->cue_start;
+                        float loop_cycle_duration = raw_cycle_duration;
+                        if (cue_duration > loop_cycle_duration) {
+                            loop_cycle_duration = cue_duration;
+                        }
+                        if (loop_cycle_duration < 0.0001f) {
+                            loop_cycle_duration = raw_cycle_duration;
+                        }
+                        float local_time = fmodf(elapsed_time, loop_cycle_duration);
+                        if (local_time < 0.0f) local_time += loop_cycle_duration;
+                        wrapped = local_time * anim_speed;
+                    } else {
+                        if (wrapped < 0.0f) wrapped = 0.0f;
+                        if (wrapped > travel) wrapped = travel;
+                    }
+
+                    float dir_x = 0.0f;
+                    float dir_y = 0.0f;
+                    if (cue->direction == 0) dir_x = -1.0f;
+                    else if (cue->direction == 1) dir_x = 1.0f;
+                    else if (cue->direction == 2) dir_y = -1.0f;
+                    else dir_y = 1.0f;
+
+                    float wave_phase = elapsed_time * anim_wave_freq * 6.2831853f;
+                    float jitter_phase = elapsed_time * anim_jitter_freq * 6.2831853f;
+                    float wave_offset = sinf(wave_phase) * anim_wave_amp;
+                    float jitter_x = sinf(jitter_phase * 1.7f) * anim_jitter_amp;
+                    float jitter_y = cosf(jitter_phase * 1.3f) * anim_jitter_amp;
+                    float distortion = cue->distortion * sinf(elapsed_time * 17.0f);
+
+                    float glow_boost = cue->glow * 0.28f;
+                    float chroma = cue->chroma_shift;
+                    float draw_r = clamp01(anim_color_r + glow_boost + chroma * 0.25f);
+                    float draw_g = clamp01(anim_color_g + glow_boost * 0.8f);
+                    float draw_b = clamp01(anim_color_b + glow_boost + chroma * 0.6f);
+
+                    float effective_size = anim_size * (1.0f + cue->outline * 0.08f + fabsf(distortion) * 0.05f);
+                    if (effective_size < 4.0f) effective_size = 4.0f;
+
+                    char scroll_text_buffer[512] = {};
+                    if (cue->direction <= 1) {
+                        snprintf(scroll_text_buffer, sizeof(scroll_text_buffer), "%s   %s", cue->text, cue->text);
+                    } else {
+                        strncpy_s(scroll_text_buffer, sizeof(scroll_text_buffer), cue->text, _TRUNCATE);
+                    }
+
+                    rev::runtime::TextTexture rt_txt{};
+                    if (!rev::runtime::RenderTextToTexture(scroll_text_buffer, cue->font_name, effective_size,
+                        draw_r, draw_g, draw_b, &rt_txt)) {
+                        continue;
+                    }
+
+                    tex = rt_txt.texture_id;
+                    float spacing_mul = (cue->spacing <= 0.01f) ? 0.01f : cue->spacing;
+                    norm_w = ((float)rt_txt.width * spacing_mul) / editor->preview_width * 2.0f;
+                    norm_h = (float)rt_txt.height / editor->preview_height * 2.0f;
+
+                    float scroll_x = anim_x + dir_x * wrapped + jitter_x + distortion;
+                    float scroll_y = anim_y + dir_y * wrapped + jitter_y;
+                    if (cue->direction <= 1) scroll_y += wave_offset;
+                    else scroll_x += wave_offset;
+
+                    pos_x = (scroll_x * 2.0f) - 1.0f;
+                    pos_y = -((scroll_y * 2.0f) - 1.0f);
+
+                    float fade_mul = rev::runtime::ComputeEffectOpacity(
+                        1, cue->fade_in_start, cue->fade_in_end,
+                        cue->fade_out_start, cue->fade_out_end,
+                        scene_time);
+                    float style_mul = 1.0f + cue->shadow * 0.1f;
+                    opacity = clamp01(anim_opacity * fade_mul * style_mul);
                 }
 
                 if (glActiveTexture_fn) glActiveTexture_fn(0x84C0); // GL_TEXTURE0
@@ -3663,7 +4409,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                 MeshCue* cue = (MeshCue*)item.cue;
                 float opacity = rev::runtime::ComputeEffectOpacity(
                     cue->effect_type, cue->fade_in_start, cue->fade_in_end,
-                    cue->fade_out_start, cue->fade_out_end, editor->current_time);
+                    cue->fade_out_start, cue->fade_out_end, editor->current_time - item.scene_start_time);
 
                 // Animated transform and material properties (start with cue values)
                 float anim_pos[3] = {cue->pos[0], cue->pos[1], cue->pos[2]};
@@ -3821,7 +4567,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     rev::gltf::Animation* anims = (rev::gltf::Animation*)cached->animation_data;
                                     if (anims && (!cached->imported_nodes || cached->imported_node_count == 0)) {
                                         // Calculate animation time relative to cue start time
-                                        float anim_time = editor->current_time - cue->cue_start;
+                                        float anim_time = editor->current_time - absolute_cue_start;
                                         
                                         // Handle looping
                                         if (cached->animation_loop && anims[cached->current_animation].duration > 0.0f) {
@@ -3850,7 +4596,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         if (glUniformMatrix4fv) glUniformMatrix4fv(mp_model, 1, 0, model);
                                     }
                                     if (anims && cached->animation_count > 0 && cached->imported_nodes && cached->imported_node_count > 0) {
-                                        float anim_time = editor->current_time - cue->cue_start;
+                                        float anim_time = editor->current_time - absolute_cue_start;
                                         if (anim_time < 0.0f) anim_time = 0.0f;
                                         node_delta_mats = new float[cached->imported_node_count * 16];
                                         if (!rev::gltf::BuildAnimatedNodeDeltaMatricesAll(cached,
@@ -4042,7 +4788,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 if (mesh->animation_data && mesh->animation_count > 0 && mesh->imported_nodes && mesh->imported_node_count > 0) {
                                     rev::gltf::Animation* anims = (rev::gltf::Animation*)mesh->animation_data;
                                     if (anims) {
-                                        float anim_time = editor->current_time - cue->cue_start;
+                                        float anim_time = editor->current_time - absolute_cue_start;
                                         if (anim_time < 0.0f) anim_time = 0.0f;
                                         node_delta_mats = new float[mesh->imported_node_count * 16];
                                         if (!rev::gltf::BuildAnimatedNodeDeltaMatricesAll(mesh,

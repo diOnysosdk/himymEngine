@@ -1,19 +1,19 @@
 # Shader System - Modular Architecture
 
-The shader system maintains shader registries for both the editor and runtime. Shaders must be added to both locations to work correctly.
+The shader system uses a single authoritative shader registry in the editor presets, and runtime compiles from that same source.
 
 ## Architecture
 
-**Two Shader Registries (MUST be kept synchronized):**
-- **`shader_presets.h/cpp`** - Editor registry with GLSL code (used by editor UI)
-- **`editor_modals.cpp`** - Shader selection dropdown (reads from shader_presets)
-- **`examples/minimal_intro/main.cpp`** - Runtime shader array `fragment_shaders[]` (line 352)
+**Single Shader Registry:**
+- **`revision_libs/rev_editor/src/shader_presets.cpp`** - authoritative GLSL source + IDs
+- **`editor_modals.cpp`** - shader selection dropdown (reads from presets)
+- **`examples/minimal_intro/main.cpp`** - runtime compiles via `GetShaderSourceById()` and `g_shader_preset_count`
 
-⚠️ **CRITICAL**: Both registries must have identical shader IDs and order, or the runtime will display the wrong shader.
+The previous duplicated runtime `fragment_shaders[]` array has been removed to prevent drift.
 
 ## How to Add a New Shader
 
-Adding a new shader requires editing **TWO files** to keep editor and runtime synchronized.
+Adding a new shader requires editing **ONE file**.
 
 ### Step 1: Add Entry to Editor Registry (`shader_presets.cpp`)
 
@@ -55,34 +55,7 @@ void main() {
 };
 ```
 
-### Step 2: Add Entry to Runtime Registry (`minimal_intro/main.cpp`)
-
-Open `examples/minimal_intro/main.cpp` and add the **SAME SHADER** to the `fragment_shaders[]` array at line 352:
-
-```cpp
-const char* fragment_shaders[] = {
-    // 0: Horizontal Gradient Bands
-    R"(...)",
-    // 1-10: Other shaders...
-    
-    // 11: Your Shader Name (MUST match shader_presets.cpp ID)
-    R"(
-#version 330 core
-in vec2 uv;
-out vec4 fragColor;
-uniform float u_time;
-uniform vec2 u_resolution;
-// ... rest of shader code (IDENTICAL to shader_presets.cpp)
-void main() {
-    // Your shader code here
-}
-)"
-};
-```
-
-⚠️ **IMPORTANT**: The array index in `fragment_shaders[]` must match the ID in `shader_presets.cpp`. If your shader has ID 11 in the editor, it must be at index 11 in the runtime array.
-
-### Step 3: Rebuild Both Editor and Runtime
+### Step 2: Rebuild Editor and Runtime
 
 ```powershell
 cmake --build build --config Release -j 8
@@ -90,7 +63,7 @@ cmake --build build --config Release -j 8
 
 The new shader will now appear in:
 - ✅ Editor's shader selection dropdown
-- ✅ Runtime playback with correct ID mapping
+- ✅ Runtime playback (auto-sourced from the same preset entry)
 
 ## Available Uniforms
 
@@ -206,16 +179,16 @@ Possible improvements to consider:
 
 ## Troubleshooting
 
-**Problem**: Runtime displays wrong shader (e.g., editor shows "Horizontal Gradient Bands" but runtime shows "Plasma Vibrant")  
-**Cause**: Shader IDs are out of sync between `shader_presets.cpp` and `minimal_intro/main.cpp`  
-**Solution**: Verify that the array index in `fragment_shaders[]` matches the ID in `g_shader_presets[]`
+**Problem**: Runtime displays the wrong shader  
+**Cause**: Invalid `shader_scene_id` in cue data or missing preset ID  
+**Solution**: Verify `shader_scene_id` exists in `g_shader_presets[]` and cues reference valid IDs
 
-**Problem**: New shader appears in editor but crashes at runtime  
-**Cause**: Forgot to add shader to `minimal_intro/main.cpp`  
-**Solution**: Add the shader to both files and rebuild
+**Problem**: New shader appears in editor but not runtime  
+**Cause**: Build is stale or shader failed to compile at runtime  
+**Solution**: Rebuild `minimal_intro`, then check runtime compile errors for that shader ID
 
-**Problem**: New shader works in editor but runtime always shows default shader (ID 0)  
-**Cause**: Hardcoded shader validation check limiting max shader ID (e.g., `shader_id > 9`)  
+**Problem**: Runtime always falls back to shader ID 0  
+**Cause**: Invalid cue ID or hardcoded validation in downstream examples  
 **Solution**: Search for hardcoded validation and replace with dynamic check:
 ```cpp
 // ❌ BAD - Hardcoded limit
@@ -224,7 +197,7 @@ if (cue.shader_scene_id < 0 || cue.shader_scene_id > 9) {
 }
 
 // ✅ GOOD - Dynamic limit
-const int num_shaders = sizeof(fragment_shaders) / sizeof(fragment_shaders[0]);
+const int num_shaders = GetRuntimeShaderCount();
 if (cue.shader_scene_id < 0 || cue.shader_scene_id >= num_shaders) {
     cue.shader_scene_id = 0;
 }

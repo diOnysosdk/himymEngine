@@ -13,8 +13,18 @@ namespace editor {
 using rev::runtime::ColorRGB;
 using rev::runtime::ImageCue;
 using rev::runtime::TextCue;
+using rev::runtime::ScrollTextCue;
 using rev::runtime::MusicCue;
 using rev::runtime::MeshCue;
+
+enum CueType {
+    CueTypeShader = 0,
+    CueTypeImage = 1,
+    CueTypeText = 2,
+    CueTypeScrollText = 3,
+    CueTypeMusic = 4,
+    CueTypeMesh = 5,
+};
 
 // Forward declarations
 struct EditorContext;
@@ -92,6 +102,10 @@ struct SceneBlock {
     TextCue* text_cues;
     int text_cue_count;
     int text_cue_capacity;
+
+    ScrollTextCue* scroll_text_cues;
+    int scroll_text_cue_count;
+    int scroll_text_cue_capacity;
     
     MusicCue* music_cues;
     int music_cue_count;
@@ -143,7 +157,7 @@ struct EditorContext {
     float timeline_scroll;
     int selected_scene_index;
     int selected_cue_index;
-    int selected_cue_type;      // 0=shader, 1=image, 2=text, 3=music, 4=mesh
+    int selected_cue_type;      // See CueType
     
     // Playback
     float current_time;
@@ -182,6 +196,11 @@ struct EditorContext {
     TextCue editing_text;
     bool text_modal_open;
     bool text_modal_request_open;
+
+    // Scroll text modal state
+    ScrollTextCue editing_scroll_text;
+    bool scroll_text_modal_open;
+    bool scroll_text_modal_request_open;
     
     // Installed Windows fonts (for font picker)
     char** installed_fonts;
@@ -214,7 +233,7 @@ struct EditorContext {
     bool curve_editor_modal_request_open;
     bool point_properties_modal_open;
     int editing_curve_index;           // Index of curve being edited
-    int editing_curve_cue_type;        // 0=shader, 1=image, 2=text, 4=mesh
+    int editing_curve_cue_type;        // See CueType (music has no curve slots)
     int editing_curve_field;           // Which field (custom per cue type)
     char editing_curve_label[64];     // Display name (e.g., "Image X Position")
     
@@ -252,6 +271,7 @@ void RenderShaderModal(EditorContext* editor);
 void RenderMusicModal(EditorContext* editor);
 void RenderImageModal(EditorContext* editor);
 void RenderTextModal (EditorContext* editor);
+void RenderScrollTextModal(EditorContext* editor);
 void RenderMeshModal (EditorContext* editor);
 void RenderProperties(EditorContext* editor);
 void RenderAssetBrowser(EditorContext* editor);
@@ -274,12 +294,14 @@ SceneBlock* GetScene(EditorContext* editor, int scene_index);
 int AddShaderCue(SceneBlock* scene, const ShaderCue& cue);
 int AddImageCue (SceneBlock* scene, const ImageCue&  cue);
 int AddTextCue  (SceneBlock* scene, const TextCue&   cue);
+int AddScrollTextCue(SceneBlock* scene, const ScrollTextCue& cue);
 int AddMusicCue (SceneBlock* scene, const MusicCue&  cue);
 int AddMeshCue  (SceneBlock* scene, const MeshCue&   cue);
 
 void DeleteShaderCue(SceneBlock* scene, int cue_index);
 void DeleteImageCue (SceneBlock* scene, int cue_index);
 void DeleteTextCue  (SceneBlock* scene, int cue_index);
+void DeleteScrollTextCue(SceneBlock* scene, int cue_index);
 void DeleteMusicCue (SceneBlock* scene, int cue_index);
 void DeleteMeshCue  (SceneBlock* scene, int cue_index);
 

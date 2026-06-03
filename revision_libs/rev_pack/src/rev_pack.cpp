@@ -249,7 +249,7 @@ static bool ParseTextAssetLine(const char* line, char* key_out, char* path_out) 
 
 static bool IsOptionalBakedTextAsset(const char* key, const char* path) {
     if (!key || !path) return false;
-    if (strncmp(key, "text_s", 6) != 0) return false;
+    if (strncmp(key, "text_s", 6) != 0 && strncmp(key, "scroll_s", 8) != 0) return false;
     if (!strstr(path, ".png")) return false;
     if (!strstr(path, "project_assets")) return false;
     return true;
@@ -271,17 +271,18 @@ PackResult PackAssets(const char* cues_path,
 
     AssetRef refs[kMaxAssets];
     int ref_count = 0;
-    bool in_image = false, in_music = false, in_mesh = false, in_text = false;
+    bool in_image = false, in_music = false, in_mesh = false, in_text = false, in_scroll_text = false;
     char line[1024];
 
     while (fgets(line, sizeof(line), cues)) {
         char* s = line;
         while (*s == ' ' || *s == '\t') s++;
-        if (strstr(s, "[image_cues]")) { in_image = true; in_music = false; in_mesh = false; in_text = false; continue; }
-        if (strstr(s, "[music_cues]")) { in_image = false; in_music = true; in_mesh = false; in_text = false; continue; }
-        if (strstr(s, "[mesh_cues]"))  { in_image = false; in_music = false; in_mesh = true;  in_text = false; continue; }
-        if (strstr(s, "[text_cues]"))  { in_image = false; in_music = false; in_mesh = false; in_text = true;  continue; }
-        if (s[0] == '[') { in_image = false; in_music = false; in_mesh = false; in_text = false; continue; }
+        if (strstr(s, "[image_cues]"))       { in_image = true;  in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; continue; }
+        if (strstr(s, "[music_cues]"))       { in_image = false; in_music = true;  in_mesh = false; in_text = false; in_scroll_text = false; continue; }
+        if (strstr(s, "[mesh_cues]"))        { in_image = false; in_music = false; in_mesh = true;  in_text = false; in_scroll_text = false; continue; }
+        if (strstr(s, "[text_cues]"))        { in_image = false; in_music = false; in_mesh = false; in_text = true;  in_scroll_text = false; continue; }
+        if (strstr(s, "[scroll_text_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = true;  continue; }
+        if (s[0] == '[') { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; continue; }
         if (s[0] == '#' || s[0] == '\r' || s[0] == '\n' || s[0] == '\0') continue;
 
         if ((in_image || in_music) && ref_count < kMaxAssets) {
@@ -290,7 +291,7 @@ PackResult PackAssets(const char* cues_path,
         } else if (in_mesh && ref_count < kMaxAssets) {
             if (ParseMeshAssetLine(s, refs[ref_count].key, refs[ref_count].path))
                 ref_count++;
-        } else if (in_text && ref_count < kMaxAssets) {
+        } else if ((in_text || in_scroll_text) && ref_count < kMaxAssets) {
             if (ParseTextAssetLine(s, refs[ref_count].key, refs[ref_count].path))
                 ref_count++;
         }

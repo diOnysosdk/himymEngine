@@ -7,6 +7,207 @@
 namespace rev {
 namespace editor {
 
+namespace {
+
+void UpdateCurveRefAfterDelete(int* ref, int deleted_curve)
+{
+    if (!ref) return;
+    if (*ref == deleted_curve) {
+        *ref = -1;
+    } else if (*ref > deleted_curve) {
+        --(*ref);
+    }
+}
+
+void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
+{
+    if (!project || deleted_curve < 0) return;
+
+    for (int si = 0; si < project->scene_count; ++si) {
+        SceneBlock* scene = &project->scenes[si];
+
+        for (int i = 0; i < scene->shader_cue_count; ++i) {
+            ShaderCue* cue = &scene->shader_cues[i];
+            UpdateCurveRefAfterDelete(&cue->curve_speed, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_intensity, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_warp, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_exposure, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_fade, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_palette_low_r, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_palette_low_g, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_palette_low_b, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_palette_mid_r, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_palette_mid_g, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_palette_mid_b, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_palette_high_r, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_palette_high_g, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_palette_high_b, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_opacity, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_exposure_ramp, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_fade_ramp, deleted_curve);
+        }
+
+        for (int i = 0; i < scene->image_cue_count; ++i) {
+            ImageCue* cue = &scene->image_cues[i];
+            UpdateCurveRefAfterDelete(&cue->curve_x, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_y, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_scale, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_opacity, deleted_curve);
+        }
+
+        for (int i = 0; i < scene->text_cue_count; ++i) {
+            TextCue* cue = &scene->text_cues[i];
+            UpdateCurveRefAfterDelete(&cue->curve_x, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_y, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_size, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_color_r, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_color_g, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_color_b, deleted_curve);
+        }
+
+        for (int i = 0; i < scene->mesh_cue_count; ++i) {
+            MeshCue* cue = &scene->mesh_cues[i];
+            UpdateCurveRefAfterDelete(&cue->curve_pos_x, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_pos_y, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_pos_z, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_rot_x, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_rot_y, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_rot_z, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_scale_x, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_scale_y, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_scale_z, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_color_r, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_color_g, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_color_b, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_color_a, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_mesh_size, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_metallic, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_roughness, deleted_curve);
+        }
+    }
+}
+
+void RegisterCurveUsage(int field,
+                        int curve_index,
+                        const char* field_label,
+                        const char* owner_label,
+                        int* usage_count,
+                        char* first_usage,
+                        size_t first_usage_size)
+{
+    if (field != curve_index || !usage_count || !first_usage || first_usage_size == 0) {
+        return;
+    }
+
+    ++(*usage_count);
+    if (first_usage[0] == '\0') {
+        snprintf(first_usage, first_usage_size, "%s @ %s", field_label, owner_label ? owner_label : "cue");
+    }
+}
+
+void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, size_t out_size)
+{
+    if (!out || out_size == 0) return;
+    out[0] = '\0';
+
+    if (!editor || !editor->project || curve_index < 0 || curve_index >= editor->project->curve_count) {
+        snprintf(out, out_size, "Curve %d", curve_index);
+        return;
+    }
+
+    int usage_count = 0;
+    char first_usage[192] = {};
+
+    for (int si = 0; si < editor->project->scene_count; ++si) {
+        SceneBlock* scene = &editor->project->scenes[si];
+        const char* scene_name = (scene->name[0] != '\0') ? scene->name : "Scene";
+
+        for (int i = 0; i < scene->shader_cue_count; ++i) {
+            ShaderCue* cue = &scene->shader_cues[i];
+            char owner[128] = {};
+            snprintf(owner, sizeof(owner), "%s/%s", scene_name, cue->shader_name[0] ? cue->shader_name : "shader");
+            RegisterCurveUsage(cue->curve_speed, curve_index, "Shader Speed", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_intensity, curve_index, "Shader Intensity", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_warp, curve_index, "Shader Warp", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_exposure, curve_index, "Shader Exposure", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_fade, curve_index, "Shader Fade", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_palette_low_r, curve_index, "Shader Low R", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_palette_low_g, curve_index, "Shader Low G", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_palette_low_b, curve_index, "Shader Low B", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_palette_mid_r, curve_index, "Shader Mid R", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_palette_mid_g, curve_index, "Shader Mid G", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_palette_mid_b, curve_index, "Shader Mid B", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_palette_high_r, curve_index, "Shader High R", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_palette_high_g, curve_index, "Shader High G", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_palette_high_b, curve_index, "Shader High B", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_opacity, curve_index, "Shader Opacity", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_exposure_ramp, curve_index, "Shader Exposure Ramp", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_fade_ramp, curve_index, "Shader Fade Ramp", owner, &usage_count, first_usage, sizeof(first_usage));
+        }
+
+        for (int i = 0; i < scene->image_cue_count; ++i) {
+            ImageCue* cue = &scene->image_cues[i];
+            char owner[128] = {};
+            snprintf(owner, sizeof(owner), "%s/%s", scene_name, cue->asset_key[0] ? cue->asset_key : "image");
+            RegisterCurveUsage(cue->curve_x, curve_index, "Image X", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_y, curve_index, "Image Y", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_scale, curve_index, "Image Scale", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_opacity, curve_index, "Image Opacity", owner, &usage_count, first_usage, sizeof(first_usage));
+        }
+
+        for (int i = 0; i < scene->text_cue_count; ++i) {
+            TextCue* cue = &scene->text_cues[i];
+            char snippet[48] = {};
+            if (cue->text[0] != '\0') {
+                strncpy_s(snippet, sizeof(snippet), cue->text, _TRUNCATE);
+            } else {
+                strncpy_s(snippet, sizeof(snippet), "text", _TRUNCATE);
+            }
+            char owner[128] = {};
+            snprintf(owner, sizeof(owner), "%s/%s", scene_name, snippet);
+            RegisterCurveUsage(cue->curve_x, curve_index, "Text X", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_y, curve_index, "Text Y", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_size, curve_index, "Text Size", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_color_r, curve_index, "Text Color R", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_color_g, curve_index, "Text Color G", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_color_b, curve_index, "Text Color B", owner, &usage_count, first_usage, sizeof(first_usage));
+        }
+
+        for (int i = 0; i < scene->mesh_cue_count; ++i) {
+            MeshCue* cue = &scene->mesh_cues[i];
+            char owner[128] = {};
+            snprintf(owner, sizeof(owner), "%s/%s", scene_name, cue->asset_key[0] ? cue->asset_key : "mesh");
+            RegisterCurveUsage(cue->curve_pos_x, curve_index, "Mesh Pos X", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_pos_y, curve_index, "Mesh Pos Y", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_pos_z, curve_index, "Mesh Pos Z", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_rot_x, curve_index, "Mesh Rot X", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_rot_y, curve_index, "Mesh Rot Y", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_rot_z, curve_index, "Mesh Rot Z", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_scale_x, curve_index, "Mesh Scale X", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_scale_y, curve_index, "Mesh Scale Y", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_scale_z, curve_index, "Mesh Scale Z", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_color_r, curve_index, "Mesh Color R", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_color_g, curve_index, "Mesh Color G", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_color_b, curve_index, "Mesh Color B", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_color_a, curve_index, "Mesh Color A", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_mesh_size, curve_index, "Mesh Size", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_metallic, curve_index, "Mesh Metallic", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_roughness, curve_index, "Mesh Roughness", owner, &usage_count, first_usage, sizeof(first_usage));
+        }
+    }
+
+    int points = editor->project->curves[curve_index].point_count;
+    if (usage_count <= 0) {
+        snprintf(out, out_size, "Curve %d - Unused (%d pts)", curve_index, points);
+    } else if (usage_count == 1) {
+        snprintf(out, out_size, "Curve %d - %s (%d pts)", curve_index, first_usage, points);
+    } else {
+        snprintf(out, out_size, "Curve %d - %s (+%d) (%d pts)", curve_index, first_usage, usage_count - 1, points);
+    }
+}
+
+} // namespace
+
 void RenderTimeline(EditorContext* editor) {
     if (!editor) return;
     
@@ -104,7 +305,7 @@ void RenderTimeline(EditorContext* editor) {
             
             // Show cue counts
             if (scene->shader_cue_count > 0 || scene->image_cue_count > 0 || 
-                scene->text_cue_count > 0 || scene->music_cue_count > 0 ||
+                scene->text_cue_count > 0 || scene->scroll_text_cue_count > 0 || scene->music_cue_count > 0 ||
                 scene->mesh_cue_count > 0) {
                 ImGui::Indent();
                 if (scene->shader_cue_count > 0) {
@@ -115,6 +316,9 @@ void RenderTimeline(EditorContext* editor) {
                 }
                 if (scene->text_cue_count > 0) {
                     ImGui::Text("  Text: %d", scene->text_cue_count);
+                }
+                if (scene->scroll_text_cue_count > 0) {
+                    ImGui::Text("  Scroll Text: %d", scene->scroll_text_cue_count);
                 }
                 if (scene->music_cue_count > 0) {
                     ImGui::Text("  Music: %d", scene->music_cue_count);
@@ -221,7 +425,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::Button(scene->shader_cues[i].shader_name)) {
                         editor->editing_shader = scene->shader_cues[i];
                         editor->selected_cue_index = i;
-                        editor->selected_cue_type = 0;
+                        editor->selected_cue_type = CueTypeShader;
                         editor->shader_modal_request_open = true;
                     }
                     ImGui::SameLine();
@@ -242,7 +446,7 @@ void RenderProperties(EditorContext* editor) {
                 // Immediately open modal for the new shader
                 editor->editing_shader = scene->shader_cues[new_index];
                 editor->selected_cue_index = new_index;
-                editor->selected_cue_type = 0;
+                editor->selected_cue_type = CueTypeShader;
                 editor->shader_modal_request_open = true;
                 editor->project->modified = true;
             }
@@ -270,7 +474,7 @@ void RenderProperties(EditorContext* editor) {
                 int new_index = AddImageCue(scene, cue);
                 editor->editing_image = scene->image_cues[new_index];
                 editor->selected_cue_index = new_index;
-                editor->selected_cue_type = 1;  // image
+                editor->selected_cue_type = CueTypeImage;
                 editor->image_modal_request_open = true;
                 editor->project->modified = true;
             }
@@ -299,8 +503,60 @@ void RenderProperties(EditorContext* editor) {
                 int new_index = AddTextCue(scene, cue);
                 editor->editing_text = scene->text_cues[new_index];
                 editor->selected_cue_index = new_index;
-                editor->selected_cue_type = 2;  // text
+                editor->selected_cue_type = CueTypeText;
                 editor->text_modal_request_open = true;
+                editor->project->modified = true;
+            }
+
+            if (ImGui::Button("+ Scroll Text Cue")) {
+                ScrollTextCue cue = {};
+                strncpy_s(cue.text, sizeof(cue.text), "SCROLL TEXT", _TRUNCATE);
+                strncpy_s(cue.font_name, sizeof(cue.font_name), "Arial", _TRUNCATE);
+                cue.x = 0.5f;
+                cue.y = 0.9f;
+                cue.size = 40.0f;
+                cue.color = {1.0f, 1.0f, 1.0f};
+                cue.opacity = 1.0f;
+                cue.cue_start = 0.0f;
+                cue.cue_end = scene->duration;
+                cue.layer_order = 0;
+                cue.blend_mode = 0;
+                cue.style_id = 0;
+                cue.direction = 0;
+                cue.loop_mode = 0;
+                cue.speed = 0.25f;
+                cue.wrap_gap = 0.2f;
+                cue.spacing = 1.0f;
+                cue.slant_deg = 0.0f;
+                cue.wave_amp = 0.0f;
+                cue.wave_freq = 1.0f;
+                cue.jitter_amp = 0.0f;
+                cue.jitter_freq = 1.0f;
+                cue.glow = 0.0f;
+                cue.shadow = 0.0f;
+                cue.outline = 0.0f;
+                cue.chroma_shift = 0.0f;
+                cue.distortion = 0.0f;
+                cue.bake_mode = 0;
+                cue.baked_asset_key[0] = '\0';
+                cue.baked_asset_path[0] = '\0';
+                cue.curve_x = -1;
+                cue.curve_y = -1;
+                cue.curve_speed = -1;
+                cue.curve_size = -1;
+                cue.curve_opacity = -1;
+                cue.curve_color_r = -1;
+                cue.curve_color_g = -1;
+                cue.curve_color_b = -1;
+                cue.curve_wave_amp = -1;
+                cue.curve_wave_freq = -1;
+                cue.curve_jitter_amp = -1;
+                cue.curve_jitter_freq = -1;
+                int new_index = AddScrollTextCue(scene, cue);
+                editor->editing_scroll_text = scene->scroll_text_cues[new_index];
+                editor->selected_cue_index = new_index;
+                editor->selected_cue_type = CueTypeScrollText;
+                editor->scroll_text_modal_request_open = true;
                 editor->project->modified = true;
             }
             
@@ -311,7 +567,7 @@ void RenderProperties(EditorContext* editor) {
                 int new_index = AddMusicCue(scene, cue);
                 editor->editing_music = scene->music_cues[new_index];
                 editor->selected_cue_index = new_index;
-                editor->selected_cue_type = 3;  // music
+                editor->selected_cue_type = CueTypeMusic;
                 editor->music_modal_request_open = true;
                 editor->project->modified = true;
             }
@@ -337,7 +593,7 @@ void RenderProperties(EditorContext* editor) {
                 int new_index = AddMeshCue(scene, cue);
                 editor->editing_mesh = scene->mesh_cues[new_index];
                 editor->selected_cue_index = new_index;
-                editor->selected_cue_type = 4;
+                editor->selected_cue_type = CueTypeMesh;
                 editor->mesh_modal_request_open = true;
                 editor->project->modified = true;
             }
@@ -362,7 +618,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::Button(display_name)) {
                         editor->editing_image = scene->image_cues[i];
                         editor->selected_cue_index = i;
-                        editor->selected_cue_type = 1;
+                        editor->selected_cue_type = CueTypeImage;
                         editor->image_modal_request_open = true;
                     }
                     ImGui::SameLine();
@@ -385,7 +641,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::Button(display_text)) {
                         editor->editing_text = scene->text_cues[i];
                         editor->selected_cue_index = i;
-                        editor->selected_cue_type = 2;
+                        editor->selected_cue_type = CueTypeText;
                         editor->text_modal_request_open = true;
                     }
                     ImGui::SameLine();
@@ -397,6 +653,29 @@ void RenderProperties(EditorContext* editor) {
                 }
             }
             
+            // Display existing scroll text cues
+            if (scene->scroll_text_cue_count > 0) {
+                ImGui::Text("Scroll Text Cues:");
+                for (int i = 0; i < scene->scroll_text_cue_count; ++i) {
+                    ImGui::PushID(3500 + i);
+                    const char* display_text = scene->scroll_text_cues[i].text[0] != '\0'
+                        ? scene->scroll_text_cues[i].text
+                        : "(no scroll text)";
+                    if (ImGui::Button(display_text)) {
+                        editor->editing_scroll_text = scene->scroll_text_cues[i];
+                        editor->selected_cue_index = i;
+                        editor->selected_cue_type = CueTypeScrollText;
+                        editor->scroll_text_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X")) {
+                        DeleteScrollTextCue(scene, i);
+                        editor->project->modified = true;
+                    }
+                    ImGui::PopID();
+                }
+            }
+
             // Display existing music cues
             if (scene->music_cue_count > 0) {
                 ImGui::Text("Music Cues:");
@@ -408,7 +687,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::Button(display_name)) {
                         editor->editing_music = scene->music_cues[i];
                         editor->selected_cue_index = i;
-                        editor->selected_cue_type = 3;
+                        editor->selected_cue_type = CueTypeMusic;
                         editor->music_modal_request_open = true;
                     }
                     ImGui::SameLine();
@@ -434,7 +713,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::Button(label)) {
                         editor->editing_mesh = *mc;
                         editor->selected_cue_index = i;
-                        editor->selected_cue_type = 4;
+                        editor->selected_cue_type = CueTypeMesh;
                         editor->mesh_modal_request_open = true;
                     }
                     ImGui::SameLine();
@@ -590,12 +869,14 @@ void RenderCurveEditor(EditorContext* editor) {
         ImGui::SameLine();
         if (editor->selected_curve_index >= 0 && ImGui::Button("Delete Curve")) {
             if (editor->selected_curve_index < editor->project->curve_count) {
+                const int deleted_curve = editor->selected_curve_index;
                 rev::curve::DestroyCurve(editor->project->curves[editor->selected_curve_index]);
                 // Shift remaining curves
                 for (int i = editor->selected_curve_index; i < editor->project->curve_count - 1; ++i) {
                     editor->project->curves[i] = editor->project->curves[i + 1];
                 }
                 editor->project->curve_count--;
+                ReindexCurveReferencesAfterDelete(editor->project, deleted_curve);
                 editor->selected_curve_index = -1;
                 editor->project->modified = true;
             }
@@ -609,12 +890,133 @@ void RenderCurveEditor(EditorContext* editor) {
             ImGui::Text("Select Curve:");
             for (int i = 0; i < editor->project->curve_count; ++i) {
                 ImGui::PushID(i);
-                char label[32];
-                sprintf_s(label, sizeof(label), "Curve %d (%d pts)", i, editor->project->curves[i].point_count);
+                char label[256] = {};
+                BuildCurveDisplayLabel(editor, i, label, sizeof(label));
                 if (ImGui::Selectable(label, editor->selected_curve_index == i)) {
                     editor->selected_curve_index = i;
                 }
                 ImGui::PopID();
+            }
+        }
+
+        ImGui::Separator();
+
+        // Assign an existing curve to another parameter on the currently selected cue.
+        if (editor->selected_curve_index >= 0 && editor->selected_curve_index < editor->project->curve_count &&
+            editor->selected_scene_index >= 0 && editor->selected_scene_index < editor->project->scene_count &&
+            editor->selected_cue_index >= 0) {
+            SceneBlock* scene = &editor->project->scenes[editor->selected_scene_index];
+            int* target_fields[24] = {};
+            const char* target_names[24] = {};
+            int target_count = 0;
+
+            auto add_target = [&](const char* name, int* field) {
+                if (!name || !field || target_count >= 24) return;
+                target_names[target_count] = name;
+                target_fields[target_count] = field;
+                ++target_count;
+            };
+
+            if (editor->selected_cue_type == CueTypeShader && editor->selected_cue_index < scene->shader_cue_count) {
+                ShaderCue* cue = &scene->shader_cues[editor->selected_cue_index];
+                add_target("Shader Speed", &cue->curve_speed);
+                add_target("Shader Intensity", &cue->curve_intensity);
+                add_target("Shader Warp", &cue->curve_warp);
+                add_target("Shader Exposure", &cue->curve_exposure);
+                add_target("Shader Fade", &cue->curve_fade);
+                add_target("Shader Low R", &cue->curve_palette_low_r);
+                add_target("Shader Low G", &cue->curve_palette_low_g);
+                add_target("Shader Low B", &cue->curve_palette_low_b);
+                add_target("Shader Mid R", &cue->curve_palette_mid_r);
+                add_target("Shader Mid G", &cue->curve_palette_mid_g);
+                add_target("Shader Mid B", &cue->curve_palette_mid_b);
+                add_target("Shader High R", &cue->curve_palette_high_r);
+                add_target("Shader High G", &cue->curve_palette_high_g);
+                add_target("Shader High B", &cue->curve_palette_high_b);
+                add_target("Shader Opacity", &cue->curve_opacity);
+                add_target("Shader Exposure Ramp", &cue->curve_exposure_ramp);
+                add_target("Shader Fade Ramp", &cue->curve_fade_ramp);
+            } else if (editor->selected_cue_type == CueTypeImage && editor->selected_cue_index < scene->image_cue_count) {
+                ImageCue* cue = &scene->image_cues[editor->selected_cue_index];
+                add_target("Image X", &cue->curve_x);
+                add_target("Image Y", &cue->curve_y);
+                add_target("Image Scale", &cue->curve_scale);
+                add_target("Image Opacity", &cue->curve_opacity);
+            } else if (editor->selected_cue_type == CueTypeText && editor->selected_cue_index < scene->text_cue_count) {
+                TextCue* cue = &scene->text_cues[editor->selected_cue_index];
+                add_target("Text X", &cue->curve_x);
+                add_target("Text Y", &cue->curve_y);
+                add_target("Text Size", &cue->curve_size);
+                add_target("Text Color R", &cue->curve_color_r);
+                add_target("Text Color G", &cue->curve_color_g);
+                add_target("Text Color B", &cue->curve_color_b);
+            } else if (editor->selected_cue_type == CueTypeScrollText && editor->selected_cue_index < scene->scroll_text_cue_count) {
+                ScrollTextCue* cue = &scene->scroll_text_cues[editor->selected_cue_index];
+                add_target("Scroll X", &cue->curve_x);
+                add_target("Scroll Y", &cue->curve_y);
+                add_target("Scroll Speed", &cue->curve_speed);
+                add_target("Scroll Size", &cue->curve_size);
+                add_target("Scroll Opacity", &cue->curve_opacity);
+                add_target("Scroll Color R", &cue->curve_color_r);
+                add_target("Scroll Color G", &cue->curve_color_g);
+                add_target("Scroll Color B", &cue->curve_color_b);
+                add_target("Scroll Wave Amp", &cue->curve_wave_amp);
+                add_target("Scroll Wave Freq", &cue->curve_wave_freq);
+                add_target("Scroll Jitter Amp", &cue->curve_jitter_amp);
+                add_target("Scroll Jitter Freq", &cue->curve_jitter_freq);
+            } else if (editor->selected_cue_type == CueTypeMesh && editor->selected_cue_index < scene->mesh_cue_count) {
+                MeshCue* cue = &scene->mesh_cues[editor->selected_cue_index];
+                add_target("Mesh Pos X", &cue->curve_pos_x);
+                add_target("Mesh Pos Y", &cue->curve_pos_y);
+                add_target("Mesh Pos Z", &cue->curve_pos_z);
+                add_target("Mesh Rot X", &cue->curve_rot_x);
+                add_target("Mesh Rot Y", &cue->curve_rot_y);
+                add_target("Mesh Rot Z", &cue->curve_rot_z);
+                add_target("Mesh Scale X", &cue->curve_scale_x);
+                add_target("Mesh Scale Y", &cue->curve_scale_y);
+                add_target("Mesh Scale Z", &cue->curve_scale_z);
+                add_target("Mesh Color R", &cue->curve_color_r);
+                add_target("Mesh Color G", &cue->curve_color_g);
+                add_target("Mesh Color B", &cue->curve_color_b);
+                add_target("Mesh Color A", &cue->curve_color_a);
+                add_target("Mesh Size", &cue->curve_mesh_size);
+                add_target("Mesh Metallic", &cue->curve_metallic);
+                add_target("Mesh Roughness", &cue->curve_roughness);
+            }
+
+            if (target_count > 0) {
+                static int selected_target = 0;
+                if (selected_target >= target_count) selected_target = 0;
+
+                ImGui::Text("Reuse Existing Curve on Current Cue:");
+                ImGui::SetNextItemWidth(280.0f);
+                ImGui::Combo("Parameter", &selected_target, target_names, target_count);
+
+                if (ImGui::Button("Assign Selected Curve")) {
+                    *target_fields[selected_target] = editor->selected_curve_index;
+
+                    // Keep modal editing copies in sync when a cue is open.
+                    if (editor->selected_cue_type == CueTypeShader && editor->selected_cue_index < scene->shader_cue_count) {
+                        editor->editing_shader = scene->shader_cues[editor->selected_cue_index];
+                    } else if (editor->selected_cue_type == CueTypeImage && editor->selected_cue_index < scene->image_cue_count) {
+                        editor->editing_image = scene->image_cues[editor->selected_cue_index];
+                    } else if (editor->selected_cue_type == CueTypeText && editor->selected_cue_index < scene->text_cue_count) {
+                        editor->editing_text = scene->text_cues[editor->selected_cue_index];
+                    } else if (editor->selected_cue_type == CueTypeScrollText && editor->selected_cue_index < scene->scroll_text_cue_count) {
+                        editor->editing_scroll_text = scene->scroll_text_cues[editor->selected_cue_index];
+                    } else if (editor->selected_cue_type == CueTypeMesh && editor->selected_cue_index < scene->mesh_cue_count) {
+                        editor->editing_mesh = scene->mesh_cues[editor->selected_cue_index];
+                    }
+
+                    editor->project->modified = true;
+                }
+
+                ImGui::SameLine();
+                if (ImGui::Button("Open Selected Curve")) {
+                    editor->editing_curve_index = editor->selected_curve_index;
+                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", target_names[selected_target]);
+                    editor->curve_editor_modal_request_open = true;
+                }
             }
         }
         
