@@ -1,2 +1,0 @@
-text_s00_c00.png|intros/3/project_assets/text_s00_c00.png|35A642E9
-mesh_0|intros/3/project_assets/world.glb|AC349E1D

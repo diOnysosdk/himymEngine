@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <mutex>
 #include <windows.h>
 
 namespace rev {
@@ -11,7 +12,7 @@ namespace pack {
 // CRC32 (ISO 3309 table)
 // ---------------------------------------------------------------------------
 static uint32_t s_crc_table[256];
-static bool     s_crc_init = false;
+static std::once_flag s_crc_init_once;
 
 static void InitCRCTable() {
     for (uint32_t i = 0; i < 256; ++i) {
@@ -20,11 +21,10 @@ static void InitCRCTable() {
             c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
         s_crc_table[i] = c;
     }
-    s_crc_init = true;
 }
 
 uint32_t CRC32(const unsigned char* data, size_t size) {
-    if (!s_crc_init) InitCRCTable();
+    std::call_once(s_crc_init_once, InitCRCTable);
     uint32_t crc = 0xFFFFFFFFu;
     for (size_t i = 0; i < size; ++i)
         crc = s_crc_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);

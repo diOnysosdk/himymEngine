@@ -83,6 +83,7 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
             UpdateCurveRefAfterDelete(&cue->curve_mesh_size, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_metallic, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_roughness, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_fov, deleted_curve);
         }
     }
 }
@@ -193,6 +194,7 @@ void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, s
             RegisterCurveUsage(cue->curve_mesh_size, curve_index, "Mesh Size", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_metallic, curve_index, "Mesh Metallic", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_roughness, curve_index, "Mesh Roughness", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_fov, curve_index, "Mesh Camera FOV", owner, &usage_count, first_usage, sizeof(first_usage));
         }
     }
 
@@ -204,6 +206,73 @@ void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, s
     } else {
         snprintf(out, out_size, "Curve %d - %s (+%d) (%d pts)", curve_index, first_usage, usage_count - 1, points);
     }
+}
+
+static int AllocateCurveSlotForPanel(EditorContext* editor, float start_v, float end_v)
+{
+    if (!editor || !editor->project) return -1;
+
+    if (editor->project->curve_count < rev::runtime::kMaxCurves) {
+        int idx = editor->project->curve_count;
+        editor->project->curves[idx] = rev::curve::CreateCurve();
+        rev::curve::AddPoint(editor->project->curves[idx], 0.0f, start_v);
+        rev::curve::AddPoint(editor->project->curves[idx], 1.0f, end_v);
+        editor->project->curve_count++;
+        return idx;
+    }
+
+    bool used[rev::runtime::kMaxCurves] = {};
+
+    // Build usage map by scanning all cue references.
+    for (int si = 0; si < editor->project->scene_count; ++si) {
+        SceneBlock* scene = &editor->project->scenes[si];
+        auto mark = [&](int idx) { if (idx >= 0 && idx < rev::runtime::kMaxCurves) used[idx] = true; };
+
+        for (int i = 0; i < scene->shader_cue_count; ++i) {
+            ShaderCue* cue = &scene->shader_cues[i];
+            mark(cue->curve_speed); mark(cue->curve_intensity); mark(cue->curve_warp);
+            mark(cue->curve_exposure); mark(cue->curve_fade); mark(cue->curve_palette_low_r);
+            mark(cue->curve_palette_low_g); mark(cue->curve_palette_low_b); mark(cue->curve_palette_mid_r);
+            mark(cue->curve_palette_mid_g); mark(cue->curve_palette_mid_b); mark(cue->curve_palette_high_r);
+            mark(cue->curve_palette_high_g); mark(cue->curve_palette_high_b); mark(cue->curve_opacity);
+            mark(cue->curve_exposure_ramp); mark(cue->curve_fade_ramp);
+        }
+        for (int i = 0; i < scene->image_cue_count; ++i) {
+            ImageCue* cue = &scene->image_cues[i];
+            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_scale); mark(cue->curve_opacity);
+        }
+        for (int i = 0; i < scene->text_cue_count; ++i) {
+            TextCue* cue = &scene->text_cues[i];
+            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_size);
+            mark(cue->curve_color_r); mark(cue->curve_color_g); mark(cue->curve_color_b);
+        }
+        for (int i = 0; i < scene->scroll_text_cue_count; ++i) {
+            ScrollTextCue* cue = &scene->scroll_text_cues[i];
+            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_speed); mark(cue->curve_size);
+            mark(cue->curve_opacity); mark(cue->curve_color_r); mark(cue->curve_color_g); mark(cue->curve_color_b);
+            mark(cue->curve_wave_amp); mark(cue->curve_wave_freq); mark(cue->curve_jitter_amp); mark(cue->curve_jitter_freq);
+        }
+        for (int i = 0; i < scene->mesh_cue_count; ++i) {
+            MeshCue* cue = &scene->mesh_cues[i];
+            mark(cue->curve_pos_x); mark(cue->curve_pos_y); mark(cue->curve_pos_z);
+            mark(cue->curve_rot_x); mark(cue->curve_rot_y); mark(cue->curve_rot_z);
+            mark(cue->curve_scale_x); mark(cue->curve_scale_y); mark(cue->curve_scale_z);
+            mark(cue->curve_color_r); mark(cue->curve_color_g); mark(cue->curve_color_b); mark(cue->curve_color_a);
+            mark(cue->curve_mesh_size); mark(cue->curve_metallic); mark(cue->curve_roughness); mark(cue->curve_fov);
+        }
+    }
+
+    for (int i = 0; i < editor->project->curve_count; ++i) {
+        if (!used[i]) {
+            rev::curve::DestroyCurve(editor->project->curves[i]);
+            editor->project->curves[i] = rev::curve::CreateCurve();
+            rev::curve::AddPoint(editor->project->curves[i], 0.0f, start_v);
+            rev::curve::AddPoint(editor->project->curves[i], 1.0f, end_v);
+            return i;
+        }
+    }
+
+    return -1;
 }
 
 } // namespace
@@ -582,13 +651,17 @@ void RenderProperties(EditorContext* editor) {
                 cue.color[0]   = cue.color[1] = cue.color[2] = cue.color[3] = 1.0f;
                 cue.metallic   = 0.0f;
                 cue.roughness  = 0.5f;
+                cue.fov_deg    = 45.0f;
+                cue.cull_mode  = 0;
+                cue.use_imported_light = 0;
+                cue.use_imported_camera = 0;
                 cue.cue_start  = 0.0f;
                 cue.cue_end    = scene->duration;
                 cue.curve_pos_x = -1; cue.curve_pos_y = -1; cue.curve_pos_z = -1;
                 cue.curve_rot_x = -1; cue.curve_rot_y = -1; cue.curve_rot_z = -1;
                 cue.curve_scale_x = -1; cue.curve_scale_y = -1; cue.curve_scale_z = -1;
                 cue.curve_color_r = -1; cue.curve_color_g = -1; cue.curve_color_b = -1; cue.curve_color_a = -1;
-                cue.curve_mesh_size = -1; cue.curve_metallic = -1; cue.curve_roughness = -1;
+                cue.curve_mesh_size = -1; cue.curve_metallic = -1; cue.curve_roughness = -1; cue.curve_fov = -1;
                 snprintf(cue.asset_key, sizeof(cue.asset_key), "mesh_%d", scene->mesh_cue_count);
                 int new_index = AddMeshCue(scene, cue);
                 editor->editing_mesh = scene->mesh_cues[new_index];
@@ -853,16 +926,13 @@ void RenderCurveEditor(EditorContext* editor) {
         ImGui::Text("Curves: %d", editor->project->curve_count);
         
         if (ImGui::Button("+ New Curve")) {
-            // Resize curve array if needed
-            if (editor->project->curve_count >= 32) {
-                ImGui::Text("Maximum curves reached");
-            } else {
-                editor->project->curves[editor->project->curve_count] = rev::curve::CreateCurve();
-                rev::curve::AddPoint(editor->project->curves[editor->project->curve_count], 0.0f, 0.0f);
-                rev::curve::AddPoint(editor->project->curves[editor->project->curve_count], 1.0f, 1.0f);
-                editor->selected_curve_index = editor->project->curve_count;
-                editor->project->curve_count++;
+            int new_index = AllocateCurveSlotForPanel(editor, 0.0f, 1.0f);
+            if (new_index >= 0) {
+                editor->selected_curve_index = new_index;
                 editor->project->modified = true;
+            } else {
+                snprintf(editor->build_status_message, sizeof(editor->build_status_message), "No free curve slots (32/32 in use)");
+                editor->build_status_timer = 3.0f;
             }
         }
         
@@ -982,6 +1052,7 @@ void RenderCurveEditor(EditorContext* editor) {
                 add_target("Mesh Size", &cue->curve_mesh_size);
                 add_target("Mesh Metallic", &cue->curve_metallic);
                 add_target("Mesh Roughness", &cue->curve_roughness);
+                add_target("Mesh Camera FOV", &cue->curve_fov);
             }
 
             if (target_count > 0) {
@@ -1165,3 +1236,4 @@ void RenderCurveEditor(EditorContext* editor) {
 
 } // namespace editor
 } // namespace rev
+

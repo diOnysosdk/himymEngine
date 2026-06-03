@@ -10,10 +10,256 @@
 
 namespace rev {
 namespace editor {
+
+struct CurveTargetBinding {
+    const char* label;
+    int* curve_field;
+    float base_value;
+};
+
+static void MarkCurveUsed(bool* used, int curve_index) {
+    if (!used) return;
+    if (curve_index >= 0 && curve_index < rev::runtime::kMaxCurves) {
+        used[curve_index] = true;
+    }
+}
+
+static void BuildCurveUsageMap(ProjectData* project, bool* used) {
+    if (!project || !used) return;
+
+    for (int i = 0; i < rev::runtime::kMaxCurves; ++i) used[i] = false;
+
+    for (int s = 0; s < project->scene_count; ++s) {
+        SceneBlock* scene = &project->scenes[s];
+
+        for (int i = 0; i < scene->shader_cue_count; ++i) {
+            ShaderCue* cue = &scene->shader_cues[i];
+            MarkCurveUsed(used, cue->curve_speed);
+            MarkCurveUsed(used, cue->curve_intensity);
+            MarkCurveUsed(used, cue->curve_warp);
+            MarkCurveUsed(used, cue->curve_exposure);
+            MarkCurveUsed(used, cue->curve_fade);
+            MarkCurveUsed(used, cue->curve_palette_low_r);
+            MarkCurveUsed(used, cue->curve_palette_low_g);
+            MarkCurveUsed(used, cue->curve_palette_low_b);
+            MarkCurveUsed(used, cue->curve_palette_mid_r);
+            MarkCurveUsed(used, cue->curve_palette_mid_g);
+            MarkCurveUsed(used, cue->curve_palette_mid_b);
+            MarkCurveUsed(used, cue->curve_palette_high_r);
+            MarkCurveUsed(used, cue->curve_palette_high_g);
+            MarkCurveUsed(used, cue->curve_palette_high_b);
+            MarkCurveUsed(used, cue->curve_opacity);
+            MarkCurveUsed(used, cue->curve_exposure_ramp);
+            MarkCurveUsed(used, cue->curve_fade_ramp);
+        }
+
+        for (int i = 0; i < scene->image_cue_count; ++i) {
+            ImageCue* cue = &scene->image_cues[i];
+            MarkCurveUsed(used, cue->curve_x);
+            MarkCurveUsed(used, cue->curve_y);
+            MarkCurveUsed(used, cue->curve_scale);
+            MarkCurveUsed(used, cue->curve_opacity);
+        }
+
+        for (int i = 0; i < scene->text_cue_count; ++i) {
+            TextCue* cue = &scene->text_cues[i];
+            MarkCurveUsed(used, cue->curve_x);
+            MarkCurveUsed(used, cue->curve_y);
+            MarkCurveUsed(used, cue->curve_size);
+            MarkCurveUsed(used, cue->curve_color_r);
+            MarkCurveUsed(used, cue->curve_color_g);
+            MarkCurveUsed(used, cue->curve_color_b);
+        }
+
+        for (int i = 0; i < scene->scroll_text_cue_count; ++i) {
+            ScrollTextCue* cue = &scene->scroll_text_cues[i];
+            MarkCurveUsed(used, cue->curve_x);
+            MarkCurveUsed(used, cue->curve_y);
+            MarkCurveUsed(used, cue->curve_speed);
+            MarkCurveUsed(used, cue->curve_size);
+            MarkCurveUsed(used, cue->curve_opacity);
+            MarkCurveUsed(used, cue->curve_color_r);
+            MarkCurveUsed(used, cue->curve_color_g);
+            MarkCurveUsed(used, cue->curve_color_b);
+            MarkCurveUsed(used, cue->curve_wave_amp);
+            MarkCurveUsed(used, cue->curve_wave_freq);
+            MarkCurveUsed(used, cue->curve_jitter_amp);
+            MarkCurveUsed(used, cue->curve_jitter_freq);
+        }
+
+        for (int i = 0; i < scene->mesh_cue_count; ++i) {
+            MeshCue* cue = &scene->mesh_cues[i];
+            MarkCurveUsed(used, cue->curve_mesh_size);
+            MarkCurveUsed(used, cue->curve_pos_x);
+            MarkCurveUsed(used, cue->curve_pos_y);
+            MarkCurveUsed(used, cue->curve_pos_z);
+            MarkCurveUsed(used, cue->curve_rot_x);
+            MarkCurveUsed(used, cue->curve_rot_y);
+            MarkCurveUsed(used, cue->curve_rot_z);
+            MarkCurveUsed(used, cue->curve_scale_x);
+            MarkCurveUsed(used, cue->curve_scale_y);
+            MarkCurveUsed(used, cue->curve_scale_z);
+            MarkCurveUsed(used, cue->curve_color_r);
+            MarkCurveUsed(used, cue->curve_color_g);
+            MarkCurveUsed(used, cue->curve_color_b);
+            MarkCurveUsed(used, cue->curve_color_a);
+            MarkCurveUsed(used, cue->curve_metallic);
+            MarkCurveUsed(used, cue->curve_roughness);
+            MarkCurveUsed(used, cue->curve_fov);
+        }
+    }
+}
+
+static int AcquireCurveSlot(EditorContext* editor, float base_value, bool* reused_existing) {
+    if (reused_existing) *reused_existing = false;
+    if (!editor || !editor->project) return -1;
+
+    if (editor->project->curve_count < rev::runtime::kMaxCurves) {
+        int idx = editor->project->curve_count;
+        rev::curve::Curve& curve = editor->project->curves[idx];
+        curve = rev::curve::CreateCurve(16);
+        rev::curve::AddPoint(curve, 0.0f, base_value);
+        rev::curve::AddPoint(curve, 1.0f, base_value);
+        editor->project->curve_count++;
+        editor->project->modified = true;
+        return idx;
+    }
+
+    bool used[rev::runtime::kMaxCurves] = {};
+    BuildCurveUsageMap(editor->project, used);
+    for (int i = 0; i < editor->project->curve_count; ++i) {
+        if (!used[i]) {
+            rev::curve::DestroyCurve(editor->project->curves[i]);
+            editor->project->curves[i] = rev::curve::CreateCurve(16);
+            rev::curve::AddPoint(editor->project->curves[i], 0.0f, base_value);
+            rev::curve::AddPoint(editor->project->curves[i], 1.0f, base_value);
+            editor->project->modified = true;
+            if (reused_existing) *reused_existing = true;
+            return i;
+        }
+    }
+
+    return -1;
+}
+
 static float ClampCurveDuration(float duration) {
     if (duration < 0.01f) return 0.01f;
     if (duration > 3600.0f) return 3600.0f;
     return duration;
+}
+
+static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
+                                          CurveTargetBinding* out_targets,
+                                          int max_targets)
+{
+    if (!editor || !editor->project || !out_targets || max_targets <= 0) return 0;
+    if (editor->selected_scene_index < 0 || editor->selected_cue_index < 0) return 0;
+
+    SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+    if (!scene) return 0;
+
+    int count = 0;
+    auto add_target = [&](const char* label, int* field, float base_value) {
+        if (!label || !field || count >= max_targets) return;
+        out_targets[count].label = label;
+        out_targets[count].curve_field = field;
+        out_targets[count].base_value = base_value;
+        ++count;
+    };
+
+    const int cue_index = editor->selected_cue_index;
+    switch (editor->editing_curve_cue_type) {
+        case CueTypeShader:
+            if (cue_index >= scene->shader_cue_count) break;
+            {
+                ShaderCue* cue = &scene->shader_cues[cue_index];
+                add_target("Shader Speed", &cue->curve_speed, cue->speed);
+                add_target("Shader Intensity", &cue->curve_intensity, cue->intensity);
+                add_target("Shader Warp", &cue->curve_warp, cue->warp);
+                add_target("Shader Exposure", &cue->curve_exposure, cue->exposure_base);
+                add_target("Shader Fade", &cue->curve_fade, cue->fade_base);
+                add_target("Shader Palette Low R", &cue->curve_palette_low_r, cue->palette_low.r);
+                add_target("Shader Palette Low G", &cue->curve_palette_low_g, cue->palette_low.g);
+                add_target("Shader Palette Low B", &cue->curve_palette_low_b, cue->palette_low.b);
+                add_target("Shader Palette Mid R", &cue->curve_palette_mid_r, cue->palette_mid.r);
+                add_target("Shader Palette Mid G", &cue->curve_palette_mid_g, cue->palette_mid.g);
+                add_target("Shader Palette Mid B", &cue->curve_palette_mid_b, cue->palette_mid.b);
+                add_target("Shader Palette High R", &cue->curve_palette_high_r, cue->palette_high.r);
+                add_target("Shader Palette High G", &cue->curve_palette_high_g, cue->palette_high.g);
+                add_target("Shader Palette High B", &cue->curve_palette_high_b, cue->palette_high.b);
+                add_target("Shader Opacity", &cue->curve_opacity, cue->opacity);
+                add_target("Shader Exposure Ramp", &cue->curve_exposure_ramp, cue->exposure_ramp);
+                add_target("Shader Fade Ramp", &cue->curve_fade_ramp, cue->fade_ramp);
+            }
+            break;
+        case CueTypeImage:
+            if (cue_index >= scene->image_cue_count) break;
+            {
+                ImageCue* cue = &scene->image_cues[cue_index];
+                add_target("Image X Position", &cue->curve_x, cue->x);
+                add_target("Image Y Position", &cue->curve_y, cue->y);
+                add_target("Image Scale", &cue->curve_scale, cue->scale);
+                add_target("Image Opacity", &cue->curve_opacity, cue->opacity);
+            }
+            break;
+        case CueTypeText:
+            if (cue_index >= scene->text_cue_count) break;
+            {
+                TextCue* cue = &scene->text_cues[cue_index];
+                add_target("Text Size", &cue->curve_size, cue->size);
+                add_target("Text Color R", &cue->curve_color_r, cue->color.r);
+                add_target("Text Color G", &cue->curve_color_g, cue->color.g);
+                add_target("Text Color B", &cue->curve_color_b, cue->color.b);
+                add_target("Text X Position", &cue->curve_x, cue->x);
+                add_target("Text Y Position", &cue->curve_y, cue->y);
+            }
+            break;
+        case CueTypeScrollText:
+            if (cue_index >= scene->scroll_text_cue_count) break;
+            {
+                ScrollTextCue* cue = &scene->scroll_text_cues[cue_index];
+                add_target("Scroll X", &cue->curve_x, cue->x);
+                add_target("Scroll Y", &cue->curve_y, cue->y);
+                add_target("Scroll Speed", &cue->curve_speed, cue->speed);
+                add_target("Scroll Size", &cue->curve_size, cue->size);
+                add_target("Scroll Opacity", &cue->curve_opacity, cue->opacity);
+                add_target("Scroll Color R", &cue->curve_color_r, cue->color.r);
+                add_target("Scroll Color G", &cue->curve_color_g, cue->color.g);
+                add_target("Scroll Color B", &cue->curve_color_b, cue->color.b);
+                add_target("Scroll Wave Amp", &cue->curve_wave_amp, cue->wave_amp);
+                add_target("Scroll Wave Freq", &cue->curve_wave_freq, cue->wave_freq);
+                add_target("Scroll Jitter Amp", &cue->curve_jitter_amp, cue->jitter_amp);
+                add_target("Scroll Jitter Freq", &cue->curve_jitter_freq, cue->jitter_freq);
+            }
+            break;
+        case CueTypeMesh:
+            if (cue_index >= scene->mesh_cue_count) break;
+            {
+                MeshCue* cue = &scene->mesh_cues[cue_index];
+                add_target("Mesh Size", &cue->curve_mesh_size, cue->mesh_size);
+                add_target("Mesh Pos X", &cue->curve_pos_x, cue->pos[0]);
+                add_target("Mesh Pos Y", &cue->curve_pos_y, cue->pos[1]);
+                add_target("Mesh Pos Z", &cue->curve_pos_z, cue->pos[2]);
+                add_target("Mesh Rot X", &cue->curve_rot_x, cue->rot[0]);
+                add_target("Mesh Rot Y", &cue->curve_rot_y, cue->rot[1]);
+                add_target("Mesh Rot Z", &cue->curve_rot_z, cue->rot[2]);
+                add_target("Mesh Scale X", &cue->curve_scale_x, cue->scale[0]);
+                add_target("Mesh Scale Y", &cue->curve_scale_y, cue->scale[1]);
+                add_target("Mesh Scale Z", &cue->curve_scale_z, cue->scale[2]);
+                add_target("Mesh Color R", &cue->curve_color_r, cue->color[0]);
+                add_target("Mesh Color G", &cue->curve_color_g, cue->color[1]);
+                add_target("Mesh Color B", &cue->curve_color_b, cue->color[2]);
+                add_target("Mesh Color A", &cue->curve_color_a, cue->color[3]);
+                add_target("Mesh Metallic", &cue->curve_metallic, cue->metallic);
+                add_target("Mesh Roughness", &cue->curve_roughness, cue->roughness);
+                add_target("Mesh Camera FOV", &cue->curve_fov, cue->fov_deg);
+            }
+            break;
+        default:
+            break;
+    }
+
+    return count;
 }
 
 void RenderCurveEditorModal(EditorContext* editor) {
@@ -43,7 +289,70 @@ void RenderCurveEditorModal(EditorContext* editor) {
         }
 
         rev::curve::Curve* curve = &editor->project->curves[editor->editing_curve_index];
-        
+
+        CurveTargetBinding targets[24] = {};
+        const int target_count = BuildCurveTargetsForCurrentCue(editor, targets, 24);
+
+        int current_target = editor->editing_curve_field;
+        if (current_target < 0 || current_target >= target_count) {
+            current_target = -1;
+            for (int i = 0; i < target_count; ++i) {
+                if (targets[i].curve_field && *targets[i].curve_field == editor->editing_curve_index) {
+                    current_target = i;
+                    break;
+                }
+            }
+            if (current_target < 0 && target_count > 0) current_target = 0;
+        }
+
+        bool curve_slots_exhausted = false;
+        auto ActivateTarget = [&](int target_index) {
+            if (target_index < 0 || target_index >= target_count) return;
+            CurveTargetBinding& target = targets[target_index];
+            if (!target.curve_field) return;
+
+            if (*target.curve_field < 0) {
+                int new_curve_index = AcquireCurveSlot(editor, target.base_value, nullptr);
+                if (new_curve_index < 0) {
+                    curve_slots_exhausted = true;
+                    return;
+                }
+                *target.curve_field = new_curve_index;
+            }
+
+            editor->editing_curve_index = *target.curve_field;
+            editor->editing_curve_field = target_index;
+            snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", target.label);
+            editor->dragging_point_index = -1;
+            editor->selected_point_index = -1;
+        };
+
+        if (target_count > 0 && current_target >= 0) {
+            editor->editing_curve_field = current_target;
+            if (targets[current_target].label) {
+                snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", targets[current_target].label);
+            }
+
+            if (ImGui::ArrowButton("##curve_prev_param", ImGuiDir_Left)) {
+                int prev = (current_target + target_count - 1) % target_count;
+                ActivateTarget(prev);
+            }
+            ImGui::SameLine();
+            if (ImGui::ArrowButton("##curve_next_param", ImGuiDir_Right)) {
+                int next = (current_target + 1) % target_count;
+                ActivateTarget(next);
+            }
+            ImGui::SameLine();
+            ImGui::Text("Parameter %d/%d", current_target + 1, target_count);
+            if (curve_slots_exhausted) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(No free curve slots)");
+            }
+        }
+
+        // Refresh in case parameter navigation switched to a different curve.
+        curve = &editor->project->curves[editor->editing_curve_index];
+
         // Header with curve name
         ImGui::Text("Editing: %s", editor->editing_curve_label);
         ImGui::SameLine();
@@ -493,6 +802,7 @@ void RenderCurveEditorModal(EditorContext* editor) {
                             if (cue->curve_color_a == curve_index) cue->curve_color_a = -1;
                             if (cue->curve_metallic == curve_index) cue->curve_metallic = -1;
                             if (cue->curve_roughness == curve_index) cue->curve_roughness = -1;
+                            if (cue->curve_fov == curve_index) cue->curve_fov = -1;
                             editor->editing_mesh = *cue; // Update editing copy
                         }
                         editor->project->modified = true;
@@ -553,7 +863,7 @@ void RenderShaderModal(EditorContext* editor) {
 
         // Helper lambda for curve buttons
         auto OpenShaderCurve = [&](int& curve_field, const char* label, float current_value) {
-            if (curve_field < 0 && editor->project->curve_count < 32) {
+            if (curve_field < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                 // Create new curve
                 rev::curve::Curve& curve = editor->project->curves[editor->project->curve_count];
                 curve = rev::curve::CreateCurve(16);
@@ -1044,7 +1354,7 @@ void RenderImageModal(EditorContext* editor) {
                     ImageCue* actual_cue = &scene->image_cues[editor->selected_cue_index];
                     
                     // Create curve if it doesn't exist
-                    if (actual_cue->curve_x < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_x < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_x = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_x];
                         curve = rev::curve::CreateCurve(16);
@@ -1082,7 +1392,7 @@ void RenderImageModal(EditorContext* editor) {
                 if (scene && editor->selected_cue_index < scene->image_cue_count) {
                     ImageCue* actual_cue = &scene->image_cues[editor->selected_cue_index];
                     
-                    if (actual_cue->curve_y < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_y < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_y = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_y];
                         curve = rev::curve::CreateCurve(16);
@@ -1122,7 +1432,7 @@ void RenderImageModal(EditorContext* editor) {
                 if (scene && editor->selected_cue_index < scene->image_cue_count) {
                     ImageCue* actual_cue = &scene->image_cues[editor->selected_cue_index];
                     
-                    if (actual_cue->curve_scale < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_scale < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_scale = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_scale];
                         curve = rev::curve::CreateCurve(16);
@@ -1158,7 +1468,7 @@ void RenderImageModal(EditorContext* editor) {
                 if (scene && editor->selected_cue_index < scene->image_cue_count) {
                     ImageCue* actual_cue = &scene->image_cues[editor->selected_cue_index];
                     
-                    if (actual_cue->curve_opacity < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_opacity < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_opacity = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_opacity];
                         curve = rev::curve::CreateCurve(16);
@@ -1367,7 +1677,7 @@ void RenderTextModal(EditorContext* editor) {
                 if (scene && editor->selected_cue_index < scene->text_cue_count) {
                     TextCue* actual_cue = &scene->text_cues[editor->selected_cue_index];
                     
-                    if (actual_cue->curve_size < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_size < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_size = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_size];
                         curve = rev::curve::CreateCurve(16);
@@ -1412,7 +1722,7 @@ void RenderTextModal(EditorContext* editor) {
                 if (scene && editor->selected_cue_index < scene->text_cue_count) {
                     TextCue* actual_cue = &scene->text_cues[editor->selected_cue_index];
                     
-                    if (actual_cue->curve_color_r < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_color_r < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_color_r = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_color_r];
                         curve = rev::curve::CreateCurve(16);
@@ -1449,7 +1759,7 @@ void RenderTextModal(EditorContext* editor) {
                 if (scene && editor->selected_cue_index < scene->text_cue_count) {
                     TextCue* actual_cue = &scene->text_cues[editor->selected_cue_index];
                     
-                    if (actual_cue->curve_color_g < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_color_g < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_color_g = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_color_g];
                         curve = rev::curve::CreateCurve(16);
@@ -1486,7 +1796,7 @@ void RenderTextModal(EditorContext* editor) {
                 if (scene && editor->selected_cue_index < scene->text_cue_count) {
                     TextCue* actual_cue = &scene->text_cues[editor->selected_cue_index];
                     
-                    if (actual_cue->curve_color_b < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_color_b < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_color_b = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_color_b];
                         curve = rev::curve::CreateCurve(16);
@@ -1526,7 +1836,7 @@ void RenderTextModal(EditorContext* editor) {
                 if (scene && editor->selected_cue_index < scene->text_cue_count) {
                     TextCue* actual_cue = &scene->text_cues[editor->selected_cue_index];
                     
-                    if (actual_cue->curve_x < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_x < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_x = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_x];
                         curve = rev::curve::CreateCurve(16);
@@ -1562,7 +1872,7 @@ void RenderTextModal(EditorContext* editor) {
                 if (scene && editor->selected_cue_index < scene->text_cue_count) {
                     TextCue* actual_cue = &scene->text_cues[editor->selected_cue_index];
                     
-                    if (actual_cue->curve_y < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_y < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_y = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_y];
                         curve = rev::curve::CreateCurve(16);
@@ -1755,7 +2065,7 @@ void RenderScrollTextModal(EditorContext* editor) {
                         else if (curve_field == &cue->curve_jitter_freq) actual_field = &actual_cue->curve_jitter_freq;
 
                         if (actual_field) {
-                            if (*actual_field < 0 && editor->project->curve_count < 32) {
+                            if (*actual_field < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                                 *actual_field = editor->project->curve_count++;
                                 auto& curve = editor->project->curves[*actual_field];
                                 curve = rev::curve::CreateCurve(16);
@@ -2222,6 +2532,17 @@ void RenderMeshModal(EditorContext* editor) {
             else
                 ImGui::TextDisabled("No file selected");
             ImGui::TextDisabled("mesh_size / mesh_param not used for external meshes");
+
+            bool use_imported_light = cue->use_imported_light != 0;
+            if (ImGui::Checkbox("Use glTF Light", &use_imported_light)) {
+                cue->use_imported_light = use_imported_light ? 1 : 0;
+                AutoSave();
+            }
+            bool use_imported_camera = cue->use_imported_camera != 0;
+            if (ImGui::Checkbox("Use glTF Camera", &use_imported_camera)) {
+                cue->use_imported_camera = use_imported_camera ? 1 : 0;
+                AutoSave();
+            }
         } else {
             if (ImGui::DragFloat("Size",  &cue->mesh_size,  0.01f, 0.01f, 100.0f)) AutoSave();
             ImGui::SameLine();
@@ -2234,7 +2555,7 @@ void RenderMeshModal(EditorContext* editor) {
                     SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                     if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                         MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                        if (actual_cue->curve_mesh_size < 0 && editor->project->curve_count < 32) {
+                        if (actual_cue->curve_mesh_size < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                             actual_cue->curve_mesh_size = editor->project->curve_count++;
                             auto& curve = editor->project->curves[actual_cue->curve_mesh_size];
                             curve = rev::curve::CreateCurve(16);
@@ -2271,7 +2592,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_pos_x < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_pos_x < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_pos_x = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_pos_x];
                         curve = rev::curve::CreateCurve(16);
@@ -2302,7 +2623,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_pos_y < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_pos_y < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_pos_y = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_pos_y];
                         curve = rev::curve::CreateCurve(16);
@@ -2333,7 +2654,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_pos_z < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_pos_z < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_pos_z = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_pos_z];
                         curve = rev::curve::CreateCurve(16);
@@ -2366,7 +2687,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_rot_x < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_rot_x < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_rot_x = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_rot_x];
                         curve = rev::curve::CreateCurve(16);
@@ -2397,7 +2718,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_rot_y < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_rot_y < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_rot_y = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_rot_y];
                         curve = rev::curve::CreateCurve(16);
@@ -2428,7 +2749,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_rot_z < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_rot_z < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_rot_z = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_rot_z];
                         curve = rev::curve::CreateCurve(16);
@@ -2461,7 +2782,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_scale_x < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_scale_x < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_scale_x = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_scale_x];
                         curve = rev::curve::CreateCurve(16);
@@ -2492,7 +2813,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_scale_y < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_scale_y < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_scale_y = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_scale_y];
                         curve = rev::curve::CreateCurve(16);
@@ -2523,7 +2844,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_scale_z < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_scale_z < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_scale_z = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_scale_z];
                         curve = rev::curve::CreateCurve(16);
@@ -2561,7 +2882,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_color_r < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_color_r < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_color_r = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_color_r];
                         curve = rev::curve::CreateCurve(16);
@@ -2593,7 +2914,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_color_g < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_color_g < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_color_g = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_color_g];
                         curve = rev::curve::CreateCurve(16);
@@ -2625,7 +2946,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_color_b < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_color_b < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_color_b = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_color_b];
                         curve = rev::curve::CreateCurve(16);
@@ -2657,7 +2978,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_color_a < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_color_a < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_color_a = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_color_a];
                         curve = rev::curve::CreateCurve(16);
@@ -2688,7 +3009,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_metallic < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_metallic < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_metallic = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_metallic];
                         curve = rev::curve::CreateCurve(16);
@@ -2719,7 +3040,7 @@ void RenderMeshModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
                     MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
-                    if (actual_cue->curve_roughness < 0 && editor->project->curve_count < 32) {
+                    if (actual_cue->curve_roughness < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
                         actual_cue->curve_roughness = editor->project->curve_count++;
                         auto& curve = editor->project->curves[actual_cue->curve_roughness];
                         curve = rev::curve::CreateCurve(16);
@@ -2738,6 +3059,40 @@ void RenderMeshModal(EditorContext* editor) {
             }
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
+
+        if (ImGui::SliderFloat("Camera FOV", &cue->fov_deg, 10.0f, 120.0f)) AutoSave();
+        ImGui::SameLine();
+        if (cue->curve_fov >= 0) {
+            ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_fov);
+            ImGui::SameLine();
+        }
+        if (ImGui::SmallButton("+##curve_mesh_fov")) {
+            if (editor->selected_scene_index >= 0 && editor->selected_cue_index >= 0) {
+                SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+                if (scene && editor->selected_cue_index < scene->mesh_cue_count) {
+                    MeshCue* actual_cue = &scene->mesh_cues[editor->selected_cue_index];
+                    if (actual_cue->curve_fov < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
+                        actual_cue->curve_fov = editor->project->curve_count++;
+                        auto& curve = editor->project->curves[actual_cue->curve_fov];
+                        curve = rev::curve::CreateCurve(16);
+                        rev::curve::AddPoint(curve, 0.0f, actual_cue->fov_deg);
+                        rev::curve::AddPoint(curve, 1.0f, actual_cue->fov_deg);
+                        editor->project->modified = true;
+                    }
+                    cue->curve_fov = actual_cue->curve_fov;
+                    if (actual_cue->curve_fov >= 0 && actual_cue->curve_fov < editor->project->curve_count) {
+                        editor->editing_curve_index = actual_cue->curve_fov;
+                        editor->editing_curve_cue_type = CueTypeMesh;
+                        snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "Mesh Camera FOV");
+                        editor->curve_editor_modal_request_open = true;
+                    }
+                }
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
+
+        const char* cull_mode_names[] = { "Off", "Back", "Front" };
+        if (ImGui::Combo("Face Culling", &cue->cull_mode, cull_mode_names, 3)) AutoSave();
 
         ImGui::Separator();
         if (ImGui::DragFloat("Cue Start", &cue->cue_start, 0.01f, 0.0f, 9999.0f)) AutoSave();
@@ -2848,14 +3203,14 @@ void RenderMeshModal(EditorContext* editor) {
                 "Rot X", "Rot Y", "Rot Z",
                 "Scale X", "Scale Y", "Scale Z",
                 "Color R", "Color G", "Color B", "Color A",
-                "Metallic", "Roughness"
+                "Metallic", "Roughness", "Camera FOV"
             };
             int* target_fields[] = {
                 &cue->curve_mesh_size, &cue->curve_pos_x, &cue->curve_pos_y, &cue->curve_pos_z,
                 &cue->curve_rot_x, &cue->curve_rot_y, &cue->curve_rot_z,
                 &cue->curve_scale_x, &cue->curve_scale_y, &cue->curve_scale_z,
                 &cue->curve_color_r, &cue->curve_color_g, &cue->curve_color_b, &cue->curve_color_a,
-                &cue->curve_metallic, &cue->curve_roughness
+                &cue->curve_metallic, &cue->curve_roughness, &cue->curve_fov
             };
             const int target_count = (int)(sizeof(target_names) / sizeof(target_names[0]));
             static int mesh_target_idx = 0;
@@ -2915,4 +3270,5 @@ void RenderMeshModal(EditorContext* editor) {
 
 } // namespace editor
 } // namespace rev
+
 

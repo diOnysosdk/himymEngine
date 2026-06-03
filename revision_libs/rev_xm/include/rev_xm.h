@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <mutex>
 
 namespace rev {
 namespace xm {
@@ -11,6 +12,7 @@ struct Player {
     float* buffer;
     int sample_rate;
     int buffer_size;
+    std::mutex mutex;
 };
 
 // Lifecycle

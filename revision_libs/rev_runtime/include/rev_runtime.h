@@ -11,6 +11,8 @@
 namespace rev {
 namespace runtime {
 
+constexpr int kMaxCurves = 128;
+
 // ------------------------------------------------------------------
 // Basic types
 // ------------------------------------------------------------------
@@ -165,6 +167,10 @@ struct MeshCue {
     float mesh_param;
     float metallic;         // PBR metallic factor [0..1] (0=dielectric, 1=metal)
     float roughness;        // PBR roughness factor [0..1] (0=glossy, 1=rough)
+    float fov_deg;          // Per-cue camera FOV in degrees (defaults to 45)
+    int   cull_mode;        // 0=off, 1=back, 2=front
+    int   use_imported_light;
+    int   use_imported_camera;
     int   effect_type;      // 0=none  1=fade_in_out
     float cue_start;
     float cue_end;
@@ -191,6 +197,7 @@ struct MeshCue {
     int   curve_mesh_size;
     int   curve_metallic;
     int   curve_roughness;
+    int   curve_fov;
 };
 
 // ------------------------------------------------------------------
@@ -247,7 +254,7 @@ bool LoadTextCue (const char* cues_path, TextCue*  cue);
 bool LoadMusicCue(const char* cues_path, MusicCue* cue);
 bool LoadMeshCue (const char* cues_path, MeshCue*  cue);
 
-// Load all curves from cues.txt into the provided array (max 32 curves)
+// Load all curves from cues.txt into the provided array (max kMaxCurves curves)
 // Returns the number of curves loaded
 int LoadCurves(const char* cues_path, curve::Curve* curves, int max_curves);
 

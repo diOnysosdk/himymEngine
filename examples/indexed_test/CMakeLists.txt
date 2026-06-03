@@ -11,6 +11,9 @@ target_link_libraries(indexed_test PRIVATE
 )
 
 if(MSVC)
-    target_compile_options(indexed_test PRIVATE /O1 /GS-)
-    target_link_options(indexed_test PRIVATE /SUBSYSTEM:WINDOWS)
+    target_compile_options(indexed_test PRIVATE
+        $<$<CONFIG:Release>:/O1>
+        $<$<CONFIG:Release>:/GS->
+    )
+    target_link_options(indexed_test PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
 endif()

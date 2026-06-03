@@ -12,6 +12,9 @@ target_link_libraries(simple_test PRIVATE
 
 # Size optimization
 if(MSVC)
-    target_compile_options(simple_test PRIVATE /O1 /GS-)
-    target_link_options(simple_test PRIVATE /SUBSYSTEM:WINDOWS)
+    target_compile_options(simple_test PRIVATE
+        $<$<CONFIG:Release>:/O1>
+        $<$<CONFIG:Release>:/GS->
+    )
+    target_link_options(simple_test PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
 endif()

@@ -14,6 +14,9 @@ target_link_libraries(mesh_demo PRIVATE
 
 # Size optimization
 if(MSVC)
-    target_compile_options(mesh_demo PRIVATE /O1 /GS-)
-    target_link_options(mesh_demo PRIVATE /SUBSYSTEM:WINDOWS)
+    target_compile_options(mesh_demo PRIVATE
+        $<$<CONFIG:Release>:/O1>
+        $<$<CONFIG:Release>:/GS->
+    )
+    target_link_options(mesh_demo PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
 endif()

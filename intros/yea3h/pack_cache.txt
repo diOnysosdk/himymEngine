@@ -1,2 +1,0 @@
-thelogo2.png|intros/yea3h/project_assets/thelogo2.png|A79E0245
-text_s00_c00.png|intros/yea3h/project_assets/text_s00_c00.png|9FF1C520

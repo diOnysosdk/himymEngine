@@ -3,6 +3,7 @@
 #include <gl/gl.h>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 
 // Define missing GL constants
 #ifndef GL_COMPILE_STATUS
@@ -67,33 +68,31 @@ static PFNGLUNIFORM4FPROC glUniform4f = nullptr;
 static PFNGLUNIFORM1IPROC glUniform1i = nullptr;
 static PFNGLUNIFORMMATRIX4FVPROC glUniformMatrix4fv = nullptr;
 
-static bool gl_functions_loaded = false;
+static std::once_flag g_gl_load_once;
 
 static void LoadGLFunctions() {
-    if (gl_functions_loaded) return;
-    
-    glCreateShader = (PFNGLCREATESHADERPROC)wglGetProcAddress("glCreateShader");
-    glShaderSource = (PFNGLSHADERSOURCEPROC)wglGetProcAddress("glShaderSource");
-    glCompileShader = (PFNGLCOMPILESHADERPROC)wglGetProcAddress("glCompileShader");
-    glGetShaderiv = (PFNGLGETSHADERIVPROC)wglGetProcAddress("glGetShaderiv");
-    glGetShaderInfoLog = (PFNGLGETSHADERINFOLOGPROC)wglGetProcAddress("glGetShaderInfoLog");
-    glCreateProgram = (PFNGLCREATEPROGRAMPROC)wglGetProcAddress("glCreateProgram");
-    glAttachShader = (PFNGLATTACHSHADERPROC)wglGetProcAddress("glAttachShader");
-    glLinkProgram = (PFNGLLINKPROGRAMPROC)wglGetProcAddress("glLinkProgram");
-    glGetProgramiv = (PFNGLGETPROGRAMIVPROC)wglGetProcAddress("glGetProgramiv");
-    glGetProgramInfoLog = (PFNGLGETPROGRAMINFOLOGPROC)wglGetProcAddress("glGetProgramInfoLog");
-    glUseProgram = (PFNGLUSEPROGRAMPROC)wglGetProcAddress("glUseProgram");
-    glDeleteShader = (PFNGLDELETESHADERPROC)wglGetProcAddress("glDeleteShader");
-    glDeleteProgram = (PFNGLDELETEPROGRAMPROC)wglGetProcAddress("glDeleteProgram");
-    glGetUniformLocation = (PFNGLGETUNIFORMLOCATIONPROC)wglGetProcAddress("glGetUniformLocation");
-    glUniform1f = (PFNGLUNIFORM1FPROC)wglGetProcAddress("glUniform1f");
-    glUniform2f = (PFNGLUNIFORM2FPROC)wglGetProcAddress("glUniform2f");
-    glUniform3f = (PFNGLUNIFORM3FPROC)wglGetProcAddress("glUniform3f");
-    glUniform4f = (PFNGLUNIFORM4FPROC)wglGetProcAddress("glUniform4f");
-    glUniform1i = (PFNGLUNIFORM1IPROC)wglGetProcAddress("glUniform1i");
-    glUniformMatrix4fv = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
-    
-    gl_functions_loaded = true;
+    std::call_once(g_gl_load_once, []() {
+        glCreateShader = (PFNGLCREATESHADERPROC)wglGetProcAddress("glCreateShader");
+        glShaderSource = (PFNGLSHADERSOURCEPROC)wglGetProcAddress("glShaderSource");
+        glCompileShader = (PFNGLCOMPILESHADERPROC)wglGetProcAddress("glCompileShader");
+        glGetShaderiv = (PFNGLGETSHADERIVPROC)wglGetProcAddress("glGetShaderiv");
+        glGetShaderInfoLog = (PFNGLGETSHADERINFOLOGPROC)wglGetProcAddress("glGetShaderInfoLog");
+        glCreateProgram = (PFNGLCREATEPROGRAMPROC)wglGetProcAddress("glCreateProgram");
+        glAttachShader = (PFNGLATTACHSHADERPROC)wglGetProcAddress("glAttachShader");
+        glLinkProgram = (PFNGLLINKPROGRAMPROC)wglGetProcAddress("glLinkProgram");
+        glGetProgramiv = (PFNGLGETPROGRAMIVPROC)wglGetProcAddress("glGetProgramiv");
+        glGetProgramInfoLog = (PFNGLGETPROGRAMINFOLOGPROC)wglGetProcAddress("glGetProgramInfoLog");
+        glUseProgram = (PFNGLUSEPROGRAMPROC)wglGetProcAddress("glUseProgram");
+        glDeleteShader = (PFNGLDELETESHADERPROC)wglGetProcAddress("glDeleteShader");
+        glDeleteProgram = (PFNGLDELETEPROGRAMPROC)wglGetProcAddress("glDeleteProgram");
+        glGetUniformLocation = (PFNGLGETUNIFORMLOCATIONPROC)wglGetProcAddress("glGetUniformLocation");
+        glUniform1f = (PFNGLUNIFORM1FPROC)wglGetProcAddress("glUniform1f");
+        glUniform2f = (PFNGLUNIFORM2FPROC)wglGetProcAddress("glUniform2f");
+        glUniform3f = (PFNGLUNIFORM3FPROC)wglGetProcAddress("glUniform3f");
+        glUniform4f = (PFNGLUNIFORM4FPROC)wglGetProcAddress("glUniform4f");
+        glUniform1i = (PFNGLUNIFORM1IPROC)wglGetProcAddress("glUniform1i");
+        glUniformMatrix4fv = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
+    });
 }
 
 namespace rev {

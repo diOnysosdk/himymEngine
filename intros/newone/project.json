@@ -1,0 +1,27 @@
+{
+  "version": "1.0",
+  "workspace_path": "E:\\code\\cpp\\mono\\himym\\intros\\newone",
+  "total_duration": 10.000,
+  "loop_intro": 0,
+  "loop_music": 0,
+  "scenes": [
+    {
+      "name": "New Scene",
+      "duration": 10.000,
+      "shader_cues": [
+      ],
+      "image_cues": [
+      ],
+      "text_cues": [
+      ],
+      "scroll_text_cues": [
+      ],
+      "music_cues": [
+      ],
+      "mesh_cues": [
+      ]
+    }
+  ],
+  "curves": [
+  ]
+}

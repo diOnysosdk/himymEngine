@@ -1,3 +1,0 @@
-logo.png|intros/1/project_assets/logo.png|7E29A2E2
-mesh_0|intros/1/project_assets/cwar.glb|B44E72EC
-mesh_0_s01_c00|intros/1/project_assets/dropbox.glb|BCF8D168

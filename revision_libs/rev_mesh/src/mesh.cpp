@@ -2,6 +2,7 @@
 #include <cstring>
 #include <cmath>
 #include <vector>
+#include <mutex>
 
 // Forward declare OpenGL functions
 typedef unsigned int GLuint;
@@ -49,22 +50,20 @@ static PFNGLDELETEBUFFERSPROC glDeleteBuffers = nullptr;
 #include <windows.h>
 
 static void LoadGLFunctions() {
-    static bool loaded = false;
-    if (loaded) return;
-    
-    glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)wglGetProcAddress("glGenVertexArrays");
-    glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
-    glGenBuffers = (PFNGLGENBUFFERSPROC)wglGetProcAddress("glGenBuffers");
-    glBindBuffer = (PFNGLBINDBUFFERPROC)wglGetProcAddress("glBindBuffer");
-    glBufferData = (PFNGLBUFFERDATAPROC)wglGetProcAddress("glBufferData");
-    glEnableVertexAttribArray = (PFNGLENABLEVERTEXATTRIBARRAYPROC)wglGetProcAddress("glEnableVertexAttribArray");
-    glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC)wglGetProcAddress("glVertexAttribPointer");
-    glDeleteVertexArrays = (PFNGLDELETEVERTEXARRAYSPROC)wglGetProcAddress("glDeleteVertexArrays");
-    glDeleteBuffers = (PFNGLDELETEBUFFERSPROC)wglGetProcAddress("glDeleteBuffers");
-    
-    // Note: glDrawElements is core OpenGL 1.1, loaded from opengl32.lib via <gl/gl.h>
-    
-    loaded = true;
+    static std::once_flag g_mesh_gl_load_once;
+    std::call_once(g_mesh_gl_load_once, []() {
+        glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)wglGetProcAddress("glGenVertexArrays");
+        glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
+        glGenBuffers = (PFNGLGENBUFFERSPROC)wglGetProcAddress("glGenBuffers");
+        glBindBuffer = (PFNGLBINDBUFFERPROC)wglGetProcAddress("glBindBuffer");
+        glBufferData = (PFNGLBUFFERDATAPROC)wglGetProcAddress("glBufferData");
+        glEnableVertexAttribArray = (PFNGLENABLEVERTEXATTRIBARRAYPROC)wglGetProcAddress("glEnableVertexAttribArray");
+        glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC)wglGetProcAddress("glVertexAttribPointer");
+        glDeleteVertexArrays = (PFNGLDELETEVERTEXARRAYSPROC)wglGetProcAddress("glDeleteVertexArrays");
+        glDeleteBuffers = (PFNGLDELETEBUFFERSPROC)wglGetProcAddress("glDeleteBuffers");
+
+        // Note: glDrawElements is core OpenGL 1.1, loaded from opengl32.lib via <gl/gl.h>
+    });
 }
 
 namespace rev {
@@ -88,6 +87,16 @@ Mesh* CreateMesh(uint32_t vertex_count, uint32_t index_count) {
     mesh->imported_light_pos[0] = 0.0f;
     mesh->imported_light_pos[1] = 0.0f;
     mesh->imported_light_pos[2] = 0.0f;
+    mesh->imported_light_node_index = -1;
+    mesh->has_imported_camera = false;
+    mesh->imported_camera_pos[0] = 0.0f;
+    mesh->imported_camera_pos[1] = 0.0f;
+    mesh->imported_camera_pos[2] = 5.0f;
+    mesh->imported_camera_target[0] = 0.0f;
+    mesh->imported_camera_target[1] = 0.0f;
+    mesh->imported_camera_target[2] = 0.0f;
+    mesh->imported_camera_fov_deg = 45.0f;
+    mesh->imported_camera_node_index = -1;
     mesh->imported_nodes = nullptr;
     mesh->imported_node_count = 0;
     

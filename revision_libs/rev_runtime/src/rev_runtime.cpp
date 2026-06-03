@@ -644,13 +644,20 @@ namespace runtime {
 // Format: asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|
 //         scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|
 //         mesh_size|mesh_param|cue_start|cue_end|layer_order|
-//         effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end
+//         effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|
+//         metallic|roughness|curve_pos_x|curve_pos_y|curve_pos_z|
+//         curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|
+//         curve_color_r|curve_color_g|curve_color_b|curve_color_a|
+//         curve_mesh_size|curve_metallic|curve_roughness|fov_deg|cull_mode
 // mesh_type 4 = external file (asset_path holds path to .gltf/.glb)
 bool LoadMeshCue(const char* cues_path, MeshCue* cue)
 {
     FILE* f = nullptr;
     fopen_s(&f, cues_path, "r");
     if (!f) return false;
+
+    cue->fov_deg = 45.0f;
+    cue->cull_mode = 0;
 
     char line[2048];
     bool in_section = false;
@@ -679,10 +686,10 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
         cue->asset_path[path_len] = '\0';
 
         // Parse remaining numeric fields
-        // Old 26-field format + new 16 curve fields = 42 fields total:
+        // Old 26-field format + 16 curve fields + optional fov/cull/curve_fov/toggles = 47 fields total:
         // mesh_type|pos(3)|rot(3)|scale(3)|color(4)|mesh_size|mesh_param|
         // cue_start|cue_end|layer_order|effect_type|fade_in/out(4)|metallic|roughness|
-        // curve_pos(3)|curve_rot(3)|curve_scale(3)|curve_color(4)|curve_mesh_size|curve_metallic|curve_roughness
+        // curve_pos(3)|curve_rot(3)|curve_scale(3)|curve_color(4)|curve_mesh_size|curve_metallic|curve_roughness|fov_deg|cull_mode|curve_fov|use_imported_light|use_imported_camera
         cue->metallic  = 0.0f;  // defaults for old files
         cue->roughness = 0.5f;
         int curve_pos_x = -1, curve_pos_y = -1, curve_pos_z = -1;
@@ -690,9 +697,14 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
         int curve_scale_x = -1, curve_scale_y = -1, curve_scale_z = -1;
         int curve_color_r = -1, curve_color_g = -1, curve_color_b = -1, curve_color_a = -1;
         int curve_mesh_size = -1, curve_metallic = -1, curve_roughness = -1;
+        float fov_deg = 45.0f;
+        int cull_mode = 0;
+        int curve_fov = -1;
+        int use_imported_light = 0;
+        int use_imported_camera = 0;
         
         int n = sscanf_s(pipe2 + 1,
-            "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+            "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%d|%d|%d|%d",
             &cue->mesh_type,
             &cue->pos[0],   &cue->pos[1],   &cue->pos[2],
             &cue->rot[0],   &cue->rot[1],   &cue->rot[2],
@@ -708,7 +720,9 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
             &curve_rot_x, &curve_rot_y, &curve_rot_z,
             &curve_scale_x, &curve_scale_y, &curve_scale_z,
             &curve_color_r, &curve_color_g, &curve_color_b, &curve_color_a,
-            &curve_mesh_size, &curve_metallic, &curve_roughness);
+            &curve_mesh_size, &curve_metallic, &curve_roughness,
+            &fov_deg, &cull_mode, &curve_fov,
+            &use_imported_light, &use_imported_camera);
         
         if (n >= 18) {   // minimum viable parse (first 18 fields after key+path)
             // Curve fields (backwards compatible - default to -1)
@@ -728,6 +742,11 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
             cue->curve_mesh_size = (n >= 40) ? curve_mesh_size : -1;
             cue->curve_metallic = (n >= 41) ? curve_metallic : -1;
             cue->curve_roughness = (n >= 42) ? curve_roughness : -1;
+            cue->fov_deg = (n >= 43 && fov_deg > 0.0f) ? fov_deg : 45.0f;
+            cue->cull_mode = (n >= 44 && cull_mode >= 0 && cull_mode <= 2) ? cull_mode : 0;
+            cue->curve_fov = (n >= 45) ? curve_fov : -1;
+            cue->use_imported_light = (n >= 46) ? use_imported_light : 0;
+            cue->use_imported_camera = (n >= 47) ? use_imported_camera : 0;
             found = true;
             break;
         }

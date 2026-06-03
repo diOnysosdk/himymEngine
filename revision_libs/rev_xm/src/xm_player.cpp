@@ -1,5 +1,6 @@
 #include "rev_xm.h"
 #include <cstring>
+#include <mutex>
 
 #ifdef _MSC_VER
 #include <malloc.h>  // For alloca on MSVC
@@ -63,19 +64,28 @@ Player* CreatePlayer(const void* xm_data, size_t xm_size, int sample_rate) {
 
 void DestroyPlayer(Player* player) {
     if (!player) return;
+
+    {
+        std::lock_guard<std::mutex> lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
-    if (player->context) {
-        delete[] (char*)player->context;  // Free the context memory
-    }
+        if (player->context) {
+            delete[] (char*)player->context;  // Free the context memory
+            player->context = nullptr;
+        }
 #endif
-    
-    delete[] player->buffer;
+
+        delete[] player->buffer;
+        player->buffer = nullptr;
+    }
+
     delete player;
 }
 
 void Update(Player* player, float* output, int frame_count) {
     if (!player || !output) return;
+
+    std::lock_guard<std::mutex> lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -90,6 +100,8 @@ void Update(Player* player, float* output, int frame_count) {
 
 void SetPosition(Player* player, int pattern, int row) {
     if (!player) return;
+
+    std::lock_guard<std::mutex> lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -103,6 +115,8 @@ void SetPosition(Player* player, int pattern, int row) {
 
 int GetPosition(Player* player) {
     if (!player) return 0;
+
+    std::lock_guard<std::mutex> lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -115,6 +129,8 @@ int GetPosition(Player* player) {
 
 bool IsFinished(Player* player) {
     if (!player) return true;
+
+    std::lock_guard<std::mutex> lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -127,6 +143,8 @@ bool IsFinished(Player* player) {
 
 int GetPatternCount(Player* player) {
     if (!player) return 0;
+
+    std::lock_guard<std::mutex> lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -139,6 +157,8 @@ int GetPatternCount(Player* player) {
 
 int GetChannelCount(Player* player) {
     if (!player) return 0;
+
+    std::lock_guard<std::mutex> lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -151,6 +171,8 @@ int GetChannelCount(Player* player) {
 
 float GetDuration(Player* player) {
     if (!player) return 0.0f;
+
+    std::lock_guard<std::mutex> lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {

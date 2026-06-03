@@ -11,7 +11,7 @@
 //   * Base color texture, normal texture, metallic-roughness texture extraction
 //   * Embedded (base64) and external texture images written to output directory
 //   * Multi-material meshes via MaterialSlot index ranges
-//   * First imported light position (if present on a light node)
+//   * First imported light position and first imported camera (if present)
 
 #include "rev_mesh.h"
 #include <stddef.h>
@@ -88,6 +88,12 @@ struct ImportResult {
     int              animation_count;
     bool             has_light;
     float            light_pos[3];
+    int              light_node_index;
+    bool             has_camera;
+    float            camera_pos[3];
+    float            camera_target[3];
+    float            camera_fov_deg;
+    int              camera_node_index;
     bool             ok;
     char             error[256];
 };
