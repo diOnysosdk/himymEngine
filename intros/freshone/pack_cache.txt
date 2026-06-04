@@ -1,3 +1,3 @@
 thelogo2.png|intros/freshone/project_assets/thelogo2.png|A79E0245
 track01.xm|intros/freshone/project_assets/track01.xm|3A27699E
-mesh_0|intros/freshone/project_assets/boxer.glb|BD8460B0
+mesh_0|intros/freshone/project_assets/boxer.glb|4FEF2C95
