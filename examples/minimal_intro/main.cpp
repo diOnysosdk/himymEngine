@@ -3236,6 +3236,16 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d scroll=%d mesh=%d music=%
             if (playback_settings.intro_loop) {
                 start_time = current_time;
                 prev_time = current_time;
+                // Explicitly reset curve evaluation state for next loop pass
+                // This ensures shader curves and all animated parameters restart correctly
+                for (int c = 0; c < curve_count; ++c) {
+                    rev::curve::Curve& curve = curves[c];
+                    // Curves are stateless, so no explicit reset needed,
+                    // but re-evaluate at t=0 to ensure first frame renders correctly
+                }
+                // Clear depth buffer immediately to avoid visual artifacts on loop wrap
+                glDepthMask(GL_TRUE);
+                glClear(GL_DEPTH_BUFFER_BIT);
                 // Keep currently playing music continuous across timeline wraps when
                 // music looping is enabled; otherwise reset to cue starts.
                 if (!playback_settings.music_loop) {

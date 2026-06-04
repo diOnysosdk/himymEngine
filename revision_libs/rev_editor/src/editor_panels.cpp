@@ -953,6 +953,34 @@ void RenderCurveEditor(EditorContext* editor) {
         }
         
         ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.3f, 0.3f, 1.0f));
+        if (ImGui::Button("Delete Unused")) {
+            // Build usage map
+            bool used[rev::runtime::kMaxCurves];
+            BuildCurveUsageMap(editor->project, used);
+            
+            // Delete unused curves (iterate backwards to avoid index shifting issues)
+            for (int i = editor->project->curve_count - 1; i >= 0; --i) {
+                if (!used[i]) {
+                    rev::curve::DestroyCurve(editor->project->curves[i]);
+                    // Shift remaining curves
+                    for (int j = i; j < editor->project->curve_count - 1; ++j) {
+                        editor->project->curves[j] = editor->project->curves[j + 1];
+                    }
+                    // Update all curve references that were affected
+                    ReindexCurveReferencesAfterDelete(editor->project, i);
+                    editor->project->curve_count--;
+                }
+            }
+            editor->selected_curve_index = -1;
+            editor->project->modified = true;
+            snprintf(editor->build_status_message, sizeof(editor->build_status_message), "Deleted unused curves");
+            editor->build_status_timer = 2.0f;
+        }
+        ImGui::PopStyleColor(2);
+        
+        ImGui::SameLine();
         ImGui::Checkbox("Grid", &editor->show_curve_grid);
         
         // Curve list

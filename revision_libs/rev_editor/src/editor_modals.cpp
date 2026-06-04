@@ -24,7 +24,7 @@ static void MarkCurveUsed(bool* used, int curve_index) {
     }
 }
 
-static void BuildCurveUsageMap(ProjectData* project, bool* used) {
+void BuildCurveUsageMap(ProjectData* project, bool* used) {
     if (!project || !used) return;
 
     for (int i = 0; i < rev::runtime::kMaxCurves; ++i) used[i] = false;

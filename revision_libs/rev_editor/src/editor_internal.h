@@ -26,5 +26,8 @@ void RenderImageModal(EditorContext* editor);
 void RenderTextModal(EditorContext* editor);
 void RenderMeshModal(EditorContext* editor);
 
+// Curve Management Functions (editor_modals.cpp)
+void BuildCurveUsageMap(ProjectData* project, bool* used);
+
 } // namespace editor
 } // namespace rev
