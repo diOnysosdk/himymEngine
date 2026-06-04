@@ -3461,8 +3461,8 @@ out vec2 uv;
 uniform vec2 u_position;  // -1 to 1
 uniform vec2 u_size;      // width, height in normalized coords
 void main() {
-    float x = -1.0 + float((gl_VertexID & 1) << 2);
-    float y = -1.0 + float((gl_VertexID & 2) << 1);
+    float x = -1.0 + float((gl_VertexID & 1) << 1);
+    float y = -1.0 + float((gl_VertexID >> 1) << 1);
     uv = vec2((x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5);  // Flip V coordinate
     // Use Z = 0.999 to ensure sprites render in front of 3D meshes even if depth state isn't fully reset
     gl_Position = vec4(u_position.x + x * u_size.x, u_position.y + y * u_size.y, 0.999, 1.0);
@@ -4421,7 +4421,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                 if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, pos_x, pos_y);
                 if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
                 if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
-                glDrawArrays(GL_TRIANGLES, 0, 3);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 glDeleteTextures(1, &tex);
 
             } else {
