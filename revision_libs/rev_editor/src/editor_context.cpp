@@ -2903,7 +2903,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 bool BuildAndRun(EditorContext* editor) {
     if (!editor) return false;
 
-    printf("\n=== Build and Run ===\n");
+    printf("\n=== Build and Run (Both Targets) ===\n");
 
     // Step 1: compute project-relative cues path
     char cues_path[512] = {};
@@ -2923,8 +2923,8 @@ bool BuildAndRun(EditorContext* editor) {
     }
     printf("Export complete.\n");
 
-    // Step 3: Build — use absolute build dir so CWD mutations don't matter
-    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Building intro...", _TRUNCATE);
+    // Step 3: Build both minimal_intro and minimal_intro_packed
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Building both targets...", _TRUNCATE);
     editor->build_status_timer = 5.0f;
     printf("Step 2: Building minimal_intro...\n");
     char build_cmd[768];
@@ -2933,14 +2933,27 @@ bool BuildAndRun(EditorContext* editor) {
              editor->startup_dir);
     int build_result = system(build_cmd);
     if (build_result != 0) {
-        printf("ERROR: Build failed with exit code %d\n", build_result);
+        printf("ERROR: Build minimal_intro failed with exit code %d\n", build_result);
         strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Build failed! Check console for errors.", _TRUNCATE);
         editor->build_status_timer = 10.0f;
         return false;
     }
     printf("Build complete.\n");
 
-    // Step 4: Launch — absolute exe path + cues_path as argv[1]
+    printf("Step 2b: Building minimal_intro_packed...\n");
+    snprintf(build_cmd, sizeof(build_cmd),
+             "cmake --build \"%s\\build\" --config Release --target minimal_intro_packed",
+             editor->startup_dir);
+    build_result = system(build_cmd);
+    if (build_result != 0) {
+        printf("ERROR: Build minimal_intro_packed failed with exit code %d\n", build_result);
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Pack build failed! Check console for errors.", _TRUNCATE);
+        editor->build_status_timer = 10.0f;
+        return false;
+    }
+    printf("Packed build complete.\n");
+
+    // Step 4: Launch minimal_intro (non-packed version with external cues)
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Launching intro...", _TRUNCATE);
     editor->build_status_timer = 3.0f;
     printf("Step 3: Launching intro (%s)...\n", cues_path);
@@ -2951,8 +2964,8 @@ bool BuildAndRun(EditorContext* editor) {
     int run_result = system(run_command);
     
     if (run_result == 0) {
-        printf("Intro launched successfully!\n");
-        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Intro launched successfully!", _TRUNCATE);
+        printf("Both intros built successfully! Launching minimal_intro...\n");
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Both built! Intro launched!", _TRUNCATE);
         editor->build_status_timer = 3.0f;
     } else {
         printf("ERROR: Failed to launch intro (exit code %d)\n", run_result);
