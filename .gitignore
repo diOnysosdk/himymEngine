@@ -71,3 +71,14 @@ assets/project.json
 
 # Keep main cues.txt
 !assets/cues.txt
+
+# Demo/test project folders
+thedemo/
+intros/*/
+Ny mappe/
+
+# Temporary image files
+*.png
+*.jpg
+*.jpeg
+ivory.png
