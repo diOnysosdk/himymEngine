@@ -18,6 +18,8 @@ struct MaterialSlot {
     int      material_index; // Source material index for imported meshes (-1 if unknown)
     uint32_t base_color_texture; // Optional per-slot texture override (0 = none)
     int      source_node_index; // Source glTF node for imported meshes (-1 if unknown)
+    float    emissive_color[3];
+    float    emissive_strength;
 };
 
 struct ImportedNode {
@@ -44,6 +46,8 @@ struct Mesh {
     uint32_t base_color_texture;
     uint32_t normal_texture;
     uint32_t metallic_roughness_texture;
+    float    emissive_color[3];
+    float    emissive_strength;
 
     // Imported light placement from glTF (if present)
     bool     has_imported_light;
@@ -80,7 +84,9 @@ void AddMaterialSlot(Mesh* mesh,
                      uint32_t color,
                      int material_index = -1,
                      uint32_t base_color_texture = 0,
-                     int source_node_index = -1);
+                     int source_node_index = -1,
+                     const float* emissive_color = nullptr,
+                     float emissive_strength = 1.0f);
 
 // GPU operations
 void UploadToGPU(Mesh* mesh);

@@ -703,8 +703,12 @@ void RenderProperties(EditorContext* editor) {
                 cue.mesh_param = 16.0f;
                 cue.scale[0]   = cue.scale[1] = cue.scale[2] = 1.0f;
                 cue.color[0]   = cue.color[1] = cue.color[2] = cue.color[3] = 1.0f;
+                cue.emissive_color[0] = 1.0f;
+                cue.emissive_color[1] = 1.0f;
+                cue.emissive_color[2] = 1.0f;
                 cue.metallic   = 0.0f;
                 cue.roughness  = 0.5f;
+                cue.emissive_strength = 0.0f;
                 cue.fov_deg    = 45.0f;
                 cue.cull_mode  = 0;
                 cue.use_imported_light = 0;

@@ -778,6 +778,9 @@ bool LoadProject(EditorContext* editor, const char* path) {
     MusicCue current_music_cue = {};
     MeshCue current_mesh_cue = {};
     current_mesh_cue.scale[0] = current_mesh_cue.scale[1] = current_mesh_cue.scale[2] = 1.0f;
+    current_mesh_cue.emissive_color[0] = 1.0f;
+    current_mesh_cue.emissive_color[1] = 1.0f;
+    current_mesh_cue.emissive_color[2] = 1.0f;
     current_mesh_cue.roughness = 0.5f;
     current_mesh_cue.fov_deg = 45.0f;
     current_mesh_cue.cull_mode = 0;
@@ -1400,6 +1403,13 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"metallic\": %f", &current_mesh_cue.metallic);
             } else if (strstr(start, "\"roughness\":")) {
                 sscanf_s(start, "\"roughness\": %f", &current_mesh_cue.roughness);
+            } else if (strstr(start, "\"emissive_color\":")) {
+                sscanf_s(start, "\"emissive_color\": [%f, %f, %f]",
+                    &current_mesh_cue.emissive_color[0],
+                    &current_mesh_cue.emissive_color[1],
+                    &current_mesh_cue.emissive_color[2]);
+            } else if (strstr(start, "\"emissive_strength\":")) {
+                sscanf_s(start, "\"emissive_strength\": %f", &current_mesh_cue.emissive_strength);
             } else if (strstr(start, "\"fov_deg\":")) {
                 sscanf_s(start, "\"fov_deg\": %f", &current_mesh_cue.fov_deg);
             } else if (strstr(start, "\"cull_mode\":")) {
@@ -1466,6 +1476,9 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 AddMeshCue(current_scene, current_mesh_cue);
                 MeshCue blank = {};
                 blank.scale[0] = blank.scale[1] = blank.scale[2] = 1.0f;
+                blank.emissive_color[0] = 1.0f;
+                blank.emissive_color[1] = 1.0f;
+                blank.emissive_color[2] = 1.0f;
                 blank.roughness = 0.5f;
                 blank.fov_deg = 45.0f;
                 blank.cull_mode = 0;
@@ -1866,6 +1879,9 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"mesh_param\": %.3f,\n", cue->mesh_param);
             fprintf(f, "          \"metallic\": %.3f,\n",   cue->metallic);
             fprintf(f, "          \"roughness\": %.3f,\n",  cue->roughness);
+            fprintf(f, "          \"emissive_color\": [%.3f, %.3f, %.3f],\n",
+                cue->emissive_color[0], cue->emissive_color[1], cue->emissive_color[2]);
+            fprintf(f, "          \"emissive_strength\": %.3f,\n", cue->emissive_strength);
             fprintf(f, "          \"fov_deg\": %.3f,\n",    cue->fov_deg);
             fprintf(f, "          \"cull_mode\": %d,\n",    cue->cull_mode);
             fprintf(f, "          \"effect_type\": %d,\n",  cue->effect_type);
@@ -3092,7 +3108,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 
     // [mesh_cues] section
     fprintf(f, "[mesh_cues]\n");
-    fprintf(f, "# asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness|curve_pos_x|curve_pos_y|curve_pos_z|curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|curve_color_r|curve_color_g|curve_color_b|curve_color_a|curve_mesh_size|curve_metallic|curve_roughness|fov_deg|cull_mode|curve_fov|use_imported_light|use_imported_camera\n");
+    fprintf(f, "# asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness|curve_pos_x|curve_pos_y|curve_pos_z|curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|curve_color_r|curve_color_g|curve_color_b|curve_color_a|curve_mesh_size|curve_metallic|curve_roughness|fov_deg|cull_mode|curve_fov|use_imported_light|use_imported_camera|emissive_r|emissive_g|emissive_b|emissive_strength\n");
 
     // Packed runtime resolves mesh assets by key. Ensure keys are unique in export,
     // even when authored cues reused defaults like "mesh_0" in multiple scenes.
@@ -3139,7 +3155,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 used_mesh_key_count++;
             }
 
-            fprintf(f, "%s|%s|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%d|%d|%d|%d\n",
+            fprintf(f, "%s|%s|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f\n",
                 export_asset_key, cue->asset_path, cue->mesh_type,
                 cue->pos[0],   cue->pos[1],   cue->pos[2],
                 cue->rot[0],   cue->rot[1],   cue->rot[2],
@@ -3155,7 +3171,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->curve_color_r, cue->curve_color_g, cue->curve_color_b, cue->curve_color_a,
                 cue->curve_mesh_size, cue->curve_metallic, cue->curve_roughness,
                 cue->fov_deg, cue->cull_mode, cue->curve_fov,
-                cue->use_imported_light, cue->use_imported_camera
+                cue->use_imported_light, cue->use_imported_camera,
+                cue->emissive_color[0], cue->emissive_color[1], cue->emissive_color[2], cue->emissive_strength
             );
         }
     }
@@ -3880,9 +3897,10 @@ in vec2 uv;
 out vec4 fragColor;
 uniform sampler2D u_texture;
 uniform float u_opacity;
+uniform vec3 u_color_tint;
 void main() {
     vec4 texColor = texture(u_texture, uv);
-    fragColor = vec4(texColor.rgb, texColor.a * u_opacity);
+    fragColor = vec4(texColor.rgb * u_color_tint, texColor.a * u_opacity);
 }
 )";
 
@@ -3918,6 +3936,8 @@ uniform vec3  u_view_pos;
 uniform vec4  u_color;
 uniform float u_metallic;
 uniform float u_roughness;
+uniform vec3  u_emissive_color;
+uniform float u_emissive_strength;
 uniform sampler2D u_base_color_texture;
 uniform int u_has_texture;
 void main() {
@@ -3941,7 +3961,8 @@ void main() {
     float spec_fac    = pow(max(dot(norm, hdir), 0.0), shininess);
     vec3  spec_col    = mix(vec3(0.04), base, u_metallic);
     vec3  spec        = spec_col * spec_fac * (1.0 - u_roughness * 0.85);
-    vec3  result      = base * (ambient + diff) + spec;
+    vec3  emissive    = u_emissive_color * u_emissive_strength;
+    vec3  result      = base * (ambient + diff) + spec + emissive;
     fragColor = vec4(result, alpha);
 }
 )";
@@ -4396,7 +4417,8 @@ void RenderPreviewFrame(EditorContext* editor) {
 
         // Upload view/proj/lighting once if we have a mesh shader
         int mp_model = -1, mp_view = -1, mp_proj = -1, mp_light = -1,
-            mp_vpos  = -1, mp_col  = -1, mp_metal = -1, mp_rough = -1;
+            mp_vpos  = -1, mp_col  = -1, mp_metal = -1, mp_rough = -1,
+            mp_emissive_color = -1, mp_emissive_strength = -1;
         if (mesh_prog) {
             mp_model = rev::shader::GetUniformLocation(mesh_prog, "u_model");
             mp_view  = rev::shader::GetUniformLocation(mesh_prog, "u_view");
@@ -4406,6 +4428,8 @@ void RenderPreviewFrame(EditorContext* editor) {
             mp_col   = rev::shader::GetUniformLocation(mesh_prog, "u_color");
             mp_metal = rev::shader::GetUniformLocation(mesh_prog, "u_metallic");
             mp_rough = rev::shader::GetUniformLocation(mesh_prog, "u_roughness");
+            mp_emissive_color = rev::shader::GetUniformLocation(mesh_prog, "u_emissive_color");
+            mp_emissive_strength = rev::shader::GetUniformLocation(mesh_prog, "u_emissive_strength");
             rev::shader::Use(mesh_prog);
             if (glUniformMatrix4fv) {
                 glUniformMatrix4fv(mp_view, 1, 0, view_mat);
@@ -4419,6 +4443,7 @@ void RenderPreviewFrame(EditorContext* editor) {
         int sp_pos = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_position") : -1;
         int sp_sz  = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_size")     : -1;
         int sp_opa = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_opacity")  : -1;
+        int sp_col = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_color_tint") : -1;
 
         // Build unified draw list: type 0=image 1=text 2=mesh 3=scroll text 4=animated sprite
         struct DrawItem { int type; void* cue; int layer_order; float scene_start_time; };
@@ -4945,6 +4970,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                 if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, pos_x, pos_y);
                 if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
                 if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
+                if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 glDeleteTextures(1, &tex);
 
@@ -5310,6 +5336,16 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         };
                                         glUniform4fv_fn(mp_col, 1, col);
                                     }
+                                    if (mp_emissive_color >= 0) {
+                                        rev::shader::SetVec3(mesh_prog, mp_emissive_color,
+                                            cue->emissive_color[0] * slot.emissive_color[0],
+                                            cue->emissive_color[1] * slot.emissive_color[1],
+                                            cue->emissive_color[2] * slot.emissive_color[2]);
+                                    }
+                                    if (mp_emissive_strength >= 0) {
+                                        rev::shader::SetFloat(mesh_prog, mp_emissive_strength,
+                                            cue->emissive_strength * slot.emissive_strength);
+                                    }
 
                                     if (glUniformMatrix4fv && mp_model >= 0) {
                                         if (node_delta_mats && slot.source_node_index >= 0 &&
@@ -5341,6 +5377,16 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     if (mp_col >= 0 && glUniform4fv_fn) {
                                         glUniform4fv_fn(mp_col, 1, cue_col);
                                     }
+                                    if (mp_emissive_color >= 0) {
+                                        rev::shader::SetVec3(mesh_prog, mp_emissive_color,
+                                            cue->emissive_color[0] * cached->emissive_color[0],
+                                            cue->emissive_color[1] * cached->emissive_color[1],
+                                            cue->emissive_color[2] * cached->emissive_color[2]);
+                                    }
+                                    if (mp_emissive_strength >= 0) {
+                                        rev::shader::SetFloat(mesh_prog, mp_emissive_strength,
+                                            cue->emissive_strength * cached->emissive_strength);
+                                    }
                                     if (cached->base_color_texture != 0) {
                                         glBindTexture(0x0DE1, cached->base_color_texture);
                                         if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
@@ -5364,6 +5410,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     mesh->imported_light_pos[0] = ir->light_pos[0];
                                     mesh->imported_light_pos[1] = ir->light_pos[1];
                                     mesh->imported_light_pos[2] = ir->light_pos[2];
+                                    mesh->emissive_color[0] = ir->material.emissive[0];
+                                    mesh->emissive_color[1] = ir->material.emissive[1];
+                                    mesh->emissive_color[2] = ir->material.emissive[2];
+                                    mesh->emissive_strength = ir->material.emissive_strength;
                                 }
                                 
                                 // Load base color texture if present
@@ -5565,6 +5615,16 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         };
                                         glUniform4fv_fn(mp_col, 1, col);
                                     }
+                                    if (mp_emissive_color >= 0) {
+                                        rev::shader::SetVec3(mesh_prog, mp_emissive_color,
+                                            cue->emissive_color[0] * slot.emissive_color[0],
+                                            cue->emissive_color[1] * slot.emissive_color[1],
+                                            cue->emissive_color[2] * slot.emissive_color[2]);
+                                    }
+                                    if (mp_emissive_strength >= 0) {
+                                        rev::shader::SetFloat(mesh_prog, mp_emissive_strength,
+                                            cue->emissive_strength * slot.emissive_strength);
+                                    }
 
                                     if (glUniformMatrix4fv && mp_model >= 0) {
                                         if (node_delta_mats && slot.source_node_index >= 0 &&
@@ -5595,6 +5655,16 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     }
                                     if (mp_col >= 0 && glUniform4fv_fn) {
                                         glUniform4fv_fn(mp_col, 1, cue_col);
+                                    }
+                                    if (mp_emissive_color >= 0) {
+                                        rev::shader::SetVec3(mesh_prog, mp_emissive_color,
+                                            cue->emissive_color[0] * mesh->emissive_color[0],
+                                            cue->emissive_color[1] * mesh->emissive_color[1],
+                                            cue->emissive_color[2] * mesh->emissive_color[2]);
+                                    }
+                                    if (mp_emissive_strength >= 0) {
+                                        rev::shader::SetFloat(mesh_prog, mp_emissive_strength,
+                                            cue->emissive_strength * mesh->emissive_strength);
                                     }
                                     if (mesh->base_color_texture != 0) {
                                         glBindTexture(0x0DE1, mesh->base_color_texture);

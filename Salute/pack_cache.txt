@@ -1,5 +1,12 @@
-silentslogo.png|Salute/project_assets/silentslogo.png|5CCDA04C
-hoflogo.png|hoflogo.png|D5403A7A
-logo - Kopi_1.png|logo - Kopi_1.png|E785AA90
-Ship|Salute/project_assets/silents_textured.glb|4F32867D
+scene2.png|Salute/project_assets/scene2.png|DCAB9F1C
+background.png|Salute/project_assets/background.png|EF7C3265
+warningout.png|Salute/project_assets/warningout.png|902F4F2B
+screenface.png|Salute/project_assets/screenface.png|BB0F0264
+hugo4.png|hugo4.png|D7696870
+hugo3.png|hugo3.png|7E44E093
+hugo2.png|hugo2.png|D8AA1586
+hugo1.png|hugo1.png|861EDB58
+text_s03_c00.png|Salute/project_assets/text_s03_c00.png|6C863146
 moon|Salute/project_assets/moon.glb|55B3C7A5
+ship|Salute/project_assets/silents_textured.glb|8B9B447E
+mesh_0|Salute/project_assets/moon.glb|55B3C7A5

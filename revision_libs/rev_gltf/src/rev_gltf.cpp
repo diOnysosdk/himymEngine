@@ -34,6 +34,7 @@ static void SetMaterialDefaults(Material* m) {
     m->base_color[0] = m->base_color[1] = m->base_color[2] = m->base_color[3] = 1.0f;
     m->metallic  = 0.0f;
     m->roughness = 1.0f;
+    m->emissive_strength = 1.0f;
 }
 
 // Write raw bytes to a file.  Returns true on success.
@@ -218,6 +219,8 @@ static void FillMaterial(Material* out, const cgltf_material* mat,
 
     // Emissive
     for (int i = 0; i < 3; ++i) out->emissive[i] = mat->emissive_factor[i];
+    out->emissive_strength = mat->has_emissive_strength ?
+        mat->emissive_strength.emissive_strength : 1.0f;
 
     // Normal texture
     if (output_dir && output_dir[0]) {
@@ -993,8 +996,19 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
             }
 
             uint32_t prim_idx_count = idx_offset - prim_idx_start;
-                int source_node_index = (int)cgltf_node_index(data, src_node);
-                rev::mesh::AddMaterialSlot(mesh, prim_idx_start, prim_idx_count, slot_color, material_index, 0, source_node_index);
+            int source_node_index = (int)cgltf_node_index(data, src_node);
+            float slot_emissive[3] = {0.0f, 0.0f, 0.0f};
+            float slot_emissive_strength = 1.0f;
+            if (material_index >= 0 && material_index < result->material_count) {
+                Material& mat = result->materials[material_index];
+                slot_emissive[0] = mat.emissive[0];
+                slot_emissive[1] = mat.emissive[1];
+                slot_emissive[2] = mat.emissive[2];
+                slot_emissive_strength = mat.emissive_strength;
+            }
+            rev::mesh::AddMaterialSlot(mesh, prim_idx_start, prim_idx_count, slot_color,
+                                       material_index, 0, source_node_index,
+                                       slot_emissive, slot_emissive_strength);
 
             vert_offset += prim_vert_count;
 

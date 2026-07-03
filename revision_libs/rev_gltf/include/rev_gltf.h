@@ -66,6 +66,7 @@ struct Material {
     float metallic;         // metallic factor  [0..1]
     float roughness;        // roughness factor [0..1]
     float emissive[3];      // emissive factor  (default 0,0,0)
+    float emissive_strength; // emissive strength (KHR_materials_emissive_strength, default 1)
     bool  double_sided;
 
     // Texture paths — workspace-relative if textures were extracted, else empty.

@@ -196,6 +196,8 @@ struct MeshCue {
     float mesh_param;
     float metallic;         // PBR metallic factor [0..1] (0=dielectric, 1=metal)
     float roughness;        // PBR roughness factor [0..1] (0=glossy, 1=rough)
+    float emissive_color[3]; // Emissive tint/multiplier
+    float emissive_strength; // Emissive intensity multiplier
     float fov_deg;          // Per-cue camera FOV in degrees (defaults to 45)
     int   cull_mode;        // 0=off, 1=back, 2=front
     int   use_imported_light;

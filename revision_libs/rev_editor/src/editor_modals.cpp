@@ -2560,6 +2560,10 @@ void RenderMeshModal(EditorContext* editor) {
                         mesh->imported_light_pos[0] = ir->light_pos[0];
                         mesh->imported_light_pos[1] = ir->light_pos[1];
                         mesh->imported_light_pos[2] = ir->light_pos[2];
+                        mesh->emissive_color[0] = ir->material.emissive[0];
+                        mesh->emissive_color[1] = ir->material.emissive[1];
+                        mesh->emissive_color[2] = ir->material.emissive[2];
+                        mesh->emissive_strength = ir->material.emissive_strength;
                     }
                     
                     // Load texture if present
@@ -2718,10 +2722,16 @@ void RenderMeshModal(EditorContext* editor) {
                         }
                         cue->metallic  = mat.metallic;
                         cue->roughness = mat.roughness;
+                           cue->emissive_color[0] = 1.0f;
+                           cue->emissive_color[1] = 1.0f;
+                           cue->emissive_color[2] = 1.0f;
+                           if (cue->emissive_strength <= 0.0f) cue->emissive_strength = 1.0f;
                         printf("[GLTF] Material: name=\"%s\" base=(%.2f,%.2f,%.2f) metallic=%.2f roughness=%.2f\n",
                                mat.name[0] ? mat.name : "(unnamed)",
                                mat.base_color[0], mat.base_color[1], mat.base_color[2],
                                mat.metallic, mat.roughness);
+                           printf("[GLTF] Emissive: color=(%.2f,%.2f,%.2f) strength=%.2f\n",
+                               mat.emissive[0], mat.emissive[1], mat.emissive[2], mat.emissive_strength);
                         if (mat.base_color_texture[0]) {
                             printf("[GLTF] Base color texture: %s\n", mat.base_color_texture);
                         } else {
@@ -3263,6 +3273,9 @@ void RenderMeshModal(EditorContext* editor) {
             }
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
+
+        if (ImGui::ColorEdit3("Emissive Tint", cue->emissive_color)) AutoSave();
+        if (ImGui::SliderFloat("Emissive Strength", &cue->emissive_strength, 0.0f, 10.0f)) AutoSave();
 
         if (ImGui::SliderFloat("Camera FOV", &cue->fov_deg, 10.0f, 120.0f)) AutoSave();
         ImGui::SameLine();

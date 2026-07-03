@@ -1049,9 +1049,10 @@ in vec2 uv;
 out vec4 fragColor;
 uniform sampler2D u_texture;
 uniform float u_opacity;
+uniform vec3 u_color_tint;
 void main() {
     vec4 texColor = texture(u_texture, uv);
-    fragColor = vec4(texColor.rgb, texColor.a * u_opacity);
+    fragColor = vec4(texColor.rgb * u_color_tint, texColor.a * u_opacity);
 }
 )";
 // Mesh (3D Phong) shaders
@@ -1086,6 +1087,8 @@ uniform vec3  u_view_pos;
 uniform vec4  u_color;
 uniform float u_metallic;
 uniform float u_roughness;
+uniform vec3  u_emissive_color;
+uniform float u_emissive_strength;
 uniform sampler2D u_base_color_texture;
 uniform int u_has_texture;
 void main() {
@@ -1106,7 +1109,8 @@ void main() {
     float spec_fac    = pow(max(dot(norm, hdir), 0.0), shininess);
     vec3  spec_col    = mix(vec3(0.04), base, u_metallic);
     vec3  spec        = spec_col * spec_fac * (1.0 - u_roughness * 0.85);
-    vec3  result      = base * (ambient + diff) + spec;
+    vec3  emissive    = u_emissive_color * u_emissive_strength;
+    vec3  result      = base * (ambient + diff) + spec + emissive;
     fragColor = vec4(result, alpha);
 }
 )";
@@ -1465,6 +1469,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                     mesh_obj->imported_light_pos[0] = ir->light_pos[0];
                                     mesh_obj->imported_light_pos[1] = ir->light_pos[1];
                                     mesh_obj->imported_light_pos[2] = ir->light_pos[2];
+                                    mesh_obj->emissive_color[0] = ir->material.emissive[0];
+                                    mesh_obj->emissive_color[1] = ir->material.emissive[1];
+                                    mesh_obj->emissive_color[2] = ir->material.emissive[2];
+                                    mesh_obj->emissive_strength = ir->material.emissive_strength;
                                 }
 
                                 // Load base color texture if present
@@ -1541,6 +1549,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                 mesh_obj->imported_light_pos[0] = ir->light_pos[0];
                                 mesh_obj->imported_light_pos[1] = ir->light_pos[1];
                                 mesh_obj->imported_light_pos[2] = ir->light_pos[2];
+                                mesh_obj->emissive_color[0] = ir->material.emissive[0];
+                                mesh_obj->emissive_color[1] = ir->material.emissive[1];
+                                mesh_obj->emissive_color[2] = ir->material.emissive[2];
+                                mesh_obj->emissive_strength = ir->material.emissive_strength;
                             }
 
                             // Load base color texture if present
@@ -1717,8 +1729,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
         LOGV("\nPreparing text cue [%d]: \"%s\"\n", ti, text_cue.text);
         text_force_baked[ti] = (text_cue.bake_mode == 1);
+        bool has_color_curve = (text_cue.curve_color_r >= 0 || text_cue.curve_color_g >= 0 || text_cue.curve_color_b >= 0);
+        bool requires_dynamic_text = ((!text_force_baked[ti]) && (text_cue.effect_type >= 3)) || has_color_curve;
 
-        if (text_cue.effect_type <= 2 || text_force_baked[ti]) {
+        if (!requires_dynamic_text) {
             bool baked_loaded = false;
             if (text_cue.baked_asset_key[0] != '\0') {
 #ifdef HIMYM_PACKED_ASSETS
@@ -1760,8 +1774,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             if (text_force_baked[ti]) {
                 LOGV("Text cue [%d] uses forced baked mode\n", ti);
             }
+            if (has_color_curve && text_force_baked[ti]) {
+                LOGV("Text cue [%d] has color curves and will still render dynamically in runtime\n", ti);
+            }
         } else {
-            // Dynamic effects (line-by-line/typewriter/sandstorm) are rasterized per frame.
+            // Dynamic effects and color-curved text are rasterized per frame.
             text_loaded[ti] = true;
             LOGV("Text cue [%d] effect mode %d renders dynamically per frame\n", ti, text_cue.effect_type);
         }
@@ -1891,7 +1908,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 // Warm dynamic text raster path once per cue.
                 for (int ti = 0; ti < text_cue_count; ++ti) {
                     TextCue& text_cue = text_cues[ti];
-                    if (text_cue.text[0] == '\0' || text_cue.effect_type < 3 || text_force_baked[ti]) continue;
+                    bool has_color_curve = (text_cue.curve_color_r >= 0 || text_cue.curve_color_g >= 0 || text_cue.curve_color_b >= 0);
+                    if (text_cue.text[0] == '\0' || ((text_cue.effect_type < 3) && !has_color_curve)) continue;
                     TextEffectFrame fx = {};
                     if (!BuildTextEffectFrame(&text_cue, text_cue.cue_start, &fx)) continue;
                     TextTexture tmp = {};
@@ -1929,6 +1947,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 int loc_color = rev::shader::GetUniformLocation(mesh_shader, "u_color");
                 int loc_metal = rev::shader::GetUniformLocation(mesh_shader, "u_metallic");
                 int loc_rough = rev::shader::GetUniformLocation(mesh_shader, "u_roughness");
+                int loc_emissive_color = rev::shader::GetUniformLocation(mesh_shader, "u_emissive_color");
+                int loc_emissive_strength = rev::shader::GetUniformLocation(mesh_shader, "u_emissive_strength");
                 int loc_has_tex = rev::shader::GetUniformLocation(mesh_shader, "u_has_texture");
                 int loc_tex = rev::shader::GetUniformLocation(mesh_shader, "u_base_color_texture");
 
@@ -2069,6 +2089,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             float col[4] = { mesh_cue.color[0] * slot_r, mesh_cue.color[1] * slot_g, mesh_cue.color[2] * slot_b, mesh_cue.color[3] * slot_a };
                             glUniform4fv_fn(loc_color, 1, col);
                         }
+                        if (loc_emissive_color >= 0) {
+                            rev::shader::SetVec3(mesh_shader, loc_emissive_color,
+                                mesh_cue.emissive_color[0] * slot.emissive_color[0],
+                                mesh_cue.emissive_color[1] * slot.emissive_color[1],
+                                mesh_cue.emissive_color[2] * slot.emissive_color[2]);
+                        }
+                        if (loc_emissive_strength >= 0) {
+                            rev::shader::SetFloat(mesh_shader, loc_emissive_strength,
+                                mesh_cue.emissive_strength * slot.emissive_strength);
+                        }
                         unsigned int tex_id = slot.base_color_texture;
                         if (tex_id == 0) tex_id = mesh_obj->base_color_texture;
                         if (tex_id != 0) {
@@ -2085,6 +2115,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         if (loc_color >= 0 && glUniform4fv_fn) {
                             float col[4] = { mesh_cue.color[0], mesh_cue.color[1], mesh_cue.color[2], mesh_cue.color[3] };
                             glUniform4fv_fn(loc_color, 1, col);
+                        }
+                        if (loc_emissive_color >= 0) {
+                            rev::shader::SetVec3(mesh_shader, loc_emissive_color,
+                                mesh_cue.emissive_color[0] * mesh_obj->emissive_color[0],
+                                mesh_cue.emissive_color[1] * mesh_obj->emissive_color[1],
+                                mesh_cue.emissive_color[2] * mesh_obj->emissive_color[2]);
+                        }
+                        if (loc_emissive_strength >= 0) {
+                            rev::shader::SetFloat(mesh_shader, loc_emissive_strength,
+                                mesh_cue.emissive_strength * mesh_obj->emissive_strength);
                         }
                         unsigned int tex_id = mesh_obj->base_color_texture;
                         if (tex_id != 0) {
@@ -2582,6 +2622,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                     int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
                     int u_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
+                    int u_col = rev::shader::GetUniformLocation(sprite_shader, "u_color_tint");
                     if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
                     if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
@@ -2589,6 +2630,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         anim_opacity * ComputeEffectOpacity(
                             image_cue.effect_type, image_cue.fade_in_start, image_cue.fade_in_end,
                             image_cue.fade_out_start, image_cue.fade_out_end, time));
+                    if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, image_tex.texture_id);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -2713,6 +2755,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                     int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
                     int u_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
+                    int u_col = rev::shader::GetUniformLocation(sprite_shader, "u_color_tint");
                     if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
                     if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
@@ -2720,6 +2763,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         anim_opacity * ComputeEffectOpacity(
                             cue.effect_type, cue.fade_in_start, cue.fade_in_end,
                             cue.fade_out_start, cue.fade_out_end, time));
+                    if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, frame_tex.texture_id);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -2793,8 +2837,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     TextTexture frame_text_tex = base_text_tex;
                     bool has_frame_text = (frame_text_tex.texture_id != 0);
                     bool frame_tex_transient = false;
+                    bool has_color_curve = (text_cue.curve_color_r >= 0 || text_cue.curve_color_g >= 0 || text_cue.curve_color_b >= 0);
+                    bool requires_dynamic_text = ((!force_baked) && (text_cue.effect_type >= 3)) || has_color_curve;
 
-                    if (text_cue.effect_type >= 3 && !force_baked) {
+                    if (requires_dynamic_text) {
                         frame_text_tex = {};
                         if (!RenderTextToTexture(
                                 fx.text, text_cue.font_name, anim_text_size,
@@ -2827,7 +2873,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa, opacity);
-                    if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, anim_text_color_r, anim_text_color_g, anim_text_color_b);
+                    if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, frame_text_tex.texture_id);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -3018,13 +3064,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa, opacity);
-                    if (u_col >= 0) {
-                        if (force_baked) {
-                            rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
-                        } else {
-                            rev::shader::SetVec3(sprite_shader, u_col, draw_r, draw_g, draw_b);
-                        }
-                    }
+                    if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, frame_text_tex.texture_id);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -3318,6 +3358,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     // Bind texture if available
                     int loc_has_tex = rev::shader::GetUniformLocation(mesh_shader, "u_has_texture");
                     int loc_tex = rev::shader::GetUniformLocation(mesh_shader, "u_base_color_texture");
+                    int loc_emissive_color = rev::shader::GetUniformLocation(mesh_shader, "u_emissive_color");
+                    int loc_emissive_strength = rev::shader::GetUniformLocation(mesh_shader, "u_emissive_strength");
                     bool rendered_slot = false;
                     // Pass 0: opaque slots. Pass 1: transparent slots.
                     for (int pass = 0; pass < 2; ++pass) {
@@ -3361,6 +3403,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                     cue_col[3] * slot_a
                                 };
                                 glUniform4fv_fn(loc_color, 1, col);
+                            }
+                            if (loc_emissive_color >= 0) {
+                                rev::shader::SetVec3(mesh_shader, loc_emissive_color,
+                                    mesh_cue.emissive_color[0] * slot.emissive_color[0],
+                                    mesh_cue.emissive_color[1] * slot.emissive_color[1],
+                                    mesh_cue.emissive_color[2] * slot.emissive_color[2]);
+                            }
+                            if (loc_emissive_strength >= 0) {
+                                rev::shader::SetFloat(mesh_shader, loc_emissive_strength,
+                                    mesh_cue.emissive_strength * slot.emissive_strength);
                             }
 
                             if (glUniformMatrix4fv_fn && loc_model >= 0) {
@@ -3411,6 +3463,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
                         if (loc_color >= 0 && glUniform4fv_fn) {
                             glUniform4fv_fn(loc_color, 1, cue_col);
+                        }
+                        if (loc_emissive_color >= 0) {
+                            rev::shader::SetVec3(mesh_shader, loc_emissive_color,
+                                mesh_cue.emissive_color[0] * mesh_obj->emissive_color[0],
+                                mesh_cue.emissive_color[1] * mesh_obj->emissive_color[1],
+                                mesh_cue.emissive_color[2] * mesh_obj->emissive_color[2]);
+                        }
+                        if (loc_emissive_strength >= 0) {
+                            rev::shader::SetFloat(mesh_shader, loc_emissive_strength,
+                                mesh_cue.emissive_strength * mesh_obj->emissive_strength);
                         }
                         if (mesh_obj->base_color_texture != 0) {
                             glBindTexture(0x0DE1, mesh_obj->base_color_texture);

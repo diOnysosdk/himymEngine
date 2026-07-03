@@ -83,6 +83,10 @@ Mesh* CreateMesh(uint32_t vertex_count, uint32_t index_count) {
     mesh->base_color_texture = 0;
     mesh->normal_texture = 0;
     mesh->metallic_roughness_texture = 0;
+    mesh->emissive_color[0] = 1.0f;
+    mesh->emissive_color[1] = 1.0f;
+    mesh->emissive_color[2] = 1.0f;
+    mesh->emissive_strength = 1.0f;
     mesh->has_imported_light = false;
     mesh->imported_light_pos[0] = 0.0f;
     mesh->imported_light_pos[1] = 0.0f;
@@ -152,7 +156,9 @@ void AddMaterialSlot(Mesh* mesh,
                      uint32_t color,
                      int material_index,
                      uint32_t base_color_texture,
-                     int source_node_index) {
+                     int source_node_index,
+                     const float* emissive_color,
+                     float emissive_strength) {
     if (!mesh) return;
     
     // Reallocate material slots array
@@ -168,6 +174,16 @@ void AddMaterialSlot(Mesh* mesh,
     new_slots[mesh->material_slot_count].material_index = material_index;
     new_slots[mesh->material_slot_count].base_color_texture = base_color_texture;
     new_slots[mesh->material_slot_count].source_node_index = source_node_index;
+    if (emissive_color) {
+        new_slots[mesh->material_slot_count].emissive_color[0] = emissive_color[0];
+        new_slots[mesh->material_slot_count].emissive_color[1] = emissive_color[1];
+        new_slots[mesh->material_slot_count].emissive_color[2] = emissive_color[2];
+    } else {
+        new_slots[mesh->material_slot_count].emissive_color[0] = 1.0f;
+        new_slots[mesh->material_slot_count].emissive_color[1] = 1.0f;
+        new_slots[mesh->material_slot_count].emissive_color[2] = 1.0f;
+    }
+    new_slots[mesh->material_slot_count].emissive_strength = emissive_strength;
     
     mesh->material_slots = new_slots;
     mesh->material_slot_count++;

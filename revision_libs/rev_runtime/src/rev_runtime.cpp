@@ -708,6 +708,8 @@ namespace runtime {
 //         curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|
 //         curve_color_r|curve_color_g|curve_color_b|curve_color_a|
 //         curve_mesh_size|curve_metallic|curve_roughness|fov_deg|cull_mode
+//         |curve_fov|use_imported_light|use_imported_camera
+//         |emissive_r|emissive_g|emissive_b|emissive_strength
 // mesh_type 4 = external file (asset_path holds path to .gltf/.glb)
 bool LoadMeshCue(const char* cues_path, MeshCue* cue)
 {
@@ -717,6 +719,10 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
 
     cue->fov_deg = 45.0f;
     cue->cull_mode = 0;
+    cue->emissive_color[0] = 1.0f;
+    cue->emissive_color[1] = 1.0f;
+    cue->emissive_color[2] = 1.0f;
+    cue->emissive_strength = 0.0f;
 
     char line[2048];
     bool in_section = false;
@@ -745,10 +751,11 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
         cue->asset_path[path_len] = '\0';
 
         // Parse remaining numeric fields
-        // Old 26-field format + 16 curve fields + optional fov/cull/curve_fov/toggles = 47 fields total:
+        // Old 26-field format + 16 curve fields + optional fov/cull/curve_fov/toggles
+        // + emissive controls = 51 fields total:
         // mesh_type|pos(3)|rot(3)|scale(3)|color(4)|mesh_size|mesh_param|
         // cue_start|cue_end|layer_order|effect_type|fade_in/out(4)|metallic|roughness|
-        // curve_pos(3)|curve_rot(3)|curve_scale(3)|curve_color(4)|curve_mesh_size|curve_metallic|curve_roughness|fov_deg|cull_mode|curve_fov|use_imported_light|use_imported_camera
+        // curve_pos(3)|curve_rot(3)|curve_scale(3)|curve_color(4)|curve_mesh_size|curve_metallic|curve_roughness|fov_deg|cull_mode|curve_fov|use_imported_light|use_imported_camera|emissive_color(3)|emissive_strength
         cue->metallic  = 0.0f;  // defaults for old files
         cue->roughness = 0.5f;
         int curve_pos_x = -1, curve_pos_y = -1, curve_pos_z = -1;
@@ -761,9 +768,13 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
         int curve_fov = -1;
         int use_imported_light = 0;
         int use_imported_camera = 0;
+        float emissive_r = 1.0f;
+        float emissive_g = 1.0f;
+        float emissive_b = 1.0f;
+        float emissive_strength = cue->emissive_strength;
         
         int n = sscanf_s(pipe2 + 1,
-            "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%d|%d|%d|%d",
+            "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%d|%d|%d|%d|%f|%f|%f|%f",
             &cue->mesh_type,
             &cue->pos[0],   &cue->pos[1],   &cue->pos[2],
             &cue->rot[0],   &cue->rot[1],   &cue->rot[2],
@@ -781,7 +792,8 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
             &curve_color_r, &curve_color_g, &curve_color_b, &curve_color_a,
             &curve_mesh_size, &curve_metallic, &curve_roughness,
             &fov_deg, &cull_mode, &curve_fov,
-            &use_imported_light, &use_imported_camera);
+            &use_imported_light, &use_imported_camera,
+            &emissive_r, &emissive_g, &emissive_b, &emissive_strength);
         
         if (n >= 18) {   // minimum viable parse (first 18 fields after key+path)
             // Curve fields (backwards compatible - default to -1)
@@ -806,6 +818,10 @@ bool LoadMeshCue(const char* cues_path, MeshCue* cue)
             cue->curve_fov = (n >= 45) ? curve_fov : -1;
             cue->use_imported_light = (n >= 46) ? use_imported_light : 0;
             cue->use_imported_camera = (n >= 47) ? use_imported_camera : 0;
+            cue->emissive_color[0] = (n >= 48) ? emissive_r : 1.0f;
+            cue->emissive_color[1] = (n >= 49) ? emissive_g : 1.0f;
+            cue->emissive_color[2] = (n >= 50) ? emissive_b : 1.0f;
+            cue->emissive_strength = (n >= 51) ? emissive_strength : 0.0f;
             found = true;
             break;
         }
