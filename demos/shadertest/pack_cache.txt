@@ -1,0 +1,3 @@
+himymengine.png|demos/shadertest/project_assets/himymengine.png|13812C03
+track01.xm|demos/shadertest/project_assets/track01.xm|3A27699E
+book_of_memories2.xm|demos/shadertest/project_assets/book_of_memories2.xm|964B22BD

@@ -1,0 +1,430 @@
+{
+  "version": "1.0",
+  "workspace_path": "E:\\code\\cpp\\mono\\himym\\demos\\shadertest",
+  "total_duration": 195.000,
+  "loop_intro": 1,
+  "loop_music": 0,
+  "scenes": [
+    {
+      "name": "New Scene 1",
+      "duration": 50.000,
+      "shader_cues": [
+        {
+          "shader_name": "Horizontal Gradient Bands",
+          "shader_scene_id": 0,
+          "palette_low": [0.800, 0.800, 0.800],
+          "palette_mid": [1.000, 1.000, 1.000],
+          "palette_high": [0.800, 0.800, 0.800],
+          "speed": 1.000,
+          "intensity": 2.000,
+          "warp": 1.000,
+          "exposure_base": 2.000,
+          "exposure_ramp": 0.020,
+          "fade_base": 1.000,
+          "fade_ramp": -0.040,
+          "cue_start": 0.000,
+          "cue_end": -1.000,
+          "fade_in": 0.500,
+          "fade_out": 0.500,
+          "layer_role": 0,
+          "opacity": 1.000,
+          "blend_mode": 0,
+          "layer_order": 0,
+          "curve_speed": 13,
+          "curve_intensity": 14,
+          "curve_warp": 15,
+          "curve_exposure": 16,
+          "curve_fade": 17,
+          "curve_palette_low_r": 0,
+          "curve_palette_low_g": 0,
+          "curve_palette_low_b": 0,
+          "curve_palette_mid_r": 1,
+          "curve_palette_mid_g": 2,
+          "curve_palette_mid_b": 3,
+          "curve_palette_high_r": 0,
+          "curve_palette_high_g": 0,
+          "curve_palette_high_b": 0,
+          "curve_opacity": 10,
+          "curve_exposure_ramp": 11,
+          "curve_fade_ramp": 12
+        },
+        {
+          "shader_name": "Cosmic Nebula Volumetric",
+          "shader_scene_id": 17,
+          "palette_low": [0.100, 0.300, 0.800],
+          "palette_mid": [0.800, 0.400, 0.200],
+          "palette_high": [1.000, 0.900, 0.700],
+          "speed": 0.125,
+          "intensity": 2.000,
+          "warp": 1.000,
+          "exposure_base": 1.000,
+          "exposure_ramp": 0.020,
+          "fade_base": 1.000,
+          "fade_ramp": -0.040,
+          "cue_start": 0.000,
+          "cue_end": -1.000,
+          "fade_in": 0.500,
+          "fade_out": 0.500,
+          "layer_role": 0,
+          "opacity": 1.000,
+          "blend_mode": 2,
+          "layer_order": 0,
+          "curve_speed": -1,
+          "curve_intensity": 8,
+          "curve_warp": -1,
+          "curve_exposure": -1,
+          "curve_fade": -1,
+          "curve_palette_low_r": -1,
+          "curve_palette_low_g": -1,
+          "curve_palette_low_b": 18,
+          "curve_palette_mid_r": 19,
+          "curve_palette_mid_g": 20,
+          "curve_palette_mid_b": 21,
+          "curve_palette_high_r": 22,
+          "curve_palette_high_g": 23,
+          "curve_palette_high_b": 24,
+          "curve_opacity": 25,
+          "curve_exposure_ramp": 26,
+          "curve_fade_ramp": -1
+        },
+        {
+          "shader_name": "Star Scroller 360",
+          "shader_scene_id": 18,
+          "palette_low": [0.100, 0.300, 0.800],
+          "palette_mid": [0.800, 0.400, 0.200],
+          "palette_high": [1.000, 0.900, 0.700],
+          "speed": 0.100,
+          "intensity": 1.167,
+          "warp": 0.630,
+          "exposure_base": 2.000,
+          "exposure_ramp": 0.500,
+          "fade_base": 1.000,
+          "fade_ramp": -0.040,
+          "cue_start": 0.000,
+          "cue_end": -1.000,
+          "fade_in": 0.500,
+          "fade_out": 0.500,
+          "layer_role": 0,
+          "opacity": 1.000,
+          "blend_mode": 1,
+          "layer_order": 0,
+          "curve_speed": -1,
+          "curve_intensity": 6,
+          "curve_warp": -1,
+          "curve_exposure": 4,
+          "curve_fade": -1,
+          "curve_palette_low_r": -1,
+          "curve_palette_low_g": -1,
+          "curve_palette_low_b": -1,
+          "curve_palette_mid_r": -1,
+          "curve_palette_mid_g": -1,
+          "curve_palette_mid_b": -1,
+          "curve_palette_high_r": -1,
+          "curve_palette_high_g": -1,
+          "curve_palette_high_b": -1,
+          "curve_opacity": 7,
+          "curve_exposure_ramp": 5,
+          "curve_fade_ramp": -1
+        },
+        {
+          "shader_name": "Horizontal Gradient Bands",
+          "shader_scene_id": 0,
+          "palette_low": [1.000, 1.000, 1.000],
+          "palette_mid": [1.000, 1.000, 1.000],
+          "palette_high": [1.000, 1.000, 1.000],
+          "speed": 0.100,
+          "intensity": 2.000,
+          "warp": 0.500,
+          "exposure_base": 2.000,
+          "exposure_ramp": -0.500,
+          "fade_base": 1.000,
+          "fade_ramp": -0.040,
+          "cue_start": 0.000,
+          "cue_end": -1.000,
+          "fade_in": 0.500,
+          "fade_out": 0.500,
+          "layer_role": 0,
+          "opacity": 1.000,
+          "blend_mode": 2,
+          "layer_order": 0,
+          "curve_speed": -1,
+          "curve_intensity": -1,
+          "curve_warp": -1,
+          "curve_exposure": -1,
+          "curve_fade": -1,
+          "curve_palette_low_r": 9,
+          "curve_palette_low_g": 9,
+          "curve_palette_low_b": 9,
+          "curve_palette_mid_r": 9,
+          "curve_palette_mid_g": 9,
+          "curve_palette_mid_b": 9,
+          "curve_palette_high_r": 9,
+          "curve_palette_high_g": 9,
+          "curve_palette_high_b": 9,
+          "curve_opacity": -1,
+          "curve_exposure_ramp": -1,
+          "curve_fade_ramp": -1
+        }
+      ],
+      "image_cues": [
+      ],
+      "text_cues": [
+      ],
+      "scroll_text_cues": [
+      ],
+      "music_cues": [
+        {
+          "asset_key": "track01.xm",
+          "asset_path": "demos/shadertest/project_assets/track01.xm",
+          "cue_start": 0.000,
+          "cue_end": 50.000
+        }
+      ],
+      "mesh_cues": [
+      ]
+    },
+    {
+      "name": "New Scene 3",
+      "duration": 145.000,
+      "shader_cues": [
+      ],
+      "image_cues": [
+      ],
+      "text_cues": [
+      ],
+      "scroll_text_cues": [
+      ],
+      "music_cues": [
+        {
+          "asset_key": "book_of_memories2.xm",
+          "asset_path": "demos/shadertest/project_assets/book_of_memories2.xm",
+          "cue_start": 0.000,
+          "cue_end": 145.000
+        }
+      ],
+      "mesh_cues": [
+      ]
+    }
+  ],
+  "curves": [
+    {
+      "wrap_mode": "clamp",
+      "duration": 3.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.000, "v": 0.889, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.896, "v": 1.006, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.014, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.500, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.156, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 6.000,
+      "points": [
+        {"t": 0.000, "v": 2.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 2.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 50.000,
+      "points": [
+        {"t": 0.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.050, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.950, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.020, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.020, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": -0.040, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": -0.040, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 2.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 2.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 2.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 2.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.800, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.800, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.800, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.800, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.400, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.400, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.200, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.200, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.900, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.900, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.700, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.700, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.020, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.020, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    }
+  ]
+}

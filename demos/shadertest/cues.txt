@@ -1,0 +1,117 @@
+[shader_cues]
+# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order|curve_speed|curve_intensity|curve_warp|curve_exposure|curve_fade|curve_palette_low_r|curve_palette_low_g|curve_palette_low_b|curve_palette_mid_r|curve_palette_mid_g|curve_palette_mid_b|curve_palette_high_r|curve_palette_high_g|curve_palette_high_b|curve_opacity|curve_exposure_ramp|curve_fade_ramp
+0|0.800|0.800|0.800|1.000|1.000|1.000|0.800|0.800|0.800|1.000|2.000|1.000|2.000|0.020|1.000|-0.040|0.000|50.000|0.500|0.500|0|1.000|0|0|13|14|15|16|17|0|0|0|1|2|3|0|0|0|10|11|12
+17|0.100|0.300|0.800|0.800|0.400|0.200|1.000|0.900|0.700|0.125|2.000|1.000|1.000|0.020|1.000|-0.040|0.000|50.000|0.500|0.500|0|1.000|2|0|-1|8|-1|-1|-1|-1|-1|18|19|20|21|22|23|24|25|26|-1
+18|0.100|0.300|0.800|0.800|0.400|0.200|1.000|0.900|0.700|0.100|1.167|0.630|2.000|0.500|1.000|-0.040|0.000|50.000|0.500|0.500|0|1.000|1|0|-1|6|-1|4|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|7|5|-1
+0|1.000|1.000|1.000|1.000|1.000|1.000|1.000|1.000|1.000|0.100|2.000|0.500|2.000|-0.500|1.000|-0.040|0.000|50.000|0.500|0.500|0|1.000|2|0|-1|-1|-1|-1|-1|9|9|9|9|9|9|9|9|9|-1|-1|-1
+
+[image_cues]
+# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity|blend_mode
+himymengine.png|demos/shadertest/project_assets/himymengine.png|0.500|0.500|0.500|1.000|0.000|5.000|0|1|0.500|1.000|2.500|3.000|-1|-1|-1|-1|0
+
+[text_cues]
+# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path
+
+[scroll_text_cues]
+# text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path
+
+[music_cues]
+# asset_key|asset_path|cue_start|cue_end
+track01.xm|demos/shadertest/project_assets/track01.xm|0.000|50.000
+book_of_memories2.xm|demos/shadertest/project_assets/book_of_memories2.xm|50.000|195.000
+
+[mesh_cues]
+# asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness|curve_pos_x|curve_pos_y|curve_pos_z|curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|curve_color_r|curve_color_g|curve_color_b|curve_color_a|curve_mesh_size|curve_metallic|curve_roughness|fov_deg|cull_mode|curve_fov|use_imported_light|use_imported_camera
+
+[curves]
+# curve_id|wrap_mode|duration|point_count
+0|clamp|3.000|2
+  0.000|0.000|0.500|0.500|linear
+  0.000|0.889|0.500|0.500|linear
+1|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+2|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+3|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+4|clamp|1.000|3
+  0.000|0.000|0.500|0.500|linear
+  0.896|1.006|0.500|0.500|linear
+  1.000|1.014|0.500|0.500|linear
+5|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|0.500|0.500|0.500|linear
+6|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|1.156|0.500|0.500|linear
+7|clamp|1.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+8|clamp|6.000|2
+  0.000|2.000|0.500|0.500|linear
+  1.000|2.000|0.500|0.500|linear
+9|clamp|50.000|4
+  0.000|1.000|0.500|0.500|linear
+  0.050|1.000|0.500|0.500|linear
+  0.950|1.000|0.500|0.500|linear
+  1.000|0.000|0.500|0.500|linear
+10|clamp|1.000|2
+  0.000|1.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+11|clamp|1.000|2
+  0.000|0.020|0.500|0.500|linear
+  1.000|0.020|0.500|0.500|linear
+12|clamp|1.000|2
+  0.000|-0.040|0.500|0.500|linear
+  1.000|-0.040|0.500|0.500|linear
+13|clamp|1.000|2
+  0.000|1.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+14|clamp|1.000|2
+  0.000|2.000|0.500|0.500|linear
+  1.000|2.000|0.500|0.500|linear
+15|clamp|1.000|2
+  0.000|1.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+16|clamp|1.000|2
+  0.000|2.000|0.500|0.500|linear
+  1.000|2.000|0.500|0.500|linear
+17|clamp|1.000|2
+  0.000|1.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+18|clamp|1.000|2
+  0.000|0.800|0.500|0.500|linear
+  1.000|0.800|0.500|0.500|linear
+19|clamp|1.000|2
+  0.000|0.800|0.500|0.500|linear
+  1.000|0.800|0.500|0.500|linear
+20|clamp|1.000|2
+  0.000|0.400|0.500|0.500|linear
+  1.000|0.400|0.500|0.500|linear
+21|clamp|1.000|2
+  0.000|0.200|0.500|0.500|linear
+  1.000|0.200|0.500|0.500|linear
+22|clamp|1.000|2
+  0.000|1.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+23|clamp|1.000|2
+  0.000|0.900|0.500|0.500|linear
+  1.000|0.900|0.500|0.500|linear
+24|clamp|1.000|2
+  0.000|0.700|0.500|0.500|linear
+  1.000|0.700|0.500|0.500|linear
+25|clamp|1.000|2
+  0.000|1.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+26|clamp|1.000|2
+  0.000|0.020|0.500|0.500|linear
+  1.000|0.020|0.500|0.500|linear
+
+[metadata]
+total_duration=195.000
+scene_count=2
+intro_loop=1
+music_loop=0

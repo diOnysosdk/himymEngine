@@ -57,6 +57,93 @@ uint64_t GetFileModificationTime(const char* path) {
     return 0;
 }
 
+static bool DirectoryExists(const char* path) {
+    if (!path || !path[0]) return false;
+    DWORD attrs = GetFileAttributesA(path);
+    return (attrs != INVALID_FILE_ATTRIBUTES) && ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0);
+}
+
+static bool FileExists(const char* path) {
+    if (!path || !path[0]) return false;
+    DWORD attrs = GetFileAttributesA(path);
+    return (attrs != INVALID_FILE_ATTRIBUTES) && ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0);
+}
+
+static void NormalizeSlashes(char* path) {
+    if (!path) return;
+    for (char* p = path; *p; ++p) {
+        if (*p == '/') *p = '\\';
+    }
+}
+
+// Some environments leave stale Windows SDK variables behind (for example
+// WindowsSdkDir pointing at a removed toolchain folder). That can make
+// CMake/MSBuild fail with SDK-not-found errors even when a valid SDK exists.
+static void SanitizeWindowsSdkEnvironmentForBuild() {
+    const char* sdk_dir = getenv("WindowsSdkDir");
+    if (sdk_dir && sdk_dir[0] && !DirectoryExists(sdk_dir)) {
+        printf("[Build] Warning: Ignoring invalid WindowsSdkDir='%s'\n", sdk_dir);
+        _putenv_s("WindowsSdkDir", "");
+    }
+
+    const char* sdk_ver = getenv("WindowsSDKVersion");
+    if (!sdk_ver || !sdk_ver[0]) return;
+
+    // Validate version against the default Windows Kits location used by VS.
+    char sdk_path[512] = {};
+    snprintf(sdk_path, sizeof(sdk_path), "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\%s", sdk_ver);
+    NormalizeSlashes(sdk_path);
+    size_t len = strlen(sdk_path);
+    while (len > 0 && (sdk_path[len - 1] == '\\' || sdk_path[len - 1] == ' ')) {
+        sdk_path[len - 1] = '\0';
+        --len;
+    }
+
+    if (!DirectoryExists(sdk_path)) {
+        printf("[Build] Warning: Ignoring invalid WindowsSDKVersion='%s'\n", sdk_ver);
+        _putenv_s("WindowsSDKVersion", "");
+    }
+}
+
+static bool CopyBuiltExeToProjectOutput(EditorContext* editor,
+                                        const char* exe_name,
+                                        char* out_dest_path,
+                                        size_t out_dest_path_size) {
+    if (!editor || !exe_name || !exe_name[0]) return false;
+
+    const char* project_root = editor->project->workspace_path[0]
+        ? editor->project->workspace_path
+        : editor->startup_dir;
+
+    char src_path[512] = {};
+    snprintf(src_path, sizeof(src_path), "%s\\build\\bin\\Release\\%s", editor->startup_dir, exe_name);
+    if (!FileExists(src_path)) {
+        printf("[Build] Warning: source executable not found: %s\n", src_path);
+        return false;
+    }
+
+    char bin_dir[512] = {};
+    char release_dir[512] = {};
+    snprintf(bin_dir, sizeof(bin_dir), "%s\\bin", project_root);
+    snprintf(release_dir, sizeof(release_dir), "%s\\Release", bin_dir);
+    CreateDirectoryA(bin_dir, NULL);
+    CreateDirectoryA(release_dir, NULL);
+
+    char dest_path[512] = {};
+    snprintf(dest_path, sizeof(dest_path), "%s\\%s", release_dir, exe_name);
+    if (!CopyFileA(src_path, dest_path, FALSE)) {
+        printf("[Build] Warning: could not copy %s to %s (err=%lu)\n", src_path, dest_path, GetLastError());
+        return false;
+    }
+
+    if (out_dest_path && out_dest_path_size > 0) {
+        strncpy_s(out_dest_path, out_dest_path_size, dest_path, _TRUNCATE);
+    }
+
+    printf("[Build] Copied %s to %s\n", exe_name, dest_path);
+    return true;
+}
+
 static void JsonEscapeString(const char* src, char* dst, size_t dst_size) {
     if (!src || !dst || dst_size == 0) return;
     size_t di = 0;
@@ -2903,6 +2990,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 bool BuildAndRun(EditorContext* editor) {
     if (!editor) return false;
 
+    SanitizeWindowsSdkEnvironmentForBuild();
+
     printf("\n=== Build and Run (Both Targets) ===\n");
 
     // Step 1: compute project-relative cues path
@@ -2953,14 +3042,38 @@ bool BuildAndRun(EditorContext* editor) {
     }
     printf("Packed build complete.\n");
 
+    // Step 3: Copy artifacts to project-local bin/Release.
+    char project_minimal_intro_path[512] = {};
+    char project_minimal_packed_path[512] = {};
+    bool copied_intro = CopyBuiltExeToProjectOutput(editor, "minimal_intro.exe",
+                                                    project_minimal_intro_path,
+                                                    sizeof(project_minimal_intro_path));
+    bool copied_packed = CopyBuiltExeToProjectOutput(editor, "minimal_intro_packed.exe",
+                                                     project_minimal_packed_path,
+                                                     sizeof(project_minimal_packed_path));
+    if (!copied_intro || !copied_packed) {
+        printf("[Build] Warning: one or more project-local executable copies failed.\n");
+    }
+
     // Step 4: Launch minimal_intro (non-packed version with external cues)
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Launching intro...", _TRUNCATE);
     editor->build_status_timer = 3.0f;
     printf("Step 3: Launching intro (%s)...\n", cues_path);
+    const char* launch_path = copied_intro
+        ? project_minimal_intro_path
+        : "";
+    if (!launch_path[0]) {
+        launch_path = nullptr;
+    }
+    char fallback_launch_path[512] = {};
+    if (!launch_path) {
+        snprintf(fallback_launch_path, sizeof(fallback_launch_path), "%s\\build\\bin\\Release\\minimal_intro.exe", editor->startup_dir);
+        launch_path = fallback_launch_path;
+    }
     char run_command[768];
     snprintf(run_command, sizeof(run_command),
-             "start \"\" \"%s\\build\\bin\\Release\\minimal_intro.exe\" %s",
-             editor->startup_dir, cues_path);
+             "start \"\" \"%s\" %s",
+             launch_path, cues_path);
     int run_result = system(run_command);
     
     if (run_result == 0) {
@@ -2978,6 +3091,8 @@ bool BuildAndRun(EditorContext* editor) {
 
 bool PackBuildAndRun(EditorContext* editor) {
     if (!editor) return false;
+
+    SanitizeWindowsSdkEnvironmentForBuild();
 
     printf("\n=== Pack, Build and Run ===\n");
 
@@ -3056,14 +3171,31 @@ bool PackBuildAndRun(EditorContext* editor) {
     }
     printf("Build complete.\n");
 
+    // Step 3b: Copy packed artifact to project-local bin/Release.
+    char project_packed_path[512] = {};
+    bool copied_packed = CopyBuiltExeToProjectOutput(editor, "minimal_intro_packed.exe",
+                                                     project_packed_path,
+                                                     sizeof(project_packed_path));
+
     // Step 4: Launch — absolute exe path + cues_path as argv[1]
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Launching packed intro...", _TRUNCATE);
     editor->build_status_timer = 3.0f;
     printf("Step 4: Launching packed intro (%s)...\n", cues_path);
+    const char* launch_path = copied_packed
+        ? project_packed_path
+        : "";
+    if (!launch_path[0]) {
+        launch_path = nullptr;
+    }
+    char fallback_launch_path[512] = {};
+    if (!launch_path) {
+        snprintf(fallback_launch_path, sizeof(fallback_launch_path), "%s\\build\\bin\\Release\\minimal_intro_packed.exe", editor->startup_dir);
+        launch_path = fallback_launch_path;
+    }
     char run_command[768];
     snprintf(run_command, sizeof(run_command),
-             "start \"\" \"%s\\build\\bin\\Release\\minimal_intro_packed.exe\" %s",
-             editor->startup_dir, cues_path);
+             "start \"\" \"%s\" %s",
+             launch_path, cues_path);
     int run_result = system(run_command);
     if (run_result == 0) {
         char msg[128];

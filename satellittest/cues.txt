@@ -1,0 +1,33 @@
+[shader_cues]
+# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order|curve_speed|curve_intensity|curve_warp|curve_exposure|curve_fade|curve_palette_low_r|curve_palette_low_g|curve_palette_low_b|curve_palette_mid_r|curve_palette_mid_g|curve_palette_mid_b|curve_palette_high_r|curve_palette_high_g|curve_palette_high_b|curve_opacity|curve_exposure_ramp|curve_fade_ramp
+0|0.000|0.000|0.250|0.000|0.000|0.588|0.000|0.000|0.862|1.000|1.000|0.500|0.760|0.020|1.000|-0.040|0.000|30.000|0.500|0.500|0|1.000|0|0|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1
+
+[image_cues]
+# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity|blend_mode
+thelogo2.png|satellittest/project_assets/thelogo2.png|0.500|0.800|1.000|1.000|0.000|30.000|0|0|0.000|0.000|0.000|0.000|-1|-1|-1|-1|0
+
+[text_cues]
+# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path
+
+[scroll_text_cues]
+# text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path
+SCROLL TEXT SCROLL TEXT SCROLL TEXT SCROLL TEXT SCROLL TEXT SCROLL TEXT SCROLL TEXT SCROLL TEXT SCROLL TEXT |Arial|2.500|0.963|40.000|1.000|1.000|1.000|0.000|30.000|0.000|0.000|0.000|0.000|0|0|0|0|0.250|1.000|0.000|1.000|0.000|1.000|0.200|0.000|0.000|1.000|0.000|0.000|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|0|0.000|0.000|1|scroll_s00_c00.png|satellittest/project_assets/scroll_s00_c00.png
+
+[music_cues]
+# asset_key|asset_path|cue_start|cue_end
+
+[mesh_cues]
+# asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness|curve_pos_x|curve_pos_y|curve_pos_z|curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|curve_color_r|curve_color_g|curve_color_b|curve_color_a|curve_mesh_size|curve_metallic|curve_roughness|fov_deg|cull_mode|curve_fov|use_imported_light|use_imported_camera
+mesh_0|satellittest/project_assets/uap.glb|4|0.000|0.000|-8.780|16.000|0.000|0.000|1.000|1.000|1.000|3.922|3.922|3.922|1.000|1.000|16.000|0.000|30.000|0|0|0.000|0.000|0.000|0.000|0.000|1.000|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|60.000|0|-1|0|0
+
+[curves]
+# curve_id|wrap_mode|duration|point_count
+0|clamp|30.000|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|360.000|0.500|0.500|linear
+
+[metadata]
+total_duration=30.000
+scene_count=1
+intro_loop=0
+music_loop=0

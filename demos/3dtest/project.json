@@ -1,0 +1,108 @@
+{
+  "version": "1.0",
+  "workspace_path": "E:\\code\\cpp\\mono\\himym\\demos\\3dtest",
+  "total_duration": 20.000,
+  "loop_intro": 0,
+  "loop_music": 0,
+  "scenes": [
+    {
+      "name": "New Scene",
+      "duration": 20.000,
+      "shader_cues": [
+        {
+          "shader_name": "Horizontal Gradient Bands",
+          "shader_scene_id": 0,
+          "palette_low": [0.000, 0.000, 0.000],
+          "palette_mid": [0.084, 0.000, 0.130],
+          "palette_high": [0.057, 0.000, 0.125],
+          "speed": 1.000,
+          "intensity": 2.000,
+          "warp": 1.000,
+          "exposure_base": 2.000,
+          "exposure_ramp": 0.500,
+          "fade_base": 1.000,
+          "fade_ramp": -0.040,
+          "cue_start": 0.000,
+          "cue_end": -1.000,
+          "fade_in": 0.500,
+          "fade_out": 0.500,
+          "layer_role": 0,
+          "opacity": 1.000,
+          "blend_mode": 0,
+          "layer_order": 0,
+          "curve_speed": -1,
+          "curve_intensity": -1,
+          "curve_warp": -1,
+          "curve_exposure": -1,
+          "curve_fade": -1,
+          "curve_palette_low_r": -1,
+          "curve_palette_low_g": -1,
+          "curve_palette_low_b": -1,
+          "curve_palette_mid_r": -1,
+          "curve_palette_mid_g": -1,
+          "curve_palette_mid_b": -1,
+          "curve_palette_high_r": -1,
+          "curve_palette_high_g": -1,
+          "curve_palette_high_b": -1,
+          "curve_opacity": -1,
+          "curve_exposure_ramp": -1,
+          "curve_fade_ramp": -1
+        }
+      ],
+      "image_cues": [
+      ],
+      "text_cues": [
+      ],
+      "scroll_text_cues": [
+      ],
+      "music_cues": [
+      ],
+      "mesh_cues": [
+        {
+          "asset_key": "mesh_0",
+          "asset_path": "demos/3dtest/project_assets/skyliner.glb",
+          "mesh_type": 4,
+          "pos": [0.000, 0.000, 0.000],
+          "rot": [0.000, 0.000, 0.000],
+          "scale": [1.000, 1.000, 1.000],
+          "color": [1.000, 1.000, 1.000, 1.000],
+          "mesh_size": 1.000,
+          "mesh_param": 16.000,
+          "metallic": 0.000,
+          "roughness": 0.500,
+          "fov_deg": 45.000,
+          "cull_mode": 0,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 20.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "layer_order": 0,
+          "curve_pos_x": -1,
+          "curve_pos_y": -1,
+          "curve_pos_z": -1,
+          "curve_rot_x": -1,
+          "curve_rot_y": -1,
+          "curve_rot_z": -1,
+          "curve_scale_x": -1,
+          "curve_scale_y": -1,
+          "curve_scale_z": -1,
+          "curve_color_r": -1,
+          "curve_color_g": -1,
+          "curve_color_b": -1,
+          "curve_color_a": -1,
+          "curve_mesh_size": -1,
+          "curve_metallic": -1,
+          "curve_roughness": -1,
+          "curve_fov": -1,
+          "use_imported_light": 1,
+          "use_imported_camera": 1
+        }
+      ]
+    }
+  ],
+  "curves": [
+  ]
+}

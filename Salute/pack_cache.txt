@@ -1,0 +1,3 @@
+silentslogo.png|Salute/project_assets/silentslogo.png|5CCDA04C
+Ship|Salute/project_assets/silents_textured.glb|4F32867D
+moon|Salute/project_assets/moon.glb|58D33D0C

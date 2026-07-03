@@ -708,8 +708,12 @@ static bool FindFirstSceneCamera(const cgltf_data* data, cgltf_node* node, float
         out_pos[1] = m[13];
         out_pos[2] = m[14];
 
-        float forward[3] = {0.0f, 0.0f, -1.0f};
-        TransformVector(m, forward, forward);
+        // Camera looks along its local -Z axis. Extract column 2 directly to
+        // avoid aliasing if caller passes the same array as both in and out.
+        // In column-major layout: m[8..10] = Z-axis column (backward); negate for forward.
+        float forward[3] = {};
+        float forward_local[3] = {0.0f, 0.0f, -1.0f};
+        TransformVector(m, forward_local, forward);
         out_target[0] = out_pos[0] + forward[0];
         out_target[1] = out_pos[1] + forward[1];
         out_target[2] = out_pos[2] + forward[2];
@@ -740,6 +744,24 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
         strncpy_s(result->error, "invalid glTF data", _TRUNCATE);
         cgltf_free(data);
         return result;
+    }
+
+    // Warn when Blender exported in Z-up mode (non-standard; glTF 2.0 requires Y-up).
+    // The asset.generator string will contain "Blender" but the exporter does NOT embed
+    // an "up" field in glTF 2.0 metadata.  The only reliable detection is to check
+    // whether every root-node's world matrix has its dominant "up" component along Y.
+    // A simpler heuristic: if the file was created by Blender AND the mesh root has a
+    // large rotation around X (~±90°), that's the wrong-up-axis sign.
+    // For now, just emit a reminder whenever loading from a Blender-generated file so
+    // users see it in stdout and can fix their export settings.
+    if (data->asset.generator && strstr(data->asset.generator, "Blender")) {
+        GLTF_LOGV("[glTF] NOTE: Blender-generated file detected ('%s').\n"
+                  "       Ensure 'Up: +Y Up' is selected in Blender's glTF export dialog.\n"
+                  "       Exporting with Z-up produces non-standard glTF and will appear\n"
+                  "       rotated 90° around X in HiMYM (mesh lies on its side, camera wrong).\n",
+                  data->asset.generator);
+        // Always print this (not just when verbose) since it is actionable axis guidance.
+        printf("[glTF] Blender export detected. Verify 'Up: +Y Up' in export settings.\n");
     }
 
     const int max_nodes = (int)data->nodes_count;
