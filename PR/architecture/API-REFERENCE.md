@@ -40,6 +40,20 @@ Imported camera animation contract (runtime + preview):
 - Camera FOV uses imported glTF camera FOV when present.
 - Node animation deltas are evaluated from one active animation track (`current_animation`, fallback index `0`) to avoid multi-track overwrite artifacts.
 
+Animated sprite cue contract (editor export + runtime):
+
+- New cue section: `[animated_sprite_cues]`
+- Line format:
+    `sprite_name|frame_keys_csv|frame_paths_csv|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|blend_mode|fps|playback_mode|start_frame|curve_x|curve_y|curve_scale|curve_opacity|curve_frame`
+- Playback semantics:
+    - `playback_mode`: `0=loop`, `1=once`, `2=pingpong`
+    - `fps` controls frame advance speed
+    - `start_frame` sets initial offset
+    - `curve_frame` (when assigned) can override frame index over time
+- Packing semantics:
+    - Packer resolves frame assets from `frame_paths_csv`
+    - Bare filenames are also resolved via cues directory and `project_assets` fallbacks
+
 These additions keep runtime and preview behavior aligned for mixed textured + color-only glTF material slots.
 
 ---

@@ -56,6 +56,19 @@ static bool IsAbsolutePath(const char* path) {
     return false;
 }
 
+static void GetDirectoryOfPath(const char* path, char* out_dir, size_t out_size) {
+    if (!out_dir || out_size == 0) return;
+    out_dir[0] = '\0';
+    if (!path || !path[0]) return;
+
+    strncpy_s(out_dir, out_size, path, _TRUNCATE);
+    char* last_slash = strrchr(out_dir, '\\');
+    char* last_fslash = strrchr(out_dir, '/');
+    char* cut = last_slash;
+    if (last_fslash && (!cut || last_fslash > cut)) cut = last_fslash;
+    if (cut) *cut = '\0';
+}
+
 static int LoadCache(const char* cache_path, CacheEntry* entries) {
     FILE* f = nullptr;
     fopen_s(&f, cache_path, "r");
@@ -255,6 +268,46 @@ static bool IsOptionalBakedTextAsset(const char* key, const char* path) {
     return true;
 }
 
+static int ParseAnimatedSpriteAssetLine(const char* line, AssetRef* out_refs, int max_refs) {
+    if (!line || !out_refs || max_refs <= 0) return 0;
+
+    char tmp[8192] = {};
+    strncpy_s(tmp, line, sizeof(tmp) - 1);
+
+    char* p1 = strchr(tmp, '|');
+    if (!p1) return 0;
+    *p1 = '\0';
+    char* frame_keys = p1 + 1;
+
+    char* p2 = strchr(frame_keys, '|');
+    if (!p2) return 0;
+    *p2 = '\0';
+    char* frame_paths = p2 + 1;
+
+    char* p3 = strchr(frame_paths, '|');
+    if (p3) *p3 = '\0';
+
+    int count = 0;
+    char* key_ctx = nullptr;
+    char* path_ctx = nullptr;
+    char* key_tok = strtok_s(frame_keys, ";", &key_ctx);
+    char* path_tok = strtok_s(frame_paths, ";", &path_ctx);
+    while (key_tok && count < max_refs) {
+        if (key_tok[0] != '\0') {
+            strncpy_s(out_refs[count].key, sizeof(out_refs[count].key), key_tok, _TRUNCATE);
+            if (path_tok && path_tok[0] != '\0') {
+                strncpy_s(out_refs[count].path, sizeof(out_refs[count].path), path_tok, _TRUNCATE);
+            } else {
+                strncpy_s(out_refs[count].path, sizeof(out_refs[count].path), key_tok, _TRUNCATE);
+            }
+            ++count;
+        }
+        key_tok = strtok_s(nullptr, ";", &key_ctx);
+        if (path_tok) path_tok = strtok_s(nullptr, ";", &path_ctx);
+    }
+    return count;
+}
+
 PackResult PackAssets(const char* cues_path,
                       const char* output_header,
                       const char* cache_path,
@@ -269,20 +322,34 @@ PackResult PackAssets(const char* cues_path,
         return result;
     }
 
+    char cues_dir[640] = {};
+    {
+        char full_cues_path[640] = {};
+        if (IsAbsolutePath(cues_path)) {
+            strncpy_s(full_cues_path, sizeof(full_cues_path), cues_path, _TRUNCATE);
+        } else if (workspace_root && workspace_root[0]) {
+            snprintf(full_cues_path, sizeof(full_cues_path), "%s\\%s", workspace_root, cues_path);
+        } else {
+            strncpy_s(full_cues_path, sizeof(full_cues_path), cues_path, _TRUNCATE);
+        }
+        GetDirectoryOfPath(full_cues_path, cues_dir, sizeof(cues_dir));
+    }
+
     AssetRef refs[kMaxAssets];
     int ref_count = 0;
-    bool in_image = false, in_music = false, in_mesh = false, in_text = false, in_scroll_text = false;
+    bool in_image = false, in_music = false, in_mesh = false, in_text = false, in_scroll_text = false, in_animated_sprite = false;
     char line[1024];
 
     while (fgets(line, sizeof(line), cues)) {
         char* s = line;
         while (*s == ' ' || *s == '\t') s++;
-        if (strstr(s, "[image_cues]"))       { in_image = true;  in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; continue; }
-        if (strstr(s, "[music_cues]"))       { in_image = false; in_music = true;  in_mesh = false; in_text = false; in_scroll_text = false; continue; }
-        if (strstr(s, "[mesh_cues]"))        { in_image = false; in_music = false; in_mesh = true;  in_text = false; in_scroll_text = false; continue; }
-        if (strstr(s, "[text_cues]"))        { in_image = false; in_music = false; in_mesh = false; in_text = true;  in_scroll_text = false; continue; }
-        if (strstr(s, "[scroll_text_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = true;  continue; }
-        if (s[0] == '[') { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; continue; }
+        if (strstr(s, "[image_cues]"))       { in_image = true;  in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; continue; }
+        if (strstr(s, "[animated_sprite_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = true; continue; }
+        if (strstr(s, "[music_cues]"))       { in_image = false; in_music = true;  in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; continue; }
+        if (strstr(s, "[mesh_cues]"))        { in_image = false; in_music = false; in_mesh = true;  in_text = false; in_scroll_text = false; in_animated_sprite = false; continue; }
+        if (strstr(s, "[text_cues]"))        { in_image = false; in_music = false; in_mesh = false; in_text = true;  in_scroll_text = false; in_animated_sprite = false; continue; }
+        if (strstr(s, "[scroll_text_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = true;  in_animated_sprite = false; continue; }
+        if (s[0] == '[') { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; continue; }
         if (s[0] == '#' || s[0] == '\r' || s[0] == '\n' || s[0] == '\0') continue;
 
         if ((in_image || in_music) && ref_count < kMaxAssets) {
@@ -294,6 +361,12 @@ PackResult PackAssets(const char* cues_path,
         } else if ((in_text || in_scroll_text) && ref_count < kMaxAssets) {
             if (ParseTextAssetLine(s, refs[ref_count].key, refs[ref_count].path))
                 ref_count++;
+        } else if (in_animated_sprite && ref_count < kMaxAssets) {
+            AssetRef parsed[64] = {};
+            int parsed_count = ParseAnimatedSpriteAssetLine(s, parsed, 64);
+            for (int i = 0; i < parsed_count && ref_count < kMaxAssets; ++i) {
+                refs[ref_count++] = parsed[i];
+            }
         }
     }
     fclose(cues);
@@ -373,6 +446,35 @@ PackResult PackAssets(const char* cues_path,
 
         size_t sz = 0;
         unsigned char* data = ReadFile(full_path, &sz);
+        if (!data && !IsAbsolutePath(refs[i].path)) {
+            // Fallbacks for relative asset paths (common for frame filenames in animated sprites).
+            char try_path[640] = {};
+
+            if (cues_dir[0]) {
+                snprintf(try_path, sizeof(try_path), "%s\\%s", cues_dir, refs[i].path);
+                for (char* p = try_path; *p; ++p) if (*p == '/') *p = '\\';
+                data = ReadFile(try_path, &sz);
+                if (data) {
+                    strncpy_s(full_path, sizeof(full_path), try_path, _TRUNCATE);
+                }
+            }
+
+            if (!data && cues_dir[0] && !strchr(refs[i].path, '\\') && !strchr(refs[i].path, '/')) {
+                snprintf(try_path, sizeof(try_path), "%s\\project_assets\\%s", cues_dir, refs[i].path);
+                data = ReadFile(try_path, &sz);
+                if (data) {
+                    strncpy_s(full_path, sizeof(full_path), try_path, _TRUNCATE);
+                }
+            }
+
+            if (!data && workspace_root && workspace_root[0] && !strchr(refs[i].path, '\\') && !strchr(refs[i].path, '/')) {
+                snprintf(try_path, sizeof(try_path), "%s\\project_assets\\%s", workspace_root, refs[i].path);
+                data = ReadFile(try_path, &sz);
+                if (data) {
+                    strncpy_s(full_path, sizeof(full_path), try_path, _TRUNCATE);
+                }
+            }
+        }
         if (!data) {
             if (IsOptionalBakedTextAsset(refs[i].key, refs[i].path)) {
                 printf("[rev_pack] Warning: skipping missing baked text asset: %s\n", full_path);

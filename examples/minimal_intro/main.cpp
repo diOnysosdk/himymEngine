@@ -20,6 +20,7 @@
 // Pull shared types into the global scope for this file.
 using rev::runtime::ColorRGB;
 using rev::runtime::ImageCue;
+using rev::runtime::AnimatedSpriteCue;
 using rev::runtime::ImageTexture;
 using rev::runtime::TextCue;
 using rev::runtime::ScrollTextCue;
@@ -33,6 +34,7 @@ using rev::runtime::LoadImageTextureFromMemory;
 using rev::runtime::RenderTextToTexture;
 using rev::runtime::MeshCue;
 using rev::runtime::LoadImageCue;
+using rev::runtime::LoadAnimatedSpriteCue;
 using rev::runtime::LoadTextCue;
 using rev::runtime::LoadMeshCue;
 using rev::runtime::LoadCurves;
@@ -831,6 +833,65 @@ int LoadAllImageCues(const char* path, ImageCue* cues, int max_cues) {
     return count;
 }
 
+int LoadAllAnimatedSpriteCues(const char* path, AnimatedSpriteCue* cues, int max_cues) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+
+    char line[8192];
+    bool in_section = false;
+    int count = 0;
+
+    while (fgets(line, sizeof(line), f) && count < max_cues) {
+        char* s = line;
+        while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+        if (strstr(s, "[animated_sprite_cues]")) { in_section = true; continue; }
+        if (s[0] == '[' && in_section) { break; }
+        if (!in_section || s[0] == '#' || s[0] == '\0' || s[0] == '\n') continue;
+
+        AnimatedSpriteCue* cue = &cues[count];
+        memset(cue, 0, sizeof(AnimatedSpriteCue));
+        cue->fps = 12.0f;
+        cue->playback_mode = 0;
+        cue->start_frame = 0;
+        cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_opacity = cue->curve_frame = -1;
+
+        char* pipe1 = strchr(s, '|');
+        if (!pipe1) continue;
+        *pipe1 = '\0';
+        strncpy_s(cue->sprite_name, s, _TRUNCATE);
+
+        char* pipe2 = strchr(pipe1 + 1, '|');
+        if (!pipe2) continue;
+        *pipe2 = '\0';
+        strncpy_s(cue->frame_keys_csv, pipe1 + 1, _TRUNCATE);
+
+        char* pipe3 = strchr(pipe2 + 1, '|');
+        if (!pipe3) continue;
+        *pipe3 = '\0';
+        strncpy_s(cue->frame_paths_csv, pipe2 + 1, _TRUNCATE);
+
+        int parsed = sscanf_s(pipe3 + 1,
+            "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d",
+            &cue->x, &cue->y, &cue->scale, &cue->opacity,
+            &cue->cue_start, &cue->cue_end,
+            &cue->layer_order, &cue->effect_type,
+            &cue->fade_in_start, &cue->fade_in_end,
+            &cue->fade_out_start, &cue->fade_out_end,
+            &cue->blend_mode,
+            &cue->fps,
+            &cue->playback_mode,
+            &cue->start_frame,
+            &cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_opacity, &cue->curve_frame);
+        if (parsed >= 6) {
+            ++count;
+        }
+    }
+
+    fclose(f);
+    return count;
+}
+
 struct RuntimePlaybackSettings {
     float total_duration;
     bool intro_loop;
@@ -1177,6 +1238,11 @@ int main(int argc, char* argv[]) {
         LOGV("  [%d] Key: %s, Time: %.1f-%.1fs\n",
              i, image_cues[i].asset_key, image_cues[i].cue_start, image_cues[i].cue_end);
     }
+
+    const int kMaxAnimatedSpriteCues = 32;
+    AnimatedSpriteCue animated_sprite_cues[kMaxAnimatedSpriteCues] = {};
+    int animated_sprite_cue_count = LoadAllAnimatedSpriteCues(cues_path, animated_sprite_cues, kMaxAnimatedSpriteCues);
+    LOGV("Animated sprite cues loaded: %d\n", animated_sprite_cue_count);
     
     // Load text cues (multi-cue support)
     const int kMaxTextCues = 32;
@@ -1219,6 +1285,9 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < image_cue_count; ++i) {
         if (image_cues[i].cue_end > total_duration) total_duration = image_cues[i].cue_end;
     }
+    for (int i = 0; i < animated_sprite_cue_count; ++i) {
+        if (animated_sprite_cues[i].cue_end > total_duration) total_duration = animated_sprite_cues[i].cue_end;
+    }
     for (int i = 0; i < text_cue_count; ++i) {
         if (text_cues[i].cue_end > total_duration) total_duration = text_cues[i].cue_end;
     }
@@ -1239,10 +1308,11 @@ int main(int argc, char* argv[]) {
     // If no cues or all have 0 duration, use default
     if (total_duration <= 0.0f) total_duration = 10.0f;
     
-printf("Summary: shaders=%d curves=%d image=%d text=%d scroll=%d mesh=%d music=%s duration=%.1fs\n",
+printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d mesh=%d music=%s duration=%.1fs\n",
            shader_cue_count,
            curve_count,
            image_cue_count,
+           animated_sprite_cue_count,
            text_cue_count,
            scroll_text_cue_count,
             mesh_cue_count,
@@ -2391,14 +2461,20 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d scroll=%d mesh=%d music=%
         // --- Unified layered draw pass ---
         // Collect active image/text/scroll/mesh cues, sort by layer_order, draw in order.
         {
-            struct DrawEntry { int type; int layer; int cue_idx; }; // 0=image 1=text 2=mesh 3=scroll
-            DrawEntry entries[kMaxImageCues + kMaxTextCues + kMaxScrollTextCues + kMaxMeshCues]; int ne = 0;
+            struct DrawEntry { int type; int layer; int cue_idx; }; // 0=image 1=text 2=mesh 3=scroll 4=animated sprite
+            DrawEntry entries[kMaxImageCues + kMaxAnimatedSpriteCues + kMaxTextCues + kMaxScrollTextCues + kMaxMeshCues]; int ne = 0;
 
             for (int ii = 0; ii < image_cue_count; ++ii) {
                 ImageCue& icue = image_cues[ii];
                 bool img_active = sprite_shader && image_loaded[ii]
                                   && time >= icue.cue_start && time <= icue.cue_end;
                 if (img_active) entries[ne++] = {0, icue.layer_order, ii};
+            }
+            for (int ai = 0; ai < animated_sprite_cue_count; ++ai) {
+                AnimatedSpriteCue& cue = animated_sprite_cues[ai];
+                bool asp_active = sprite_shader && cue.frame_keys_csv[0]
+                                  && time >= cue.cue_start && time <= cue.cue_end;
+                if (asp_active) entries[ne++] = {4, cue.layer_order, ai};
             }
             for (int ti = 0; ti < text_cue_count; ++ti) {
                 TextCue& text_cue = text_cues[ti];
@@ -2423,9 +2499,9 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d scroll=%d mesh=%d music=%
             // Bubble sort ascending (lower layer_order draws first = further back)
             // Tie-break rule for same layer: mesh behind image behind text/scroll.
             auto draw_priority = [](int type) {
-                // type: 0=image, 1=text, 2=mesh, 3=scroll
+                // type: 0=image, 1=text, 2=mesh, 3=scroll, 4=animated sprite
                 if (type == 2) return 0; // mesh first (back)
-                if (type == 0) return 1; // image middle
+                if (type == 0 || type == 4) return 1; // image middle
                 return 2;                // text/scroll front
             };
             for (int i = 0; i < ne - 1; i++)
@@ -2439,7 +2515,7 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d scroll=%d mesh=%d music=%
             if (g_verbose_logging && (debug_frame < 240) && (debug_frame % 30 == 0)) {
                 LOGV("           draw_entries=%d", ne);
                 for (int di = 0; di < ne && di < 8; ++di) {
-                    const char* type_name = (entries[di].type == 0) ? "img" : (entries[di].type == 1) ? "txt" : (entries[di].type == 3) ? "scr" : "msh";
+                    const char* type_name = (entries[di].type == 0) ? "img" : (entries[di].type == 1) ? "txt" : (entries[di].type == 3) ? "scr" : (entries[di].type == 4) ? "asp" : "msh";
                     LOGV(" [%s L%d idx%d]", type_name, entries[di].layer, entries[di].cue_idx);
                 }
                 LOGV("\n");
@@ -2516,6 +2592,138 @@ printf("Summary: shaders=%d curves=%d image=%d text=%d scroll=%d mesh=%d music=%
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, image_tex.texture_id);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+                } else if (entries[ei].type == 4) {
+                    int anim_idx = entries[ei].cue_idx;
+                    AnimatedSpriteCue& cue = animated_sprite_cues[anim_idx];
+
+                    glBindVertexArray(vao);
+                    if (depth_on) {
+                        glDisable(GL_DEPTH_TEST);
+                        glDepthMask(GL_FALSE);
+                        depth_on = false;
+                    }
+                    if (!blend_on) {
+                        glEnable(GL_BLEND);
+                        blend_on = true;
+                    }
+                    ApplySpriteBlendMode(cue.blend_mode);
+                    rev::shader::Use(sprite_shader);
+
+                    float elapsed_time = time - cue.cue_start;
+                    if (elapsed_time < 0.0f) elapsed_time = 0.0f;
+
+                    float anim_x = cue.x;
+                    float anim_y = cue.y;
+                    float anim_scale = cue.scale;
+                    float anim_opacity = cue.opacity;
+                    float anim_frame = (float)cue.start_frame;
+
+                    if (cue.curve_x >= 0 && cue.curve_x < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_x].duration;
+                        anim_x = rev::curve::Evaluate(curves[cue.curve_x], t);
+                    }
+                    if (cue.curve_y >= 0 && cue.curve_y < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_y].duration;
+                        anim_y = rev::curve::Evaluate(curves[cue.curve_y], t);
+                    }
+                    if (cue.curve_scale >= 0 && cue.curve_scale < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_scale].duration;
+                        anim_scale = rev::curve::Evaluate(curves[cue.curve_scale], t);
+                    }
+                    if (cue.curve_opacity >= 0 && cue.curve_opacity < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_opacity].duration;
+                        anim_opacity = rev::curve::Evaluate(curves[cue.curve_opacity], t);
+                    }
+                    if (cue.curve_frame >= 0 && cue.curve_frame < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_frame].duration;
+                        anim_frame = rev::curve::Evaluate(curves[cue.curve_frame], t);
+                    }
+
+                    int frame_count = 0;
+                    for (const char* p = cue.frame_keys_csv; *p; ++p) if (*p == ';') ++frame_count;
+                    if (cue.frame_keys_csv[0]) ++frame_count;
+                    if (frame_count <= 0) continue;
+
+                    int frame_idx = cue.start_frame;
+                    if (cue.fps > 0.0f && elapsed_time > 0.0f) {
+                        float frame_f = elapsed_time * cue.fps;
+                        if (cue.playback_mode == 1) {
+                            frame_idx = (int)frame_f;
+                            if (frame_idx >= frame_count) frame_idx = frame_count - 1;
+                        } else if (cue.playback_mode == 2 && frame_count > 1) {
+                            int period = frame_count * 2 - 2;
+                            int ping_idx = ((int)frame_f) % period;
+                            if (ping_idx < 0) ping_idx += period;
+                            frame_idx = (ping_idx >= frame_count) ? (period - ping_idx) : ping_idx;
+                        } else {
+                            frame_idx = ((int)frame_f) % frame_count;
+                            if (frame_idx < 0) frame_idx += frame_count;
+                        }
+                    }
+                    if (cue.curve_frame >= 0 && cue.curve_frame < curve_count) {
+                        frame_idx = (int)anim_frame;
+                    }
+                    if (frame_idx < 0) frame_idx = 0;
+                    if (frame_idx >= frame_count) frame_idx = frame_count - 1;
+
+                    char selected_key[256] = {};
+                    {
+                        int current = 0;
+                        const char* start = cue.frame_keys_csv;
+                        const char* p = cue.frame_keys_csv;
+                        while (true) {
+                            if (*p == ';' || *p == '\0') {
+                                if (current == frame_idx) {
+                                    size_t len = (size_t)(p - start);
+                                    if (len >= sizeof(selected_key)) len = sizeof(selected_key) - 1;
+                                    strncpy_s(selected_key, start, len);
+                                    break;
+                                }
+                                if (*p == '\0') break;
+                                start = p + 1;
+                                ++current;
+                            }
+                            if (*p == '\0') break;
+                            ++p;
+                        }
+                    }
+                    if (!selected_key[0]) continue;
+
+                    ImageTexture frame_tex = {};
+                    bool frame_loaded = false;
+#ifdef HIMYM_PACKED_ASSETS
+                    const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(selected_key, kPackedAssets, kPackedAssetCount);
+                    if (pa) {
+                        frame_loaded = LoadImageTextureFromMemory(pa->data, pa->size, &frame_tex);
+                    }
+#else
+                    char frame_path[512] = {};
+                    snprintf(frame_path, sizeof(frame_path), "%s", selected_key);
+                    for (char* p = frame_path; *p; ++p) if (*p == '/') *p = '\\';
+                    frame_loaded = LoadImageTexture(frame_path, &frame_tex);
+#endif
+                    if (!frame_loaded || frame_tex.texture_id == 0) continue;
+
+                    float w = (frame_tex.width * anim_scale) / (float)config.width * 2.0f;
+                    float h = (frame_tex.height * anim_scale) / (float)config.height * 2.0f;
+                    float x = (anim_x * 2.0f - 1.0f);
+                    float y = -((anim_y * 2.0f) - 1.0f);
+                    int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
+                    int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
+                    int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
+                    int u_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
+                    if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
+                    if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
+                    if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
+                    if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa,
+                        anim_opacity * ComputeEffectOpacity(
+                            cue.effect_type, cue.fade_in_start, cue.fade_in_end,
+                            cue.fade_out_start, cue.fade_out_end, time));
+                    if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, frame_tex.texture_id);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                    glDeleteTextures(1, &frame_tex.texture_id);
 
                 } else if (entries[ei].type == 1) {
                     // Text sprite

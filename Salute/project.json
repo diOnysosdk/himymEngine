@@ -15,7 +15,7 @@
           "palette_low": [0.963, 0.696, 0.925],
           "palette_mid": [0.190, 0.336, 0.178],
           "palette_high": [0.995, 0.457, 0.998],
-          "speed": 0.513,
+          "speed": 0.300,
           "intensity": 1.261,
           "warp": 0.839,
           "exposure_base": 1.718,
@@ -52,23 +52,51 @@
       "image_cues": [
         {
           "asset_key": "silentslogo.png",
-          "x": 0.852,
-          "y": 0.850,
-          "scale": 0.500,
+          "x": 0.915,
+          "y": 0.915,
+          "scale": 0.300,
           "opacity": 1.000,
-          "effect_type": 1,
-          "cue_start": 2.000,
+          "effect_type": 0,
+          "cue_start": 0.000,
           "cue_end": 60.000,
-          "fade_in_start": 2.000,
-          "fade_in_end": 2.500,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
           "fade_out_start": 0.000,
           "fade_out_end": 0.000,
           "blend_mode": 0,
-          "layer_order": 0,
+          "layer_order": 2,
           "curve_x": -1,
-          "curve_y": 1,
+          "curve_y": -1,
           "curve_scale": -1,
           "curve_opacity": -1
+        }
+      ],
+      "animated_sprite_cues": [
+        {
+          "sprite_name": "sprite_0",
+          "frame_keys_csv": "blockers.png",
+          "frame_paths_csv": "blockers.png",
+          "x": 0.500,
+          "y": 0.500,
+          "scale": 0.500,
+          "opacity": 1.000,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 60.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "layer_order": 1,
+          "blend_mode": 0,
+          "fps": 0.500,
+          "playback_mode": 0,
+          "start_frame": 0,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_scale": -1,
+          "curve_opacity": -1,
+          "curve_frame": -1
         }
       ],
       "text_cues": [
@@ -82,8 +110,8 @@
           "asset_key": "Ship",
           "asset_path": "Salute/project_assets/silents_textured.glb",
           "mesh_type": 4,
-          "pos": [-1.270, 0.400, -26.340],
-          "rot": [-180.000, 15.000, 37.000],
+          "pos": [-1.270, -0.040, -31.920],
+          "rot": [-180.000, -9.000, 16.000],
           "scale": [1.000, 1.000, 1.000],
           "color": [1.000, 1.000, 1.000, 1.000],
           "mesh_size": 1.000,
@@ -124,10 +152,10 @@
           "asset_key": "moon",
           "asset_path": "Salute/project_assets/moon.glb",
           "mesh_type": 4,
-          "pos": [25.000, 25.000, -100.000],
-          "rot": [40.000, 40.000, 0.000],
+          "pos": [7.400, 11.240, -93.930],
+          "rot": [89.000, 50.000, -47.000],
           "scale": [25.000, 25.000, 25.000],
-          "color": [1.000, 1.000, 1.000, 1.000],
+          "color": [2.008, 2.008, 2.008, 1.000],
           "mesh_size": 1.000,
           "mesh_param": 16.000,
           "metallic": 0.000,
@@ -172,14 +200,6 @@
       "points": [
         {"t": 0.000, "v": -180.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
         {"t": 1.000, "v": 180.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
-      ]
-    },
-    {
-      "wrap_mode": "pingpong",
-      "duration": 0.250,
-      "points": [
-        {"t": 0.000, "v": 0.850, "in_ease": 0.500, "out_ease": 0.500, "mode": "smoothstep"},
-        {"t": 1.000, "v": 0.825, "in_ease": 0.500, "out_ease": 0.500, "mode": "smoothstep"}
       ]
     }
   ]

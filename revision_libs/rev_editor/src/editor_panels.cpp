@@ -55,6 +55,15 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
             UpdateCurveRefAfterDelete(&cue->curve_opacity, deleted_curve);
         }
 
+        for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
+            AnimatedSpriteCue* cue = &scene->animated_sprite_cues[i];
+            UpdateCurveRefAfterDelete(&cue->curve_x, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_y, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_scale, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_opacity, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_frame, deleted_curve);
+        }
+
         for (int i = 0; i < scene->text_cue_count; ++i) {
             TextCue* cue = &scene->text_cues[i];
             UpdateCurveRefAfterDelete(&cue->curve_x, deleted_curve);
@@ -156,6 +165,17 @@ void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, s
             RegisterCurveUsage(cue->curve_opacity, curve_index, "Image Opacity", owner, &usage_count, first_usage, sizeof(first_usage));
         }
 
+        for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
+            AnimatedSpriteCue* cue = &scene->animated_sprite_cues[i];
+            char owner[128] = {};
+            snprintf(owner, sizeof(owner), "%s/%s", scene_name, cue->sprite_name[0] ? cue->sprite_name : "anim_sprite");
+            RegisterCurveUsage(cue->curve_x, curve_index, "AnimSprite X", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_y, curve_index, "AnimSprite Y", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_scale, curve_index, "AnimSprite Scale", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_opacity, curve_index, "AnimSprite Opacity", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_frame, curve_index, "AnimSprite Frame", owner, &usage_count, first_usage, sizeof(first_usage));
+        }
+
         for (int i = 0; i < scene->text_cue_count; ++i) {
             TextCue* cue = &scene->text_cues[i];
             char snippet[48] = {};
@@ -240,6 +260,10 @@ static int AllocateCurveSlotForPanel(EditorContext* editor, float start_v, float
         for (int i = 0; i < scene->image_cue_count; ++i) {
             ImageCue* cue = &scene->image_cues[i];
             mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_scale); mark(cue->curve_opacity);
+        }
+        for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
+            AnimatedSpriteCue* cue = &scene->animated_sprite_cues[i];
+            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_scale); mark(cue->curve_opacity); mark(cue->curve_frame);
         }
         for (int i = 0; i < scene->text_cue_count; ++i) {
             TextCue* cue = &scene->text_cues[i];
@@ -373,7 +397,7 @@ void RenderTimeline(EditorContext* editor) {
             if (!can_move_down) ImGui::EndDisabled();
             
             // Show cue counts
-            if (scene->shader_cue_count > 0 || scene->image_cue_count > 0 || 
+            if (scene->shader_cue_count > 0 || scene->image_cue_count > 0 || scene->animated_sprite_cue_count > 0 ||
                 scene->text_cue_count > 0 || scene->scroll_text_cue_count > 0 || scene->music_cue_count > 0 ||
                 scene->mesh_cue_count > 0) {
                 ImGui::Indent();
@@ -382,6 +406,9 @@ void RenderTimeline(EditorContext* editor) {
                 }
                 if (scene->image_cue_count > 0) {
                     ImGui::Text("  Images: %d", scene->image_cue_count);
+                }
+                if (scene->animated_sprite_cue_count > 0) {
+                    ImGui::Text("  Animated Sprites: %d", scene->animated_sprite_cue_count);
                 }
                 if (scene->text_cue_count > 0) {
                     ImGui::Text("  Text: %d", scene->text_cue_count);
@@ -547,6 +574,33 @@ void RenderProperties(EditorContext* editor) {
                 editor->image_modal_request_open = true;
                 editor->project->modified = true;
             }
+
+            if (ImGui::Button("+ Animated Sprite Cue")) {
+                AnimatedSpriteCue cue = {};
+                snprintf(cue.sprite_name, sizeof(cue.sprite_name), "sprite_%d", scene->animated_sprite_cue_count);
+                cue.x = 0.5f;
+                cue.y = 0.5f;
+                cue.scale = 1.0f;
+                cue.opacity = 1.0f;
+                cue.cue_start = 0.0f;
+                cue.cue_end = scene->duration;
+                cue.layer_order = 0;
+                cue.blend_mode = 0;
+                cue.fps = 12.0f;
+                cue.playback_mode = 0;
+                cue.start_frame = 0;
+                cue.curve_x = -1;
+                cue.curve_y = -1;
+                cue.curve_scale = -1;
+                cue.curve_opacity = -1;
+                cue.curve_frame = -1;
+                int new_index = AddAnimatedSpriteCue(scene, cue);
+                editor->editing_animated_sprite = scene->animated_sprite_cues[new_index];
+                editor->selected_cue_index = new_index;
+                editor->selected_cue_type = CueTypeAnimatedSprite;
+                editor->animated_sprite_modal_request_open = true;
+                editor->project->modified = true;
+            }
             if (!project_saved && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 ImGui::SetTooltip("Save the project first to set up the assets folder");
             }
@@ -697,6 +751,28 @@ void RenderProperties(EditorContext* editor) {
                     ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {
                         DeleteImageCue(scene, i);
+                        editor->project->modified = true;
+                    }
+                    ImGui::PopID();
+                }
+            }
+
+            if (scene->animated_sprite_cue_count > 0) {
+                ImGui::Text("Animated Sprite Cues:");
+                for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
+                    ImGui::PushID(2500 + i);
+                    const char* display_name = scene->animated_sprite_cues[i].sprite_name[0] != '\0'
+                        ? scene->animated_sprite_cues[i].sprite_name
+                        : "(animated sprite)";
+                    if (ImGui::Button(display_name)) {
+                        editor->editing_animated_sprite = scene->animated_sprite_cues[i];
+                        editor->selected_cue_index = i;
+                        editor->selected_cue_type = CueTypeAnimatedSprite;
+                        editor->animated_sprite_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X")) {
+                        DeleteAnimatedSpriteCue(scene, i);
                         editor->project->modified = true;
                     }
                     ImGui::PopID();
@@ -1040,6 +1116,13 @@ void RenderCurveEditor(EditorContext* editor) {
                 add_target("Image Y", &cue->curve_y);
                 add_target("Image Scale", &cue->curve_scale);
                 add_target("Image Opacity", &cue->curve_opacity);
+            } else if (editor->selected_cue_type == CueTypeAnimatedSprite && editor->selected_cue_index < scene->animated_sprite_cue_count) {
+                AnimatedSpriteCue* cue = &scene->animated_sprite_cues[editor->selected_cue_index];
+                add_target("AnimSprite X", &cue->curve_x);
+                add_target("AnimSprite Y", &cue->curve_y);
+                add_target("AnimSprite Scale", &cue->curve_scale);
+                add_target("AnimSprite Opacity", &cue->curve_opacity);
+                add_target("AnimSprite Frame", &cue->curve_frame);
             } else if (editor->selected_cue_type == CueTypeText && editor->selected_cue_index < scene->text_cue_count) {
                 TextCue* cue = &scene->text_cues[editor->selected_cue_index];
                 add_target("Text X", &cue->curve_x);
@@ -1099,6 +1182,8 @@ void RenderCurveEditor(EditorContext* editor) {
                         editor->editing_shader = scene->shader_cues[editor->selected_cue_index];
                     } else if (editor->selected_cue_type == CueTypeImage && editor->selected_cue_index < scene->image_cue_count) {
                         editor->editing_image = scene->image_cues[editor->selected_cue_index];
+                    } else if (editor->selected_cue_type == CueTypeAnimatedSprite && editor->selected_cue_index < scene->animated_sprite_cue_count) {
+                        editor->editing_animated_sprite = scene->animated_sprite_cues[editor->selected_cue_index];
                     } else if (editor->selected_cue_type == CueTypeText && editor->selected_cue_index < scene->text_cue_count) {
                         editor->editing_text = scene->text_cues[editor->selected_cue_index];
                     } else if (editor->selected_cue_type == CueTypeScrollText && editor->selected_cue_index < scene->scroll_text_cue_count) {

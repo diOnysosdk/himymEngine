@@ -541,6 +541,17 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->music_modal_request_open = false;
     editor->image_modal_open = false;
     editor->image_modal_request_open = false;
+    editor->animated_sprite_modal_open = false;
+    editor->animated_sprite_modal_request_open = false;
+    memset(&editor->editing_animated_sprite, 0, sizeof(editor->editing_animated_sprite));
+    editor->editing_animated_sprite.fps = 12.0f;
+    editor->editing_animated_sprite.playback_mode = 0;
+    editor->editing_animated_sprite.start_frame = 0;
+    editor->editing_animated_sprite.curve_x = -1;
+    editor->editing_animated_sprite.curve_y = -1;
+    editor->editing_animated_sprite.curve_scale = -1;
+    editor->editing_animated_sprite.curve_opacity = -1;
+    editor->editing_animated_sprite.curve_frame = -1;
     editor->text_modal_open = false;
     editor->text_modal_request_open = false;
     editor->scroll_text_modal_open = false;
@@ -654,6 +665,7 @@ void DestroyEditor(EditorContext* editor) {
             SceneBlock* scene = &editor->project->scenes[i];
             delete[] scene->shader_cues;
             delete[] scene->image_cues;
+            delete[] scene->animated_sprite_cues;
             delete[] scene->text_cues;
             delete[] scene->scroll_text_cues;
             delete[] scene->music_cues;
@@ -704,6 +716,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
     bool in_scenes = false;
     bool in_shader_cues = false;
     bool in_image_cues = false;
+    bool in_animated_sprite_cues = false;
     bool in_text_cues = false;
     bool in_scroll_text_cues = false;
     bool in_music_cues = false;
@@ -721,6 +734,15 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_shader_cue.curve_opacity = current_shader_cue.curve_exposure_ramp = current_shader_cue.curve_fade_ramp = -1;
     
     ImageCue current_image_cue = {};
+    AnimatedSpriteCue current_animated_sprite_cue = {};
+    current_animated_sprite_cue.fps = 12.0f;
+    current_animated_sprite_cue.playback_mode = 0;
+    current_animated_sprite_cue.start_frame = 0;
+    current_animated_sprite_cue.curve_x = -1;
+    current_animated_sprite_cue.curve_y = -1;
+    current_animated_sprite_cue.curve_scale = -1;
+    current_animated_sprite_cue.curve_opacity = -1;
+    current_animated_sprite_cue.curve_frame = -1;
     TextCue current_text_cue = {};
     current_text_cue.curve_x = -1;
     current_text_cue.curve_y = -1;
@@ -819,6 +841,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             has_duration = false;
             in_shader_cues = false;
             in_image_cues = false;
+            in_animated_sprite_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
@@ -829,30 +852,42 @@ bool LoadProject(EditorContext* editor, const char* path) {
         if (strstr(start, "\"shader_cues\":")) {
             in_shader_cues = true;
             in_image_cues = false;
+            in_animated_sprite_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
         } else if (strstr(start, "\"image_cues\":")) {
             in_shader_cues = false;
             in_image_cues = true;
+            in_animated_sprite_cues = false;
+            in_text_cues = false;
+            in_scroll_text_cues = false;
+            in_music_cues = false;
+        } else if (strstr(start, "\"animated_sprite_cues\":")) {
+            in_shader_cues = false;
+            in_image_cues = false;
+            in_animated_sprite_cues = true;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
         } else if (strstr(start, "\"text_cues\":")) {
             in_shader_cues = false;
             in_image_cues = false;
+            in_animated_sprite_cues = false;
             in_text_cues = true;
             in_scroll_text_cues = false;
             in_music_cues = false;
         } else if (strstr(start, "\"scroll_text_cues\":")) {
             in_shader_cues = false;
             in_image_cues = false;
+            in_animated_sprite_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = true;
             in_music_cues = false;
         } else if (strstr(start, "\"music_cues\":")) {
             in_shader_cues = false;
             in_image_cues = false;
+            in_animated_sprite_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = true;
@@ -860,12 +895,77 @@ bool LoadProject(EditorContext* editor, const char* path) {
         } else if (strstr(start, "\"mesh_cues\":")) {
             in_shader_cues = false;
             in_image_cues = false;
+            in_animated_sprite_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
             in_mesh_cues = true;
         } else if (strstr(start, "\"curves\":")) {
             in_curves = true;
+        }
+
+        // Parse animated sprite cue fields
+        if (in_animated_sprite_cues && current_scene) {
+            if (strstr(start, "\"sprite_name\":")) {
+                ParseJsonStringValue(start, current_animated_sprite_cue.sprite_name, sizeof(current_animated_sprite_cue.sprite_name));
+            } else if (strstr(start, "\"frame_keys_csv\":")) {
+                ParseJsonStringValue(start, current_animated_sprite_cue.frame_keys_csv, sizeof(current_animated_sprite_cue.frame_keys_csv));
+            } else if (strstr(start, "\"frame_paths_csv\":")) {
+                ParseJsonStringValue(start, current_animated_sprite_cue.frame_paths_csv, sizeof(current_animated_sprite_cue.frame_paths_csv));
+            } else if (strstr(start, "\"x\":")) {
+                sscanf_s(start, "\"x\": %f", &current_animated_sprite_cue.x);
+            } else if (strstr(start, "\"y\":")) {
+                sscanf_s(start, "\"y\": %f", &current_animated_sprite_cue.y);
+            } else if (strstr(start, "\"scale\":")) {
+                sscanf_s(start, "\"scale\": %f", &current_animated_sprite_cue.scale);
+            } else if (strstr(start, "\"opacity\":")) {
+                sscanf_s(start, "\"opacity\": %f", &current_animated_sprite_cue.opacity);
+            } else if (strstr(start, "\"effect_type\":")) {
+                sscanf_s(start, "\"effect_type\": %d", &current_animated_sprite_cue.effect_type);
+            } else if (strstr(start, "\"cue_start\":")) {
+                sscanf_s(start, "\"cue_start\": %f", &current_animated_sprite_cue.cue_start);
+            } else if (strstr(start, "\"cue_end\":")) {
+                sscanf_s(start, "\"cue_end\": %f", &current_animated_sprite_cue.cue_end);
+            } else if (strstr(start, "\"fade_in_start\":")) {
+                sscanf_s(start, "\"fade_in_start\": %f", &current_animated_sprite_cue.fade_in_start);
+            } else if (strstr(start, "\"fade_in_end\":")) {
+                sscanf_s(start, "\"fade_in_end\": %f", &current_animated_sprite_cue.fade_in_end);
+            } else if (strstr(start, "\"fade_out_start\":")) {
+                sscanf_s(start, "\"fade_out_start\": %f", &current_animated_sprite_cue.fade_out_start);
+            } else if (strstr(start, "\"fade_out_end\":")) {
+                sscanf_s(start, "\"fade_out_end\": %f", &current_animated_sprite_cue.fade_out_end);
+            } else if (strstr(start, "\"layer_order\":")) {
+                sscanf_s(start, "\"layer_order\": %d", &current_animated_sprite_cue.layer_order);
+            } else if (strstr(start, "\"blend_mode\":")) {
+                sscanf_s(start, "\"blend_mode\": %d", &current_animated_sprite_cue.blend_mode);
+            } else if (strstr(start, "\"fps\":")) {
+                sscanf_s(start, "\"fps\": %f", &current_animated_sprite_cue.fps);
+            } else if (strstr(start, "\"playback_mode\":")) {
+                sscanf_s(start, "\"playback_mode\": %d", &current_animated_sprite_cue.playback_mode);
+            } else if (strstr(start, "\"start_frame\":")) {
+                sscanf_s(start, "\"start_frame\": %d", &current_animated_sprite_cue.start_frame);
+            } else if (strstr(start, "\"curve_x\":")) {
+                sscanf_s(start, "\"curve_x\": %d", &current_animated_sprite_cue.curve_x);
+            } else if (strstr(start, "\"curve_y\":")) {
+                sscanf_s(start, "\"curve_y\": %d", &current_animated_sprite_cue.curve_y);
+            } else if (strstr(start, "\"curve_scale\":")) {
+                sscanf_s(start, "\"curve_scale\": %d", &current_animated_sprite_cue.curve_scale);
+            } else if (strstr(start, "\"curve_opacity\":")) {
+                sscanf_s(start, "\"curve_opacity\": %d", &current_animated_sprite_cue.curve_opacity);
+            } else if (strstr(start, "\"curve_frame\":")) {
+                sscanf_s(start, "\"curve_frame\": %d", &current_animated_sprite_cue.curve_frame);
+            } else if (start[0] == '}' && current_animated_sprite_cue.frame_keys_csv[0] != '\0') {
+                AddAnimatedSpriteCue(current_scene, current_animated_sprite_cue);
+                memset(&current_animated_sprite_cue, 0, sizeof(current_animated_sprite_cue));
+                current_animated_sprite_cue.fps = 12.0f;
+                current_animated_sprite_cue.playback_mode = 0;
+                current_animated_sprite_cue.start_frame = 0;
+                current_animated_sprite_cue.curve_x = -1;
+                current_animated_sprite_cue.curve_y = -1;
+                current_animated_sprite_cue.curve_scale = -1;
+                current_animated_sprite_cue.curve_opacity = -1;
+                current_animated_sprite_cue.curve_frame = -1;
+            }
         }
         
         // Parse shader cue fields
@@ -1584,6 +1684,45 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "        }%s\n", (i < scene->image_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
+
+        // Animated sprite cues
+        fprintf(f, "      \"animated_sprite_cues\": [\n");
+        for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
+            AnimatedSpriteCue* cue = &scene->animated_sprite_cues[i];
+            char escaped_sprite_name[128] = {};
+            char escaped_frame_keys[4096] = {};
+            char escaped_frame_paths[4096] = {};
+            JsonEscapeString(cue->sprite_name, escaped_sprite_name, sizeof(escaped_sprite_name));
+            JsonEscapeString(cue->frame_keys_csv, escaped_frame_keys, sizeof(escaped_frame_keys));
+            JsonEscapeString(cue->frame_paths_csv, escaped_frame_paths, sizeof(escaped_frame_paths));
+            fprintf(f, "        {\n");
+            fprintf(f, "          \"sprite_name\": \"%s\",\n", escaped_sprite_name);
+            fprintf(f, "          \"frame_keys_csv\": \"%s\",\n", escaped_frame_keys);
+            fprintf(f, "          \"frame_paths_csv\": \"%s\",\n", escaped_frame_paths);
+            fprintf(f, "          \"x\": %.3f,\n", cue->x);
+            fprintf(f, "          \"y\": %.3f,\n", cue->y);
+            fprintf(f, "          \"scale\": %.3f,\n", cue->scale);
+            fprintf(f, "          \"opacity\": %.3f,\n", cue->opacity);
+            fprintf(f, "          \"effect_type\": %d,\n", cue->effect_type);
+            fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
+            fprintf(f, "          \"cue_end\": %.3f,\n", cue->cue_end);
+            fprintf(f, "          \"fade_in_start\": %.3f,\n", cue->fade_in_start);
+            fprintf(f, "          \"fade_in_end\": %.3f,\n", cue->fade_in_end);
+            fprintf(f, "          \"fade_out_start\": %.3f,\n", cue->fade_out_start);
+            fprintf(f, "          \"fade_out_end\": %.3f,\n", cue->fade_out_end);
+            fprintf(f, "          \"layer_order\": %d,\n", cue->layer_order);
+            fprintf(f, "          \"blend_mode\": %d,\n", cue->blend_mode);
+            fprintf(f, "          \"fps\": %.3f,\n", cue->fps);
+            fprintf(f, "          \"playback_mode\": %d,\n", cue->playback_mode);
+            fprintf(f, "          \"start_frame\": %d,\n", cue->start_frame);
+            fprintf(f, "          \"curve_x\": %d,\n", cue->curve_x);
+            fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
+            fprintf(f, "          \"curve_scale\": %d,\n", cue->curve_scale);
+            fprintf(f, "          \"curve_opacity\": %d,\n", cue->curve_opacity);
+            fprintf(f, "          \"curve_frame\": %d\n", cue->curve_frame);
+            fprintf(f, "        }%s\n", (i < scene->animated_sprite_cue_count - 1) ? "," : "");
+        }
+        fprintf(f, "      ],\n");
         
         // Text cues
         fprintf(f, "      \"text_cues\": [\n");
@@ -1845,6 +1984,7 @@ bool NewProject(EditorContext* editor) {
         SceneBlock* scene = &editor->project->scenes[i];
         delete[] scene->shader_cues;
         delete[] scene->image_cues;
+        delete[] scene->animated_sprite_cues;
         delete[] scene->text_cues;
         delete[] scene->scroll_text_cues;
         delete[] scene->music_cues;
@@ -1999,6 +2139,10 @@ void RenderUI(EditorContext* editor) {
     
     if (editor->image_modal_open || editor->image_modal_request_open) {
         RenderImageModal(editor);
+    }
+
+    if (editor->animated_sprite_modal_open || editor->animated_sprite_modal_request_open) {
+        RenderAnimatedSpriteModal(editor);
     }
     
     if (editor->text_modal_open || editor->text_modal_request_open) {
@@ -2231,7 +2375,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     NewProject(editor);
     
     char line[1024];
-    enum Section { NONE, SHADER_CUES, IMAGE_CUES, TEXT_CUES, SCROLL_TEXT_CUES, MUSIC_CUES, CURVES, METADATA };
+    enum Section { NONE, SHADER_CUES, IMAGE_CUES, ANIMATED_SPRITE_CUES, TEXT_CUES, SCROLL_TEXT_CUES, MUSIC_CUES, CURVES, METADATA };
     Section current_section = NONE;
     
     float total_duration = 10.0f; // Default
@@ -2247,6 +2391,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         // Section detection
         if (strstr(start, "[shader_cues]")) { current_section = SHADER_CUES; continue; }
         if (strstr(start, "[image_cues]")) { current_section = IMAGE_CUES; continue; }
+        if (strstr(start, "[animated_sprite_cues]")) { current_section = ANIMATED_SPRITE_CUES; continue; }
         if (strstr(start, "[text_cues]")) { current_section = TEXT_CUES; continue; }
         if (strstr(start, "[scroll_text_cues]")) { current_section = SCROLL_TEXT_CUES; continue; }
         if (strstr(start, "[music_cues]")) { current_section = MUSIC_CUES; continue; }
@@ -2338,6 +2483,50 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
                 SceneBlock* scene = &editor->project->scenes[0];
                 AddImageCue(scene, cue);
                 printf("[ImportFromCues] Imported image cue: %s\n", cue.asset_key);
+            }
+            continue;
+        }
+
+        // Parse animated sprite cues:
+        // sprite_name|frame_keys_csv|frame_paths_csv|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|blend_mode|fps|playback_mode|start_frame|curve_x|curve_y|curve_scale|curve_opacity|curve_frame
+        if (current_section == ANIMATED_SPRITE_CUES) {
+            char* p1 = strchr(start, '|');
+            if (!p1) continue;
+            AnimatedSpriteCue cue = {};
+            cue.fps = 12.0f;
+            cue.playback_mode = 0;
+            cue.start_frame = 0;
+            cue.curve_x = cue.curve_y = cue.curve_scale = cue.curve_opacity = cue.curve_frame = -1;
+
+            size_t sprite_name_len = (size_t)(p1 - start);
+            if (sprite_name_len >= sizeof(cue.sprite_name)) sprite_name_len = sizeof(cue.sprite_name) - 1;
+            strncpy_s(cue.sprite_name, start, sprite_name_len);
+
+            char* p2 = strchr(p1 + 1, '|');
+            if (!p2) continue;
+            size_t keys_len = (size_t)(p2 - (p1 + 1));
+            if (keys_len >= sizeof(cue.frame_keys_csv)) keys_len = sizeof(cue.frame_keys_csv) - 1;
+            strncpy_s(cue.frame_keys_csv, p1 + 1, keys_len);
+
+            char* p3 = strchr(p2 + 1, '|');
+            if (!p3) continue;
+            size_t paths_len = (size_t)(p3 - (p2 + 1));
+            if (paths_len >= sizeof(cue.frame_paths_csv)) paths_len = sizeof(cue.frame_paths_csv) - 1;
+            strncpy_s(cue.frame_paths_csv, p2 + 1, paths_len);
+
+            int parsed = sscanf_s(p3 + 1, "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d",
+                &cue.x, &cue.y, &cue.scale, &cue.opacity,
+                &cue.cue_start, &cue.cue_end,
+                &cue.layer_order, &cue.effect_type,
+                &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end,
+                &cue.blend_mode, &cue.fps, &cue.playback_mode, &cue.start_frame,
+                &cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_opacity, &cue.curve_frame);
+            if (parsed >= 6) {
+                if (editor->project->scene_count == 0)
+                    AddScene(editor, "Imported Scene", total_duration);
+                SceneBlock* scene = &editor->project->scenes[0];
+                AddAnimatedSpriteCue(scene, cue);
+                printf("[ImportFromCues] Imported animated sprite cue: %s\n", cue.sprite_name);
             }
             continue;
         }
@@ -2673,6 +2862,41 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
         }
     }
     
+    fprintf(f, "\n");
+
+    // [animated_sprite_cues] section
+    fprintf(f, "[animated_sprite_cues]\n");
+    fprintf(f, "# sprite_name|frame_keys_csv|frame_paths_csv|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|blend_mode|fps|playback_mode|start_frame|curve_x|curve_y|curve_scale|curve_opacity|curve_frame\n");
+
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        SceneBlock* scene = &editor->project->scenes[scene_idx];
+        float scene_start = 0.0f;
+
+        for (int i = 0; i < scene_idx; ++i) {
+            scene_start += editor->project->scenes[i].duration;
+        }
+
+        for (int cue_idx = 0; cue_idx < scene->animated_sprite_cue_count; ++cue_idx) {
+            AnimatedSpriteCue* cue = &scene->animated_sprite_cues[cue_idx];
+            float abs_start = scene_start + cue->cue_start;
+            float abs_end = (cue->cue_end < 0.0f) ? (scene_start + scene->duration) : (scene_start + cue->cue_end);
+            float abs_fade_in_start  = scene_start + cue->fade_in_start;
+            float abs_fade_in_end    = scene_start + cue->fade_in_end;
+            float abs_fade_out_start = scene_start + cue->fade_out_start;
+            float abs_fade_out_end   = scene_start + cue->fade_out_end;
+
+            fprintf(f, "%s|%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%d|%d|%d|%d|%d|%d|%d\n",
+                cue->sprite_name, cue->frame_keys_csv, cue->frame_paths_csv,
+                cue->x, cue->y, cue->scale, cue->opacity,
+                abs_start, abs_end,
+                cue->layer_order, cue->effect_type,
+                abs_fade_in_start, abs_fade_in_end, abs_fade_out_start, abs_fade_out_end,
+                cue->blend_mode,
+                cue->fps, cue->playback_mode, cue->start_frame,
+                cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_opacity, cue->curve_frame);
+        }
+    }
+
     fprintf(f, "\n");
     
     // [text_cues] section
@@ -3251,6 +3475,10 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
     scene->image_cues = nullptr;
     scene->image_cue_count = 0;
     scene->image_cue_capacity = 0;
+
+    scene->animated_sprite_cues = nullptr;
+    scene->animated_sprite_cue_count = 0;
+    scene->animated_sprite_cue_capacity = 0;
     
     scene->text_cues = nullptr;
     scene->text_cue_count = 0;
@@ -3286,6 +3514,7 @@ void DeleteScene(EditorContext* editor, int scene_index) {
     // Free scene resources
     delete[] scene->shader_cues;
     delete[] scene->image_cues;
+    delete[] scene->animated_sprite_cues;
     delete[] scene->text_cues;
     delete[] scene->scroll_text_cues;
     delete[] scene->music_cues;
@@ -3373,6 +3602,27 @@ int AddImageCue(SceneBlock* scene, const ImageCue& cue) {
     return index;
 }
 
+int AddAnimatedSpriteCue(SceneBlock* scene, const AnimatedSpriteCue& cue) {
+    if (!scene) return -1;
+
+    if (scene->animated_sprite_cue_count >= scene->animated_sprite_cue_capacity) {
+        int new_capacity = scene->animated_sprite_cue_capacity == 0 ? 4 : scene->animated_sprite_cue_capacity * 2;
+        AnimatedSpriteCue* new_cues = new AnimatedSpriteCue[new_capacity];
+
+        for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
+            new_cues[i] = scene->animated_sprite_cues[i];
+        }
+
+        delete[] scene->animated_sprite_cues;
+        scene->animated_sprite_cues = new_cues;
+        scene->animated_sprite_cue_capacity = new_capacity;
+    }
+
+    int index = scene->animated_sprite_cue_count++;
+    scene->animated_sprite_cues[index] = cue;
+    return index;
+}
+
 int AddTextCue(SceneBlock* scene, const TextCue& cue) {
     if (!scene) return -1;
     
@@ -3452,6 +3702,15 @@ void DeleteImageCue(SceneBlock* scene, int cue_index) {
         scene->image_cues[i] = scene->image_cues[i + 1];
     }
     scene->image_cue_count--;
+}
+
+void DeleteAnimatedSpriteCue(SceneBlock* scene, int cue_index) {
+    if (!scene || cue_index < 0 || cue_index >= scene->animated_sprite_cue_count) return;
+
+    for (int i = cue_index; i < scene->animated_sprite_cue_count - 1; ++i) {
+        scene->animated_sprite_cues[i] = scene->animated_sprite_cues[i + 1];
+    }
+    scene->animated_sprite_cue_count--;
 }
 
 void DeleteTextCue(SceneBlock* scene, int cue_index) {
@@ -4161,7 +4420,7 @@ void RenderPreviewFrame(EditorContext* editor) {
         int sp_sz  = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_size")     : -1;
         int sp_opa = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_opacity")  : -1;
 
-        // Build unified draw list: type 0=image 1=text 2=mesh 3=scroll text
+        // Build unified draw list: type 0=image 1=text 2=mesh 3=scroll text 4=animated sprite
         struct DrawItem { int type; void* cue; int layer_order; float scene_start_time; };
         static const int kMaxItems = 512;
         DrawItem items[kMaxItems];
@@ -4183,6 +4442,17 @@ void RenderPreviewFrame(EditorContext* editor) {
                     : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
                 if (time_in_range)
                     items[item_count++] = { 0, cue, cue->layer_order, item_scene_start };
+            }
+            for (int i = 0; i < scene->animated_sprite_cue_count && item_count < kMaxItems; i++) {
+                AnimatedSpriteCue* cue = &scene->animated_sprite_cues[i];
+                float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                float absolute_start = item_scene_start + cue->cue_start;
+                float absolute_end = item_scene_start + end;
+                bool time_in_range = is_last_scene
+                    ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
+                    : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
+                if (time_in_range && cue->frame_keys_csv[0])
+                    items[item_count++] = { 4, cue, cue->layer_order, item_scene_start };
             }
             for (int i = 0; i < scene->text_cue_count && item_count < kMaxItems; i++) {
                 TextCue* cue = &scene->text_cues[i];
@@ -4223,11 +4493,11 @@ void RenderPreviewFrame(EditorContext* editor) {
         }
 
         // Stable bubble sort by layer_order ascending
-        // Tie-break rule for same layer: mesh behind image behind text/scroll.
+        // Tie-break rule for same layer: mesh behind image/sprite behind text/scroll.
         auto draw_priority = [](int type) {
-            // type: 0=image, 1=text, 2=mesh, 3=scroll text
+            // type: 0=image, 1=text, 2=mesh, 3=scroll text, 4=animated sprite
             if (type == 2) return 0; // mesh first (back)
-            if (type == 0) return 1; // image middle
+            if (type == 0 || type == 4) return 1; // image middle
             return 2;                // text/scroll front
         };
         for (int i = 0; i < item_count - 1; i++)
@@ -4244,8 +4514,8 @@ void RenderPreviewFrame(EditorContext* editor) {
             DrawItem& item = items[idx];
             glDisable(GL_CULL_FACE);
 
-            if (item.type == 0 || item.type == 1 || item.type == 3) {
-                // Sprite (image, text, or scroll text)
+            if (item.type == 0 || item.type == 1 || item.type == 3 || item.type == 4) {
+                // Sprite (image, text, scroll text, animated sprite)
                 if (!sprite_prog) continue;
                 
                 // When switching from mesh to sprite, rebind dummy VAO for gl_VertexID rendering
@@ -4269,6 +4539,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                 int sprite_blend_mode = 0;
                 if (item.type == 0) {
                     sprite_blend_mode = ((ImageCue*)item.cue)->blend_mode;
+                } else if (item.type == 4) {
+                    sprite_blend_mode = ((AnimatedSpriteCue*)item.cue)->blend_mode;
                 } else if (item.type == 1) {
                     sprite_blend_mode = ((TextCue*)item.cue)->blend_mode;
                 } else {
@@ -4319,6 +4591,113 @@ void RenderPreviewFrame(EditorContext* editor) {
                     char full_path[512];
                     snprintf(full_path, sizeof(full_path), "%s\\%s",
                              editor->project->assets_path, cue->asset_key);
+                    rev::runtime::ImageTexture rt_img{};
+                    if (!rev::runtime::LoadImageTexture(full_path, &rt_img)) continue;
+                    tex    = rt_img.texture_id;
+                    norm_w = (rt_img.width  * anim_scale) / editor->preview_width  * 2.0f;
+                    norm_h = (rt_img.height * anim_scale) / editor->preview_height * 2.0f;
+                    pos_x  =  (anim_x * 2.0f) - 1.0f;
+                    pos_y  = -((anim_y * 2.0f) - 1.0f);
+                    opacity = anim_opacity * rev::runtime::ComputeEffectOpacity(
+                        cue->effect_type, cue->fade_in_start, cue->fade_in_end,
+                        cue->fade_out_start, cue->fade_out_end, editor->current_time - item.scene_start_time);
+                } else if (item.type == 4) {
+                    AnimatedSpriteCue* cue = (AnimatedSpriteCue*)item.cue;
+
+                    float anim_x = cue->x;
+                    float anim_y = cue->y;
+                    float anim_scale = cue->scale;
+                    float anim_opacity = cue->opacity;
+                    float anim_frame = (float)cue->start_frame;
+
+                    float absolute_cue_start = item.scene_start_time + cue->cue_start;
+                    float elapsed_time = editor->current_time - absolute_cue_start;
+                    if (elapsed_time >= 0.0f) {
+                        if (cue->curve_x >= 0 && cue->curve_x < editor->project->curve_count) {
+                            rev::curve::Curve* curve = &editor->project->curves[cue->curve_x];
+                            float t = elapsed_time / curve->duration;
+                            anim_x = rev::curve::Evaluate(*curve, t);
+                        }
+                        if (cue->curve_y >= 0 && cue->curve_y < editor->project->curve_count) {
+                            rev::curve::Curve* curve = &editor->project->curves[cue->curve_y];
+                            float t = elapsed_time / curve->duration;
+                            anim_y = rev::curve::Evaluate(*curve, t);
+                        }
+                        if (cue->curve_scale >= 0 && cue->curve_scale < editor->project->curve_count) {
+                            rev::curve::Curve* curve = &editor->project->curves[cue->curve_scale];
+                            float t = elapsed_time / curve->duration;
+                            anim_scale = rev::curve::Evaluate(*curve, t);
+                        }
+                        if (cue->curve_opacity >= 0 && cue->curve_opacity < editor->project->curve_count) {
+                            rev::curve::Curve* curve = &editor->project->curves[cue->curve_opacity];
+                            float t = elapsed_time / curve->duration;
+                            anim_opacity = rev::curve::Evaluate(*curve, t);
+                        }
+                        if (cue->curve_frame >= 0 && cue->curve_frame < editor->project->curve_count) {
+                            rev::curve::Curve* curve = &editor->project->curves[cue->curve_frame];
+                            float t = elapsed_time / curve->duration;
+                            anim_frame = rev::curve::Evaluate(*curve, t);
+                        }
+                    }
+
+                    int frame_count = 0;
+                    for (const char* p = cue->frame_keys_csv; *p; ++p) {
+                        if (*p == ';') ++frame_count;
+                    }
+                    if (cue->frame_keys_csv[0] != '\0') ++frame_count;
+                    if (frame_count <= 0) continue;
+
+                    int frame_idx = cue->start_frame;
+                    if (cue->fps > 0.0f && elapsed_time > 0.0f) {
+                        float frame_f = elapsed_time * cue->fps;
+                        if (cue->playback_mode == 1) {
+                            int once_idx = (int)frame_f;
+                            if (once_idx >= frame_count) once_idx = frame_count - 1;
+                            if (once_idx < 0) once_idx = 0;
+                            frame_idx = once_idx;
+                        } else if (cue->playback_mode == 2 && frame_count > 1) {
+                            int period = (frame_count * 2) - 2;
+                            int ping_idx = ((int)frame_f) % period;
+                            if (ping_idx < 0) ping_idx += period;
+                            if (ping_idx >= frame_count) ping_idx = period - ping_idx;
+                            frame_idx = ping_idx;
+                        } else {
+                            int loop_idx = ((int)frame_f) % frame_count;
+                            if (loop_idx < 0) loop_idx += frame_count;
+                            frame_idx = loop_idx;
+                        }
+                    }
+                    if (cue->curve_frame >= 0 && cue->curve_frame < editor->project->curve_count) {
+                        frame_idx = (int)anim_frame;
+                    }
+                    if (frame_idx < 0) frame_idx = 0;
+                    if (frame_idx >= frame_count) frame_idx = frame_count - 1;
+
+                    char selected_key[256] = {};
+                    {
+                        int current = 0;
+                        const char* start = cue->frame_keys_csv;
+                        const char* p = cue->frame_keys_csv;
+                        while (true) {
+                            if (*p == ';' || *p == '\0') {
+                                if (current == frame_idx) {
+                                    size_t len = (size_t)(p - start);
+                                    if (len >= sizeof(selected_key)) len = sizeof(selected_key) - 1;
+                                    strncpy_s(selected_key, start, len);
+                                    break;
+                                }
+                                if (*p == '\0') break;
+                                start = p + 1;
+                                ++current;
+                            }
+                            if (*p == '\0') break;
+                            ++p;
+                        }
+                    }
+                    if (selected_key[0] == '\0') continue;
+
+                    char full_path[512];
+                    snprintf(full_path, sizeof(full_path), "%s\\%s", editor->project->assets_path, selected_key);
                     rev::runtime::ImageTexture rt_img{};
                     if (!rev::runtime::LoadImageTexture(full_path, &rt_img)) continue;
                     tex    = rt_img.texture_id;

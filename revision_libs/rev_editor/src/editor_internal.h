@@ -23,7 +23,9 @@ void RenderCurveEditorModal(EditorContext* editor);
 void RenderShaderModal(EditorContext* editor);
 void RenderMusicModal(EditorContext* editor);
 void RenderImageModal(EditorContext* editor);
+void RenderAnimatedSpriteModal(EditorContext* editor);
 void RenderTextModal(EditorContext* editor);
+void RenderScrollTextModal(EditorContext* editor);
 void RenderMeshModal(EditorContext* editor);
 
 // Curve Management Functions (editor_modals.cpp)

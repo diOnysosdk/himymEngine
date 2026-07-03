@@ -48,6 +48,35 @@ struct ImageCue {
     int   curve_opacity;
 };
 
+// Animated sprite cue (frame-by-frame image sequence)
+struct AnimatedSpriteCue {
+    char  sprite_name[64];       // Friendly name used by editor/runtime UI
+    char  frame_keys_csv[2048];  // Semicolon-separated frame asset keys (filenames)
+    char  frame_paths_csv[4096]; // Semicolon-separated frame asset paths
+    float x, y;                  // Centre position [0..1] where y=0 is top
+    float scale;
+    float opacity;
+    int   effect_type;           // 0=none  1=fade_in_out
+    float cue_start;
+    float cue_end;
+    float fade_in_start;
+    float fade_in_end;
+    float fade_out_start;
+    float fade_out_end;
+    int   layer_order;
+    int   blend_mode;            // 0=alpha, 1=additive, 2=multiply, 3=screen
+    float fps;                   // Frames per second
+    int   playback_mode;         // 0=loop, 1=once, 2=pingpong
+    int   start_frame;           // Initial frame offset
+
+    // Curve assignments (-1 = no curve)
+    int   curve_x;
+    int   curve_y;
+    int   curve_scale;
+    int   curve_opacity;
+    int   curve_frame;
+};
+
 // Text cue
 struct TextCue {
     char     text[256];
@@ -250,6 +279,7 @@ bool RenderTextToTexture(const char* text, const char* font_name, float size,
 // Cue file parsers  (parse the first matching cue from a cues.txt)
 // ------------------------------------------------------------------
 bool LoadImageCue(const char* cues_path, ImageCue* cue);
+bool LoadAnimatedSpriteCue(const char* cues_path, AnimatedSpriteCue* cue);
 bool LoadTextCue (const char* cues_path, TextCue*  cue);
 bool LoadMusicCue(const char* cues_path, MusicCue* cue);
 bool LoadMeshCue (const char* cues_path, MeshCue*  cue);

@@ -61,6 +61,15 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, cue->curve_opacity);
         }
 
+        for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
+            AnimatedSpriteCue* cue = &scene->animated_sprite_cues[i];
+            MarkCurveUsed(used, cue->curve_x);
+            MarkCurveUsed(used, cue->curve_y);
+            MarkCurveUsed(used, cue->curve_scale);
+            MarkCurveUsed(used, cue->curve_opacity);
+            MarkCurveUsed(used, cue->curve_frame);
+        }
+
         for (int i = 0; i < scene->text_cue_count; ++i) {
             TextCue* cue = &scene->text_cues[i];
             MarkCurveUsed(used, cue->curve_x);
@@ -200,6 +209,17 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 add_target("Image Y Position", &cue->curve_y, cue->y);
                 add_target("Image Scale", &cue->curve_scale, cue->scale);
                 add_target("Image Opacity", &cue->curve_opacity, cue->opacity);
+            }
+            break;
+        case CueTypeAnimatedSprite:
+            if (cue_index >= scene->animated_sprite_cue_count) break;
+            {
+                AnimatedSpriteCue* cue = &scene->animated_sprite_cues[cue_index];
+                add_target("AnimSprite X Position", &cue->curve_x, cue->x);
+                add_target("AnimSprite Y Position", &cue->curve_y, cue->y);
+                add_target("AnimSprite Scale", &cue->curve_scale, cue->scale);
+                add_target("AnimSprite Opacity", &cue->curve_opacity, cue->opacity);
+                add_target("AnimSprite Frame", &cue->curve_frame, (float)cue->start_frame);
             }
             break;
         case CueTypeText:
@@ -1578,6 +1598,190 @@ void RenderImageModal(EditorContext* editor) {
     } else {
         if (editor->image_modal_open) {
             editor->image_modal_open = false;
+        }
+    }
+}
+
+void RenderAnimatedSpriteModal(EditorContext* editor) {
+    if (!editor) return;
+
+    if (editor->animated_sprite_modal_request_open) {
+        ImGui::OpenPopup("Animated Sprite Settings");
+        editor->animated_sprite_modal_open = true;
+        editor->animated_sprite_modal_request_open = false;
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    bool popup_open = ImGui::BeginPopupModal("Animated Sprite Settings", NULL, ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleColor();
+
+    if (popup_open) {
+        AnimatedSpriteCue* cue = &editor->editing_animated_sprite;
+
+        auto AutoSave = [&]() {
+            if (editor->selected_scene_index >= 0 &&
+                editor->selected_cue_index >= 0 &&
+                editor->selected_cue_type == CueTypeAnimatedSprite) {
+                SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+                if (scene && editor->selected_cue_index < scene->animated_sprite_cue_count) {
+                    scene->animated_sprite_cues[editor->selected_cue_index] = *cue;
+                    editor->project->modified = true;
+                }
+            }
+        };
+
+        auto OpenCurveEditor = [&](int* curve_field, float base_value, const char* label) {
+            if (!curve_field || !label) return;
+            if (editor->selected_scene_index < 0 || editor->selected_cue_index < 0 ||
+                editor->selected_cue_type != CueTypeAnimatedSprite) return;
+            SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+            if (!scene || editor->selected_cue_index >= scene->animated_sprite_cue_count) return;
+            AnimatedSpriteCue* actual_cue = &scene->animated_sprite_cues[editor->selected_cue_index];
+
+            int* actual_field = nullptr;
+            if (curve_field == &cue->curve_x) actual_field = &actual_cue->curve_x;
+            else if (curve_field == &cue->curve_y) actual_field = &actual_cue->curve_y;
+            else if (curve_field == &cue->curve_scale) actual_field = &actual_cue->curve_scale;
+            else if (curve_field == &cue->curve_opacity) actual_field = &actual_cue->curve_opacity;
+            else if (curve_field == &cue->curve_frame) actual_field = &actual_cue->curve_frame;
+            if (!actual_field) return;
+
+            if (*actual_field < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
+                *actual_field = editor->project->curve_count++;
+                auto& curve = editor->project->curves[*actual_field];
+                curve = rev::curve::CreateCurve(16);
+                rev::curve::AddPoint(curve, 0.0f, base_value);
+                rev::curve::AddPoint(curve, 1.0f, base_value);
+                editor->project->modified = true;
+            }
+
+            *curve_field = *actual_field;
+            if (*actual_field >= 0 && *actual_field < editor->project->curve_count) {
+                editor->editing_curve_index = *actual_field;
+                editor->editing_curve_cue_type = CueTypeAnimatedSprite;
+                snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", label);
+                editor->curve_editor_modal_request_open = true;
+            }
+        };
+
+        ImGui::Text("Sprite Name:");
+        if (ImGui::InputText("##sprite_name", cue->sprite_name, sizeof(cue->sprite_name))) AutoSave();
+
+        ImGui::Separator();
+        ImGui::Text("Frames (semicolon-separated asset keys):");
+        if (ImGui::InputTextMultiline("##frame_keys_csv", cue->frame_keys_csv, sizeof(cue->frame_keys_csv), ImVec2(420, 70))) AutoSave();
+
+        ImGui::Text("Frame Paths (semicolon-separated relative paths):");
+        if (ImGui::InputTextMultiline("##frame_paths_csv", cue->frame_paths_csv, sizeof(cue->frame_paths_csv), ImVec2(420, 70))) AutoSave();
+
+        if (ImGui::Button("Add Frame")) {
+            OPENFILENAMEA ofn = {};
+            char filepath[260] = {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = (HWND)editor->window->hwnd;
+            ofn.lpstrFile = filepath;
+            ofn.nMaxFile = sizeof(filepath);
+            ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0All Files\0*.*\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrInitialDir = "assets";
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+            if (GetOpenFileNameA(&ofn)) {
+                const char* filename = strrchr(filepath, '\\');
+                if (!filename) filename = strrchr(filepath, '/');
+                if (filename) filename++; else filename = filepath;
+
+                if (editor->project->assets_path[0]) {
+                    char dest_path[512] = {};
+                    snprintf(dest_path, sizeof(dest_path), "%s\\%s", editor->project->assets_path, filename);
+                    if (!CopyFileA(filepath, dest_path, FALSE)) {
+                        printf("[ANIM_SPRITE] Warning: could not copy asset to %s (err=%lu)\n", dest_path, GetLastError());
+                    }
+                }
+
+                if (cue->frame_keys_csv[0] != '\0' && strlen(cue->frame_keys_csv) + 1 < sizeof(cue->frame_keys_csv)) {
+                    strcat_s(cue->frame_keys_csv, sizeof(cue->frame_keys_csv), ";");
+                }
+                strcat_s(cue->frame_keys_csv, sizeof(cue->frame_keys_csv), filename);
+
+                if (cue->frame_paths_csv[0] != '\0' && strlen(cue->frame_paths_csv) + 1 < sizeof(cue->frame_paths_csv)) {
+                    strcat_s(cue->frame_paths_csv, sizeof(cue->frame_paths_csv), ";");
+                }
+                strcat_s(cue->frame_paths_csv, sizeof(cue->frame_paths_csv), filename);
+                AutoSave();
+            }
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Position (0.0-1.0):");
+        if (ImGui::SliderFloat("X", &cue->x, 0.0f, 1.0f)) AutoSave();
+        ImGui::SameLine();
+        if (cue->curve_x >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_x); ImGui::SameLine(); }
+        if (ImGui::SmallButton("+##curve_anim_x")) OpenCurveEditor(&cue->curve_x, cue->x, "AnimSprite X Position");
+
+        if (ImGui::SliderFloat("Y", &cue->y, 0.0f, 1.0f)) AutoSave();
+        ImGui::SameLine();
+        if (cue->curve_y >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_y); ImGui::SameLine(); }
+        if (ImGui::SmallButton("+##curve_anim_y")) OpenCurveEditor(&cue->curve_y, cue->y, "AnimSprite Y Position");
+
+        ImGui::Separator();
+        ImGui::Text("Transform:");
+        if (ImGui::SliderFloat("Scale", &cue->scale, 0.1f, 5.0f)) AutoSave();
+        ImGui::SameLine();
+        if (cue->curve_scale >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_scale); ImGui::SameLine(); }
+        if (ImGui::SmallButton("+##curve_anim_scale")) OpenCurveEditor(&cue->curve_scale, cue->scale, "AnimSprite Scale");
+
+        if (ImGui::SliderFloat("Opacity", &cue->opacity, 0.0f, 1.0f)) AutoSave();
+        ImGui::SameLine();
+        if (cue->curve_opacity >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_opacity); ImGui::SameLine(); }
+        if (ImGui::SmallButton("+##curve_anim_opacity")) OpenCurveEditor(&cue->curve_opacity, cue->opacity, "AnimSprite Opacity");
+
+        const char* blend_modes[] = {"Alpha", "Add", "Multiply", "Screen"};
+        if (ImGui::Combo("Blend", &cue->blend_mode, blend_modes, 4)) AutoSave();
+
+        ImGui::Separator();
+        ImGui::Text("Playback:");
+        if (ImGui::InputFloat("FPS", &cue->fps, 0.5f, 1.0f, "%.2f")) {
+            if (cue->fps < 0.1f) cue->fps = 0.1f;
+            AutoSave();
+        }
+        const char* playback_modes[] = {"Loop", "Once", "PingPong"};
+        if (ImGui::Combo("Mode", &cue->playback_mode, playback_modes, 3)) AutoSave();
+        if (ImGui::InputInt("Start Frame", &cue->start_frame, 1, 10)) {
+            if (cue->start_frame < 0) cue->start_frame = 0;
+            AutoSave();
+        }
+        ImGui::SameLine();
+        if (cue->curve_frame >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_frame); ImGui::SameLine(); }
+        if (ImGui::SmallButton("+##curve_anim_frame")) OpenCurveEditor(&cue->curve_frame, (float)cue->start_frame, "AnimSprite Frame");
+
+        ImGui::Separator();
+        ImGui::Text("Layer / Effect:");
+        if (ImGui::SliderInt("Layer", &cue->layer_order, -10, 10)) AutoSave();
+        const char* img_effects[] = {"None", "Fade In/Out"};
+        if (ImGui::Combo("Type##anim", &cue->effect_type, img_effects, 2)) AutoSave();
+        if (cue->effect_type > 0) {
+            if (ImGui::InputFloat("Fade In Start##anim", &cue->fade_in_start, 0.1f, 1.0f)) AutoSave();
+            if (ImGui::InputFloat("Fade In End##anim", &cue->fade_in_end, 0.1f, 1.0f)) AutoSave();
+            if (ImGui::InputFloat("Fade Out Start##anim", &cue->fade_out_start, 0.1f, 1.0f)) AutoSave();
+            if (ImGui::InputFloat("Fade Out End##anim", &cue->fade_out_end, 0.1f, 1.0f)) AutoSave();
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Timing (seconds):");
+        if (ImGui::InputFloat("Start", &cue->cue_start, 0.1f, 1.0f)) AutoSave();
+        if (ImGui::InputFloat("End", &cue->cue_end, 0.1f, 1.0f)) AutoSave();
+
+        ImGui::Separator();
+        if (ImGui::Button("Close", ImVec2(240, 0))) {
+            editor->animated_sprite_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    } else {
+        if (editor->animated_sprite_modal_open) {
+            editor->animated_sprite_modal_open = false;
         }
     }
 }

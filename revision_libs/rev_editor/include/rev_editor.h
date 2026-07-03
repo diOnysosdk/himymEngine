@@ -12,6 +12,7 @@ namespace editor {
 // Types shared with the runtime (single source of truth in rev_runtime)
 using rev::runtime::ColorRGB;
 using rev::runtime::ImageCue;
+using rev::runtime::AnimatedSpriteCue;
 using rev::runtime::TextCue;
 using rev::runtime::ScrollTextCue;
 using rev::runtime::MusicCue;
@@ -24,6 +25,7 @@ enum CueType {
     CueTypeScrollText = 3,
     CueTypeMusic = 4,
     CueTypeMesh = 5,
+    CueTypeAnimatedSprite = 6,
 };
 
 // Forward declarations
@@ -98,6 +100,10 @@ struct SceneBlock {
     ImageCue* image_cues;
     int image_cue_count;
     int image_cue_capacity;
+
+    AnimatedSpriteCue* animated_sprite_cues;
+    int animated_sprite_cue_count;
+    int animated_sprite_cue_capacity;
     
     TextCue* text_cues;
     int text_cue_count;
@@ -197,6 +203,11 @@ struct EditorContext {
     bool text_modal_open;
     bool text_modal_request_open;
 
+    // Animated sprite modal state
+    AnimatedSpriteCue editing_animated_sprite;
+    bool animated_sprite_modal_open;
+    bool animated_sprite_modal_request_open;
+
     // Scroll text modal state
     ScrollTextCue editing_scroll_text;
     bool scroll_text_modal_open;
@@ -270,6 +281,7 @@ void RenderCurveEditorModal(EditorContext* editor);
 void RenderShaderModal(EditorContext* editor);
 void RenderMusicModal(EditorContext* editor);
 void RenderImageModal(EditorContext* editor);
+void RenderAnimatedSpriteModal(EditorContext* editor);
 void RenderTextModal (EditorContext* editor);
 void RenderScrollTextModal(EditorContext* editor);
 void RenderMeshModal (EditorContext* editor);
@@ -293,6 +305,7 @@ SceneBlock* GetScene(EditorContext* editor, int scene_index);
 // Cue management
 int AddShaderCue(SceneBlock* scene, const ShaderCue& cue);
 int AddImageCue (SceneBlock* scene, const ImageCue&  cue);
+int AddAnimatedSpriteCue(SceneBlock* scene, const AnimatedSpriteCue& cue);
 int AddTextCue  (SceneBlock* scene, const TextCue&   cue);
 int AddScrollTextCue(SceneBlock* scene, const ScrollTextCue& cue);
 int AddMusicCue (SceneBlock* scene, const MusicCue&  cue);
@@ -300,6 +313,7 @@ int AddMeshCue  (SceneBlock* scene, const MeshCue&   cue);
 
 void DeleteShaderCue(SceneBlock* scene, int cue_index);
 void DeleteImageCue (SceneBlock* scene, int cue_index);
+void DeleteAnimatedSpriteCue(SceneBlock* scene, int cue_index);
 void DeleteTextCue  (SceneBlock* scene, int cue_index);
 void DeleteScrollTextCue(SceneBlock* scene, int cue_index);
 void DeleteMusicCue (SceneBlock* scene, int cue_index);

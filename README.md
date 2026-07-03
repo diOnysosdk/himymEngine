@@ -166,6 +166,7 @@ Shared runtime core providing unified app lifecycle, sequence management, conten
 - **Scene Timeline**: Cue-based sequencing with precise timing
 - **Shader Effects**: GLSL vertex/fragment shaders with curve-driven parameters
 - **3D Rendering**: glTF mesh support with Phong lighting and material slots
+- **Animated Sprites**: Frame-sequence image cues with FPS, loop/once/pingpong playback, and curve-driven frame selection
 - **Text Rendering**: TTF font rendering with fade/animation curves
 - **Audio Sync**: XM music playback with timeline markers
 - **Animation Curves**: 6 easing modes for smooth parameter interpolation
@@ -175,6 +176,7 @@ Shared runtime core providing unified app lifecycle, sequence management, conten
 ### Editor Features
 - **Scene Authoring**: Timeline-based scene composition
 - **Shader Modal**: Interactive shader parameter tuning with randomization
+- **Animated Sprite Modal**: Frame list authoring with playback controls (FPS, mode, start frame) and per-parameter curves
 - **Curve Editor**: Visual animation curve creation and manipulation
 - **Asset Browser**: Browse and organize meshes, textures, and audio
 - **Live Preview**: See changes in real-time during authoring

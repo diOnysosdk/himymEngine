@@ -103,6 +103,21 @@ The Scene Block Editor is a monolithic Python/tkinter application (8000+ lines) 
 
 **Result**: Text appears with fade effect during specified timing.
 
+### Workflow 4b: Add Animated Sprite Overlay
+
+1. **Select scene** in timeline
+2. **Click "+ Animated Sprite Cue"** in Properties
+3. In animated sprite modal:
+   - **Sprite Name**: friendly label (e.g., `logo_burst`)
+   - **Frames**: add image frames (Browse copies files into `{project}_assets/`)
+   - **Playback**: set `FPS`, `Mode` (`Loop` / `Once` / `PingPong`), and `Start Frame`
+   - **Transform**: set X/Y/Scale/Opacity
+   - **Timing**: set cue start/end and optional fade window
+   - Optional curves: X, Y, Scale, Opacity, and Frame Index
+4. **Close** (changes auto-save while editing)
+
+**Result**: Frame-by-frame sprite animation plays during cue timing, with optional curve-driven frame selection.
+
 ### Workflow 5: Add Music
 
 1. **Click "+ Music"** button
@@ -261,6 +276,10 @@ shader_id:0|speed|3
 [shader_pipeline]
 order|shader_scene_id|start|end|fade_in|fade_out|implicit_end|layer_role|opacity|blend|layer_order|speed|intensity|warp
 0|0|0.0|10.0|0.5|0.5|0|0|1.0|0|0|1.0|1.0|0.5
+
+[animated_sprite_cues]
+# sprite_name|frame_keys_csv|frame_paths_csv|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|blend_mode|fps|playback_mode|start_frame|curve_x|curve_y|curve_scale|curve_opacity|curve_frame
+logo_burst|frame_00.png;frame_01.png;frame_02.png|Salute_assets/frame_00.png;Salute_assets/frame_01.png;Salute_assets/frame_02.png|0.50|0.50|1.00|1.00|2.00|6.00|1|0|0.00|0.00|0.00|0.00|0|12.00|0|0|-1|-1|-1|-1|-1
 ```
 
 **Runtime** parses this at startup (no JSON parser needed).

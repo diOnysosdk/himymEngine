@@ -110,6 +110,7 @@ Creates `39_my_plasma.glsl` with your parameters.
 ## Next Steps
 
 - **[Editor Guide](../guides/EDITOR_GUIDE.md)** - Complete editor walkthrough
+- **[Animated Sprite Workflow](../guides/EDITOR_GUIDE.md#workflow-4b-add-animated-sprite-overlay)** - Add frame-sequence sprite cues with playback controls
 - **[Shader Guide](../guides/SHADER_GUIDE.md)** - Write your own shaders
 - **[Curve System](../guides/CURVE_SYSTEM_GUIDE.md)** - Master curve animation
 - **[3D Stage](../guides/3D_STAGE_GUIDE.md)** - Enable optional 3D rendering

@@ -1,3 +1,5 @@
 silentslogo.png|Salute/project_assets/silentslogo.png|5CCDA04C
+hoflogo.png|hoflogo.png|D5403A7A
+logo - Kopi_1.png|logo - Kopi_1.png|E785AA90
 Ship|Salute/project_assets/silents_textured.glb|4F32867D
-moon|Salute/project_assets/moon.glb|58D33D0C
+moon|Salute/project_assets/moon.glb|55B3C7A5

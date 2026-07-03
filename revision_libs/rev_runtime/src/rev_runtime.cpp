@@ -448,6 +448,65 @@ bool LoadImageCue(const char* cues_path, ImageCue* cue)
     return found;
 }
 
+bool LoadAnimatedSpriteCue(const char* cues_path, AnimatedSpriteCue* cue)
+{
+    FILE* f = nullptr;
+    fopen_s(&f, cues_path, "r");
+    if (!f) return false;
+
+    char line[8192];
+    bool in_section = false;
+    bool found      = false;
+
+    cue->fps = 12.0f;
+    cue->playback_mode = 0;
+    cue->start_frame = 0;
+    cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_opacity = cue->curve_frame = -1;
+
+    while (fgets(line, sizeof(line), f)) {
+        char* s = line; TrimLeft(s);
+        if (strstr(s, "[animated_sprite_cues]")) { in_section = true; continue; }
+        if (s[0] == '[' && in_section) { break; }
+        if (!in_section || s[0] == '#' || s[0] == '\0' || s[0] == '\n') continue;
+
+        char* pipe1 = strchr(s, '|');
+        if (!pipe1) continue;
+        *pipe1 = '\0';
+        strncpy_s(cue->sprite_name, s, _TRUNCATE);
+
+        char* pipe2 = strchr(pipe1 + 1, '|');
+        if (!pipe2) continue;
+        *pipe2 = '\0';
+        strncpy_s(cue->frame_keys_csv, pipe1 + 1, _TRUNCATE);
+
+        char* pipe3 = strchr(pipe2 + 1, '|');
+        if (!pipe3) continue;
+        *pipe3 = '\0';
+        strncpy_s(cue->frame_paths_csv, pipe2 + 1, _TRUNCATE);
+
+        int parsed = sscanf_s(pipe3 + 1,
+            "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d",
+            &cue->x, &cue->y, &cue->scale, &cue->opacity,
+            &cue->cue_start, &cue->cue_end,
+            &cue->layer_order, &cue->effect_type,
+            &cue->fade_in_start, &cue->fade_in_end,
+            &cue->fade_out_start, &cue->fade_out_end,
+            &cue->blend_mode,
+            &cue->fps,
+            &cue->playback_mode,
+            &cue->start_frame,
+            &cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_opacity, &cue->curve_frame);
+
+        if (parsed >= 6) {
+            found = true;
+            break;
+        }
+    }
+
+    fclose(f);
+    return found;
+}
+
 bool LoadTextCue(const char* cues_path, TextCue* cue)
 {
     FILE* f = nullptr;
