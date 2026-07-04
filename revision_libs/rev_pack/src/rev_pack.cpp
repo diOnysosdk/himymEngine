@@ -323,6 +323,8 @@ PackResult PackAssets(const char* cues_path,
     }
 
     char cues_dir[640] = {};
+    char cues_leaf[128] = {};
+    char cues_leaf_assets[192] = {};
     {
         char full_cues_path[640] = {};
         if (IsAbsolutePath(cues_path)) {
@@ -333,6 +335,13 @@ PackResult PackAssets(const char* cues_path,
             strncpy_s(full_cues_path, sizeof(full_cues_path), cues_path, _TRUNCATE);
         }
         GetDirectoryOfPath(full_cues_path, cues_dir, sizeof(cues_dir));
+        const char* leaf = strrchr(cues_dir, '\\');
+        if (!leaf) leaf = strrchr(cues_dir, '/');
+        leaf = leaf ? leaf + 1 : cues_dir;
+        strncpy_s(cues_leaf, sizeof(cues_leaf), leaf, _TRUNCATE);
+        if (cues_leaf[0]) {
+            snprintf(cues_leaf_assets, sizeof(cues_leaf_assets), "%s_assets", cues_leaf);
+        }
     }
 
     AssetRef refs[kMaxAssets];
@@ -467,8 +476,24 @@ PackResult PackAssets(const char* cues_path,
                 }
             }
 
+            if (!data && cues_dir[0] && cues_leaf_assets[0] && !strchr(refs[i].path, '\\') && !strchr(refs[i].path, '/')) {
+                snprintf(try_path, sizeof(try_path), "%s\\%s\\%s", cues_dir, cues_leaf_assets, refs[i].path);
+                data = ReadFile(try_path, &sz);
+                if (data) {
+                    strncpy_s(full_path, sizeof(full_path), try_path, _TRUNCATE);
+                }
+            }
+
             if (!data && workspace_root && workspace_root[0] && !strchr(refs[i].path, '\\') && !strchr(refs[i].path, '/')) {
                 snprintf(try_path, sizeof(try_path), "%s\\project_assets\\%s", workspace_root, refs[i].path);
+                data = ReadFile(try_path, &sz);
+                if (data) {
+                    strncpy_s(full_path, sizeof(full_path), try_path, _TRUNCATE);
+                }
+            }
+
+            if (!data && workspace_root && workspace_root[0] && cues_leaf_assets[0] && !strchr(refs[i].path, '\\') && !strchr(refs[i].path, '/')) {
+                snprintf(try_path, sizeof(try_path), "%s\\%s\\%s", workspace_root, cues_leaf_assets, refs[i].path);
                 data = ReadFile(try_path, &sz);
                 if (data) {
                     strncpy_s(full_path, sizeof(full_path), try_path, _TRUNCATE);

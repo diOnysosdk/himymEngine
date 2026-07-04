@@ -1129,20 +1129,219 @@ static int GetRuntimeShaderCount() {
     return rev::editor::g_shader_preset_count;
 }
 
+static bool RuntimeFileExists(const char* path) {
+    if (!path || !path[0]) return false;
+    DWORD attr = GetFileAttributesA(path);
+    return (attr != INVALID_FILE_ATTRIBUTES) && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+static bool RuntimeDirContainsFile(const char* dir, const char* rel_file) {
+    if (!dir || !dir[0] || !rel_file || !rel_file[0]) return false;
+    char full_path[MAX_PATH] = {};
+    snprintf(full_path, sizeof(full_path), "%s\\%s", dir, rel_file);
+    return RuntimeFileExists(full_path);
+}
+
+static bool RuntimeIsAbsolutePath(const char* path) {
+    if (!path || !path[0]) return false;
+    if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
+        path[1] == ':' && (path[2] == '\\' || path[2] == '/')) {
+        return true;
+    }
+    if ((path[0] == '\\' && path[1] == '\\') || path[0] == '/') return true;
+    return false;
+}
+
+static void RuntimeNormalizeSlashes(char* path) {
+    if (!path) return;
+    for (char* p = path; *p; ++p) {
+        if (*p == '/') *p = '\\';
+    }
+}
+
+static void RuntimeGetDirectoryOfPath(const char* path, char* out_dir, size_t out_dir_size) {
+    if (!out_dir || out_dir_size == 0) return;
+    out_dir[0] = '\0';
+    if (!path || !path[0]) return;
+    strncpy_s(out_dir, out_dir_size, path, _TRUNCATE);
+    char* p = strrchr(out_dir, '\\');
+    if (!p) p = strrchr(out_dir, '/');
+    if (p) *p = '\0';
+}
+
+static void RuntimeGetLeafName(const char* path, char* out_name, size_t out_name_size) {
+    if (!out_name || out_name_size == 0) return;
+    out_name[0] = '\0';
+    if (!path || !path[0]) return;
+
+    const char* leaf = strrchr(path, '\\');
+    if (!leaf) leaf = strrchr(path, '/');
+    leaf = leaf ? leaf + 1 : path;
+    strncpy_s(out_name, out_name_size, leaf, _TRUNCATE);
+}
+
+static bool ResolveRuntimeAssetPath(const char* declared_path,
+                                    const char* cues_path,
+                                    char* out_path,
+                                    size_t out_path_size) {
+    if (!out_path || out_path_size == 0) return false;
+    out_path[0] = '\0';
+    if (!declared_path || !declared_path[0]) return false;
+
+    char declared_norm[512] = {};
+    strncpy_s(declared_norm, sizeof(declared_norm), declared_path, _TRUNCATE);
+    RuntimeNormalizeSlashes(declared_norm);
+
+    if (RuntimeFileExists(declared_norm)) {
+        strncpy_s(out_path, out_path_size, declared_norm, _TRUNCATE);
+        return true;
+    }
+
+    bool is_abs = RuntimeIsAbsolutePath(declared_norm);
+    bool has_sep = strchr(declared_norm, '\\') != nullptr;
+
+    char cues_abs[MAX_PATH] = {};
+    char cues_dir[MAX_PATH] = {};
+    if (cues_path && cues_path[0]) {
+        if (GetFullPathNameA(cues_path, (DWORD)sizeof(cues_abs), cues_abs, nullptr) > 0) {
+            RuntimeGetDirectoryOfPath(cues_abs, cues_dir, sizeof(cues_dir));
+        } else {
+            RuntimeGetDirectoryOfPath(cues_path, cues_dir, sizeof(cues_dir));
+            RuntimeNormalizeSlashes(cues_dir);
+        }
+    }
+
+    if (!is_abs && cues_dir[0]) {
+        char candidate[640] = {};
+        snprintf(candidate, sizeof(candidate), "%s\\%s", cues_dir, declared_norm);
+        RuntimeNormalizeSlashes(candidate);
+        if (RuntimeFileExists(candidate)) {
+            strncpy_s(out_path, out_path_size, candidate, _TRUNCATE);
+            return true;
+        }
+    }
+
+    if (!is_abs && !has_sep) {
+        char candidate[640] = {};
+        snprintf(candidate, sizeof(candidate), "project_assets\\%s", declared_norm);
+        if (RuntimeFileExists(candidate)) {
+            strncpy_s(out_path, out_path_size, candidate, _TRUNCATE);
+            return true;
+        }
+
+        if (cues_dir[0]) {
+            char cues_leaf[128] = {};
+            char project_assets_dir[260] = {};
+            RuntimeGetLeafName(cues_dir, cues_leaf, sizeof(cues_leaf));
+            if (cues_leaf[0]) {
+                snprintf(project_assets_dir, sizeof(project_assets_dir), "%s_assets", cues_leaf);
+                snprintf(candidate, sizeof(candidate), "%s\\%s", project_assets_dir, declared_norm);
+                if (RuntimeFileExists(candidate)) {
+                    strncpy_s(out_path, out_path_size, candidate, _TRUNCATE);
+                    return true;
+                }
+            }
+        }
+
+        if (cues_dir[0]) {
+            snprintf(candidate, sizeof(candidate), "%s\\project_assets\\%s", cues_dir, declared_norm);
+            if (RuntimeFileExists(candidate)) {
+                strncpy_s(out_path, out_path_size, candidate, _TRUNCATE);
+                return true;
+            }
+
+            char cues_leaf[128] = {};
+            char project_assets_dir[260] = {};
+            RuntimeGetLeafName(cues_dir, cues_leaf, sizeof(cues_leaf));
+            if (cues_leaf[0]) {
+                snprintf(project_assets_dir, sizeof(project_assets_dir), "%s_assets", cues_leaf);
+                snprintf(candidate, sizeof(candidate), "%s\\%s\\%s", cues_dir, project_assets_dir, declared_norm);
+                if (RuntimeFileExists(candidate)) {
+                    strncpy_s(out_path, out_path_size, candidate, _TRUNCATE);
+                    return true;
+                }
+            }
+        }
+    }
+
+    strncpy_s(out_path, out_path_size, declared_norm, _TRUNCATE);
+    return false;
+}
+
+static void TrimLastPathSegment(char* path) {
+    if (!path || !path[0]) return;
+    char* p = strrchr(path, '\\');
+    if (p) *p = '\0';
+}
+
+static void ExtractCsvItemByIndex(const char* csv, int index, char* out, size_t out_size) {
+    if (!out || out_size == 0) return;
+    out[0] = '\0';
+    if (!csv || index < 0) return;
+
+    int current = 0;
+    const char* start = csv;
+    const char* p = csv;
+    while (true) {
+        if (*p == ';' || *p == '\0') {
+            if (current == index) {
+                size_t len = (size_t)(p - start);
+                if (len >= out_size) len = out_size - 1;
+                strncpy_s(out, out_size, start, len);
+                return;
+            }
+            if (*p == '\0') break;
+            start = p + 1;
+            ++current;
+        }
+        if (*p == '\0') break;
+        ++p;
+    }
+}
+
 
 int main(int argc, char* argv[]) {
-    // Normalise CWD to workspace root regardless of launch location.
-    // The exe lives at build/bin/Release/ — walk up 3 levels.
+    // Pick runtime CWD from the executable location so both layouts work:
+    // - build/bin/Release/minimal_intro.exe  -> workspace root
+    // - <project>/bin/Release/minimal_intro.exe -> project root
     {
-        char exe_path[MAX_PATH] = {};
-        GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
-        char* p = strrchr(exe_path, '\\');
-        if (p) *p = '\0';
-        for (int i = 0; i < 3; ++i) {
-            p = strrchr(exe_path, '\\');
-            if (p) *p = '\0';
+        char module_path[MAX_PATH] = {};
+        GetModuleFileNameA(NULL, module_path, sizeof(module_path));
+
+        char exe_dir[MAX_PATH] = {};
+        strncpy_s(exe_dir, module_path, _TRUNCATE);
+        TrimLastPathSegment(exe_dir);      // .../bin/Release
+
+        char up1[MAX_PATH] = {};
+        strncpy_s(up1, exe_dir, _TRUNCATE);
+        TrimLastPathSegment(up1);          // .../bin
+
+        char up2[MAX_PATH] = {};
+        strncpy_s(up2, up1, _TRUNCATE);
+        TrimLastPathSegment(up2);          // .../<project> or .../build
+
+        char up3[MAX_PATH] = {};
+        strncpy_s(up3, up2, _TRUNCATE);
+        TrimLastPathSegment(up3);          // .../<workspace parent> or .../<workspace>
+
+        const char* chosen_cwd = nullptr;
+        if (RuntimeDirContainsFile(up2, "cues.txt")) {
+            chosen_cwd = up2;
+        } else if (RuntimeDirContainsFile(up3, "cues.txt")) {
+            chosen_cwd = up3;
+        } else if (RuntimeDirContainsFile(up3, "assets\\cues.txt")) {
+            chosen_cwd = up3;
+        } else if (RuntimeDirContainsFile(up2, "assets\\cues.txt")) {
+            chosen_cwd = up2;
+        } else if (up3[0]) {
+            chosen_cwd = up3;
+        } else {
+            chosen_cwd = exe_dir;
         }
-        if (exe_path[0]) SetCurrentDirectoryA(exe_path);
+
+        if (chosen_cwd && chosen_cwd[0]) {
+            SetCurrentDirectoryA(chosen_cwd);
+        }
     }
 
     g_verbose_logging = IsVerboseLoggingEnabled();
@@ -1181,10 +1380,30 @@ int main(int argc, char* argv[]) {
         }
     }
 #endif
+    bool root_cues_exists = false;
+    {
+        FILE* root_cues = nullptr;
+        fopen_s(&root_cues, "cues.txt", "rb");
+        if (root_cues) {
+            root_cues_exists = true;
+            fclose(root_cues);
+        }
+    }
     const char* cues_path = (argc > 1 && argv[1] && argv[1][0]) ? argv[1]
-                          : (packed_cues_tmp[0] ? packed_cues_tmp : "assets/cues.txt");
+                          : (root_cues_exists ? "cues.txt"
+                             : (packed_cues_tmp[0] ? packed_cues_tmp : "assets/cues.txt"));
 #else
-    const char* cues_path = (argc > 1 && argv[1] && argv[1][0]) ? argv[1] : "assets/cues.txt";
+    bool root_cues_exists = false;
+    {
+        FILE* root_cues = nullptr;
+        fopen_s(&root_cues, "cues.txt", "rb");
+        if (root_cues) {
+            root_cues_exists = true;
+            fclose(root_cues);
+        }
+    }
+    const char* cues_path = (argc > 1 && argv[1] && argv[1][0]) ? argv[1]
+                          : (root_cues_exists ? "cues.txt" : "assets/cues.txt");
 #endif
     LOGV("Cues file: %s\n", cues_path);
     if (g_logfile) fprintf(g_logfile, "Cues file: %s\n", cues_path);
@@ -1538,14 +1757,18 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     }
 #else
                     {
+                        char resolved_mesh_path[512] = {};
+                        ResolveRuntimeAssetPath(mesh_cue.asset_path, cues_path,
+                                                resolved_mesh_path, sizeof(resolved_mesh_path));
+
                         // Extract textures to the same directory as the mesh file
                         char mesh_dir[512] = {};
-                        strncpy_s(mesh_dir, mesh_cue.asset_path, sizeof(mesh_dir) - 1);
+                        strncpy_s(mesh_dir, resolved_mesh_path, sizeof(mesh_dir) - 1);
                         char* last_slash = strrchr(mesh_dir, '\\');
                         if (!last_slash) last_slash = strrchr(mesh_dir, '/');
                         if (last_slash) *last_slash = '\0'; else mesh_dir[0] = '\0';
 
-                        rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(mesh_cue.asset_path, mesh_dir[0] ? mesh_dir : ".");
+                        rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(resolved_mesh_path, mesh_dir[0] ? mesh_dir : ".");
                         if (ir && ir->ok) {
                             mesh_obj = ir->mesh;
                             ir->mesh = nullptr;
@@ -1600,9 +1823,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                 mesh_obj->animation_speed = 1.0f;
                                 mesh_obj->animation_loop = true;
                                 ir->animations = nullptr;  // Transfer ownership
-                                LOGV("glTF loaded: %s with %d animations\n", mesh_cue.asset_path, ir->animation_count);
+                                LOGV("glTF loaded: %s with %d animations\n", resolved_mesh_path, ir->animation_count);
                             } else {
-                                LOGV("glTF loaded: %s\n", mesh_cue.asset_path);
+                                LOGV("glTF loaded: %s\n", resolved_mesh_path);
                             }
                         } else {
                             printf("glTF load failed: %s\n", (ir ? ir->error : "null result"));
@@ -1653,7 +1876,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         }
 #else
         char music_path[512] = {};
-        strncpy_s(music_path, cue.asset_path, _TRUNCATE);
+    ResolveRuntimeAssetPath(cue.asset_path, cues_path, music_path, sizeof(music_path));
 
         FILE* xm_file = nullptr;
         fopen_s(&xm_file, music_path, "rb");
@@ -1710,10 +1933,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         }
 #else
         char image_path[512];
-        strncpy_s(image_path, image_cue.asset_path, _TRUNCATE);
-        for (char* p = image_path; *p; ++p) {
-            if (*p == '/') *p = '\\';
-        }
+    ResolveRuntimeAssetPath(image_cue.asset_path, cues_path, image_path, sizeof(image_path));
         LOGV("Loading image [%d]: %s\n", ii, image_path);
         if (LoadImageTexture(image_path, &image_texes[ii])) {
             image_loaded[ii] = true;
@@ -1751,10 +1971,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 #else
                 if (text_cue.baked_asset_path[0] != '\0') {
                     char baked_path[512] = {};
-                    strncpy_s(baked_path, text_cue.baked_asset_path, _TRUNCATE);
-                    for (char* p = baked_path; *p; ++p) {
-                        if (*p == '/') *p = '\\';
-                    }
+                    ResolveRuntimeAssetPath(text_cue.baked_asset_path, cues_path, baked_path, sizeof(baked_path));
                     if (LoadImageTexture(baked_path, &text_texes[ti])) {
                         baked_loaded = true;
                         LOGV("Text baked image loaded: %s %dx%d\n",
@@ -1810,10 +2027,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 #else
             if (scroll_cue.baked_asset_path[0] != '\0') {
                 char baked_path[512] = {};
-                strncpy_s(baked_path, scroll_cue.baked_asset_path, _TRUNCATE);
-                for (char* p = baked_path; *p; ++p) {
-                    if (*p == '/') *p = '\\';
-                }
+                ResolveRuntimeAssetPath(scroll_cue.baked_asset_path, cues_path, baked_path, sizeof(baked_path));
                 if (LoadImageTexture(baked_path, &scroll_text_texes[si])) {
                     baked_loaded = true;
                     LOGV("Scroll baked image loaded: %s %dx%d\n",
@@ -2730,26 +2944,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (frame_idx >= frame_count) frame_idx = frame_count - 1;
 
                     char selected_key[256] = {};
-                    {
-                        int current = 0;
-                        const char* start = cue.frame_keys_csv;
-                        const char* p = cue.frame_keys_csv;
-                        while (true) {
-                            if (*p == ';' || *p == '\0') {
-                                if (current == frame_idx) {
-                                    size_t len = (size_t)(p - start);
-                                    if (len >= sizeof(selected_key)) len = sizeof(selected_key) - 1;
-                                    strncpy_s(selected_key, start, len);
-                                    break;
-                                }
-                                if (*p == '\0') break;
-                                start = p + 1;
-                                ++current;
-                            }
-                            if (*p == '\0') break;
-                            ++p;
-                        }
-                    }
+                    char selected_path[512] = {};
+                    ExtractCsvItemByIndex(cue.frame_keys_csv, frame_idx, selected_key, sizeof(selected_key));
+                    ExtractCsvItemByIndex(cue.frame_paths_csv, frame_idx, selected_path, sizeof(selected_path));
                     if (!selected_key[0]) continue;
 
                     ImageTexture frame_tex = {};
@@ -2761,8 +2958,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     }
 #else
                     char frame_path[512] = {};
-                    snprintf(frame_path, sizeof(frame_path), "%s", selected_key);
-                    for (char* p = frame_path; *p; ++p) if (*p == '/') *p = '\\';
+                    ResolveRuntimeAssetPath(selected_path[0] ? selected_path : selected_key,
+                                            cues_path,
+                                            frame_path,
+                                            sizeof(frame_path));
                     frame_loaded = LoadImageTexture(frame_path, &frame_tex);
 #endif
                     if (!frame_loaded || frame_tex.texture_id == 0) continue;

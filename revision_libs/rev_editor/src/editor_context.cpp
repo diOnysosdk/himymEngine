@@ -144,6 +144,30 @@ static bool CopyBuiltExeToProjectOutput(EditorContext* editor,
     return true;
 }
 
+static bool EnsureProjectOutputReleaseDir(EditorContext* editor,
+                                          char* out_release_dir,
+                                          size_t out_release_dir_size) {
+    if (!editor) return false;
+
+    const char* project_root = editor->project->workspace_path[0]
+        ? editor->project->workspace_path
+        : editor->startup_dir;
+
+    char bin_dir[512] = {};
+    char release_dir[512] = {};
+    snprintf(bin_dir, sizeof(bin_dir), "%s\\bin", project_root);
+    snprintf(release_dir, sizeof(release_dir), "%s\\Release", bin_dir);
+
+    CreateDirectoryA(bin_dir, NULL);
+    CreateDirectoryA(release_dir, NULL);
+
+    if (out_release_dir && out_release_dir_size > 0) {
+        strncpy_s(out_release_dir, out_release_dir_size, release_dir, _TRUNCATE);
+    }
+
+    return DirectoryExists(release_dir);
+}
+
 static void JsonEscapeString(const char* src, char* dst, size_t dst_size) {
     if (!src || !dst || dst_size == 0) return;
     size_t di = 0;
@@ -3255,6 +3279,11 @@ bool BuildAndRun(EditorContext* editor) {
         return false;
     }
 
+    char project_release_dir[512] = {};
+    if (EnsureProjectOutputReleaseDir(editor, project_release_dir, sizeof(project_release_dir))) {
+        printf("[Build] Project output directory ready: %s\n", project_release_dir);
+    }
+
     // Step 2: Export to {project_dir}/cues.txt
     printf("Step 1: Exporting to %s...\n", cues_path);
     if (!ExportProject(editor, cues_path)) {
@@ -3282,7 +3311,42 @@ bool BuildAndRun(EditorContext* editor) {
     }
     printf("Build complete.\n");
 
-    printf("Step 2b: Building minimal_intro_packed...\n");
+    // Step 2b: Regenerate packed_assets.h for this project before packed build.
+    // Without this step, minimal_intro_packed can be stale and show default content.
+    char pack_cache_path[512] = {};
+    snprintf(pack_cache_path, sizeof(pack_cache_path), "%s/pack_cache.txt",
+             editor->project->workspace_path[0] ? editor->project->workspace_path
+                                                 : editor->startup_dir);
+    for (char* p = pack_cache_path; *p; ++p) if (*p == '\\') *p = '/';
+
+    char packed_header_path[512] = {};
+    char build_dir[512] = {};
+    snprintf(build_dir, sizeof(build_dir), "%s\\build", editor->startup_dir);
+    CreateDirectoryA(build_dir, NULL);
+    snprintf(packed_header_path, sizeof(packed_header_path), "%s\\packed_assets.h", build_dir);
+
+    printf("Step 2b: Packing assets for packed build (cache: %s)...\n", pack_cache_path);
+    rev::pack::PackResult pack_result = rev::pack::PackAssets(
+        cues_path,
+        packed_header_path,
+        pack_cache_path,
+        editor->startup_dir
+    );
+    if (!pack_result.ok) {
+        printf("ERROR: Packing failed: %s\n", pack_result.error);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Pack failed: %s", pack_result.error);
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), msg, _TRUNCATE);
+        editor->build_status_timer = 10.0f;
+        return false;
+    }
+    printf("Pack complete: %d total, %d packed, %d skipped.\n",
+           pack_result.total, pack_result.packed, pack_result.skipped);
+    if (pack_result.optional_skipped > 0) {
+        printf("[Pack] Warning: %d optional baked text asset(s) were skipped.\n", pack_result.optional_skipped);
+    }
+
+    printf("Step 2c: Building minimal_intro_packed...\n");
     snprintf(build_cmd, sizeof(build_cmd),
              "cmake --build \"%s\\build\" --config Release --target minimal_intro_packed",
              editor->startup_dir);
@@ -3325,7 +3389,7 @@ bool BuildAndRun(EditorContext* editor) {
     }
     char run_command[768];
     snprintf(run_command, sizeof(run_command),
-             "start \"\" \"%s\" %s",
+             "start \"\" \"%s\" \"%s\"",
              launch_path, cues_path);
     int run_result = system(run_command);
     
@@ -3355,6 +3419,11 @@ bool PackBuildAndRun(EditorContext* editor) {
         strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Save the project first!", _TRUNCATE);
         editor->build_status_timer = 5.0f;
         return false;
+    }
+
+    char project_release_dir[512] = {};
+    if (EnsureProjectOutputReleaseDir(editor, project_release_dir, sizeof(project_release_dir))) {
+        printf("[Build] Project output directory ready: %s\n", project_release_dir);
     }
 
     // Step 2: Export cues.txt to project directory
@@ -3447,7 +3516,7 @@ bool PackBuildAndRun(EditorContext* editor) {
     }
     char run_command[768];
     snprintf(run_command, sizeof(run_command),
-             "start \"\" \"%s\" %s",
+             "start \"\" \"%s\" \"%s\"",
              launch_path, cues_path);
     int run_result = system(run_command);
     if (run_result == 0) {

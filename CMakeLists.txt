@@ -40,3 +40,12 @@ add_subdirectory(examples/demo_intro)
 add_subdirectory(examples/mesh_demo)
 add_subdirectory(examples/simple_test)
 add_subdirectory(examples/indexed_test)
+
+# Utility CLI: generate build/packed_assets.h without launching editor UI.
+add_executable(pack_cli tools/pack_cli.cpp)
+target_link_libraries(pack_cli PRIVATE rev_pack)
+if(MSVC)
+    set_target_properties(pack_cli PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup"
+    )
+endif()
