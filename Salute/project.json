@@ -1,9 +1,10 @@
 {
   "version": "1.0",
   "workspace_path": "E:\\code\\cpp\\mono\\himym\\Salute",
-  "total_duration": 18.000,
+  "total_duration": 23.000,
   "loop_intro": 1,
   "loop_music": 0,
+  "music_persist_across_scenes": 1,
   "scenes": [
     {
       "name": "Silents Scene",
@@ -97,6 +98,12 @@
       "scroll_text_cues": [
       ],
       "music_cues": [
+        {
+          "asset_key": "hardwired intro.xm",
+          "asset_path": "Salute/project_assets/hardwired intro.xm",
+          "cue_start": 0.000,
+          "cue_end": 25.000
+        }
       ],
       "mesh_cues": [
         {
@@ -196,10 +203,10 @@
       ],
       "image_cues": [
         {
-          "asset_key": "scene2.png",
+          "asset_key": "mancabin.png",
           "x": 0.500,
           "y": 0.500,
-          "scale": 1.000,
+          "scale": 2.000,
           "opacity": 1.000,
           "effect_type": 0,
           "cue_start": 0.000,
@@ -281,7 +288,7 @@
           "asset_key": "background.png",
           "x": 0.500,
           "y": 0.500,
-          "scale": 1.000,
+          "scale": 2.000,
           "opacity": 1.000,
           "effect_type": 0,
           "cue_start": 0.000,
@@ -345,7 +352,7 @@
           "asset_key": "warningout.png",
           "x": 0.500,
           "y": 0.500,
-          "scale": 1.000,
+          "scale": 1.500,
           "opacity": 1.000,
           "effect_type": 0,
           "cue_start": 0.000,
@@ -362,7 +369,7 @@
           "curve_opacity": -1
         },
         {
-          "asset_key": "screenface.png",
+          "asset_key": "screen.png",
           "x": 0.500,
           "y": 0.500,
           "scale": 1.015,
@@ -380,6 +387,26 @@
           "curve_y": -1,
           "curve_scale": -1,
           "curve_opacity": -1
+        },
+        {
+          "asset_key": "face.png",
+          "x": 0.610,
+          "y": 0.557,
+          "scale": 1.306,
+          "opacity": 0.323,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 3.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 1,
+          "layer_order": 1,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_scale": -1,
+          "curve_opacity": -1
         }
       ],
       "animated_sprite_cues": [
@@ -392,11 +419,11 @@
           "y": 0.500,
           "size": 60.000,
           "color": [1.000, 1.000, 1.000],
-          "effect_type": 0,
+          "effect_type": 4,
           "cue_start": 0.000,
           "cue_end": 3.000,
           "fade_in_start": 0.000,
-          "fade_in_end": 0.000,
+          "fade_in_end": 0.500,
           "fade_out_start": 0.000,
           "fade_out_end": 0.000,
           "blend_mode": 0,
@@ -417,6 +444,326 @@
       "music_cues": [
       ],
       "mesh_cues": [
+      ]
+    },
+    {
+      "name": "New Scene",
+      "duration": 1.000,
+      "shader_cues": [
+      ],
+      "image_cues": [
+        {
+          "asset_key": "scaredlookingguy.png",
+          "x": 0.500,
+          "y": 0.500,
+          "scale": 1.600,
+          "opacity": 1.000,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 1.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 0,
+          "layer_order": 0,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_scale": -1,
+          "curve_opacity": -1
+        }
+      ],
+      "animated_sprite_cues": [
+      ],
+      "text_cues": [
+      ],
+      "scroll_text_cues": [
+      ],
+      "music_cues": [
+      ],
+      "mesh_cues": [
+        {
+          "asset_key": "mesh_0",
+          "asset_path": "Salute/project_assets/moon.glb",
+          "mesh_type": 4,
+          "pos": [0.000, 0.000, 0.000],
+          "rot": [0.000, 0.000, 0.000],
+          "scale": [2.000, 2.000, 2.000],
+          "color": [8.031, 8.031, 8.031, 1.000],
+          "mesh_size": 1.000,
+          "mesh_param": 16.000,
+          "metallic": 0.000,
+          "roughness": 1.000,
+          "emissive_color": [1.000, 1.000, 1.000],
+          "emissive_strength": 1.961,
+          "fov_deg": 36.692,
+          "cull_mode": 0,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 1.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "layer_order": 0,
+          "curve_pos_x": -1,
+          "curve_pos_y": -1,
+          "curve_pos_z": -1,
+          "curve_rot_x": -1,
+          "curve_rot_y": -1,
+          "curve_rot_z": -1,
+          "curve_scale_x": -1,
+          "curve_scale_y": -1,
+          "curve_scale_z": -1,
+          "curve_color_r": -1,
+          "curve_color_g": -1,
+          "curve_color_b": -1,
+          "curve_color_a": -1,
+          "curve_mesh_size": -1,
+          "curve_metallic": -1,
+          "curve_roughness": -1,
+          "curve_fov": -1,
+          "use_imported_light": 0,
+          "use_imported_camera": 0
+        }
+      ]
+    },
+    {
+      "name": "New Scene",
+      "duration": 2.000,
+      "shader_cues": [
+      ],
+      "image_cues": [
+        {
+          "asset_key": "lastsilentscenebeforeend.png",
+          "x": 0.500,
+          "y": 0.500,
+          "scale": 2.000,
+          "opacity": 1.000,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 2.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 0,
+          "layer_order": 0,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_scale": 5,
+          "curve_opacity": 7
+        },
+        {
+          "asset_key": "whiteout.png",
+          "x": 0.500,
+          "y": 0.500,
+          "scale": 3.000,
+          "opacity": 1.000,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 2.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 0,
+          "layer_order": 2,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_scale": -1,
+          "curve_opacity": 12
+        }
+      ],
+      "animated_sprite_cues": [
+      ],
+      "text_cues": [
+      ],
+      "scroll_text_cues": [
+      ],
+      "music_cues": [
+      ],
+      "mesh_cues": [
+      ]
+    },
+    {
+      "name": "New Scene",
+      "duration": 1.000,
+      "shader_cues": [
+      ],
+      "image_cues": [
+        {
+          "asset_key": "eyes.png",
+          "x": 0.500,
+          "y": 0.500,
+          "scale": 0.100,
+          "opacity": 1.000,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 1.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 0,
+          "layer_order": 0,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_scale": 9,
+          "curve_opacity": -1
+        },
+        {
+          "asset_key": "whiteout.png",
+          "x": 0.500,
+          "y": 0.500,
+          "scale": 3.000,
+          "opacity": 1.000,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 1.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 0,
+          "layer_order": 0,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_scale": -1,
+          "curve_opacity": 8
+        }
+      ],
+      "animated_sprite_cues": [
+      ],
+      "text_cues": [
+      ],
+      "scroll_text_cues": [
+      ],
+      "music_cues": [
+      ],
+      "mesh_cues": [
+      ]
+    },
+    {
+      "name": "New Scene",
+      "duration": 1.000,
+      "shader_cues": [
+      ],
+      "image_cues": [
+        {
+          "asset_key": "HugoScared.png",
+          "x": 0.334,
+          "y": 0.755,
+          "scale": 1.000,
+          "opacity": 1.000,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 1.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 0,
+          "layer_order": 0,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_scale": -1,
+          "curve_opacity": -1
+        },
+        {
+          "asset_key": "beak.png",
+          "x": 1.000,
+          "y": 0.464,
+          "scale": 1.362,
+          "opacity": 1.000,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 1.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 1,
+          "layer_order": 2,
+          "curve_x": 11,
+          "curve_y": -1,
+          "curve_scale": -1,
+          "curve_opacity": -1
+        },
+        {
+          "asset_key": "whiteout.png",
+          "x": 0.500,
+          "y": 0.500,
+          "scale": 3.000,
+          "opacity": 1.000,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 1.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "blend_mode": 0,
+          "layer_order": 2,
+          "curve_x": -1,
+          "curve_y": -1,
+          "curve_scale": -1,
+          "curve_opacity": 10
+        }
+      ],
+      "animated_sprite_cues": [
+      ],
+      "text_cues": [
+      ],
+      "scroll_text_cues": [
+      ],
+      "music_cues": [
+      ],
+      "mesh_cues": [
+        {
+          "asset_key": "mesh_0",
+          "asset_path": "Salute/project_assets/moon.glb",
+          "mesh_type": 4,
+          "pos": [0.000, 0.000, 3.480],
+          "rot": [0.000, 0.000, 0.000],
+          "scale": [1.000, 1.000, 1.000],
+          "color": [4.016, 4.016, 4.016, 1.000],
+          "mesh_size": 1.000,
+          "mesh_param": 16.000,
+          "metallic": 0.000,
+          "roughness": 1.000,
+          "emissive_color": [1.000, 1.000, 1.000],
+          "emissive_strength": 1.000,
+          "fov_deg": 45.000,
+          "cull_mode": 0,
+          "effect_type": 0,
+          "cue_start": 0.000,
+          "cue_end": 1.000,
+          "fade_in_start": 0.000,
+          "fade_in_end": 0.000,
+          "fade_out_start": 0.000,
+          "fade_out_end": 0.000,
+          "layer_order": 0,
+          "curve_pos_x": -1,
+          "curve_pos_y": -1,
+          "curve_pos_z": -1,
+          "curve_rot_x": -1,
+          "curve_rot_y": -1,
+          "curve_rot_z": -1,
+          "curve_scale_x": -1,
+          "curve_scale_y": -1,
+          "curve_scale_z": -1,
+          "curve_color_r": -1,
+          "curve_color_g": -1,
+          "curve_color_b": -1,
+          "curve_color_a": -1,
+          "curve_mesh_size": -1,
+          "curve_metallic": -1,
+          "curve_roughness": -1,
+          "curve_fov": -1,
+          "use_imported_light": 0,
+          "use_imported_camera": 0
+        }
       ]
     }
   ],
@@ -459,6 +806,74 @@
       "points": [
         {"t": 0.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
         {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 2.000,
+      "points": [
+        {"t": 0.000, "v": 2.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 4.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "loop",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.198, "v": 0.009, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.399, "v": 0.991, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.598, "v": 0.011, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 0.800, "v": 0.989, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.989, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "loop",
+      "duration": 0.500,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "loop",
+      "duration": 0.250,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 0.100, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.500, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "loop",
+      "duration": 0.200,
+      "points": [
+        {"t": 0.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "clamp",
+      "duration": 1.000,
+      "points": [
+        {"t": 0.000, "v": 1.250, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 0.750, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
+      ]
+    },
+    {
+      "wrap_mode": "loop",
+      "duration": 0.200,
+      "points": [
+        {"t": 0.000, "v": 0.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"},
+        {"t": 1.000, "v": 1.000, "in_ease": 0.500, "out_ease": 0.500, "mode": "linear"}
       ]
     }
   ]

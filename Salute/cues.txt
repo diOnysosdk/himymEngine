@@ -5,10 +5,19 @@
 
 [image_cues]
 # asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity|blend_mode
-scene2.png|Salute/project_assets/scene2.png|0.500|0.500|1.000|1.000|5.000|10.000|0|0|5.000|5.000|5.000|5.000|-1|-1|-1|-1|0
-background.png|Salute/project_assets/background.png|0.500|0.500|1.000|1.000|10.000|15.000|0|0|10.000|10.000|10.000|10.000|-1|-1|-1|-1|0
-warningout.png|Salute/project_assets/warningout.png|0.500|0.500|1.000|1.000|15.000|18.000|0|0|15.000|15.000|15.000|15.000|-1|-1|-1|-1|0
-screenface.png|Salute/project_assets/screenface.png|0.500|0.500|1.015|1.000|15.000|18.000|1|0|15.000|15.000|15.000|15.000|-1|-1|-1|-1|0
+mancabin.png|Salute/project_assets/mancabin.png|0.500|0.500|2.000|1.000|5.000|10.000|0|0|5.000|5.000|5.000|5.000|-1|-1|-1|-1|0
+background.png|Salute/project_assets/background.png|0.500|0.500|2.000|1.000|10.000|15.000|0|0|10.000|10.000|10.000|10.000|-1|-1|-1|-1|0
+warningout.png|Salute/project_assets/warningout.png|0.500|0.500|1.500|1.000|15.000|18.000|0|0|15.000|15.000|15.000|15.000|-1|-1|-1|-1|0
+screen.png|Salute/project_assets/screen.png|0.500|0.500|1.015|1.000|15.000|18.000|1|0|15.000|15.000|15.000|15.000|-1|-1|-1|-1|0
+face.png|Salute/project_assets/face.png|0.610|0.557|1.306|0.323|15.000|18.000|1|0|15.000|15.000|15.000|15.000|-1|-1|-1|-1|1
+scaredlookingguy.png|Salute/project_assets/scaredlookingguy.png|0.500|0.500|1.600|1.000|18.000|19.000|0|0|18.000|18.000|18.000|18.000|-1|-1|-1|-1|0
+lastsilentscenebeforeend.png|Salute/project_assets/lastsilentscenebeforeend.png|0.500|0.500|2.000|1.000|19.000|21.000|0|0|19.000|19.000|19.000|19.000|-1|-1|5|7|0
+whiteout.png|Salute/project_assets/whiteout.png|0.500|0.500|3.000|1.000|19.000|21.000|2|0|19.000|19.000|19.000|19.000|-1|-1|-1|12|0
+eyes.png|Salute/project_assets/eyes.png|0.500|0.500|0.100|1.000|21.000|22.000|0|0|21.000|21.000|21.000|21.000|-1|-1|9|-1|0
+whiteout.png|Salute/project_assets/whiteout.png|0.500|0.500|3.000|1.000|21.000|22.000|0|0|21.000|21.000|21.000|21.000|-1|-1|-1|8|0
+HugoScared.png|Salute/project_assets/HugoScared.png|0.334|0.755|1.000|1.000|22.000|23.000|0|0|22.000|22.000|22.000|22.000|-1|-1|-1|-1|0
+beak.png|Salute/project_assets/beak.png|1.000|0.464|1.362|1.000|22.000|23.000|2|0|22.000|22.000|22.000|22.000|11|-1|-1|-1|1
+whiteout.png|Salute/project_assets/whiteout.png|0.500|0.500|3.000|1.000|22.000|23.000|2|0|22.000|22.000|22.000|22.000|-1|-1|-1|10|0
 
 [animated_sprite_cues]
 # sprite_name|frame_keys_csv|frame_paths_csv|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|blend_mode|fps|playback_mode|start_frame|curve_x|curve_y|curve_scale|curve_opacity|curve_frame
@@ -16,19 +25,22 @@ sprite_0|hugo4.png;hugo3.png;hugo2.png;hugo1.png|hugo4.png;hugo3.png;hugo2.png;h
 
 [text_cues]
 # text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path
-INTRUDER ALERT|Headliner|0.500|0.500|60.000|1.000|1.000|1.000|0|15.000|18.000|15.000|15.000|15.000|15.000|1|0|-1|-1|-1|2|3|4|1|text_s03_c00.png|Salute/project_assets/text_s03_c00.png
+INTRUDER ALERT|Headliner|0.500|0.500|60.000|1.000|1.000|1.000|4|15.000|18.000|15.000|15.500|15.000|15.000|1|0|-1|-1|-1|2|3|4|1|text_s03_c00.png|Salute/project_assets/text_s03_c00.png
 
 [scroll_text_cues]
 # text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path
 
 [music_cues]
 # asset_key|asset_path|cue_start|cue_end
+hardwired intro.xm|Salute/project_assets/hardwired intro.xm|0.000|25.000
 
 [mesh_cues]
 # asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness|curve_pos_x|curve_pos_y|curve_pos_z|curve_rot_x|curve_rot_y|curve_rot_z|curve_scale_x|curve_scale_y|curve_scale_z|curve_color_r|curve_color_g|curve_color_b|curve_color_a|curve_mesh_size|curve_metallic|curve_roughness|fov_deg|cull_mode|curve_fov|use_imported_light|use_imported_camera|emissive_r|emissive_g|emissive_b|emissive_strength
 moon|Salute/project_assets/moon.glb|4|11.860|11.240|-93.930|88.000|43.000|-47.000|20.000|20.000|20.000|0.991|1.000|0.926|1.000|1.000|16.000|0.000|5.000|0|0|0.000|0.000|0.000|0.000|0.000|1.000|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|24.000|0|-1|0|0|1.000|1.000|1.000|0.000
 ship|Salute/project_assets/silents_textured.glb|4|-1.160|1.320|-24.000|8.000|-9.000|15.000|1.000|1.000|1.000|1.000|1.000|1.000|1.000|1.000|16.000|0.000|5.000|0|0|0.000|0.000|0.000|0.000|0.000|0.500|-1|-1|-1|0|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|24.000|0|-1|0|0|1.000|1.000|1.000|1.000
 mesh_0|Salute/project_assets/moon.glb|4|-0.120|0.000|-0.290|44.000|27.000|0.000|2.000|2.000|2.000|4.016|4.016|4.016|2.008|1.000|16.000|5.000|10.000|0|0|5.000|5.000|5.000|5.000|1.000|1.000|-1|-1|-1|-1|-1|1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|24.000|0|-1|0|0|2.008|2.008|2.008|0.000
+mesh_0_s04_c00|Salute/project_assets/moon.glb|4|0.000|0.000|0.000|0.000|0.000|0.000|2.000|2.000|2.000|8.031|8.031|8.031|1.000|1.000|16.000|18.000|19.000|0|0|18.000|18.000|18.000|18.000|0.000|1.000|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|36.692|0|-1|0|0|1.000|1.000|1.000|1.961
+mesh_0_s07_c00|Salute/project_assets/moon.glb|4|0.000|0.000|3.480|0.000|0.000|0.000|1.000|1.000|1.000|4.016|4.016|4.016|1.000|1.000|16.000|22.000|23.000|0|0|22.000|22.000|22.000|22.000|0.000|1.000|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|45.000|0|-1|0|0|1.000|1.000|1.000|1.000
 
 [curves]
 # curve_id|wrap_mode|duration|point_count
@@ -47,9 +59,38 @@ mesh_0|Salute/project_assets/moon.glb|4|-0.120|0.000|-0.290|44.000|27.000|0.000|
 4|loop|1.000|2
   0.000|1.000|0.500|0.500|linear
   1.000|0.000|0.500|0.500|linear
+5|clamp|2.000|2
+  0.000|2.000|0.500|0.500|linear
+  1.000|4.000|0.500|0.500|linear
+6|loop|1.000|6
+  0.000|1.000|0.500|0.500|linear
+  0.198|0.009|0.500|0.500|linear
+  0.399|0.991|0.500|0.500|linear
+  0.598|0.011|0.500|0.500|linear
+  0.800|0.989|0.500|0.500|linear
+  1.000|0.989|0.500|0.500|linear
+7|loop|0.500|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+8|loop|0.250|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
+9|clamp|1.000|2
+  0.000|0.100|0.500|0.500|linear
+  1.000|1.500|0.500|0.500|linear
+10|loop|0.200|2
+  0.000|1.000|0.500|0.500|linear
+  1.000|0.000|0.500|0.500|linear
+11|clamp|1.000|2
+  0.000|1.250|0.500|0.500|linear
+  1.000|0.750|0.500|0.500|linear
+12|loop|0.200|2
+  0.000|0.000|0.500|0.500|linear
+  1.000|1.000|0.500|0.500|linear
 
 [metadata]
-total_duration=18.000
-scene_count=4
+total_duration=23.000
+scene_count=8
 intro_loop=1
 music_loop=0
+music_persist=1

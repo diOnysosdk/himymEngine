@@ -641,6 +641,7 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->project->total_duration = 0.0f;
     editor->project->loop_intro = false;
     editor->project->loop_music = false;
+    editor->project->music_persist_across_scenes = false;
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
@@ -810,6 +811,10 @@ bool LoadProject(EditorContext* editor, const char* path) {
         }
         if (sscanf_s(start, "\"loop_music\": %d", &bool_value) == 1) {
             editor->project->loop_music = (bool_value != 0);
+            continue;
+        }
+        if (sscanf_s(start, "\"music_persist_across_scenes\": %d", &bool_value) == 1) {
+            editor->project->music_persist_across_scenes = (bool_value != 0);
             continue;
         }
         
@@ -1607,6 +1612,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
     fprintf(f, "  \"total_duration\": %.3f,\n", editor->project->total_duration);
     fprintf(f, "  \"loop_intro\": %d,\n", editor->project->loop_intro ? 1 : 0);
     fprintf(f, "  \"loop_music\": %d,\n", editor->project->loop_music ? 1 : 0);
+    fprintf(f, "  \"music_persist_across_scenes\": %d,\n", editor->project->music_persist_across_scenes ? 1 : 0);
     fprintf(f, "  \"scenes\": [\n");
     
     // Save scenes
@@ -2022,6 +2028,7 @@ bool NewProject(EditorContext* editor) {
     editor->project->total_duration = 0.0f;  // Will be updated as scenes are added
     editor->project->loop_intro = false;
     editor->project->loop_music = false;
+    editor->project->music_persist_across_scenes = false;
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
@@ -2397,6 +2404,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     float total_duration = 10.0f; // Default
     int intro_loop_setting = 0;
     int music_loop_setting = 0;
+    int music_persist_setting = 0;
     
     while (fgets(line, sizeof(line), f)) {
         // Trim whitespace
@@ -2421,6 +2429,8 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             } else if (sscanf_s(start, "intro_loop=%d", &intro_loop_setting) == 1) {
                 // parsed below
             } else if (sscanf_s(start, "music_loop=%d", &music_loop_setting) == 1) {
+                // parsed below
+            } else if (sscanf_s(start, "music_persist=%d", &music_persist_setting) == 1) {
                 // parsed below
             }
             continue;
@@ -2757,6 +2767,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         editor->project->total_duration = total_duration;
         editor->project->loop_intro = (intro_loop_setting != 0);
         editor->project->loop_music = (music_loop_setting != 0);
+        editor->project->music_persist_across_scenes = (music_persist_setting != 0);
     }
     
     printf("[ImportFromCues] Import complete!\n");
@@ -3223,6 +3234,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     fprintf(f, "scene_count=%d\n", editor->project->scene_count);
     fprintf(f, "intro_loop=%d\n", editor->project->loop_intro ? 1 : 0);
     fprintf(f, "music_loop=%d\n", editor->project->loop_music ? 1 : 0);
+    fprintf(f, "music_persist=%d\n", editor->project->music_persist_across_scenes ? 1 : 0);
     
     fclose(f);
     return true;
@@ -5727,6 +5739,27 @@ void UpdatePlayback(EditorContext* editor, float delta_time) {
     }
 }
 
+void ReloadEditorAssets(EditorContext* editor) {
+    if (!editor) return;
+
+    // Images and text are loaded from disk during preview draws, but mesh imports are cached.
+    // Clearing this cache forces the next preview frame to reload meshes/textures from files.
+    for (int i = 0; i < editor->mesh_cache_count; ++i) {
+        if (editor->mesh_cache[i].mesh) {
+            rev::mesh::DestroyMesh((rev::mesh::Mesh*)editor->mesh_cache[i].mesh);
+            editor->mesh_cache[i].mesh = nullptr;
+        }
+        editor->mesh_cache[i].path[0] = '\0';
+        editor->mesh_cache[i].last_write_time = 0;
+    }
+    editor->mesh_cache_count = 0;
+
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+              "Preview assets reloaded.", _TRUNCATE);
+    editor->build_status_timer = 2.0f;
+    printf("[Preview] Reloaded asset cache\n");
+}
+
 void RenderPreviewPanel(EditorContext* editor) {
     if (!editor || !editor->show_preview) return;
     
@@ -5754,6 +5787,10 @@ void RenderPreviewPanel(EditorContext* editor) {
         editor->playing = false;
         editor->current_time = 0.0f;
         // Mesh animations now driven by scene time, no need to reset them individually
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reload Assets")) {
+        ReloadEditorAssets(editor);
     }
     ImGui::SameLine();
     
@@ -5809,6 +5846,8 @@ void RenderPreviewPanel(EditorContext* editor) {
     ImGui::Text("Playback Mode: Intro %s | Music %s",
         editor->project->loop_intro ? "Loop" : "One-shot",
         editor->project->loop_music ? "Loop" : "One-shot");
+    ImGui::Text("Music Transition: %s",
+        editor->project->music_persist_across_scenes ? "Carry across scenes (unless track changes)" : "Scene-based restart");
     ImGui::Text("Active Music Cue @ %.2fs: %s", editor->current_time, active_music_key);
     
     ImGui::Separator();

@@ -143,6 +143,7 @@ struct ProjectData {
     float total_duration;       // Sum of all scene durations
     bool  loop_intro;           // true = restart timeline when reaching end
     bool  loop_music;           // true = loop active XM cue playback
+    bool  music_persist_across_scenes; // true = keep current track across scene cuts unless a different cue track becomes active
 };
 
 // Editor context (opaque handle)
@@ -295,6 +296,7 @@ void CleanupPreview(EditorContext* editor);
 void ResizePreview(EditorContext* editor, int width, int height);
 void RenderPreviewFrame(EditorContext* editor);
 void UpdatePlayback(EditorContext* editor, float delta_time);
+void ReloadEditorAssets(EditorContext* editor);
 
 // Scene management
 int AddScene(EditorContext* editor, const char* name, float duration);

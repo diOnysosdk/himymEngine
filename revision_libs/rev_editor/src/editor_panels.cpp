@@ -321,6 +321,15 @@ void RenderTimeline(EditorContext* editor) {
             editor->project->loop_music = loop_music;
             editor->project->modified = true;
         }
+
+        bool music_persist = editor->project->music_persist_across_scenes;
+        if (ImGui::Checkbox("Carry Music Across Scenes", &music_persist)) {
+            editor->project->music_persist_across_scenes = music_persist;
+            editor->project->modified = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Keep current track across scene changes unless a different music cue becomes active.");
+        }
         
         ImGui::SliderFloat("Zoom", &editor->timeline_zoom, 0.1f, 10.0f);
         ImGui::SameLine();

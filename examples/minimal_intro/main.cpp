@@ -896,6 +896,7 @@ struct RuntimePlaybackSettings {
     float total_duration;
     bool intro_loop;
     bool music_loop;
+    bool music_persist_across_scenes;
 };
 
 bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* settings) {
@@ -903,6 +904,7 @@ bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* sett
     settings->total_duration = 0.0f;
     settings->intro_loop = false;
     settings->music_loop = false;
+    settings->music_persist_across_scenes = false;
 
     FILE* f = nullptr;
     fopen_s(&f, path, "r");
@@ -935,6 +937,9 @@ bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* sett
             found = true;
         } else if (sscanf_s(s, "music_loop=%d", &bool_value) == 1) {
             settings->music_loop = (bool_value != 0);
+            found = true;
+        } else if (sscanf_s(s, "music_persist=%d", &bool_value) == 1) {
+            settings->music_persist_across_scenes = (bool_value != 0);
             found = true;
         }
     }
@@ -1322,9 +1327,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             mesh_cue_count,
             has_music ? "yes" : "no",
             total_duration);
-    printf("Playback: intro_loop=%s music_loop=%s music_cues=%d\n",
+        printf("Playback: intro_loop=%s music_loop=%s music_persist=%s music_cues=%d\n",
            playback_settings.intro_loop ? "on" : "off",
            playback_settings.music_loop ? "on" : "off",
+            playback_settings.music_persist_across_scenes ? "on" : "off",
            music_cue_count);
     
     // Create window and OpenGL context
@@ -2219,22 +2225,36 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         prev_time = current_time;
 
         if (audio_state && loaded_music_player_count > 0) {
-            // music_loop=true means one continuously looping track for the project;
-            // avoid timeline-driven cue switching to prevent restart lock/stall.
-            if (!playback_settings.music_loop) {
-                int new_music_index = -1;
-                float latest_start = -1.0f;
-                for (int mi = 0; mi < loaded_music_player_count; ++mi) {
-                    float cue_end = ResolveCueEnd(music_players[mi].cue.cue_end, total_duration);
-                    if (time >= music_players[mi].cue.cue_start && time <= cue_end) {
-                        if (music_players[mi].cue.cue_start >= latest_start) {
-                            latest_start = music_players[mi].cue.cue_start;
-                            new_music_index = mi;
-                        }
+            int new_music_index = -1;
+            float latest_start = -1.0f;
+            for (int mi = 0; mi < loaded_music_player_count; ++mi) {
+                float cue_end = ResolveCueEnd(music_players[mi].cue.cue_end, total_duration);
+                if (time >= music_players[mi].cue.cue_start && time <= cue_end) {
+                    if (music_players[mi].cue.cue_start >= latest_start) {
+                        latest_start = music_players[mi].cue.cue_start;
+                        new_music_index = mi;
+                    }
+                }
+            }
+
+            if (playback_settings.music_persist_across_scenes && new_music_index < 0) {
+                new_music_index = active_music_index;
+            }
+
+            if (new_music_index != active_music_index) {
+                bool keep_progress = false;
+                if (playback_settings.music_persist_across_scenes &&
+                    active_music_index >= 0 && new_music_index >= 0) {
+                    const char* old_key = music_players[active_music_index].cue.asset_key;
+                    const char* new_key = music_players[new_music_index].cue.asset_key;
+                    if (_stricmp(old_key, new_key) == 0) {
+                        keep_progress = true;
                     }
                 }
 
-                if (new_music_index != active_music_index) {
+                if (keep_progress) {
+                    active_music_index = new_music_index;
+                } else {
                     active_music_index = new_music_index;
                     rev::xm::Player* selected_player = nullptr;
                     if (active_music_index >= 0) {
@@ -2249,7 +2269,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
 
             if (playback_settings.music_loop && active_music_index >= 0) {
-                rev::xm::Player* selected_player = music_players[active_music_index].player;
+                rev::xm::Player* selected_player = audio_state->player.load(std::memory_order_acquire);
                 if (selected_player) {
                     bool finished = rev::xm::IsFinished(selected_player);
                     if (finished) {

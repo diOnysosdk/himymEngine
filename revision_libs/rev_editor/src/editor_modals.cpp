@@ -1257,6 +1257,10 @@ void RenderMusicModal(EditorContext* editor) {
                 }
             }
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Reload")) {
+            ReloadEditorAssets(editor);
+        }
         
         ImGui::Separator();
         
@@ -1352,6 +1356,10 @@ void RenderImageModal(EditorContext* editor) {
                     printf("[IMAGE] Warning: project not saved yet, asset not copied.\n");
                 }
             }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reload")) {
+            ReloadEditorAssets(editor);
         }
         
         ImGui::Separator();
@@ -2740,6 +2748,10 @@ void RenderMeshModal(EditorContext* editor) {
                     }
                     if (ir) rev::gltf::FreeImportResult(ir);
                 }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reload##gltf")) {
+                ReloadEditorAssets(editor);
             }
             if (cue->asset_path[0])
                 ImGui::TextDisabled("%s", cue->asset_path);
