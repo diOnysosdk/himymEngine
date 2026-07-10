@@ -928,7 +928,11 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
                 switch (prim->attributes[ai].type) {
                     case cgltf_attribute_type_position: pos_acc  = prim->attributes[ai].data; break;
                     case cgltf_attribute_type_normal:   norm_acc = prim->attributes[ai].data; break;
-                    case cgltf_attribute_type_texcoord: uv_acc   = prim->attributes[ai].data; break;
+                    case cgltf_attribute_type_texcoord:
+                        if (prim->attributes[ai].index == 0) {
+                            uv_acc = prim->attributes[ai].data;
+                        }
+                        break;
                     default: break;
                 }
             }

@@ -53,6 +53,16 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
             UpdateCurveRefAfterDelete(&cue->curve_y, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_scale, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_opacity, deleted_curve);
+            for (int e = 0; e < cue->post_effect_count; ++e) {
+                LayerPostEffect* effect = &cue->post_effects[e];
+                UpdateCurveRefAfterDelete(&effect->curve_intensity, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_threshold, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_radius, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_r, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_g, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_b, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_a, deleted_curve);
+            }
         }
 
         for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
@@ -62,6 +72,16 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
             UpdateCurveRefAfterDelete(&cue->curve_scale, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_opacity, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_frame, deleted_curve);
+            for (int e = 0; e < cue->post_effect_count; ++e) {
+                LayerPostEffect* effect = &cue->post_effects[e];
+                UpdateCurveRefAfterDelete(&effect->curve_intensity, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_threshold, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_radius, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_r, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_g, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_b, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_a, deleted_curve);
+            }
         }
 
         for (int i = 0; i < scene->text_cue_count; ++i) {
@@ -175,6 +195,16 @@ void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, s
             RegisterCurveUsage(cue->curve_y, curve_index, "Image Y", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_scale, curve_index, "Image Scale", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_opacity, curve_index, "Image Opacity", owner, &usage_count, first_usage, sizeof(first_usage));
+            for (int e = 0; e < cue->post_effect_count; ++e) {
+                LayerPostEffect* effect = &cue->post_effects[e];
+                RegisterCurveUsage(effect->curve_intensity, curve_index, "Layer Effect Intensity", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_threshold, curve_index, "Layer Effect Threshold", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_radius, curve_index, "Layer Effect Radius", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_color_r, curve_index, "Layer Effect Color R", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_color_g, curve_index, "Layer Effect Color G", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_color_b, curve_index, "Layer Effect Color B", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_color_a, curve_index, "Layer Effect Color A", owner, &usage_count, first_usage, sizeof(first_usage));
+            }
         }
 
         for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
@@ -186,6 +216,16 @@ void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, s
             RegisterCurveUsage(cue->curve_scale, curve_index, "AnimSprite Scale", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_opacity, curve_index, "AnimSprite Opacity", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_frame, curve_index, "AnimSprite Frame", owner, &usage_count, first_usage, sizeof(first_usage));
+            for (int e = 0; e < cue->post_effect_count; ++e) {
+                LayerPostEffect* effect = &cue->post_effects[e];
+                RegisterCurveUsage(effect->curve_intensity, curve_index, "Layer Effect Intensity", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_threshold, curve_index, "Layer Effect Threshold", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_radius, curve_index, "Layer Effect Radius", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_color_r, curve_index, "Layer Effect Color R", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_color_g, curve_index, "Layer Effect Color G", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_color_b, curve_index, "Layer Effect Color B", owner, &usage_count, first_usage, sizeof(first_usage));
+                RegisterCurveUsage(effect->curve_color_a, curve_index, "Layer Effect Color A", owner, &usage_count, first_usage, sizeof(first_usage));
+            }
         }
 
         for (int i = 0; i < scene->text_cue_count; ++i) {
@@ -286,10 +326,20 @@ static int AllocateCurveSlotForPanel(EditorContext* editor, float start_v, float
         for (int i = 0; i < scene->image_cue_count; ++i) {
             ImageCue* cue = &scene->image_cues[i];
             mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_scale); mark(cue->curve_opacity);
+            for (int e = 0; e < cue->post_effect_count; ++e) {
+                LayerPostEffect* effect = &cue->post_effects[e];
+                mark(effect->curve_intensity); mark(effect->curve_threshold); mark(effect->curve_radius);
+                mark(effect->curve_color_r); mark(effect->curve_color_g); mark(effect->curve_color_b); mark(effect->curve_color_a);
+            }
         }
         for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
             AnimatedSpriteCue* cue = &scene->animated_sprite_cues[i];
             mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_scale); mark(cue->curve_opacity); mark(cue->curve_frame);
+            for (int e = 0; e < cue->post_effect_count; ++e) {
+                LayerPostEffect* effect = &cue->post_effects[e];
+                mark(effect->curve_intensity); mark(effect->curve_threshold); mark(effect->curve_radius);
+                mark(effect->curve_color_r); mark(effect->curve_color_g); mark(effect->curve_color_b); mark(effect->curve_color_a);
+            }
         }
         for (int i = 0; i < scene->text_cue_count; ++i) {
             TextCue* cue = &scene->text_cues[i];
@@ -550,14 +600,19 @@ void RenderProperties(EditorContext* editor) {
                 "HDR Rendering", "ACES Tone Mapping", "Bloom", "Vignette",
                 "Color Grading", "Film Grain", "Blue Noise Dithering",
                 "Exponential Fog", "FXAA", "Chromatic Aberration",
-                "Camera Shake", "Beat Flash", "Fade In / Fade Out"
+                "Camera Shake", "Beat Flash", "Fade In / Fade Out",
+                "CRT Warp", "Scanlines", "Lens Distortion", "Palette Cycling",
+                "Heat Distortion", "Glitch", "Bloom Pulsing", "Feedback Buffer",
+                "Infinite Zoom", "Recursive Feedback"
             };
 
             ImGui::Separator();
-            ImGui::Text("Post Effects");
+            char post_effect_header[96] = {};
+            snprintf(post_effect_header, sizeof(post_effect_header), "Post Effects (%d)", scene->post_effect_count);
+            if (ImGui::CollapsingHeader(post_effect_header, ImGuiTreeNodeFlags_DefaultOpen)) {
             static int new_post_effect_type = PostEffectBloom;
             ImGui::SetNextItemWidth(220.0f);
-            ImGui::Combo("Effect", &new_post_effect_type, post_effect_names, 13);
+            ImGui::Combo("Effect", &new_post_effect_type, post_effect_names, PostEffectCount);
             if (ImGui::Button("+ Add Post Effect")) {
                 PostEffect effect = {};
                 effect.type = new_post_effect_type;
@@ -585,7 +640,7 @@ void RenderProperties(EditorContext* editor) {
                     editor->project->modified = true;
                 }
                 ImGui::SameLine();
-                const int effect_type = (effect->type >= 0 && effect->type < 13) ? effect->type : 0;
+                const int effect_type = (effect->type >= 0 && effect->type < PostEffectCount) ? effect->type : 0;
                 ImGui::Text("%d. %s", i + 1, post_effect_names[effect_type]);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Up") && i > 0) {
@@ -604,6 +659,7 @@ void RenderProperties(EditorContext* editor) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X")) {
                     DeletePostEffect(scene, i);
+                    editor->post_frame_rendered = false;
                     editor->project->modified = true;
                     ImGui::PopID();
                     break;
@@ -654,6 +710,7 @@ void RenderProperties(EditorContext* editor) {
                     }
                 }
                 ImGui::PopID();
+            }
             }
             
             ImGui::Separator();

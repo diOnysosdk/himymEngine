@@ -45,6 +45,8 @@ static long long ImGuiMessageCallback(void* hwnd, unsigned int msg, unsigned lon
 namespace rev {
 namespace editor {
 
+static bool ParseLayerPostEffectField(const char* line, LayerPostEffect* effects, int* effect_count);
+
 // Helper: get file modification time as uint64 (Windows FILETIME)
 uint64_t GetFileModificationTime(const char* path) {
     WIN32_FILE_ATTRIBUTE_DATA fileInfo;
@@ -552,6 +554,9 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->preview_fbo = 0;
     editor->preview_texture = 0;
     editor->preview_depth = 0;
+    editor->layer_fbo = 0;
+    editor->layer_texture = 0;
+    editor->post_frame_rendered = false;
     editor->preview_vao = 0;
     editor->preview_width = 1920;
     editor->preview_height = 1080;
@@ -1014,7 +1019,10 @@ bool LoadProject(EditorContext* editor, const char* path) {
 
         // Parse animated sprite cue fields
         if (in_animated_sprite_cues && current_scene) {
-            if (strstr(start, "\"sprite_name\":")) {
+            if (ParseLayerPostEffectField(start, current_animated_sprite_cue.post_effects,
+                                          &current_animated_sprite_cue.post_effect_count)) {
+                // Parsed a per-layer post-effect field.
+            } else if (strstr(start, "\"sprite_name\":")) {
                 ParseJsonStringValue(start, current_animated_sprite_cue.sprite_name, sizeof(current_animated_sprite_cue.sprite_name));
             } else if (strstr(start, "\"frame_keys_csv\":")) {
                 ParseJsonStringValue(start, current_animated_sprite_cue.frame_keys_csv, sizeof(current_animated_sprite_cue.frame_keys_csv));
@@ -1173,7 +1181,10 @@ bool LoadProject(EditorContext* editor, const char* path) {
         
         // Parse image cue fields
         if (in_image_cues && current_scene) {
-            if (strstr(start, "\"asset_key\":")) {
+            if (ParseLayerPostEffectField(start, current_image_cue.post_effects,
+                                          &current_image_cue.post_effect_count)) {
+                // Parsed a per-layer post-effect field.
+            } else if (strstr(start, "\"asset_key\":")) {
                 ParseJsonStringValue(start, current_image_cue.asset_key, sizeof(current_image_cue.asset_key));
             } else if (strstr(start, "\"x\":")) {
                 sscanf_s(start, "\"x\": %f", &current_image_cue.x);
@@ -1696,6 +1707,63 @@ bool LoadProject(EditorContext* editor, const char* path) {
     return true;
 }
 
+static bool ParseLayerPostEffectField(const char* line, LayerPostEffect* effects, int* effect_count) {
+    if (!line || !effects || !effect_count) return false;
+    if (sscanf_s(line, "\"post_effect_count\": %d", effect_count) == 1) return true;
+    int index = -1;
+    if (sscanf_s(line, "\"post_effect_%d_", &index) != 1 ||
+        index < 0 || index >= rev::runtime::kMaxLayerPostEffects) return false;
+    int int_value = 0;
+    float float_value = 0.0f;
+    if (sscanf_s(line, "\"post_effect_%d_type\": %d", &index, &int_value) == 2) effects[index].type = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_enabled\": %d", &index, &int_value) == 2) effects[index].enabled = int_value != 0;
+    else if (sscanf_s(line, "\"post_effect_%d_order\": %d", &index, &int_value) == 2) effects[index].order = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_intensity\": %f", &index, &float_value) == 2) effects[index].intensity = float_value;
+    else if (sscanf_s(line, "\"post_effect_%d_threshold\": %f", &index, &float_value) == 2) effects[index].threshold = float_value;
+    else if (sscanf_s(line, "\"post_effect_%d_radius\": %f", &index, &float_value) == 2) effects[index].radius = float_value;
+    else if (sscanf_s(line, "\"post_effect_%d_color\": [%f, %f, %f, %f]", &index,
+                      &effects[index].color[0], &effects[index].color[1],
+                      &effects[index].color[2], &effects[index].color[3]) == 5) {}
+    else if (sscanf_s(line, "\"post_effect_%d_start\": %f", &index, &float_value) == 2) effects[index].start_time = float_value;
+    else if (sscanf_s(line, "\"post_effect_%d_end\": %f", &index, &float_value) == 2) effects[index].end_time = float_value;
+    else if (sscanf_s(line, "\"post_effect_%d_curve_intensity\": %d", &index, &int_value) == 2) effects[index].curve_intensity = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_curve_threshold\": %d", &index, &int_value) == 2) effects[index].curve_threshold = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_curve_radius\": %d", &index, &int_value) == 2) effects[index].curve_radius = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_curve_color_r\": %d", &index, &int_value) == 2) effects[index].curve_color_r = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_curve_color_g\": %d", &index, &int_value) == 2) effects[index].curve_color_g = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_curve_color_b\": %d", &index, &int_value) == 2) effects[index].curve_color_b = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_curve_color_a\": %d", &index, &int_value) == 2) effects[index].curve_color_a = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_curve_amount\": %d", &index, &int_value) == 2) effects[index].curve_amount = int_value;
+    else return false;
+    return true;
+}
+
+static void WriteLayerPostEffectFields(FILE* f, const LayerPostEffect* effects, int effect_count) {
+    fprintf(f, "          \"post_effect_count\": %d,\n", effect_count);
+    for (int i = 0; i < rev::runtime::kMaxLayerPostEffects; ++i) {
+        const LayerPostEffect& effect = effects[i];
+        fprintf(f, "          \"post_effect_%d_type\": %d,\n", i, effect.type);
+        fprintf(f, "          \"post_effect_%d_enabled\": %d,\n", i, effect.enabled ? 1 : 0);
+        fprintf(f, "          \"post_effect_%d_order\": %d,\n", i, effect.order);
+        fprintf(f, "          \"post_effect_%d_intensity\": %.3f,\n", i, effect.intensity);
+        fprintf(f, "          \"post_effect_%d_threshold\": %.3f,\n", i, effect.threshold);
+        fprintf(f, "          \"post_effect_%d_radius\": %.3f,\n", i, effect.radius);
+        fprintf(f, "          \"post_effect_%d_color\": [%.3f, %.3f, %.3f, %.3f],\n", i,
+                effect.color[0], effect.color[1], effect.color[2], effect.color[3]);
+        fprintf(f, "          \"post_effect_%d_start\": %.3f,\n", i, effect.start_time);
+        fprintf(f, "          \"post_effect_%d_end\": %.3f,\n", i, effect.end_time);
+        fprintf(f, "          \"post_effect_%d_curve_intensity\": %d,\n", i, effect.curve_intensity);
+        fprintf(f, "          \"post_effect_%d_curve_threshold\": %d,\n", i, effect.curve_threshold);
+        fprintf(f, "          \"post_effect_%d_curve_radius\": %d,\n", i, effect.curve_radius);
+        fprintf(f, "          \"post_effect_%d_curve_color_r\": %d,\n", i, effect.curve_color_r);
+        fprintf(f, "          \"post_effect_%d_curve_color_g\": %d,\n", i, effect.curve_color_g);
+        fprintf(f, "          \"post_effect_%d_curve_color_b\": %d,\n", i, effect.curve_color_b);
+        fprintf(f, "          \"post_effect_%d_curve_color_a\": %d,\n", i, effect.curve_color_a);
+        fprintf(f, "          \"post_effect_%d_curve_amount\": %d%s\n", i, effect.curve_amount,
+                (i == rev::runtime::kMaxLayerPostEffects - 1) ? "" : ",");
+    }
+}
+
 bool SaveProject(EditorContext* editor, const char* path) {
     if (!editor || !path) return false;
     
@@ -1799,7 +1867,8 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"curve_x\": %d,\n", cue->curve_x);
             fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
             fprintf(f, "          \"curve_scale\": %d,\n", cue->curve_scale);
-            fprintf(f, "          \"curve_opacity\": %d\n", cue->curve_opacity);
+            fprintf(f, "          \"curve_opacity\": %d,\n", cue->curve_opacity);
+            WriteLayerPostEffectFields(f, cue->post_effects, cue->post_effect_count);
             fprintf(f, "        }%s\n", (i < scene->image_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
@@ -1838,7 +1907,8 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
             fprintf(f, "          \"curve_scale\": %d,\n", cue->curve_scale);
             fprintf(f, "          \"curve_opacity\": %d,\n", cue->curve_opacity);
-            fprintf(f, "          \"curve_frame\": %d\n", cue->curve_frame);
+            fprintf(f, "          \"curve_frame\": %d,\n", cue->curve_frame);
+            WriteLayerPostEffectFields(f, cue->post_effects, cue->post_effect_count);
             fprintf(f, "        }%s\n", (i < scene->animated_sprite_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
@@ -2940,6 +3010,21 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     return true;
 }
 
+static void WriteLayerPostEffectsPipe(FILE* f, const LayerPostEffect* effects, int effect_count) {
+    fprintf(f, "|%d", effect_count);
+    for (int i = 0; i < effect_count && i < rev::runtime::kMaxLayerPostEffects; ++i) {
+        const LayerPostEffect& effect = effects[i];
+        fprintf(f, "|%d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%d,%d,%d,%d,%d,%d,%d,%d",
+                effect.type, effect.enabled ? 1 : 0, effect.order,
+                effect.intensity, effect.threshold, effect.radius,
+                effect.color[0], effect.color[1], effect.color[2], effect.color[3],
+                effect.start_time, effect.end_time,
+                effect.curve_intensity, effect.curve_threshold, effect.curve_radius,
+                effect.curve_color_r, effect.curve_color_g, effect.curve_color_b,
+                effect.curve_color_a, effect.curve_amount);
+    }
+}
+
 bool ExportProject(EditorContext* editor, const char* output_path) {
     if (!editor || !output_path) return false;
 
@@ -3069,13 +3154,15 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             char full_path[640];
             snprintf(full_path, sizeof(full_path), "%s/%s", rel_assets_prefix, cue->asset_key);
             
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d\n",
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d",
                 cue->asset_key, full_path, cue->x, cue->y, cue->scale, cue->opacity,
                 abs_start, abs_end, cue->layer_order,
                 cue->effect_type, abs_fade_in_start, abs_fade_in_end, abs_fade_out_start, abs_fade_out_end,
                 cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_opacity,
                 cue->blend_mode
             );
+            WriteLayerPostEffectsPipe(f, cue->post_effects, cue->post_effect_count);
+            fprintf(f, "\n");
         }
     }
     
@@ -3102,7 +3189,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             float abs_fade_out_start = scene_start + cue->fade_out_start;
             float abs_fade_out_end   = scene_start + cue->fade_out_end;
 
-            fprintf(f, "%s|%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%d|%d|%d|%d|%d|%d|%d\n",
+            fprintf(f, "%s|%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%d|%d|%d|%d|%d|%d|%d",
                 cue->sprite_name, cue->frame_keys_csv, cue->frame_paths_csv,
                 cue->x, cue->y, cue->scale, cue->opacity,
                 abs_start, abs_end,
@@ -3111,6 +3198,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->blend_mode,
                 cue->fps, cue->playback_mode, cue->start_frame,
                 cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_opacity, cue->curve_frame);
+            WriteLayerPostEffectsPipe(f, cue->post_effects, cue->post_effect_count);
+            fprintf(f, "\n");
         }
     }
 
@@ -4245,10 +4334,12 @@ static const char* sprite_vertex_shader = R"(
 out vec2 uv;
 uniform vec2 u_position;  // -1 to 1
 uniform vec2 u_size;      // width, height in normalized coords
+uniform float u_flip_v;
 void main() {
     float x = -1.0 + float((gl_VertexID & 1) << 1);
     float y = -1.0 + float((gl_VertexID >> 1) << 1);
-    uv = vec2((x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5);  // Flip V coordinate
+    float base_v = (y + 1.0) * 0.5;
+    uv = vec2((x + 1.0) * 0.5, mix(base_v, 1.0 - base_v, u_flip_v));
     // Use Z = 0.999 to ensure sprites render in front of 3D meshes even if depth state isn't fully reset
     gl_Position = vec4(u_position.x + x * u_size.x, u_position.y + y * u_size.y, 0.999, 1.0);
 }
@@ -4427,7 +4518,7 @@ void InitializePreview(EditorContext* editor, int width, int height) {
     // Create color texture
     glGenTextures(1, &editor->preview_texture);
     glBindTexture(GL_TEXTURE_2D, editor->preview_texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(0x8D40, 0x8CE0, GL_TEXTURE_2D, editor->preview_texture, 0); // GL_COLOR_ATTACHMENT0
@@ -4449,7 +4540,7 @@ void InitializePreview(EditorContext* editor, int width, int height) {
     glBindFramebuffer(0x8D40, editor->post_fbo);
     glGenTextures(1, &editor->post_texture);
     glBindTexture(GL_TEXTURE_2D, editor->post_texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(0x8D40, 0x8CE0, GL_TEXTURE_2D, editor->post_texture, 0);
@@ -4457,6 +4548,34 @@ void InitializePreview(EditorContext* editor, int width, int height) {
         CleanupPreview(editor);
         return;
     }
+
+    glGenFramebuffers(1, &editor->post_history_fbo);
+    glBindFramebuffer(0x8D40, editor->post_history_fbo);
+    glGenTextures(1, &editor->post_history_texture);
+    glBindTexture(GL_TEXTURE_2D, editor->post_history_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(0x8D40, 0x8CE0, GL_TEXTURE_2D, editor->post_history_texture, 0);
+    if (glCheckFramebufferStatus(0x8D40) != 0x8CD5) {
+        CleanupPreview(editor);
+        return;
+    }
+
+    glGenFramebuffers(1, &editor->layer_fbo);
+    glBindFramebuffer(0x8D40, editor->layer_fbo);
+    glGenTextures(1, &editor->layer_texture);
+    glBindTexture(GL_TEXTURE_2D, editor->layer_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(0x8D40, 0x8CE0, GL_TEXTURE_2D, editor->layer_texture, 0);
+    if (glCheckFramebufferStatus(0x8D40) != 0x8CD5) {
+        CleanupPreview(editor);
+        return;
+    }
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(0x00004000); // GL_COLOR_BUFFER_BIT
     
     // Unbind framebuffer
     glBindFramebuffer(0x8D40, 0);
@@ -4470,6 +4589,9 @@ void InitializePreview(EditorContext* editor, int width, int height) {
         CleanupPreview(editor);
         return;
     }
+    rev::shader::Use((rev::shader::Program*)editor->sprite_shader);
+    rev::shader::SetFloat((rev::shader::Program*)editor->sprite_shader,
+                          rev::shader::GetUniformLocation((rev::shader::Program*)editor->sprite_shader, "u_flip_v"), 1.0f);
 
     editor->post_shader = rev::shader::CompileFromSource(preview_vertex_shader, GetPostEffectFragmentSource());
     if (!editor->post_shader) {
@@ -4528,6 +4650,14 @@ void CleanupPreview(EditorContext* editor) {
         glDeleteTextures(1, &editor->post_texture);
         editor->post_texture = 0;
     }
+    if (editor->post_history_texture) {
+        glDeleteTextures(1, &editor->post_history_texture);
+        editor->post_history_texture = 0;
+    }
+    if (editor->layer_texture) {
+        glDeleteTextures(1, &editor->layer_texture);
+        editor->layer_texture = 0;
+    }
     
     if (editor->preview_depth && glDeleteRenderbuffers) {
         glDeleteRenderbuffers(1, &editor->preview_depth);
@@ -4541,6 +4671,14 @@ void CleanupPreview(EditorContext* editor) {
     if (editor->post_fbo && glDeleteFramebuffers) {
         glDeleteFramebuffers(1, &editor->post_fbo);
         editor->post_fbo = 0;
+    }
+    if (editor->post_history_fbo && glDeleteFramebuffers) {
+        glDeleteFramebuffers(1, &editor->post_history_fbo);
+        editor->post_history_fbo = 0;
+    }
+    if (editor->layer_fbo && glDeleteFramebuffers) {
+        glDeleteFramebuffers(1, &editor->layer_fbo);
+        editor->layer_fbo = 0;
     }
 
     if (editor->preview_vao) {
@@ -4571,6 +4709,8 @@ void ResizePreview(EditorContext* editor, int width, int height) {
 
 void RenderPreviewFrame(EditorContext* editor) {
     if (!editor || !editor->preview_initialized) return;
+
+    editor->post_frame_rendered = false;
     
     typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int target, unsigned int framebuffer);
     typedef void (*PFNGLFRAMEBUFFERTEXTURE2DPROC)(unsigned int target, unsigned int attachment, unsigned int textarget, unsigned int texture, int level);
@@ -5366,19 +5506,125 @@ void RenderPreviewFrame(EditorContext* editor) {
                     opacity = clamp01(anim_opacity * fade_mul * style_mul);
                 }
 
-                if (glActiveTexture_fn) glActiveTexture_fn(0x84C0); // GL_TEXTURE0
-                glBindTexture(GL_TEXTURE_2D, tex);
-                if (sp_tex >= 0) rev::shader::SetInt(sprite_prog, sp_tex, 0);
-                if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, pos_x, pos_y);
-                if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
-                if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
-                if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
-                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                LayerPostEffect* layer_effects = nullptr;
+                int layer_effect_count = 0;
+                if (item.type == 0) {
+                    ImageCue* cue = (ImageCue*)item.cue;
+                    layer_effects = cue->post_effects;
+                    layer_effect_count = cue->post_effect_count;
+                } else if (item.type == 4) {
+                    AnimatedSpriteCue* cue = (AnimatedSpriteCue*)item.cue;
+                    layer_effects = cue->post_effects;
+                    layer_effect_count = cue->post_effect_count;
+                }
+
+                bool has_layer_post = editor->layer_fbo && editor->layer_texture && editor->post_shader &&
+                    layer_effects && layer_effect_count > 0;
+                if (has_layer_post) {
+                    glBindFramebuffer(0x8D40, editor->layer_fbo);
+                    glViewport(0, 0, editor->preview_width, editor->preview_height);
+                    glDisable(GL_BLEND);
+                    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+                    glClear(GL_COLOR_BUFFER_BIT);
+                    rev::shader::Use(sprite_prog);
+                    if (glActiveTexture_fn) glActiveTexture_fn(0x84C0);
+                    glBindTexture(GL_TEXTURE_2D, tex);
+                    if (sp_tex >= 0) rev::shader::SetInt(sprite_prog, sp_tex, 0);
+                    if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, pos_x, pos_y);
+                    if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
+                    if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
+                    if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+                    int enabled[PostEffectCount] = {};
+                    float intensity[PostEffectCount] = {};
+                    float threshold[PostEffectCount] = {};
+                    float radius[PostEffectCount] = {};
+                    float color[PostEffectCount][4] = {};
+                    float layer_time = editor->current_time - item.scene_start_time;
+                    for (int effect_index = 0; effect_index < layer_effect_count && effect_index < rev::runtime::kMaxLayerPostEffects; ++effect_index) {
+                        LayerPostEffect& effect = layer_effects[effect_index];
+                        float effect_end = effect.end_time < 0.0f ? 1.0e30f : effect.end_time;
+                        if (!effect.enabled || effect.type < 0 || effect.type >= PostEffectCount ||
+                            effect.type >= 20 ||
+                            layer_time < effect.start_time || layer_time > effect_end) continue;
+                        auto evaluate_layer_curve = [&](int curve_index, float fallback) {
+                            if (curve_index < 0 || curve_index >= editor->project->curve_count) return fallback;
+                            const rev::curve::Curve& curve = editor->project->curves[curve_index];
+                            float normalized_time = curve.duration > 0.0f
+                                ? (layer_time - effect.start_time) / curve.duration : 0.0f;
+                            return rev::curve::Evaluate(curve, normalized_time);
+                        };
+                        enabled[effect.type] = 1;
+                        intensity[effect.type] = evaluate_layer_curve(effect.curve_intensity, effect.intensity);
+                        threshold[effect.type] = evaluate_layer_curve(effect.curve_threshold, effect.threshold);
+                        radius[effect.type] = evaluate_layer_curve(effect.curve_radius, effect.radius);
+                        color[effect.type][0] = evaluate_layer_curve(effect.curve_color_r, effect.color[0]);
+                        color[effect.type][1] = evaluate_layer_curve(effect.curve_color_g, effect.color[1]);
+                        color[effect.type][2] = evaluate_layer_curve(effect.curve_color_b, effect.color[2]);
+                        color[effect.type][3] = evaluate_layer_curve(effect.curve_color_a, effect.color[3]);
+                    }
+
+                    glBindFramebuffer(0x8D40, editor->post_fbo);
+                    glViewport(0, 0, editor->preview_width, editor->preview_height);
+                    rev::shader::Program* layer_post = (rev::shader::Program*)editor->post_shader;
+                    rev::shader::Use(layer_post);
+                    rev::shader::SetInt(layer_post, rev::shader::GetUniformLocation(layer_post, "u_scene"), 0);
+                    rev::shader::SetInt(layer_post, rev::shader::GetUniformLocation(layer_post, "u_history"), 1);
+                    rev::shader::SetInt(layer_post, rev::shader::GetUniformLocation(layer_post, "u_unpremultiply_scene"), 1);
+                    rev::shader::SetVec2(layer_post, rev::shader::GetUniformLocation(layer_post, "u_resolution"),
+                                         (float)editor->preview_width, (float)editor->preview_height);
+                    rev::shader::SetFloat(layer_post, rev::shader::GetUniformLocation(layer_post, "u_time"), layer_time);
+                    if (glActiveTexture_fn) glActiveTexture_fn(0x84C0);
+                    glBindTexture(GL_TEXTURE_2D, editor->layer_texture);
+                    if (glActiveTexture_fn) glActiveTexture_fn(0x84C1);
+                    glBindTexture(GL_TEXTURE_2D, editor->post_history_texture);
+                    for (int effect_index = 0; effect_index < PostEffectCount; ++effect_index) {
+                        char uniform_name[64];
+                        snprintf(uniform_name, sizeof(uniform_name), "u_enabled[%d]", effect_index);
+                        rev::shader::SetInt(layer_post, rev::shader::GetUniformLocation(layer_post, uniform_name), enabled[effect_index]);
+                        snprintf(uniform_name, sizeof(uniform_name), "u_intensity[%d]", effect_index);
+                        rev::shader::SetFloat(layer_post, rev::shader::GetUniformLocation(layer_post, uniform_name), intensity[effect_index]);
+                        snprintf(uniform_name, sizeof(uniform_name), "u_threshold[%d]", effect_index);
+                        rev::shader::SetFloat(layer_post, rev::shader::GetUniformLocation(layer_post, uniform_name), threshold[effect_index]);
+                        snprintf(uniform_name, sizeof(uniform_name), "u_radius[%d]", effect_index);
+                        rev::shader::SetFloat(layer_post, rev::shader::GetUniformLocation(layer_post, uniform_name), radius[effect_index]);
+                        snprintf(uniform_name, sizeof(uniform_name), "u_color[%d]", effect_index);
+                        rev::shader::SetVec4(layer_post, rev::shader::GetUniformLocation(layer_post, uniform_name),
+                                             color[effect_index][0], color[effect_index][1], color[effect_index][2], color[effect_index][3]);
+                    }
+                    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+                    glBindFramebuffer(0x8D40, editor->preview_fbo);
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    rev::shader::Use(sprite_prog);
+                    if (glActiveTexture_fn) glActiveTexture_fn(0x84C0);
+                    glBindTexture(GL_TEXTURE_2D, editor->post_texture);
+                    if (sp_tex >= 0) rev::shader::SetInt(sprite_prog, sp_tex, 0);
+                    if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, 0.0f, 0.0f);
+                    if (sp_sz >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, 1.0f, 1.0f);
+                    if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, 1.0f);
+                    if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
+                    rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_flip_v"), 0.0f);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                    rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_flip_v"), 1.0f);
+                } else {
+                    if (glActiveTexture_fn) glActiveTexture_fn(0x84C0); // GL_TEXTURE0
+                    glBindTexture(GL_TEXTURE_2D, tex);
+                    if (sp_tex >= 0) rev::shader::SetInt(sprite_prog, sp_tex, 0);
+                    if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, pos_x, pos_y);
+                    if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
+                    if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
+                    if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
+                    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                }
                 glDeleteTextures(1, &tex);
 
             } else {
                 // Mesh (type == 2)
                 if (!mesh_prog) continue;
+                if (glActiveTexture_fn) glActiveTexture_fn(0x84C0); // GL_TEXTURE0 for mesh material samplers
                 if (!depth_on) {
                     glEnable(0x0B71);                       // GL_DEPTH_TEST
                     if (glDepthFunc_fn) glDepthFunc_fn(0x0201); // GL_LESS
@@ -6122,17 +6368,17 @@ void RenderPreviewFrame(EditorContext* editor) {
             scene_start = scene_end;
         }
 
-        int enabled[13] = {};
-        float intensity[13] = {};
-        float threshold[13] = {};
-        float radius[13] = {};
-        float color[13][4] = {};
+        int enabled[PostEffectCount] = {};
+        float intensity[PostEffectCount] = {};
+        float threshold[PostEffectCount] = {};
+        float radius[PostEffectCount] = {};
+        float color[PostEffectCount][4] = {};
         bool has_effect = false;
         if (active_scene) {
             float local_time = editor->current_time - scene_start;
             for (int i = 0; i < active_scene->post_effect_count; ++i) {
                 PostEffect* effect = &active_scene->post_effects[i];
-                if (!effect->enabled || effect->type < 0 || effect->type >= 13) continue;
+                if (!effect->enabled || effect->type < 0 || effect->type >= PostEffectCount) continue;
                 if (local_time < effect->start_time ||
                     (effect->end_time >= 0.0f && local_time > effect->end_time)) continue;
                 float curve_time = local_time - effect->start_time;
@@ -6159,6 +6405,14 @@ void RenderPreviewFrame(EditorContext* editor) {
             glViewport(0, 0, editor->preview_width, editor->preview_height);
             glDisable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
+            typedef void (*PFNGLCOLORMASKPROC)(unsigned char, unsigned char, unsigned char, unsigned char);
+            auto glColorMask_fn = (PFNGLCOLORMASKPROC)wglGetProcAddress("glColorMask");
+            if (glColorMask_fn) glColorMask_fn(1, 1, 1, 1);
+            typedef void (*PFNGLDEPTHMASKPROC)(unsigned char);
+            auto glDepthMask_post = (PFNGLDEPTHMASKPROC)wglGetProcAddress("glDepthMask");
+            if (glDepthMask_post) glDepthMask_post(1);
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
             if (editor->preview_vao) {
                 typedef void (*PFNGLBINDVERTEXARRAYPROC)(unsigned int array);
                 auto glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
@@ -6167,6 +6421,8 @@ void RenderPreviewFrame(EditorContext* editor) {
             rev::shader::Program* post_prog = (rev::shader::Program*)editor->post_shader;
             rev::shader::Use(post_prog);
             rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, "u_scene"), 0);
+            rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, "u_history"), 1);
+            rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, "u_unpremultiply_scene"), 2);
             rev::shader::SetVec2(post_prog, rev::shader::GetUniformLocation(post_prog, "u_resolution"),
                                  (float)editor->preview_width, (float)editor->preview_height);
             rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, "u_time"), editor->current_time);
@@ -6174,7 +6430,9 @@ void RenderPreviewFrame(EditorContext* editor) {
             auto glActiveTexture = (PFNGLACTIVETEXTUREPROC)wglGetProcAddress("glActiveTexture");
             if (glActiveTexture) glActiveTexture(0x84C0); // GL_TEXTURE0
             glBindTexture(GL_TEXTURE_2D, editor->preview_texture);
-            for (int i = 0; i < 13; ++i) {
+            if (glActiveTexture) glActiveTexture(0x84C1); // GL_TEXTURE1
+            glBindTexture(GL_TEXTURE_2D, editor->post_history_texture);
+            for (int i = 0; i < PostEffectCount; ++i) {
                 char uniform_name[64];
                 snprintf(uniform_name, sizeof(uniform_name), "u_enabled[%d]", i);
                 rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), enabled[i]);
@@ -6189,10 +6447,49 @@ void RenderPreviewFrame(EditorContext* editor) {
                                      color[i][0], color[i][1], color[i][2], color[i][3]);
             }
             glDrawArrays(GL_TRIANGLES, 0, 3);
+            editor->post_frame_rendered = true;
 
-            unsigned int rendered_texture = editor->post_texture;
-            editor->post_texture = editor->preview_texture;
-            editor->preview_texture = rendered_texture;
+            typedef void (*PFNGLBLITFRAMEBUFFERPROC)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
+            auto glBlitFramebuffer = (PFNGLBLITFRAMEBUFFERPROC)wglGetProcAddress("glBlitFramebuffer");
+            if (glBlitFramebuffer && editor->post_history_fbo) {
+                glBindFramebuffer(0x8CA8, editor->post_fbo); // GL_READ_FRAMEBUFFER
+                glBindFramebuffer(0x8CA9, editor->post_history_fbo); // GL_DRAW_FRAMEBUFFER
+                glBlitFramebuffer(0, 0, editor->preview_width, editor->preview_height,
+                                  0, 0, editor->preview_width, editor->preview_height,
+                                  0x00004000, 0x2600); // COLOR_BUFFER_BIT, GL_NEAREST
+                glBindFramebuffer(0x8D40, editor->post_fbo);
+            }
+
+        } else if (editor->post_history_fbo) {
+            rev::shader::Program* post_prog = (rev::shader::Program*)editor->post_shader;
+            if (post_prog) {
+                rev::shader::Use(post_prog);
+                for (int i = 0; i < PostEffectCount; ++i) {
+                    char uniform_name[64];
+                    snprintf(uniform_name, sizeof(uniform_name), "u_enabled[%d]", i);
+                    rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), 0);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_intensity[%d]", i);
+                    rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), 0.0f);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_threshold[%d]", i);
+                    rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), 0.0f);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_radius[%d]", i);
+                    rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), 0.0f);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_color[%d]", i);
+                    rev::shader::SetVec4(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name),
+                                         0.0f, 0.0f, 0.0f, 0.0f);
+                }
+            }
+            typedef void (*PFNGLBLITFRAMEBUFFERPROC)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
+            auto glBlitFramebuffer = (PFNGLBLITFRAMEBUFFERPROC)wglGetProcAddress("glBlitFramebuffer");
+            if (glBlitFramebuffer) {
+                glBindFramebuffer(0x8CA8, editor->preview_fbo); // GL_READ_FRAMEBUFFER
+                glBindFramebuffer(0x8CA9, editor->post_history_fbo); // GL_DRAW_FRAMEBUFFER
+                glBlitFramebuffer(0, 0, editor->preview_width, editor->preview_height,
+                                  0, 0, editor->preview_width, editor->preview_height,
+                                  0x00004000, 0x2600); // COLOR_BUFFER_BIT, GL_NEAREST
+                glBindFramebuffer(0x8D40, 0);
+            }
+            editor->post_frame_rendered = false;
         }
 
     }
@@ -6332,7 +6629,10 @@ void RenderPreviewPanel(EditorContext* editor) {
     ImGui::Separator();
     
     // Display preview texture
-    if (editor->preview_texture) {
+    unsigned int preview_display_texture = editor->post_frame_rendered
+        ? editor->post_texture
+        : editor->preview_texture;
+    if (preview_display_texture) {
         ImVec2 avail = ImGui::GetContentRegionAvail();
         
         // Calculate size maintaining 16:9 aspect ratio
@@ -6354,7 +6654,7 @@ void RenderPreviewPanel(EditorContext* editor) {
         // FBO stays at 1920x1080 — ImGui scales the texture to fit the panel.
         // All size formulas (tex_pixels / preview_width * 2) produce the same
         // proportional result as the final product at every panel size.
-        ImGui::Image((ImTextureID)(intptr_t)editor->preview_texture, ImVec2(w, h), ImVec2(0, 1), ImVec2(1, 0));
+        ImGui::Image((ImTextureID)(intptr_t)preview_display_texture, ImVec2(w, h), ImVec2(0, 1), ImVec2(1, 0));
     } else {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Preview not initialized");
     }

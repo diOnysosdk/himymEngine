@@ -1541,16 +1541,26 @@ const char* GetPostEffectFragmentSource() {
 in vec2 uv;
 out vec4 fragColor;
 uniform sampler2D u_scene;
+uniform sampler2D u_history;
+uniform int u_unpremultiply_scene;
 uniform vec2 u_resolution;
 uniform float u_time;
-uniform int u_enabled[13];
-uniform float u_intensity[13];
-uniform float u_threshold[13];
-uniform float u_radius[13];
-uniform vec4 u_color[13];
+uniform int u_enabled[23];
+uniform float u_intensity[23];
+uniform float u_threshold[23];
+uniform float u_radius[23];
+uniform vec4 u_color[23];
 
 vec3 SampleScene(vec2 coord) {
-    return texture(u_scene, clamp(coord, vec2(0.0), vec2(1.0))).rgb;
+    vec4 sample_color = texture(u_scene, clamp(coord, vec2(0.0), vec2(1.0)));
+    if (u_unpremultiply_scene != 0) {
+        return sample_color.rgb / max(sample_color.a, 0.001);
+    }
+    return sample_color.rgb;
+}
+
+float SampleSceneAlpha(vec2 coord) {
+    return texture(u_scene, clamp(coord, vec2(0.0), vec2(1.0))).a;
 }
 
 void main() {
@@ -1560,20 +1570,34 @@ void main() {
         float shake = u_intensity[10] * 0.003;
         coord += vec2(sin(u_time * 31.0), cos(u_time * 37.0)) * shake;
     }
+    float scene_alpha = SampleSceneAlpha(coord);
+    if (scene_alpha <= 0.001 && u_unpremultiply_scene == 1) {
+        fragColor = vec4(0.0);
+        return;
+    }
     vec3 color = SampleScene(coord);
     if (u_enabled[2] != 0) {
         vec3 bloom = vec3(0.0);
+        float bloom_alpha = scene_alpha;
         float radius = max(u_radius[2], 0.5);
         for (int x = -2; x <= 2; ++x) for (int y = -2; y <= 2; ++y) {
-            vec3 sample_color = SampleScene(coord + vec2(x, y) * texel * radius);
+            vec2 sample_coord = coord + vec2(x, y) * texel * radius;
+            vec3 sample_color = SampleScene(sample_coord);
             bloom += max(sample_color - vec3(u_threshold[2]), vec3(0.0));
+            bloom_alpha = max(bloom_alpha, SampleSceneAlpha(sample_coord));
         }
         color += bloom * (u_intensity[2] / 25.0);
+        scene_alpha = bloom_alpha;
     }
     if (u_enabled[9] != 0) {
         float shift = u_intensity[9] * 0.004;
-        color.r = SampleScene(coord + vec2(shift, 0.0)).r;
-        color.b = SampleScene(coord - vec2(shift, 0.0)).b;
+        vec3 shifted_right = SampleScene(coord + vec2(shift, 0.0));
+        vec3 shifted_left = SampleScene(coord - vec2(shift, 0.0));
+        color.r = shifted_right.r;
+        color.b = shifted_left.b;
+        scene_alpha = max(scene_alpha,
+                          max(SampleSceneAlpha(coord + vec2(shift, 0.0)),
+                              SampleSceneAlpha(coord - vec2(shift, 0.0))));
     }
     if (u_enabled[8] != 0) {
         vec3 luma = vec3(0.299, 0.587, 0.114);
@@ -1597,13 +1621,79 @@ void main() {
         color += noise * (u_intensity[5] * 0.08 + u_intensity[6] * 0.025);
     }
     if (u_enabled[1] != 0) {
-        color = color / (color + vec3(1.0));
-        color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
+        vec3 tone_input = max(color, vec3(0.0));
+        color = tone_input / (tone_input + vec3(1.0));
+        color = pow(color, vec3(1.0 / 2.2));
     }
-    if (u_enabled[0] != 0) color = color / (color + vec3(1.0));
+    if (u_enabled[0] != 0) {
+        vec3 tone_input = max(color, vec3(0.0));
+        color = tone_input / (tone_input + vec3(1.0));
+    }
     if (u_enabled[11] != 0) color += u_color[11].rgb * u_intensity[11] * max(0.0, sin(u_time * 31.416));
     if (u_enabled[12] != 0) color *= 1.0 - clamp(u_intensity[12], 0.0, 1.0);
-    fragColor = vec4(max(color, vec3(0.0)), 1.0);
+    if (u_enabled[13] != 0) {
+        vec2 centered = coord * 2.0 - 1.0;
+        float barrel = dot(centered, centered) * u_intensity[13] * 0.08;
+        vec2 warped = centered * (1.0 + barrel) * 0.5 + 0.5;
+        color = SampleScene(warped);
+        scene_alpha = SampleSceneAlpha(warped);
+        float scan = 0.94 + 0.06 * sin(uv.y * u_resolution.y * 1.5708);
+        color *= scan;
+    }
+    if (u_enabled[14] != 0) {
+        float scan = 0.75 + 0.25 * sin(uv.y * u_resolution.y * 3.14159);
+        color *= mix(1.0, scan, clamp(u_intensity[14], 0.0, 1.0));
+    }
+    if (u_enabled[15] != 0) {
+        vec2 centered = coord * 2.0 - 1.0;
+        float r2 = dot(centered, centered);
+        vec2 warped = centered * (1.0 + r2 * u_intensity[15] * 0.12) * 0.5 + 0.5;
+        color = mix(color, SampleScene(warped), clamp(u_intensity[15], 0.0, 1.0));
+        scene_alpha = mix(scene_alpha, SampleSceneAlpha(warped), clamp(u_intensity[15], 0.0, 1.0));
+    }
+    if (u_enabled[16] != 0) {
+        float phase = sin(u_time * 1.7 * max(u_intensity[16], 0.05)) * 0.5 + 0.5;
+        color = mix(color, color.gbr, phase * clamp(u_intensity[16], 0.0, 1.0) * 0.35);
+    }
+    if (u_enabled[17] != 0) {
+        float heat = sin(uv.y * 31.0 + u_time * 5.0) * sin(uv.x * 23.0 - u_time * 3.0);
+        vec2 warped = coord + vec2(heat, -heat) * texel * u_intensity[17] * 8.0;
+        float distortion_amount = clamp(u_intensity[17], 0.0, 1.0);
+        color = mix(color, SampleScene(warped), distortion_amount);
+        scene_alpha = mix(scene_alpha, SampleSceneAlpha(warped), distortion_amount);
+    }
+    if (u_enabled[18] != 0) {
+        float block = floor(uv.y * 32.0);
+        float glitch = step(0.82, fract(sin(block * 12.9898 + floor(u_time * 12.0)) * 43758.5453));
+        vec2 warped = coord + vec2(glitch * sin(block * 4.7 + u_time * 9.0), 0.0) * texel * u_intensity[18] * 24.0;
+        float glitch_amount = glitch * clamp(u_intensity[18], 0.0, 1.0);
+        color = mix(color, SampleScene(warped), glitch_amount);
+        scene_alpha = mix(scene_alpha, SampleSceneAlpha(warped), glitch_amount);
+    }
+    if (u_enabled[19] != 0) {
+        vec3 glow = max(color - vec3(u_threshold[19]), vec3(0.0));
+        color += glow * (0.5 + 0.5 * sin(u_time * 6.28318)) * u_intensity[19] * 0.25;
+    }
+    if (u_enabled[20] != 0) {
+        vec3 previous = texture(u_history, coord).rgb;
+        color = mix(color, previous, clamp(u_intensity[20] * 0.85, 0.0, 0.95));
+    }
+    if (u_enabled[21] != 0) {
+        vec2 centered = coord * 2.0 - 1.0;
+        float zoom = 1.0 + sin(u_time * 2.0) * u_intensity[21] * 0.03;
+        vec2 zoomed = centered / max(zoom, 0.01) * 0.5 + 0.5;
+        vec3 previous = texture(u_history, clamp(zoomed, vec2(0.0), vec2(1.0))).rgb;
+        color = mix(color, previous, clamp(u_intensity[21] * 0.75, 0.0, 0.9));
+    }
+    if (u_enabled[22] != 0) {
+        vec2 centered = coord * 2.0 - 1.0;
+        float zoom = 1.0 + u_intensity[22] * 0.025;
+        vec2 recursive_uv = centered / max(zoom, 0.01) * 0.5 + 0.5;
+        vec3 previous = texture(u_history, clamp(recursive_uv, vec2(0.0), vec2(1.0))).rgb;
+        color = mix(color, previous * (0.8 + 0.2 * sin(u_time * 3.0)), clamp(u_intensity[22] * 0.8, 0.0, 0.92));
+    }
+    float output_alpha = u_unpremultiply_scene == 1 ? scene_alpha : 1.0;
+    fragColor = vec4(max(color, vec3(0.0)), output_alpha);
 }
 )";
 }

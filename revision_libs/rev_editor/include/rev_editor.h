@@ -17,6 +17,7 @@ using rev::runtime::TextCue;
 using rev::runtime::ScrollTextCue;
 using rev::runtime::MusicCue;
 using rev::runtime::MeshCue;
+using rev::runtime::LayerPostEffect;
 
 enum CueType {
     CueTypeShader = 0,
@@ -43,6 +44,17 @@ enum PostEffectType {
     PostEffectCameraShake = 10,
     PostEffectBeatFlash = 11,
     PostEffectFade = 12,
+    PostEffectCRTWarp = 13,
+    PostEffectScanlines = 14,
+    PostEffectLensDistortion = 15,
+    PostEffectPaletteCycle = 16,
+    PostEffectHeatDistortion = 17,
+    PostEffectGlitch = 18,
+    PostEffectBloomPulse = 19,
+    PostEffectFeedback = 20,
+    PostEffectInfiniteZoom = 21,
+    PostEffectRecursiveFeedback = 22,
+    PostEffectCount = 23,
 };
 
 struct PostEffect {
@@ -220,6 +232,11 @@ struct EditorContext {
     unsigned int preview_depth;      // Depth attachment
     unsigned int post_fbo;           // Post-production target
     unsigned int post_texture;       // Post-production color attachment
+    unsigned int post_history_fbo;   // Previous post frame target
+    unsigned int post_history_texture;
+    unsigned int layer_fbo;
+    unsigned int layer_texture;
+    bool post_frame_rendered;
     unsigned int preview_vao;        // Dummy VAO required by OpenGL 3.3 core for gl_VertexID draws
     int preview_width;
     int preview_height;

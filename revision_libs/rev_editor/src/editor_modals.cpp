@@ -17,6 +17,92 @@ struct CurveTargetBinding {
     float base_value;
 };
 
+static void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int* effect_count,
+                                   bool* modified, const char* id_prefix, int cue_type, int cue_index) {
+    if (!effects || !effect_count) return;
+    static const char* names[] = {
+        "HDR Rendering", "ACES Tone Mapping", "Bloom", "Vignette",
+        "Color Grading", "Film Grain", "Blue Noise Dithering", "Exponential Fog",
+        "FXAA", "Chromatic Aberration", "Camera Shake", "Beat Flash", "Fade In / Fade Out",
+        "CRT Warp", "Scanlines", "Lens Distortion", "Palette Cycling", "Heat Distortion",
+        "Glitch", "Bloom Pulsing", "Feedback Buffer", "Infinite Zoom", "Recursive Feedback"
+    };
+    char label[96] = {};
+    snprintf(label, sizeof(label), "Layer Post Effects (%d)##%s", *effect_count, id_prefix);
+    if (!ImGui::CollapsingHeader(label)) return;
+
+    static int new_type = PostEffectBloom;
+    ImGui::SetNextItemWidth(220.0f);
+    snprintf(label, sizeof(label), "Effect##%s_add", id_prefix);
+    ImGui::Combo(label, &new_type, names, PostEffectCount);
+    snprintf(label, sizeof(label), "+ Add Layer Effect##%s_add", id_prefix);
+    if (ImGui::Button(label) && *effect_count < rev::runtime::kMaxLayerPostEffects) {
+        LayerPostEffect& effect = effects[*effect_count];
+        memset(&effect, 0, sizeof(effect));
+        effect.type = new_type;
+        effect.enabled = true;
+        effect.order = *effect_count;
+        effect.intensity = 1.0f;
+        effect.threshold = 1.0f;
+        effect.radius = 1.0f;
+        effect.color[0] = effect.color[1] = effect.color[2] = effect.color[3] = 1.0f;
+        effect.end_time = -1.0f;
+        effect.curve_intensity = effect.curve_threshold = effect.curve_radius = -1;
+        effect.curve_color_r = effect.curve_color_g = effect.curve_color_b = effect.curve_color_a = -1;
+        effect.curve_amount = -1;
+        ++*effect_count;
+        if (modified) *modified = true;
+    }
+    for (int i = 0; i < *effect_count; ++i) {
+        LayerPostEffect& effect = effects[i];
+        ImGui::PushID(i);
+        bool enabled = effect.enabled;
+        if (ImGui::Checkbox("##enabled", &enabled)) {
+            effect.enabled = enabled;
+            if (modified) *modified = true;
+        }
+        ImGui::SameLine();
+        const int type = (effect.type >= 0 && effect.type < PostEffectCount) ? effect.type : 0;
+        ImGui::Text("%d. %s", i + 1, names[type]);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X")) {
+            for (int move = i; move + 1 < *effect_count; ++move) effects[move] = effects[move + 1];
+            --*effect_count;
+            if (modified) *modified = true;
+            ImGui::PopID();
+            break;
+        }
+        if (ImGui::SliderFloat("Intensity", &effect.intensity, 0.0f, 2.0f) && modified) *modified = true;
+        if (ImGui::SliderFloat("Threshold", &effect.threshold, 0.0f, 4.0f) && modified) *modified = true;
+        if (ImGui::SliderFloat("Radius", &effect.radius, 0.0f, 4.0f) && modified) *modified = true;
+        if (ImGui::ColorEdit4("Color", effect.color) && modified) *modified = true;
+        if (ImGui::InputFloat("Start", &effect.start_time, 0.1f, 1.0f) && modified) *modified = true;
+        if (ImGui::InputFloat("End (-1 = layer end)", &effect.end_time, 0.1f, 1.0f) && modified) *modified = true;
+        if (ImGui::Button("Edit Layer Effect Curves")) {
+            if (editor) {
+                editor->selected_cue_index = cue_index;
+                editor->editing_curve_cue_type = cue_type;
+                editor->editing_curve_field = -1;
+                editor->editing_curve_index = effect.curve_intensity >= 0
+                    ? effect.curve_intensity : effect.curve_threshold;
+                if (editor->editing_curve_index < 0) editor->editing_curve_index = effect.curve_radius;
+                if (editor->editing_curve_index < 0) editor->editing_curve_index = effect.curve_color_r;
+                if (editor->editing_curve_index < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
+                    int curve_index = editor->project->curve_count++;
+                    editor->project->curves[curve_index] = rev::curve::CreateCurve(16);
+                    rev::curve::AddPoint(editor->project->curves[curve_index], 0.0f, effect.intensity);
+                    rev::curve::AddPoint(editor->project->curves[curve_index], 1.0f, effect.intensity);
+                    effect.curve_intensity = curve_index;
+                    editor->editing_curve_index = curve_index;
+                    if (modified) *modified = true;
+                }
+                if (editor->editing_curve_index >= 0) editor->curve_editor_modal_request_open = true;
+            }
+        }
+        ImGui::PopID();
+    }
+}
+
 static void MarkCurveUsed(bool* used, int curve_index) {
     if (!used) return;
     if (curve_index >= 0 && curve_index < rev::runtime::kMaxCurves) {
@@ -221,6 +307,16 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 add_target("Image Y Position", &cue->curve_y, cue->y);
                 add_target("Image Scale", &cue->curve_scale, cue->scale);
                 add_target("Image Opacity", &cue->curve_opacity, cue->opacity);
+                for (int i = 0; i < cue->post_effect_count; ++i) {
+                    LayerPostEffect* effect = &cue->post_effects[i];
+                    add_target("Layer Effect Intensity", &effect->curve_intensity, effect->intensity);
+                    add_target("Layer Effect Threshold", &effect->curve_threshold, effect->threshold);
+                    add_target("Layer Effect Radius", &effect->curve_radius, effect->radius);
+                    add_target("Layer Effect Color R", &effect->curve_color_r, effect->color[0]);
+                    add_target("Layer Effect Color G", &effect->curve_color_g, effect->color[1]);
+                    add_target("Layer Effect Color B", &effect->curve_color_b, effect->color[2]);
+                    add_target("Layer Effect Color A", &effect->curve_color_a, effect->color[3]);
+                }
             }
             break;
         case CueTypeAnimatedSprite:
@@ -232,6 +328,16 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 add_target("AnimSprite Scale", &cue->curve_scale, cue->scale);
                 add_target("AnimSprite Opacity", &cue->curve_opacity, cue->opacity);
                 add_target("AnimSprite Frame", &cue->curve_frame, (float)cue->start_frame);
+                for (int i = 0; i < cue->post_effect_count; ++i) {
+                    LayerPostEffect* effect = &cue->post_effects[i];
+                    add_target("Layer Effect Intensity", &effect->curve_intensity, effect->intensity);
+                    add_target("Layer Effect Threshold", &effect->curve_threshold, effect->threshold);
+                    add_target("Layer Effect Radius", &effect->curve_radius, effect->radius);
+                    add_target("Layer Effect Color R", &effect->curve_color_r, effect->color[0]);
+                    add_target("Layer Effect Color G", &effect->curve_color_g, effect->color[1]);
+                    add_target("Layer Effect Color B", &effect->curve_color_b, effect->color[2]);
+                    add_target("Layer Effect Color A", &effect->curve_color_a, effect->color[3]);
+                }
             }
             break;
         case CueTypeText:
@@ -1564,6 +1670,11 @@ void RenderImageModal(EditorContext* editor) {
             if (ImGui::InputFloat("Fade Out Start##img", &cue->fade_out_start, 0.1f, 1.0f)) AutoSave();
             if (ImGui::InputFloat("Fade Out End##img",   &cue->fade_out_end,   0.1f, 1.0f)) AutoSave();
         }
+
+        bool layer_effects_modified = false;
+        RenderLayerPostEffects(editor, cue->post_effects, &cue->post_effect_count,
+                       &layer_effects_modified, "image", CueTypeImage, editor->selected_cue_index);
+        if (layer_effects_modified) AutoSave();
         
         ImGui::Separator();
         
@@ -1799,6 +1910,11 @@ void RenderAnimatedSpriteModal(EditorContext* editor) {
             if (ImGui::InputFloat("Fade Out Start##anim", &cue->fade_out_start, 0.1f, 1.0f)) AutoSave();
             if (ImGui::InputFloat("Fade Out End##anim", &cue->fade_out_end, 0.1f, 1.0f)) AutoSave();
         }
+
+        bool layer_effects_modified = false;
+        RenderLayerPostEffects(editor, cue->post_effects, &cue->post_effect_count,
+                       &layer_effects_modified, "animated_sprite", CueTypeAnimatedSprite, editor->selected_cue_index);
+        if (layer_effects_modified) AutoSave();
 
         ImGui::Separator();
         ImGui::Text("Timing (seconds):");

@@ -12,12 +12,33 @@ namespace rev {
 namespace runtime {
 
 constexpr int kMaxCurves = 128;
+constexpr int kMaxLayerPostEffects = 8;
 
 // ------------------------------------------------------------------
 // Basic types
 // ------------------------------------------------------------------
 struct ColorRGB {
     float r, g, b;
+};
+
+struct LayerPostEffect {
+    int type;
+    bool enabled;
+    int order;
+    float intensity;
+    float threshold;
+    float radius;
+    float color[4];
+    float start_time;
+    float end_time;
+    int curve_intensity;
+    int curve_threshold;
+    int curve_radius;
+    int curve_color_r;
+    int curve_color_g;
+    int curve_color_b;
+    int curve_color_a;
+    int curve_amount;
 };
 
 // ------------------------------------------------------------------
@@ -46,6 +67,9 @@ struct ImageCue {
     int   curve_y;
     int   curve_scale;
     int   curve_opacity;
+
+    int post_effect_count;
+    LayerPostEffect post_effects[kMaxLayerPostEffects];
 };
 
 // Animated sprite cue (frame-by-frame image sequence)
@@ -75,6 +99,9 @@ struct AnimatedSpriteCue {
     int   curve_scale;
     int   curve_opacity;
     int   curve_frame;
+
+    int post_effect_count;
+    LayerPostEffect post_effects[kMaxLayerPostEffects];
 };
 
 // Text cue
