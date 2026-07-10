@@ -116,6 +116,18 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, cue->curve_roughness);
             MarkCurveUsed(used, cue->curve_fov);
         }
+
+        for (int i = 0; i < scene->post_effect_count; ++i) {
+            PostEffect* effect = &scene->post_effects[i];
+            MarkCurveUsed(used, effect->curve_intensity);
+            MarkCurveUsed(used, effect->curve_threshold);
+            MarkCurveUsed(used, effect->curve_radius);
+            MarkCurveUsed(used, effect->curve_color_r);
+            MarkCurveUsed(used, effect->curve_color_g);
+            MarkCurveUsed(used, effect->curve_color_b);
+            MarkCurveUsed(used, effect->curve_color_a);
+            MarkCurveUsed(used, effect->curve_amount);
+        }
     }
 }
 
@@ -273,6 +285,19 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 add_target("Mesh Metallic", &cue->curve_metallic, cue->metallic);
                 add_target("Mesh Roughness", &cue->curve_roughness, cue->roughness);
                 add_target("Mesh Camera FOV", &cue->curve_fov, cue->fov_deg);
+            }
+            break;
+        case CueTypePostEffect:
+            if (cue_index >= scene->post_effect_count) break;
+            {
+                PostEffect* effect = &scene->post_effects[cue_index];
+                add_target("Post Effect Intensity", &effect->curve_intensity, effect->intensity);
+                add_target("Post Effect Threshold", &effect->curve_threshold, effect->threshold);
+                add_target("Post Effect Radius", &effect->curve_radius, effect->radius);
+                add_target("Post Effect Color R", &effect->curve_color_r, effect->color[0]);
+                add_target("Post Effect Color G", &effect->curve_color_g, effect->color[1]);
+                add_target("Post Effect Color B", &effect->curve_color_b, effect->color[2]);
+                add_target("Post Effect Color A", &effect->curve_color_a, effect->color[3]);
             }
             break;
         default:

@@ -94,6 +94,18 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
             UpdateCurveRefAfterDelete(&cue->curve_roughness, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_fov, deleted_curve);
         }
+
+        for (int i = 0; i < scene->post_effect_count; ++i) {
+            PostEffect* effect = &scene->post_effects[i];
+            UpdateCurveRefAfterDelete(&effect->curve_intensity, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_threshold, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_radius, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_color_r, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_color_g, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_color_b, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_color_a, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_amount, deleted_curve);
+        }
     }
 }
 
@@ -215,6 +227,20 @@ void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, s
             RegisterCurveUsage(cue->curve_metallic, curve_index, "Mesh Metallic", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_roughness, curve_index, "Mesh Roughness", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_fov, curve_index, "Mesh Camera FOV", owner, &usage_count, first_usage, sizeof(first_usage));
+        }
+
+        for (int i = 0; i < scene->post_effect_count; ++i) {
+            PostEffect* effect = &scene->post_effects[i];
+            char owner[128] = {};
+            snprintf(owner, sizeof(owner), "%s/Post Effect %d", scene_name, i + 1);
+            RegisterCurveUsage(effect->curve_intensity, curve_index, "Post Intensity", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_threshold, curve_index, "Post Threshold", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_radius, curve_index, "Post Radius", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_color_r, curve_index, "Post Color R", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_color_g, curve_index, "Post Color G", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_color_b, curve_index, "Post Color B", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_color_a, curve_index, "Post Color A", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_amount, curve_index, "Post Amount", owner, &usage_count, first_usage, sizeof(first_usage));
         }
     }
 
@@ -518,6 +544,116 @@ void RenderProperties(EditorContext* editor) {
                     editor->project->total_duration += duration;
                     editor->project->modified = true;
                 }
+            }
+
+            static const char* post_effect_names[] = {
+                "HDR Rendering", "ACES Tone Mapping", "Bloom", "Vignette",
+                "Color Grading", "Film Grain", "Blue Noise Dithering",
+                "Exponential Fog", "FXAA", "Chromatic Aberration",
+                "Camera Shake", "Beat Flash", "Fade In / Fade Out"
+            };
+
+            ImGui::Separator();
+            ImGui::Text("Post Effects");
+            static int new_post_effect_type = PostEffectBloom;
+            ImGui::SetNextItemWidth(220.0f);
+            ImGui::Combo("Effect", &new_post_effect_type, post_effect_names, 13);
+            if (ImGui::Button("+ Add Post Effect")) {
+                PostEffect effect = {};
+                effect.type = new_post_effect_type;
+                effect.enabled = true;
+                effect.order = scene->post_effect_count;
+                effect.intensity = 1.0f;
+                effect.threshold = 1.0f;
+                effect.radius = 1.0f;
+                effect.color[0] = effect.color[1] = effect.color[2] = effect.color[3] = 1.0f;
+                effect.end_time = -1.0f;
+                effect.curve_intensity = effect.curve_threshold = effect.curve_radius = -1;
+                effect.curve_color_r = effect.curve_color_g = effect.curve_color_b = effect.curve_color_a = -1;
+                effect.curve_amount = -1;
+                AddPostEffect(scene, effect);
+                editor->project->modified = true;
+            }
+
+            for (int i = 0; i < scene->post_effect_count; ++i) {
+                PostEffect* effect = &scene->post_effects[i];
+                ImGui::PushID(i);
+                ImGui::Separator();
+                bool enabled = effect->enabled;
+                if (ImGui::Checkbox("##enabled", &enabled)) {
+                    effect->enabled = enabled;
+                    editor->project->modified = true;
+                }
+                ImGui::SameLine();
+                const int effect_type = (effect->type >= 0 && effect->type < 13) ? effect->type : 0;
+                ImGui::Text("%d. %s", i + 1, post_effect_names[effect_type]);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Up") && i > 0) {
+                    PostEffect temp = scene->post_effects[i - 1];
+                    scene->post_effects[i - 1] = *effect;
+                    *effect = temp;
+                    editor->project->modified = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Down") && i + 1 < scene->post_effect_count) {
+                    PostEffect temp = scene->post_effects[i + 1];
+                    scene->post_effects[i + 1] = *effect;
+                    *effect = temp;
+                    editor->project->modified = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) {
+                    DeletePostEffect(scene, i);
+                    editor->project->modified = true;
+                    ImGui::PopID();
+                    break;
+                }
+                if (ImGui::SliderFloat("Intensity", &effect->intensity, 0.0f, 2.0f)) {
+                    editor->project->modified = true;
+                }
+                if (ImGui::SliderFloat("Threshold", &effect->threshold, 0.0f, 4.0f)) {
+                    editor->project->modified = true;
+                }
+                if (ImGui::SliderFloat("Radius", &effect->radius, 0.0f, 4.0f)) {
+                    editor->project->modified = true;
+                }
+                if (ImGui::ColorEdit4("Color", effect->color)) {
+                    editor->project->modified = true;
+                }
+                if (ImGui::InputFloat("Start", &effect->start_time, 0.1f, 1.0f)) {
+                    editor->project->modified = true;
+                }
+                if (ImGui::InputFloat("End (-1 = scene end)", &effect->end_time, 0.1f, 1.0f)) {
+                    editor->project->modified = true;
+                }
+                if (ImGui::Button("Edit Effect Curves")) {
+                    editor->selected_cue_index = i;
+                    editor->editing_curve_cue_type = CueTypePostEffect;
+                    editor->editing_curve_field = -1;
+                    editor->editing_curve_index = effect->curve_intensity >= 0
+                        ? effect->curve_intensity : effect->curve_threshold;
+                    if (editor->editing_curve_index < 0) {
+                        editor->editing_curve_index = effect->curve_radius >= 0
+                            ? effect->curve_radius : effect->curve_amount;
+                    }
+                    if (editor->editing_curve_index < 0) {
+                        editor->editing_curve_index = effect->curve_color_r;
+                    }
+                    if (editor->editing_curve_index < 0 &&
+                        editor->project->curve_count < rev::runtime::kMaxCurves) {
+                        int curve_index = editor->project->curve_count++;
+                        editor->project->curves[curve_index] = rev::curve::CreateCurve(16);
+                        rev::curve::AddPoint(editor->project->curves[curve_index], 0.0f, effect->intensity);
+                        rev::curve::AddPoint(editor->project->curves[curve_index], 1.0f, effect->intensity);
+                        effect->curve_intensity = curve_index;
+                        editor->editing_curve_index = curve_index;
+                        editor->project->modified = true;
+                    }
+                    if (editor->editing_curve_index >= 0) {
+                        editor->curve_editor_modal_request_open = true;
+                    }
+                }
+                ImGui::PopID();
             }
             
             ImGui::Separator();

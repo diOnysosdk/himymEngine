@@ -26,6 +26,45 @@ enum CueType {
     CueTypeMusic = 4,
     CueTypeMesh = 5,
     CueTypeAnimatedSprite = 6,
+    CueTypePostEffect = 7,
+};
+
+enum PostEffectType {
+    PostEffectHDR = 0,
+    PostEffectACES = 1,
+    PostEffectBloom = 2,
+    PostEffectVignette = 3,
+    PostEffectColorGrading = 4,
+    PostEffectFilmGrain = 5,
+    PostEffectBlueNoise = 6,
+    PostEffectExponentialFog = 7,
+    PostEffectFXAA = 8,
+    PostEffectChromaticAberration = 9,
+    PostEffectCameraShake = 10,
+    PostEffectBeatFlash = 11,
+    PostEffectFade = 12,
+};
+
+struct PostEffect {
+    int type;
+    bool enabled;
+    int order;
+    float intensity;
+    float threshold;
+    float radius;
+    float color[4];
+    float start_time;
+    float end_time;
+
+    // Curve assignments (-1 = no curve)
+    int curve_intensity;
+    int curve_threshold;
+    int curve_radius;
+    int curve_color_r;
+    int curve_color_g;
+    int curve_color_b;
+    int curve_color_a;
+    int curve_amount;
 };
 
 // Forward declarations
@@ -120,6 +159,10 @@ struct SceneBlock {
     MeshCue* mesh_cues;
     int mesh_cue_count;
     int mesh_cue_capacity;
+
+        PostEffect* post_effects;
+        int post_effect_count;
+        int post_effect_capacity;
 };
 
 // Project data structure
@@ -175,6 +218,8 @@ struct EditorContext {
     unsigned int preview_fbo;        // Framebuffer object
     unsigned int preview_texture;    // Color attachment
     unsigned int preview_depth;      // Depth attachment
+    unsigned int post_fbo;           // Post-production target
+    unsigned int post_texture;       // Post-production color attachment
     unsigned int preview_vao;        // Dummy VAO required by OpenGL 3.3 core for gl_VertexID draws
     int preview_width;
     int preview_height;
@@ -182,6 +227,7 @@ struct EditorContext {
     void* preview_shader;            // rev::shader::Program* for fullscreen shader
     void* sprite_shader;             // rev::shader::Program* for sprite rendering
     void* mesh_shader;               // rev::shader::Program* for 3D mesh rendering
+    void* post_shader;               // rev::shader::Program* for post-production effects
     int preview_current_shader_id;   // Currently compiled shader preset ID (-1 = none)
     
     // Shader modal state
@@ -312,6 +358,8 @@ int AddTextCue  (SceneBlock* scene, const TextCue&   cue);
 int AddScrollTextCue(SceneBlock* scene, const ScrollTextCue& cue);
 int AddMusicCue (SceneBlock* scene, const MusicCue&  cue);
 int AddMeshCue  (SceneBlock* scene, const MeshCue&   cue);
+int AddPostEffect(SceneBlock* scene, const PostEffect& effect);
+void DeletePostEffect(SceneBlock* scene, int effect_index);
 
 void DeleteShaderCue(SceneBlock* scene, int cue_index);
 void DeleteImageCue (SceneBlock* scene, int cue_index);

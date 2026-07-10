@@ -1535,6 +1535,79 @@ void main() {
 
 const int g_shader_preset_count = sizeof(g_shader_presets) / sizeof(g_shader_presets[0]);
 
+const char* GetPostEffectFragmentSource() {
+    return R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform sampler2D u_scene;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform int u_enabled[13];
+uniform float u_intensity[13];
+uniform float u_threshold[13];
+uniform float u_radius[13];
+uniform vec4 u_color[13];
+
+vec3 SampleScene(vec2 coord) {
+    return texture(u_scene, clamp(coord, vec2(0.0), vec2(1.0))).rgb;
+}
+
+void main() {
+    vec2 coord = uv;
+    vec2 texel = 1.0 / u_resolution;
+    if (u_enabled[10] != 0) {
+        float shake = u_intensity[10] * 0.003;
+        coord += vec2(sin(u_time * 31.0), cos(u_time * 37.0)) * shake;
+    }
+    vec3 color = SampleScene(coord);
+    if (u_enabled[2] != 0) {
+        vec3 bloom = vec3(0.0);
+        float radius = max(u_radius[2], 0.5);
+        for (int x = -2; x <= 2; ++x) for (int y = -2; y <= 2; ++y) {
+            vec3 sample_color = SampleScene(coord + vec2(x, y) * texel * radius);
+            bloom += max(sample_color - vec3(u_threshold[2]), vec3(0.0));
+        }
+        color += bloom * (u_intensity[2] / 25.0);
+    }
+    if (u_enabled[9] != 0) {
+        float shift = u_intensity[9] * 0.004;
+        color.r = SampleScene(coord + vec2(shift, 0.0)).r;
+        color.b = SampleScene(coord - vec2(shift, 0.0)).b;
+    }
+    if (u_enabled[8] != 0) {
+        vec3 luma = vec3(0.299, 0.587, 0.114);
+        float center = dot(color, luma);
+        float edge = abs(center - dot(SampleScene(coord + vec2(texel.x, 0.0)), luma));
+        edge += abs(center - dot(SampleScene(coord + vec2(0.0, texel.y)), luma));
+        color = mix(color, vec3(center), clamp(edge * u_intensity[8] * 2.0, 0.0, 0.35));
+    }
+    if (u_enabled[4] != 0) color = mix(color, color * u_color[4].rgb, clamp(u_intensity[4], 0.0, 1.0));
+    if (u_enabled[7] != 0) {
+        float fog = 1.0 - exp(-max(uv.y, 0.0) * u_intensity[7] * 3.0);
+        color = mix(color, u_color[7].rgb, clamp(fog, 0.0, 1.0));
+    }
+    if (u_enabled[3] != 0) {
+        vec2 centered = uv * 2.0 - 1.0;
+        float vignette = smoothstep(1.2, 0.2, dot(centered, centered));
+        color *= mix(1.0 - u_intensity[3], 1.0, vignette);
+    }
+    if (u_enabled[5] != 0 || u_enabled[6] != 0) {
+        float noise = fract(sin(dot(uv * u_resolution + u_time, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+        color += noise * (u_intensity[5] * 0.08 + u_intensity[6] * 0.025);
+    }
+    if (u_enabled[1] != 0) {
+        color = color / (color + vec3(1.0));
+        color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
+    }
+    if (u_enabled[0] != 0) color = color / (color + vec3(1.0));
+    if (u_enabled[11] != 0) color += u_color[11].rgb * u_intensity[11] * max(0.0, sin(u_time * 31.416));
+    if (u_enabled[12] != 0) color *= 1.0 - clamp(u_intensity[12], 0.0, 1.0);
+    fragColor = vec4(max(color, vec3(0.0)), 1.0);
+}
+)";
+}
+
 const char* GetShaderSourceById(int shader_id) {
     for (int i = 0; i < g_shader_preset_count; ++i) {
         if (g_shader_presets[i].id == shader_id) {

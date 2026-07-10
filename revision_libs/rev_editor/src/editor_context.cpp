@@ -695,6 +695,7 @@ void DestroyEditor(EditorContext* editor) {
             delete[] scene->scroll_text_cues;
             delete[] scene->music_cues;
             delete[] scene->mesh_cues;
+            delete[] scene->post_effects;
         }
         delete[] editor->project->scenes;
         
@@ -746,6 +747,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
     bool in_scroll_text_cues = false;
     bool in_music_cues = false;
     bool in_mesh_cues = false;
+    bool in_post_effects = false;
     bool in_curves = false;
     bool in_curve_points = false;
     
@@ -816,6 +818,16 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_mesh_cue.curve_scale_x = current_mesh_cue.curve_scale_y = current_mesh_cue.curve_scale_z = -1;
     current_mesh_cue.curve_color_r = current_mesh_cue.curve_color_g = current_mesh_cue.curve_color_b = current_mesh_cue.curve_color_a = -1;
     current_mesh_cue.curve_mesh_size = current_mesh_cue.curve_metallic = current_mesh_cue.curve_roughness = current_mesh_cue.curve_fov = -1;
+    PostEffect current_post_effect = {};
+    current_post_effect.enabled = true;
+    current_post_effect.intensity = 1.0f;
+    current_post_effect.threshold = 1.0f;
+    current_post_effect.radius = 1.0f;
+    current_post_effect.color[0] = current_post_effect.color[1] = current_post_effect.color[2] = current_post_effect.color[3] = 1.0f;
+    current_post_effect.end_time = -1.0f;
+    current_post_effect.curve_intensity = current_post_effect.curve_threshold = current_post_effect.curve_radius = -1;
+    current_post_effect.curve_color_r = current_post_effect.curve_color_g = current_post_effect.curve_color_b = current_post_effect.curve_color_a = -1;
+    current_post_effect.curve_amount = -1;
     rev::curve::Curve* current_curve = nullptr;
     
     char scene_name[64] = {};
@@ -878,6 +890,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_scroll_text_cues = false;
             in_music_cues = false;
             in_mesh_cues = false;
+            in_post_effects = false;
         }
         
         // Section detection
@@ -932,8 +945,71 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_scroll_text_cues = false;
             in_music_cues = false;
             in_mesh_cues = true;
+            in_post_effects = false;
+        } else if (strstr(start, "\"post_effects\":")) {
+            in_shader_cues = false;
+            in_image_cues = false;
+            in_animated_sprite_cues = false;
+            in_text_cues = false;
+            in_scroll_text_cues = false;
+            in_music_cues = false;
+            in_mesh_cues = false;
+            in_post_effects = true;
         } else if (strstr(start, "\"curves\":")) {
             in_curves = true;
+        }
+
+        if (in_post_effects && current_scene) {
+            if (strstr(start, "\"type\":")) {
+                sscanf_s(start, "\"type\": %d", &current_post_effect.type);
+            } else if (strstr(start, "\"enabled\":")) {
+                sscanf_s(start, "\"enabled\": %d", &bool_value);
+                current_post_effect.enabled = (bool_value != 0);
+            } else if (strstr(start, "\"order\":")) {
+                sscanf_s(start, "\"order\": %d", &current_post_effect.order);
+            } else if (strstr(start, "\"intensity\":")) {
+                sscanf_s(start, "\"intensity\": %f", &current_post_effect.intensity);
+            } else if (strstr(start, "\"threshold\":")) {
+                sscanf_s(start, "\"threshold\": %f", &current_post_effect.threshold);
+            } else if (strstr(start, "\"radius\":")) {
+                sscanf_s(start, "\"radius\": %f", &current_post_effect.radius);
+            } else if (strstr(start, "\"color\":")) {
+                sscanf_s(start, "\"color\": [%f, %f, %f, %f]",
+                    &current_post_effect.color[0], &current_post_effect.color[1],
+                    &current_post_effect.color[2], &current_post_effect.color[3]);
+            } else if (strstr(start, "\"start_time\":")) {
+                sscanf_s(start, "\"start_time\": %f", &current_post_effect.start_time);
+            } else if (strstr(start, "\"end_time\":")) {
+                sscanf_s(start, "\"end_time\": %f", &current_post_effect.end_time);
+            } else if (strstr(start, "\"curve_intensity\":")) {
+                sscanf_s(start, "\"curve_intensity\": %d", &current_post_effect.curve_intensity);
+            } else if (strstr(start, "\"curve_threshold\":")) {
+                sscanf_s(start, "\"curve_threshold\": %d", &current_post_effect.curve_threshold);
+            } else if (strstr(start, "\"curve_radius\":")) {
+                sscanf_s(start, "\"curve_radius\": %d", &current_post_effect.curve_radius);
+            } else if (strstr(start, "\"curve_color_r\":")) {
+                sscanf_s(start, "\"curve_color_r\": %d", &current_post_effect.curve_color_r);
+            } else if (strstr(start, "\"curve_color_g\":")) {
+                sscanf_s(start, "\"curve_color_g\": %d", &current_post_effect.curve_color_g);
+            } else if (strstr(start, "\"curve_color_b\":")) {
+                sscanf_s(start, "\"curve_color_b\": %d", &current_post_effect.curve_color_b);
+            } else if (strstr(start, "\"curve_color_a\":")) {
+                sscanf_s(start, "\"curve_color_a\": %d", &current_post_effect.curve_color_a);
+            } else if (strstr(start, "\"curve_amount\":")) {
+                sscanf_s(start, "\"curve_amount\": %d", &current_post_effect.curve_amount);
+            } else if (start[0] == '}' && current_post_effect.type >= 0) {
+                AddPostEffect(current_scene, current_post_effect);
+                memset(&current_post_effect, 0, sizeof(current_post_effect));
+                current_post_effect.enabled = true;
+                current_post_effect.intensity = 1.0f;
+                current_post_effect.threshold = 1.0f;
+                current_post_effect.radius = 1.0f;
+                current_post_effect.color[0] = current_post_effect.color[1] = current_post_effect.color[2] = current_post_effect.color[3] = 1.0f;
+                current_post_effect.curve_intensity = current_post_effect.curve_threshold = current_post_effect.curve_radius = -1;
+                current_post_effect.curve_color_r = current_post_effect.curve_color_g = current_post_effect.curve_color_b = current_post_effect.curve_color_a = -1;
+                current_post_effect.curve_amount = -1;
+                current_post_effect.end_time = -1.0f;
+            }
         }
 
         // Parse animated sprite cue fields
@@ -1889,6 +1965,33 @@ bool SaveProject(EditorContext* editor, const char* path) {
         }
         fprintf(f, "      ],\n");
 
+        // Scene post-production effects
+        fprintf(f, "      \"post_effects\": [\n");
+        for (int i = 0; i < scene->post_effect_count; ++i) {
+            PostEffect* effect = &scene->post_effects[i];
+            fprintf(f, "        {\n");
+            fprintf(f, "          \"type\": %d,\n", effect->type);
+            fprintf(f, "          \"enabled\": %d,\n", effect->enabled ? 1 : 0);
+            fprintf(f, "          \"order\": %d,\n", effect->order);
+            fprintf(f, "          \"intensity\": %.3f,\n", effect->intensity);
+            fprintf(f, "          \"threshold\": %.3f,\n", effect->threshold);
+            fprintf(f, "          \"radius\": %.3f,\n", effect->radius);
+            fprintf(f, "          \"color\": [%.3f, %.3f, %.3f, %.3f],\n",
+                effect->color[0], effect->color[1], effect->color[2], effect->color[3]);
+            fprintf(f, "          \"start_time\": %.3f,\n", effect->start_time);
+            fprintf(f, "          \"end_time\": %.3f,\n", effect->end_time);
+            fprintf(f, "          \"curve_intensity\": %d,\n", effect->curve_intensity);
+            fprintf(f, "          \"curve_threshold\": %d,\n", effect->curve_threshold);
+            fprintf(f, "          \"curve_radius\": %d,\n", effect->curve_radius);
+            fprintf(f, "          \"curve_color_r\": %d,\n", effect->curve_color_r);
+            fprintf(f, "          \"curve_color_g\": %d,\n", effect->curve_color_g);
+            fprintf(f, "          \"curve_color_b\": %d,\n", effect->curve_color_b);
+            fprintf(f, "          \"curve_color_a\": %d,\n", effect->curve_color_a);
+            fprintf(f, "          \"curve_amount\": %d\n", effect->curve_amount);
+            fprintf(f, "        }%s\n", (i < scene->post_effect_count - 1) ? "," : "");
+        }
+        fprintf(f, "      ],\n");
+
         // Mesh cues
         fprintf(f, "      \"mesh_cues\": [\n");
         for (int i = 0; i < scene->mesh_cue_count; ++i) {
@@ -2422,7 +2525,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     NewProject(editor);
     
     char line[1024];
-    enum Section { NONE, SHADER_CUES, IMAGE_CUES, ANIMATED_SPRITE_CUES, TEXT_CUES, SCROLL_TEXT_CUES, MUSIC_CUES, CURVES, METADATA };
+    enum Section { NONE, SHADER_CUES, IMAGE_CUES, ANIMATED_SPRITE_CUES, TEXT_CUES, SCROLL_TEXT_CUES, MUSIC_CUES, POST_EFFECTS, CURVES, METADATA };
     Section current_section = NONE;
     
     float total_duration = 10.0f; // Default
@@ -2443,6 +2546,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         if (strstr(start, "[text_cues]")) { current_section = TEXT_CUES; continue; }
         if (strstr(start, "[scroll_text_cues]")) { current_section = SCROLL_TEXT_CUES; continue; }
         if (strstr(start, "[music_cues]")) { current_section = MUSIC_CUES; continue; }
+        if (strstr(start, "[post_effects]")) { current_section = POST_EFFECTS; continue; }
         if (strstr(start, "[curves]")) { current_section = CURVES; continue; }
         if (strstr(start, "[metadata]")) { current_section = METADATA; continue; }
         
@@ -2782,6 +2886,44 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             }
             continue;
         }
+
+        if (current_section == POST_EFFECTS) {
+            PostEffect effect = {};
+            effect.curve_intensity = effect.curve_threshold = effect.curve_radius = -1;
+            effect.curve_color_r = effect.curve_color_g = effect.curve_color_b = effect.curve_color_a = -1;
+            effect.curve_amount = -1;
+            int scene_index = 0;
+            int enabled = 1;
+            float curve_amount_legacy = 0.0f;
+            int parsed = sscanf_s(start, "%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d",
+                &scene_index, &effect.type, &enabled, &effect.order,
+                &effect.intensity, &effect.threshold, &effect.radius,
+                &effect.color[0], &effect.color[1], &effect.color[2], &effect.color[3],
+                &effect.start_time, &effect.end_time, &curve_amount_legacy,
+                &effect.curve_intensity, &effect.curve_threshold, &effect.curve_radius,
+                &effect.curve_color_r, &effect.curve_color_g, &effect.curve_color_b,
+                &effect.curve_color_a, &effect.curve_amount);
+            if (parsed >= 14) {
+                if (parsed < 22) {
+                    effect.curve_intensity = effect.curve_threshold = effect.curve_radius = -1;
+                    effect.curve_color_r = effect.curve_color_g = effect.curve_color_b = effect.curve_color_a = -1;
+                    effect.curve_amount = -1;
+                }
+                effect.enabled = enabled != 0;
+                if (editor->project->scene_count == 0) {
+                    AddScene(editor, "Imported Scene", 10.0f);
+                }
+                int target_scene = scene_index;
+                if (target_scene < 0 || target_scene >= editor->project->scene_count) target_scene = 0;
+                SceneBlock* scene = &editor->project->scenes[target_scene];
+                float scene_start = 0.0f;
+                for (int si = 0; si < target_scene; ++si) scene_start += editor->project->scenes[si].duration;
+                effect.start_time -= scene_start;
+                effect.end_time = effect.end_time < 0.0f ? -1.0f : effect.end_time - scene_start;
+                AddPostEffect(scene, effect);
+            }
+            continue;
+        }
     }
 
     fclose(f);
@@ -2849,6 +2991,30 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
         }
     }
     
+    fprintf(f, "\n");
+
+    // [post_effects] section. Times are absolute in the exported timeline.
+    fprintf(f, "[post_effects]\n");
+    fprintf(f, "# scene_index|type|enabled|order|intensity|threshold|radius|color_r|color_g|color_b|color_a|start_time|end_time|legacy_curve_amount|curve_intensity|curve_threshold|curve_radius|curve_color_r|curve_color_g|curve_color_b|curve_color_a|curve_amount\n");
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        SceneBlock* scene = &editor->project->scenes[scene_idx];
+        float scene_start = 0.0f;
+        for (int i = 0; i < scene_idx; ++i) scene_start += editor->project->scenes[i].duration;
+        for (int effect_idx = 0; effect_idx < scene->post_effect_count; ++effect_idx) {
+            PostEffect* effect = &scene->post_effects[effect_idx];
+            float abs_start = scene_start + effect->start_time;
+            float abs_end = effect->end_time < 0.0f ? -1.0f : scene_start + effect->end_time;
+            fprintf(f, "%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|-1|%d|%d|%d|%d|%d|%d|%d|%d\n",
+                scene_idx, effect->type, effect->enabled ? 1 : 0, effect->order,
+                effect->intensity, effect->threshold, effect->radius,
+                effect->color[0], effect->color[1], effect->color[2], effect->color[3],
+                abs_start, abs_end,
+                effect->curve_intensity, effect->curve_threshold, effect->curve_radius,
+                effect->curve_color_r, effect->curve_color_g, effect->curve_color_b,
+                effect->curve_color_a, effect->curve_amount);
+        }
+    }
+
     fprintf(f, "\n");
     
     // [image_cues] section
@@ -3594,6 +3760,10 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
     scene->mesh_cue_count = 0;
     scene->mesh_cue_capacity = 0;
 
+    scene->post_effects = nullptr;
+    scene->post_effect_count = 0;
+    scene->post_effect_capacity = 0;
+
     // Update total duration
     editor->project->total_duration += duration;
     editor->project->modified = true;
@@ -3617,6 +3787,7 @@ void DeleteScene(EditorContext* editor, int scene_index) {
     delete[] scene->scroll_text_cues;
     delete[] scene->music_cues;
     delete[] scene->mesh_cues;
+    delete[] scene->post_effects;
     
     // Shift remaining scenes
     for (int i = scene_index; i < editor->project->scene_count - 1; ++i) {
@@ -3868,6 +4039,34 @@ void DeleteMeshCue(SceneBlock* scene, int cue_index) {
     scene->mesh_cue_count--;
 }
 
+int AddPostEffect(SceneBlock* scene, const PostEffect& effect) {
+    if (!scene) return -1;
+
+    if (scene->post_effect_count >= scene->post_effect_capacity) {
+        int new_capacity = scene->post_effect_capacity == 0 ? 4 : scene->post_effect_capacity * 2;
+        PostEffect* new_effects = new PostEffect[new_capacity];
+        for (int i = 0; i < scene->post_effect_count; ++i) {
+            new_effects[i] = scene->post_effects[i];
+        }
+        delete[] scene->post_effects;
+        scene->post_effects = new_effects;
+        scene->post_effect_capacity = new_capacity;
+    }
+
+    int index = scene->post_effect_count++;
+    scene->post_effects[index] = effect;
+    return index;
+}
+
+void DeletePostEffect(SceneBlock* scene, int effect_index) {
+    if (!scene || effect_index < 0 || effect_index >= scene->post_effect_count) return;
+
+    for (int i = effect_index; i < scene->post_effect_count - 1; ++i) {
+        scene->post_effects[i] = scene->post_effects[i + 1];
+    }
+    scene->post_effect_count--;
+}
+
 // ===== Shader Presets =====
 
 void LoadShaderPreset(ShaderCue* cue, int preset_id) {
@@ -3953,6 +4152,90 @@ void main() {
                    u_palette_high, smoothstep(0.0, 1.0, v));
     
     fragColor = vec4(col, 1.0);
+}
+)";
+
+static const char* post_fragment_shader = R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform sampler2D u_scene;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform int u_enabled[13];
+uniform float u_intensity[13];
+uniform float u_threshold[13];
+uniform float u_radius[13];
+uniform vec4 u_color[13];
+
+vec3 SampleScene(vec2 coord) {
+    return texture(u_scene, clamp(coord, vec2(0.0), vec2(1.0))).rgb;
+}
+
+void main() {
+    vec2 coord = uv;
+    vec2 texel = 1.0 / u_resolution;
+    if (u_enabled[10] != 0) {
+        float shake = u_intensity[10] * 0.003;
+        coord += vec2(sin(u_time * 31.0), cos(u_time * 37.0)) * shake;
+    }
+
+    vec3 color = SampleScene(coord);
+    if (u_enabled[2] != 0) {
+        vec3 bloom = vec3(0.0);
+        float radius = max(u_radius[2], 0.5);
+        for (int x = -2; x <= 2; ++x) {
+            for (int y = -2; y <= 2; ++y) {
+                vec3 sample_color = SampleScene(coord + vec2(x, y) * texel * radius);
+                bloom += max(sample_color - vec3(u_threshold[2]), vec3(0.0));
+            }
+        }
+        color += bloom * (u_intensity[2] / 25.0);
+    }
+    if (u_enabled[9] != 0) {
+        float shift = u_intensity[9] * 0.004;
+        color.r = SampleScene(coord + vec2(shift, 0.0)).r;
+        color.b = SampleScene(coord - vec2(shift, 0.0)).b;
+    }
+    if (u_enabled[8] != 0) {
+        vec3 luma = vec3(0.299, 0.587, 0.114);
+        float center = dot(color, luma);
+        float edge = 0.0;
+        edge += abs(center - dot(SampleScene(coord + vec2(texel.x, 0.0)), luma));
+        edge += abs(center - dot(SampleScene(coord + vec2(0.0, texel.y)), luma));
+        color = mix(color, vec3(center), clamp(edge * u_intensity[8] * 2.0, 0.0, 0.35));
+    }
+    if (u_enabled[4] != 0) {
+        color = mix(color, color * u_color[4].rgb, clamp(u_intensity[4], 0.0, 1.0));
+    }
+    if (u_enabled[7] != 0) {
+        float fog = 1.0 - exp(-max(uv.y, 0.0) * u_intensity[7] * 3.0);
+        color = mix(color, u_color[7].rgb, clamp(fog, 0.0, 1.0));
+    }
+    if (u_enabled[3] != 0) {
+        vec2 centered = uv * 2.0 - 1.0;
+        float vignette = smoothstep(1.2, 0.2, dot(centered, centered));
+        color *= mix(1.0 - u_intensity[3], 1.0, vignette);
+    }
+    if (u_enabled[5] != 0 || u_enabled[6] != 0) {
+        float noise = fract(sin(dot(uv * u_resolution + u_time, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+        float amount = u_intensity[5] * 0.08 + u_intensity[6] * 0.025;
+        color += noise * amount;
+    }
+    if (u_enabled[1] != 0) {
+        color = color / (color + vec3(1.0));
+        color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
+    }
+    if (u_enabled[0] != 0) {
+        color = color / (color + vec3(1.0));
+    }
+    if (u_enabled[11] != 0) {
+        color += u_color[11].rgb * u_intensity[11] * max(0.0, sin(u_time * 31.416));
+    }
+    if (u_enabled[12] != 0) {
+        color *= 1.0 - clamp(u_intensity[12], 0.0, 1.0);
+    }
+    fragColor = vec4(max(color, vec3(0.0)), 1.0);
 }
 )";
 
@@ -4160,6 +4443,20 @@ void InitializePreview(EditorContext* editor, int width, int height) {
         CleanupPreview(editor);
         return;
     }
+
+    // Separate color target for the fullscreen post-production pass.
+    glGenFramebuffers(1, &editor->post_fbo);
+    glBindFramebuffer(0x8D40, editor->post_fbo);
+    glGenTextures(1, &editor->post_texture);
+    glBindTexture(GL_TEXTURE_2D, editor->post_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(0x8D40, 0x8CE0, GL_TEXTURE_2D, editor->post_texture, 0);
+    if (glCheckFramebufferStatus(0x8D40) != 0x8CD5) {
+        CleanupPreview(editor);
+        return;
+    }
     
     // Unbind framebuffer
     glBindFramebuffer(0x8D40, 0);
@@ -4170,6 +4467,12 @@ void InitializePreview(EditorContext* editor, int width, int height) {
     // Compile sprite shader for image/text
     editor->sprite_shader = rev::shader::CompileFromSource(sprite_vertex_shader, sprite_fragment_shader);
     if (!editor->sprite_shader) {
+        CleanupPreview(editor);
+        return;
+    }
+
+    editor->post_shader = rev::shader::CompileFromSource(preview_vertex_shader, GetPostEffectFragmentSource());
+    if (!editor->post_shader) {
         CleanupPreview(editor);
         return;
     }
@@ -4210,11 +4513,20 @@ void CleanupPreview(EditorContext* editor) {
         rev::shader::DestroyProgram((rev::shader::Program*)editor->mesh_shader);
         editor->mesh_shader = nullptr;
     }
+    if (editor->post_shader) {
+        rev::shader::DestroyProgram((rev::shader::Program*)editor->post_shader);
+        editor->post_shader = nullptr;
+    }
     editor->preview_current_shader_id = -1;
     
     if (editor->preview_texture) {
         glDeleteTextures(1, &editor->preview_texture);
         editor->preview_texture = 0;
+    }
+
+    if (editor->post_texture) {
+        glDeleteTextures(1, &editor->post_texture);
+        editor->post_texture = 0;
     }
     
     if (editor->preview_depth && glDeleteRenderbuffers) {
@@ -4225,6 +4537,10 @@ void CleanupPreview(EditorContext* editor) {
     if (editor->preview_fbo && glDeleteFramebuffers) {
         glDeleteFramebuffers(1, &editor->preview_fbo);
         editor->preview_fbo = 0;
+    }
+    if (editor->post_fbo && glDeleteFramebuffers) {
+        glDeleteFramebuffers(1, &editor->post_fbo);
+        editor->post_fbo = 0;
     }
 
     if (editor->preview_vao) {
@@ -4257,12 +4573,17 @@ void RenderPreviewFrame(EditorContext* editor) {
     if (!editor || !editor->preview_initialized) return;
     
     typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int target, unsigned int framebuffer);
+    typedef void (*PFNGLFRAMEBUFFERTEXTURE2DPROC)(unsigned int target, unsigned int attachment, unsigned int textarget, unsigned int texture, int level);
     auto glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)wglGetProcAddress("glBindFramebuffer");
+    auto glFramebufferTexture2D = (PFNGLFRAMEBUFFERTEXTURE2DPROC)wglGetProcAddress("glFramebufferTexture2D");
     
     if (!glBindFramebuffer) return;
     
     // Bind preview framebuffer
     glBindFramebuffer(0x8D40, editor->preview_fbo); // GL_FRAMEBUFFER
+    if (glFramebufferTexture2D) {
+        glFramebufferTexture2D(0x8D40, 0x8CE0, GL_TEXTURE_2D, editor->preview_texture, 0);
+    }
 
     // Bind the dummy VAO — required in OpenGL 3.3 core profile for any glDrawArrays
     // call, including gl_VertexID-based fullscreen quads.  Without this, draw calls
@@ -5785,6 +6106,95 @@ void RenderPreviewFrame(EditorContext* editor) {
             if (glDepthMask_fn) glDepthMask_fn(1); // GL_TRUE
             glDisable(0x0B71); // GL_DEPTH_TEST
         }
+    }
+
+    // Apply scene-level post-production after the complete layered scene draw.
+    if (editor->post_shader && editor->project) {
+        SceneBlock* active_scene = nullptr;
+        float scene_start = 0.0f;
+        for (int scene_index = 0; scene_index < editor->project->scene_count; ++scene_index) {
+            SceneBlock* scene = &editor->project->scenes[scene_index];
+            float scene_end = scene_start + scene->duration;
+            if (editor->current_time >= scene_start && editor->current_time <= scene_end) {
+                active_scene = scene;
+                break;
+            }
+            scene_start = scene_end;
+        }
+
+        int enabled[13] = {};
+        float intensity[13] = {};
+        float threshold[13] = {};
+        float radius[13] = {};
+        float color[13][4] = {};
+        bool has_effect = false;
+        if (active_scene) {
+            float local_time = editor->current_time - scene_start;
+            for (int i = 0; i < active_scene->post_effect_count; ++i) {
+                PostEffect* effect = &active_scene->post_effects[i];
+                if (!effect->enabled || effect->type < 0 || effect->type >= 13) continue;
+                if (local_time < effect->start_time ||
+                    (effect->end_time >= 0.0f && local_time > effect->end_time)) continue;
+                float curve_time = local_time - effect->start_time;
+                auto evaluate_effect_curve = [&](int curve_index, float fallback) {
+                    if (curve_index < 0 || curve_index >= editor->project->curve_count) return fallback;
+                    rev::curve::Curve& curve = editor->project->curves[curve_index];
+                    float normalized_time = curve.duration > 0.0f ? curve_time / curve.duration : 0.0f;
+                    return rev::curve::Evaluate(curve, normalized_time);
+                };
+                enabled[effect->type] = 1;
+                intensity[effect->type] = evaluate_effect_curve(effect->curve_intensity, effect->intensity);
+                threshold[effect->type] = evaluate_effect_curve(effect->curve_threshold, effect->threshold);
+                radius[effect->type] = evaluate_effect_curve(effect->curve_radius, effect->radius);
+                color[effect->type][0] = evaluate_effect_curve(effect->curve_color_r, effect->color[0]);
+                color[effect->type][1] = evaluate_effect_curve(effect->curve_color_g, effect->color[1]);
+                color[effect->type][2] = evaluate_effect_curve(effect->curve_color_b, effect->color[2]);
+                color[effect->type][3] = evaluate_effect_curve(effect->curve_color_a, effect->color[3]);
+                has_effect = true;
+            }
+        }
+
+        if (has_effect && glFramebufferTexture2D) {
+            glBindFramebuffer(0x8D40, editor->post_fbo);
+            glViewport(0, 0, editor->preview_width, editor->preview_height);
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
+            if (editor->preview_vao) {
+                typedef void (*PFNGLBINDVERTEXARRAYPROC)(unsigned int array);
+                auto glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
+                if (glBindVertexArray) glBindVertexArray(editor->preview_vao);
+            }
+            rev::shader::Program* post_prog = (rev::shader::Program*)editor->post_shader;
+            rev::shader::Use(post_prog);
+            rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, "u_scene"), 0);
+            rev::shader::SetVec2(post_prog, rev::shader::GetUniformLocation(post_prog, "u_resolution"),
+                                 (float)editor->preview_width, (float)editor->preview_height);
+            rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, "u_time"), editor->current_time);
+            typedef void (*PFNGLACTIVETEXTUREPROC)(unsigned int texture);
+            auto glActiveTexture = (PFNGLACTIVETEXTUREPROC)wglGetProcAddress("glActiveTexture");
+            if (glActiveTexture) glActiveTexture(0x84C0); // GL_TEXTURE0
+            glBindTexture(GL_TEXTURE_2D, editor->preview_texture);
+            for (int i = 0; i < 13; ++i) {
+                char uniform_name[64];
+                snprintf(uniform_name, sizeof(uniform_name), "u_enabled[%d]", i);
+                rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), enabled[i]);
+                snprintf(uniform_name, sizeof(uniform_name), "u_intensity[%d]", i);
+                rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), intensity[i]);
+                snprintf(uniform_name, sizeof(uniform_name), "u_threshold[%d]", i);
+                rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), threshold[i]);
+                snprintf(uniform_name, sizeof(uniform_name), "u_radius[%d]", i);
+                rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), radius[i]);
+                snprintf(uniform_name, sizeof(uniform_name), "u_color[%d]", i);
+                rev::shader::SetVec4(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name),
+                                     color[i][0], color[i][1], color[i][2], color[i][3]);
+            }
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+
+            unsigned int rendered_texture = editor->post_texture;
+            editor->post_texture = editor->preview_texture;
+            editor->preview_texture = rendered_texture;
+        }
+
     }
 
     // Unbind framebuffer (restore default)

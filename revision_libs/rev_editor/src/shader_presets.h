@@ -17,6 +17,7 @@ extern const int g_shader_preset_count;
 
 // Helper to get shader source by ID (returns nullptr if not found)
 const char* GetShaderSourceById(int shader_id);
+const char* GetPostEffectFragmentSource();
 
 // Helper to get preset by ID (returns nullptr if not found)
 const ShaderPreset* GetPresetById(int shader_id);
