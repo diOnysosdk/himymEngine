@@ -1196,6 +1196,37 @@ void main() {
 }
 )";
 
+struct SpriteUniformCache {
+    rev::shader::Program* program = nullptr;
+    int position = -1;
+    int size = -1;
+    int texture = -1;
+    int opacity = -1;
+    int color = -1;
+    int uv_rect = -1;
+};
+
+static bool IsSpriteVisible(float center_x, float center_y, float width, float height)
+{
+    return !(center_x + width * 0.5f < -1.0f || center_x - width * 0.5f > 1.0f ||
+             center_y + height * 0.5f < -1.0f || center_y - height * 0.5f > 1.0f);
+}
+
+static SpriteUniformCache GetSpriteUniformCache(rev::shader::Program* program)
+{
+    static SpriteUniformCache cache;
+    if (cache.program != program) {
+        cache.program = program;
+        cache.position = rev::shader::GetUniformLocation(program, "u_position");
+        cache.size = rev::shader::GetUniformLocation(program, "u_size");
+        cache.texture = rev::shader::GetUniformLocation(program, "u_texture");
+        cache.opacity = rev::shader::GetUniformLocation(program, "u_opacity");
+        cache.color = rev::shader::GetUniformLocation(program, "u_color_tint");
+        cache.uv_rect = rev::shader::GetUniformLocation(program, "u_uv_rect");
+    }
+    return cache;
+}
+
 static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* atlas,
                          const char* text, float x, float y, float size_scale,
                          float spacing, float opacity, float r, float g, float b,
@@ -1204,12 +1235,13 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
                          float jitter_amp, float jitter_freq, float time,
                          bool horizontal_scroll) {
     if (!program || !atlas || atlas->texture_id == 0 || !text) return false;
-    int u_pos = rev::shader::GetUniformLocation(program, "u_position");
-    int u_sz = rev::shader::GetUniformLocation(program, "u_size");
-    int u_tex = rev::shader::GetUniformLocation(program, "u_texture");
-    int u_opa = rev::shader::GetUniformLocation(program, "u_opacity");
-    int u_col = rev::shader::GetUniformLocation(program, "u_color_tint");
-    int u_uv = rev::shader::GetUniformLocation(program, "u_uv_rect");
+    const SpriteUniformCache uniforms = GetSpriteUniformCache(program);
+    int u_pos = uniforms.position;
+    int u_sz = uniforms.size;
+    int u_tex = uniforms.texture;
+    int u_opa = uniforms.opacity;
+    int u_col = uniforms.color;
+    int u_uv = uniforms.uv_rect;
     if (u_tex >= 0) rev::shader::SetInt(program, u_tex, 0);
     if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity);
     if (u_col >= 0) rev::shader::SetVec3(program, u_col, r, g, b);
@@ -1250,6 +1282,13 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
         } else {
             glyph_x += wave + jitter_x;
             glyph_y += jitter_y;
+        }
+        const bool outside_x = (glyph_x + w * 0.5f < 0.0f) || (glyph_x - w * 0.5f > 1.0f);
+        const bool outside_y = (glyph_y + h * 0.5f < 0.0f) || (glyph_y - h * 0.5f > 1.0f);
+        if (outside_x || outside_y) {
+            cursor_x += glyph->advance * spacing * size_scale / viewport_width * 2.0f;
+            ++glyph_index;
+            continue;
         }
         if (u_pos >= 0) rev::shader::SetVec2(program, u_pos, glyph_x * 2.0f - 1.0f, -((glyph_y * 2.0f) - 1.0f));
         if (u_sz >= 0) rev::shader::SetVec2(program, u_sz, w, h);
@@ -3373,6 +3412,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float h = (image_tex.height * anim_scale) / (float)config.height * 2.0f;
                     float x =  (anim_x * 2.0f - 1.0f);
                     float y = -((anim_y * 2.0f) - 1.0f);
+                    if (!IsSpriteVisible(x, y, w, h)) continue;
                     int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
                     int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                     int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
@@ -3499,6 +3539,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float h = (frame_tex.height * anim_scale) / (float)config.height * 2.0f;
                     float x = (anim_x * 2.0f - 1.0f);
                     float y = -((anim_y * 2.0f) - 1.0f);
+                    if (!IsSpriteVisible(x, y, w, h)) {
+                        glDeleteTextures(1, &frame_tex.texture_id);
+                        continue;
+                    }
                     int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
                     int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                     int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
@@ -3634,6 +3678,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float h = ((float)frame_text_tex.height * size_scale) / (float)config.height * 2.0f;
                     float x =  ((anim_text_x + fx.offset_x) * 2.0f - 1.0f);
                     float y = -(((anim_text_y + fx.offset_y) * 2.0f) - 1.0f);
+                    if (!IsSpriteVisible(x, y, w, h)) continue;
                     int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
                     int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                     int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
@@ -3834,6 +3879,12 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float h = ((float)frame_text_tex.height * size_scale) / (float)config.height * 2.0f;
                     float x = (scroll_x * 2.0f - 1.0f);
                     float y = -((scroll_y * 2.0f) - 1.0f);
+                    if (!IsSpriteVisible(x, y, w, h)) {
+                        if (frame_tex_transient && frame_text_tex.texture_id != 0) {
+                            glDeleteTextures(1, &frame_text_tex.texture_id);
+                        }
+                        continue;
+                    }
                     int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
                     int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                     int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
