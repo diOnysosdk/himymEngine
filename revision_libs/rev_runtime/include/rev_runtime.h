@@ -136,6 +136,12 @@ struct TextCue {
     // When present, runtime can load this image directly instead of rasterizing via GDI+.
     char     baked_asset_key[64];
     char     baked_asset_path[512];
+
+    // Exported glyph atlas used by per-character text rendering.
+    char     glyph_atlas_key[64];
+    char     glyph_atlas_path[512];
+    char     glyph_meta_key[64];
+    char     glyph_meta_path[512];
 };
 
 // Scroll text cue (dedicated style/preset-driven marquee pipeline)

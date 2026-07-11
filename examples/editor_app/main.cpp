@@ -75,6 +75,13 @@ int main() {
     
     // Main loop
     while (rev::platform::PollEvents(window) && !window->should_close) {
+        // Windows can report a zero-sized client area while the editor is minimized.
+        // Skip GL/ImGui work until the window is restored.
+        if (IsIconic(static_cast<HWND>(window->hwnd))) {
+            Sleep(16);
+            continue;
+        }
+
         // Clear background
         glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);

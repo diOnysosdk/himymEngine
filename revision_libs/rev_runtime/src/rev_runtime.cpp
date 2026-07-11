@@ -819,7 +819,7 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
         //         effect_type|cue_start|cue_end|
         //         fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|
         //         curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|
-        //         bake_mode|baked_asset_key|baked_asset_path (optional)
+        //         bake_mode|baked_asset_key|baked_asset_path|glyph_atlas_key|glyph_atlas_path|glyph_meta_key|glyph_meta_path (optional)
         char* pipe1 = strchr(s, '|');
         if (!pipe1) continue;
         *pipe1 = '\0';
@@ -852,10 +852,14 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
         int bake_mode = 0;
         char baked_asset_key[64] = {};
         char baked_asset_path[512] = {};
+        char glyph_atlas_key[64] = {};
+        char glyph_atlas_path[512] = {};
+        char glyph_meta_key[64] = {};
+        char glyph_meta_path[512] = {};
         
         bool parsed_with_bake_mode = true;
         int parsed = sscanf_s(pipe2 + 1,
-                 "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%63[^|]|%511[^|\r\n]",
+                 "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%63[^|]|%511[^|]|%63[^|]|%511[^|]|%63[^|]|%511[^|\r\n]",
                      &cue->x, &cue->y, &cue->size,
                      &cue->color.r, &cue->color.g, &cue->color.b,
                      &cue->effect_type,
@@ -868,7 +872,11 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
                      &curve_color_r, &curve_color_g, &curve_color_b,
                      &bake_mode,
                      baked_asset_key, (unsigned)_countof(baked_asset_key),
-                     baked_asset_path, (unsigned)_countof(baked_asset_path));
+                     baked_asset_path, (unsigned)_countof(baked_asset_path),
+                     glyph_atlas_key, (unsigned)_countof(glyph_atlas_key),
+                     glyph_atlas_path, (unsigned)_countof(glyph_atlas_path),
+                     glyph_meta_key, (unsigned)_countof(glyph_meta_key),
+                     glyph_meta_path, (unsigned)_countof(glyph_meta_path));
         if (parsed < 23) {
             // Backward compatibility: older exports had no blend_mode column.
             parsed_with_bake_mode = false;
@@ -918,6 +926,10 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
                 } else {
                     cue->baked_asset_path[0] = '\0';
                 }
+                if (parsed >= 25) strncpy_s(cue->glyph_atlas_key, glyph_atlas_key, _TRUNCATE);
+                if (parsed >= 26) strncpy_s(cue->glyph_atlas_path, glyph_atlas_path, _TRUNCATE);
+                if (parsed >= 27) strncpy_s(cue->glyph_meta_key, glyph_meta_key, _TRUNCATE);
+                if (parsed >= 28) strncpy_s(cue->glyph_meta_path, glyph_meta_path, _TRUNCATE);
             } else {
                 if (parsed >= 21) {
                     strncpy_s(cue->baked_asset_key, baked_asset_key, _TRUNCATE);

@@ -629,10 +629,14 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
         int bake_mode = 0;
         char baked_asset_key[64] = {};
         char baked_asset_path[512] = {};
+        char glyph_atlas_key[64] = {};
+        char glyph_atlas_path[512] = {};
+        char glyph_meta_key[64] = {};
+        char glyph_meta_path[512] = {};
 
         bool parsed_with_bake_mode = true;
         int parsed = sscanf_s(pipe2 + 1,
-                 "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%63[^|]|%511[^|\r\n]",
+                 "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%63[^|]|%511[^|]|%63[^|]|%511[^|]|%63[^|]|%511[^|\r\n]",
                      &cue->x, &cue->y, &cue->size,
                      &cue->color.r, &cue->color.g, &cue->color.b,
                      &cue->effect_type,
@@ -645,7 +649,11 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
                      &curve_color_r, &curve_color_g, &curve_color_b,
                      &bake_mode,
                      baked_asset_key, (unsigned)_countof(baked_asset_key),
-                     baked_asset_path, (unsigned)_countof(baked_asset_path));
+                     baked_asset_path, (unsigned)_countof(baked_asset_path),
+                     glyph_atlas_key, (unsigned)_countof(glyph_atlas_key),
+                     glyph_atlas_path, (unsigned)_countof(glyph_atlas_path),
+                     glyph_meta_key, (unsigned)_countof(glyph_meta_key),
+                     glyph_meta_path, (unsigned)_countof(glyph_meta_path));
         if (parsed < 23) {
             parsed_with_bake_mode = false;
             parsed = sscanf_s(pipe2 + 1,
@@ -685,6 +693,10 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
             if (parsed_with_bake_mode) {
                 if (parsed >= 23) strncpy_s(cue->baked_asset_key, baked_asset_key, _TRUNCATE);
                 if (parsed >= 24) strncpy_s(cue->baked_asset_path, baked_asset_path, _TRUNCATE);
+                if (parsed >= 25) strncpy_s(cue->glyph_atlas_key, glyph_atlas_key, _TRUNCATE);
+                if (parsed >= 26) strncpy_s(cue->glyph_atlas_path, glyph_atlas_path, _TRUNCATE);
+                if (parsed >= 27) strncpy_s(cue->glyph_meta_key, glyph_meta_key, _TRUNCATE);
+                if (parsed >= 28) strncpy_s(cue->glyph_meta_path, glyph_meta_path, _TRUNCATE);
             } else {
                 if (parsed >= 21) strncpy_s(cue->baked_asset_key, baked_asset_key, _TRUNCATE);
                 if (parsed >= 22) strncpy_s(cue->baked_asset_path, baked_asset_path, _TRUNCATE);
@@ -2291,9 +2303,27 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
         LOGV("\nPreparing text cue [%d]: \"%s\"\n", ti, text_cue.text);
         text_force_baked[ti] = (text_cue.bake_mode == 1);
+        bool atlas_loaded = false;
+#ifdef HIMYM_PACKED_ASSETS
+        if (text_cue.glyph_atlas_key[0] != '\0' && text_cue.glyph_meta_key[0] != '\0') {
+            const rev::pack::PackedAsset* atlas_asset = rev::pack::GetPackedAsset(
+                text_cue.glyph_atlas_key, kPackedAssets, kPackedAssetCount);
+            const rev::pack::PackedAsset* meta_asset = rev::pack::GetPackedAsset(
+                text_cue.glyph_meta_key, kPackedAssets, kPackedAssetCount);
+            if (atlas_asset && meta_asset) {
+                atlas_loaded = LoadTextGlyphAtlasFromMemory(
+                    atlas_asset->data, atlas_asset->size,
+                    meta_asset->data, meta_asset->size,
+                    &text_atlases[ti]);
+                LOGV("Text glyph atlas [%d] %s\n", ti, atlas_loaded ? "loaded (packed)" : "failed to load (packed)");
+            }
+        }
+#else
         if (!text_force_baked[ti]) {
             CreateTextGlyphAtlas(text_cue.font_name, text_cue.size, &text_atlases[ti]);
+            atlas_loaded = text_atlases[ti].texture_id != 0;
         }
+#endif
         bool has_color_curve = (text_cue.curve_color_r >= 0 || text_cue.curve_color_g >= 0 || text_cue.curve_color_b >= 0);
         bool requires_dynamic_text = ((!text_force_baked[ti]) && (text_cue.effect_type >= 3)) || has_color_curve;
 
@@ -2338,6 +2368,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
 
             if (!baked_loaded) {
+#ifdef HIMYM_PACKED_ASSETS
+                if (text_force_baked[ti]) {
+                    printf("Embedded baked text asset not found [%d]: %s\n", ti, text_cue.baked_asset_key);
+                }
+#else
                 if (RenderTextToTexture(text_cue.text, text_cue.font_name, text_cue.size,
                                         text_cue.color.r, text_cue.color.g, text_cue.color.b, &text_texes[ti])) {
                     LOGV("Text rendered (fallback): %dx%d, will show at %.1f-%.1fs\n",
@@ -2347,6 +2382,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 } else {
                     printf("FAILED to render text cue %d\n", ti);
                 }
+#endif
             }
 
             text_loaded[ti] = baked_loaded;
@@ -2358,7 +2394,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
         } else {
             // Dynamic glyphs are preferred; the exported full-text image remains a fallback.
-            text_loaded[ti] = baked_loaded || text_atlases[ti].texture_id != 0;
+            text_loaded[ti] = baked_loaded || atlas_loaded;
             LOGV("Text cue [%d] effect mode %d renders dynamically per frame\n", ti, text_cue.effect_type);
         }
     }
@@ -2371,7 +2407,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         scroll_text_force_baked[si] = (scroll_cue.bake_mode == 1);
         bool atlas_loaded = false;
 #ifdef HIMYM_PACKED_ASSETS
-        if (!scroll_text_force_baked[si] && scroll_cue.glyph_atlas_key[0] != '\0' && scroll_cue.glyph_meta_key[0] != '\0') {
+        if (scroll_cue.glyph_atlas_key[0] != '\0' && scroll_cue.glyph_meta_key[0] != '\0') {
             const rev::pack::PackedAsset* atlas_asset = rev::pack::GetPackedAsset(
                 scroll_cue.glyph_atlas_key, kPackedAssets, kPackedAssetCount);
             const rev::pack::PackedAsset* meta_asset = rev::pack::GetPackedAsset(
@@ -2385,10 +2421,12 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
         }
 #endif
-        if (!scroll_text_force_baked[si] && !atlas_loaded) {
+        if (!atlas_loaded) {
+    #ifndef HIMYM_PACKED_ASSETS
             CreateTextGlyphAtlas(scroll_cue.font_name, scroll_cue.size, &scroll_text_atlases[si]);
+    #endif
         }
-        if (!scroll_text_force_baked[si] && scroll_text_atlases[si].texture_id != 0) continue;
+        if (scroll_text_atlases[si].texture_id != 0) continue;
 
         bool baked_loaded = false;
         if (scroll_cue.baked_asset_key[0] != '\0') {
@@ -2502,7 +2540,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 }
 
-                // Warm dynamic text raster path once per cue.
+                // Warm the legacy dynamic raster path only for unpacked preview builds.
+#ifndef HIMYM_PACKED_ASSETS
                 for (int ti = 0; ti < text_cue_count; ++ti) {
                     TextCue& text_cue = text_cues[ti];
                     bool has_color_curve = (text_cue.curve_color_r >= 0 || text_cue.curve_color_g >= 0 || text_cue.curve_color_b >= 0);
@@ -2519,6 +2558,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         }
                     }
                 }
+#endif
                 glDisable(GL_BLEND);
             }
 
@@ -3555,7 +3595,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         text_cue.fade_in_start, text_cue.fade_in_end,
                         text_cue.fade_out_start, text_cue.fade_out_end, time) * fx.opacity_mul;
 
-                    if (requires_dynamic_text && text_atlases[text_idx].texture_id != 0) {
+                    if (text_atlases[text_idx].texture_id != 0) {
                         DrawGlyphRun(sprite_shader, &text_atlases[text_idx], fx.text,
                                      anim_text_x + fx.offset_x, anim_text_y + fx.offset_y,
                                      anim_text_size / text_cue.size, 1.0f, opacity,
@@ -3570,6 +3610,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     bool frame_tex_transient = false;
 
                     if (requires_dynamic_text && !has_frame_text) {
+#ifdef HIMYM_PACKED_ASSETS
+                        continue;
+#else
                         frame_text_tex = {};
                         if (!RenderTextToTexture(
                                 fx.text, text_cue.font_name, anim_text_size,
@@ -3579,6 +3622,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         }
                         has_frame_text = true;
                         frame_tex_transient = true;
+#endif
                     }
 
                     if (!has_frame_text) {
@@ -3775,7 +3819,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float scroll_y = anim_y + dir_y * wrapped + jitter_y;
                     if (cue.direction <= 1) scroll_y += wave_offset;
                     else scroll_x += wave_offset;
-                    if (!force_baked && scroll_text_atlases[scroll_idx].texture_id != 0) {
+                    if (scroll_text_atlases[scroll_idx].texture_id != 0) {
                         DrawGlyphRun(sprite_shader, &scroll_text_atlases[scroll_idx], glyph_scroll_text,
                                      scroll_x - jitter_x, scroll_y - jitter_y - wave_offset,
                                      glyph_scale, cue.spacing, opacity,

@@ -1344,6 +1344,14 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 ParseJsonStringValue(start, current_text_cue.baked_asset_key, sizeof(current_text_cue.baked_asset_key));
             } else if (strstr(start, "\"baked_asset_path\":")) {
                 ParseJsonStringValue(start, current_text_cue.baked_asset_path, sizeof(current_text_cue.baked_asset_path));
+            } else if (strstr(start, "\"glyph_atlas_key\":")) {
+                ParseJsonStringValue(start, current_text_cue.glyph_atlas_key, sizeof(current_text_cue.glyph_atlas_key));
+            } else if (strstr(start, "\"glyph_atlas_path\":")) {
+                ParseJsonStringValue(start, current_text_cue.glyph_atlas_path, sizeof(current_text_cue.glyph_atlas_path));
+            } else if (strstr(start, "\"glyph_meta_key\":")) {
+                ParseJsonStringValue(start, current_text_cue.glyph_meta_key, sizeof(current_text_cue.glyph_meta_key));
+            } else if (strstr(start, "\"glyph_meta_path\":")) {
+                ParseJsonStringValue(start, current_text_cue.glyph_meta_path, sizeof(current_text_cue.glyph_meta_path));
             } else if (strstr(start, "\"layer_order\":")) {
                 sscanf_s(start, "\"layer_order\": %d", &current_text_cue.layer_order);
             } else if (start[0] == '}' && current_text_cue.text[0] != '\0') {
@@ -1927,10 +1935,18 @@ bool SaveProject(EditorContext* editor, const char* path) {
             char escaped_font[128] = {};
             char escaped_baked_key[128] = {};
             char escaped_baked_path[1024] = {};
+            char escaped_glyph_atlas_key[128] = {};
+            char escaped_glyph_atlas_path[1024] = {};
+            char escaped_glyph_meta_key[128] = {};
+            char escaped_glyph_meta_path[1024] = {};
             JsonEscapeString(cue->text, escaped_text, sizeof(escaped_text));
             JsonEscapeString(cue->font_name, escaped_font, sizeof(escaped_font));
             JsonEscapeString(cue->baked_asset_key, escaped_baked_key, sizeof(escaped_baked_key));
             JsonEscapeString(cue->baked_asset_path, escaped_baked_path, sizeof(escaped_baked_path));
+            JsonEscapeString(cue->glyph_atlas_key, escaped_glyph_atlas_key, sizeof(escaped_glyph_atlas_key));
+            JsonEscapeString(cue->glyph_atlas_path, escaped_glyph_atlas_path, sizeof(escaped_glyph_atlas_path));
+            JsonEscapeString(cue->glyph_meta_key, escaped_glyph_meta_key, sizeof(escaped_glyph_meta_key));
+            JsonEscapeString(cue->glyph_meta_path, escaped_glyph_meta_path, sizeof(escaped_glyph_meta_path));
             fprintf(f, "        {\n");
             fprintf(f, "          \"text\": \"%s\",\n", escaped_text);
             fprintf(f, "          \"font_name\": \"%s\",\n", escaped_font);
@@ -1956,6 +1972,10 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"curve_color_b\": %d,\n", cue->curve_color_b);
             fprintf(f, "          \"baked_asset_key\": \"%s\",\n", escaped_baked_key);
             fprintf(f, "          \"baked_asset_path\": \"%s\",\n", escaped_baked_path);
+            fprintf(f, "          \"glyph_atlas_key\": \"%s\",\n", escaped_glyph_atlas_key);
+            fprintf(f, "          \"glyph_atlas_path\": \"%s\",\n", escaped_glyph_atlas_path);
+            fprintf(f, "          \"glyph_meta_key\": \"%s\",\n", escaped_glyph_meta_key);
+            fprintf(f, "          \"glyph_meta_path\": \"%s\",\n", escaped_glyph_meta_path);
             fprintf(f, "          \"layer_order\": %d\n", cue->layer_order);
             fprintf(f, "        }%s\n", (i < scene->text_cue_count - 1) ? "," : "");
         }
@@ -3213,7 +3233,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     
     // [text_cues] section
     fprintf(f, "[text_cues]\n");
-    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path\n");
+    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path|glyph_atlas_key|glyph_atlas_path|glyph_meta_key|glyph_meta_path\n");
     
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
@@ -3251,6 +3271,10 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             // but a machine without the authored font can still display the cue.
             char baked_asset_key[64] = {};
             char baked_asset_path[512] = {};
+            char glyph_atlas_key[64] = {};
+            char glyph_atlas_path[512] = {};
+            char glyph_meta_key[64] = {};
+            char glyph_meta_path[512] = {};
             if (cue->text[0] != '\0') {
                 snprintf(baked_asset_key, sizeof(baked_asset_key), "text_s%02d_c%02d.png", scene_idx, cue_idx);
 
@@ -3274,8 +3298,31 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                     cue->baked_asset_path[0] = '\0';
                 }
             }
+
+            if (cue->text[0] != '\0') {
+                snprintf(glyph_atlas_key, sizeof(glyph_atlas_key), "text_glyph_s%02d_c%02d.png", scene_idx, cue_idx);
+                snprintf(glyph_meta_key, sizeof(glyph_meta_key), "text_glyph_s%02d_c%02d.txt", scene_idx, cue_idx);
+                char atlas_abs_path[640] = {};
+                char meta_abs_path[640] = {};
+                snprintf(atlas_abs_path, sizeof(atlas_abs_path), "%s\\%s", editor->project->assets_path, glyph_atlas_key);
+                snprintf(meta_abs_path, sizeof(meta_abs_path), "%s\\%s", editor->project->assets_path, glyph_meta_key);
+                if (rev::runtime::SaveTextGlyphAtlas(cue->font_name, cue->size, atlas_abs_path, meta_abs_path) &&
+                    IsFileReadableWithRetry(atlas_abs_path, 60, 25) && IsFileReadableWithRetry(meta_abs_path, 60, 25)) {
+                    snprintf(glyph_atlas_path, sizeof(glyph_atlas_path), "%s/%s", rel_assets_prefix, glyph_atlas_key);
+                    snprintf(glyph_meta_path, sizeof(glyph_meta_path), "%s/%s", rel_assets_prefix, glyph_meta_key);
+                    strncpy_s(cue->glyph_atlas_key, sizeof(cue->glyph_atlas_key), glyph_atlas_key, _TRUNCATE);
+                    strncpy_s(cue->glyph_atlas_path, sizeof(cue->glyph_atlas_path), glyph_atlas_path, _TRUNCATE);
+                    strncpy_s(cue->glyph_meta_key, sizeof(cue->glyph_meta_key), glyph_meta_key, _TRUNCATE);
+                    strncpy_s(cue->glyph_meta_path, sizeof(cue->glyph_meta_path), glyph_meta_path, _TRUNCATE);
+                } else {
+                    cue->glyph_atlas_key[0] = '\0';
+                    cue->glyph_atlas_path[0] = '\0';
+                    cue->glyph_meta_key[0] = '\0';
+                    cue->glyph_meta_path[0] = '\0';
+                }
+            }
             
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%s|%s\n",
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s\n",
                 encoded_text, cue->font_name, cue->x, cue->y, cue->size,
                 cue->color.r, cue->color.g, cue->color.b,
                 cue->effect_type, abs_start, abs_end,
@@ -3285,7 +3332,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->curve_x, cue->curve_y, cue->curve_size,
                 cue->curve_color_r, cue->curve_color_g, cue->curve_color_b,
                 cue->bake_mode,
-                baked_asset_key, baked_asset_path
+                baked_asset_key, baked_asset_path,
+                glyph_atlas_key, glyph_atlas_path, glyph_meta_key, glyph_meta_path
             );
         }
     }
