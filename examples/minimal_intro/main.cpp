@@ -25,6 +25,8 @@ using rev::runtime::ImageTexture;
 using rev::runtime::TextCue;
 using rev::runtime::ScrollTextCue;
 using rev::runtime::TextTexture;
+using rev::runtime::TextGlyphAtlas;
+using rev::runtime::TextGlyph;
 using rev::runtime::TextEffectFrame;
 using rev::runtime::MusicCue;
 using rev::runtime::ComputeEffectOpacity;
@@ -32,6 +34,9 @@ using rev::runtime::BuildTextEffectFrame;
 using rev::runtime::LoadImageTexture;
 using rev::runtime::LoadImageTextureFromMemory;
 using rev::runtime::RenderTextToTexture;
+using rev::runtime::CreateTextGlyphAtlas;
+using rev::runtime::DestroyTextGlyphAtlas;
+using rev::runtime::FindTextGlyph;
 using rev::runtime::MeshCue;
 using rev::runtime::LoadImageCue;
 using rev::runtime::LoadAnimatedSpriteCue;
@@ -548,6 +553,27 @@ int LoadAllMeshCues(const char* path, MeshCue* cues, int max_cues) {
     return count;
 }
 
+static void ParseScrollGlyphAssetRefs(const char* fields, ScrollTextCue* cue)
+{
+    if (!fields || !cue) return;
+    char copy[4096] = {};
+    strncpy_s(copy, sizeof(copy), fields, _TRUNCATE);
+    char* context = nullptr;
+    char* token = strtok_s(copy, "|\r\n", &context);
+    char* values[64] = {};
+    int count = 0;
+    while (token && count < (int)_countof(values)) {
+        values[count++] = token;
+        token = strtok_s(nullptr, "|\r\n", &context);
+    }
+    if (count >= 50) {
+        strncpy_s(cue->glyph_atlas_key, values[46], _TRUNCATE);
+        strncpy_s(cue->glyph_atlas_path, values[47], _TRUNCATE);
+        strncpy_s(cue->glyph_meta_key, values[48], _TRUNCATE);
+        strncpy_s(cue->glyph_meta_path, values[49], _TRUNCATE);
+    }
+}
+
 // Load ALL text cues from cues.txt
 int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
     FILE* f = nullptr;
@@ -788,6 +814,7 @@ int LoadAllScrollTextCues(const char* path, ScrollTextCue* cues, int max_cues) {
             if (parsed >= 41) strncpy_s(cue->baked_asset_path, baked_asset_path, _TRUNCATE);
         }
 
+        ParseScrollGlyphAssetRefs(pipe2 + 1, cue);
         if (parsed >= 12) {
             count++;
         }
@@ -1146,14 +1173,82 @@ out vec2 uv;
 uniform vec2 u_position;  // -1 to 1
 uniform vec2 u_size;      // width, height in normalized coords
 uniform float u_flip_v;
+uniform vec4 u_uv_rect;   // atlas rectangle, or full texture for sprites
 void main() {
     float x = -1.0 + float((gl_VertexID & 1) << 1);
     float y = -1.0 + float((gl_VertexID >> 1) << 1);
     float base_v = (y + 1.0) * 0.5;
-    uv = vec2((x + 1.0) * 0.5, mix(base_v, 1.0 - base_v, u_flip_v));
+    vec2 local_uv = vec2((x + 1.0) * 0.5, mix(base_v, 1.0 - base_v, u_flip_v));
+    uv = mix(u_uv_rect.xy, u_uv_rect.zw, local_uv);
     gl_Position = vec4(u_position.x + x * u_size.x, u_position.y + y * u_size.y, 0.0, 1.0);
 }
 )";
+
+static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* atlas,
+                         const char* text, float x, float y, float size_scale,
+                         float spacing, float opacity, float r, float g, float b,
+                         float viewport_width, float viewport_height,
+                         float wave_amp, float wave_freq,
+                         float jitter_amp, float jitter_freq, float time,
+                         bool horizontal_scroll) {
+    if (!program || !atlas || atlas->texture_id == 0 || !text) return false;
+    int u_pos = rev::shader::GetUniformLocation(program, "u_position");
+    int u_sz = rev::shader::GetUniformLocation(program, "u_size");
+    int u_tex = rev::shader::GetUniformLocation(program, "u_texture");
+    int u_opa = rev::shader::GetUniformLocation(program, "u_opacity");
+    int u_col = rev::shader::GetUniformLocation(program, "u_color_tint");
+    int u_uv = rev::shader::GetUniformLocation(program, "u_uv_rect");
+    if (u_tex >= 0) rev::shader::SetInt(program, u_tex, 0);
+    if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity);
+    if (u_col >= 0) rev::shader::SetVec3(program, u_col, r, g, b);
+    if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, atlas->texture_id);
+
+    if (spacing < 0.01f) spacing = 0.01f;
+    float line_width = 0.0f;
+    for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
+        if (*p == '\n') break;
+        const TextGlyph* glyph = FindTextGlyph(atlas, *p);
+        if (glyph) line_width += glyph->advance * spacing * size_scale;
+    }
+    float cursor_x = x - (line_width / viewport_width);
+    float cursor_y = y;
+    bool drew_glyph = false;
+    int glyph_index = 0;
+    for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
+        if (*p == '\n') {
+            cursor_x = x - (line_width / viewport_width);
+            cursor_y -= (atlas->line_height * size_scale / viewport_height) * 2.0f;
+            continue;
+        }
+        const TextGlyph* glyph = FindTextGlyph(atlas, *p);
+        if (!glyph) continue;
+        float w = glyph->width * size_scale / viewport_width * 2.0f;
+        float h = glyph->height * size_scale / viewport_height * 2.0f;
+        float phase = time * wave_freq * 6.2831853f + (float)glyph_index * 0.72f;
+        float jitter_phase = time * jitter_freq * 6.2831853f + (float)glyph_index * 1.19f;
+        float wave = sinf(phase) * wave_amp;
+        float jitter_x = sinf(jitter_phase * 1.7f) * jitter_amp;
+        float jitter_y = cosf(jitter_phase * 1.3f) * jitter_amp;
+        float glyph_x = cursor_x + (glyph->width * 0.5f * size_scale / viewport_width * 2.0f);
+        float glyph_y = cursor_y;
+        if (horizontal_scroll) {
+            glyph_x += jitter_x;
+            glyph_y += wave + jitter_y;
+        } else {
+            glyph_x += wave + jitter_x;
+            glyph_y += jitter_y;
+        }
+        if (u_pos >= 0) rev::shader::SetVec2(program, u_pos, glyph_x * 2.0f - 1.0f, -((glyph_y * 2.0f) - 1.0f));
+        if (u_sz >= 0) rev::shader::SetVec2(program, u_sz, w, h);
+        if (u_uv >= 0) rev::shader::SetVec4(program, u_uv, glyph->u0, glyph->v0, glyph->u1, glyph->v1);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        cursor_x += glyph->advance * spacing * size_scale / viewport_width * 2.0f;
+        ++glyph_index;
+        drew_glyph = true;
+    }
+    return drew_glyph;
+}
 
 // Sprite fragment shader - textured with opacity
 const char* sprite_fragment_shader = R"(
@@ -1497,9 +1592,11 @@ int main(int argc, char* argv[]) {
             fclose(root_cues);
         }
     }
-    const char* cues_path = (argc > 1 && argv[1] && argv[1][0]) ? argv[1]
-                          : (root_cues_exists ? "cues.txt"
-                             : (packed_cues_tmp[0] ? packed_cues_tmp : "assets/cues.txt"));
+    // Packed builds are self-contained: argv[1] is intentionally ignored so a
+    // stale or missing disk cues.txt cannot replace the embedded project.
+    const char* cues_path = packed_cues_tmp[0] ? packed_cues_tmp
+                          : (root_cues_exists ? "cues.txt" : "assets/cues.txt");
+    if (g_logfile) fprintf(g_logfile, "[Packed] Using embedded cues; argv cue path ignored\n");
 #else
     bool root_cues_exists = false;
     {
@@ -1575,6 +1672,10 @@ int main(int argc, char* argv[]) {
     int image_cue_count = LoadAllImageCues(cues_path, image_cues, kMaxImageCues);
     bool has_image = (image_cue_count > 0);
     LOGV("Image cues loaded: %d\n", image_cue_count);
+    if (g_logfile) {
+        fprintf(g_logfile, "Image cues loaded: %d\n", image_cue_count);
+        fflush(g_logfile);
+    }
     for (int i = 0; i < image_cue_count; ++i) {
         LOGV("  [%d] Key: %s, Time: %.1f-%.1fs\n",
              i, image_cues[i].asset_key, image_cues[i].cue_start, image_cues[i].cue_end);
@@ -1589,15 +1690,17 @@ int main(int argc, char* argv[]) {
     const int kMaxTextCues = 32;
     TextCue text_cues[kMaxTextCues] = {};
     TextTexture text_texes[kMaxTextCues] = {};
+    TextGlyphAtlas text_atlases[kMaxTextCues] = {};
     bool text_loaded[kMaxTextCues] = {};
     bool text_force_baked[kMaxTextCues] = {};
     int text_cue_count = LoadAllTextCues(cues_path, text_cues, kMaxTextCues);
 
     const int kMaxScrollTextCues = 64;
-    ScrollTextCue scroll_text_cues[kMaxScrollTextCues] = {};
-    TextTexture scroll_text_texes[kMaxScrollTextCues] = {};
-    bool scroll_text_loaded[kMaxScrollTextCues] = {};
-    bool scroll_text_force_baked[kMaxScrollTextCues] = {};
+    static ScrollTextCue scroll_text_cues[kMaxScrollTextCues] = {};
+    static TextTexture scroll_text_texes[kMaxScrollTextCues] = {};
+    static TextGlyphAtlas scroll_text_atlases[kMaxScrollTextCues] = {};
+    static bool scroll_text_loaded[kMaxScrollTextCues] = {};
+    static bool scroll_text_force_baked[kMaxScrollTextCues] = {};
     int scroll_text_cue_count = LoadAllScrollTextCues(cues_path, scroll_text_cues, kMaxScrollTextCues);
 
     // Load mesh cues (multi-cue support)
@@ -1869,6 +1972,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     } else {
         rev::shader::Use(sprite_shader);
         rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_flip_v"), 1.0f);
+        rev::shader::SetVec4(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect"), 0.0f, 0.0f, 1.0f, 1.0f);
         LOGV("Sprite shader OK\n");
     }
 
@@ -2151,11 +2255,17 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             if (LoadImageTextureFromMemory(pa->data, pa->size, &image_texes[ii])) {
                 image_loaded[ii] = true;
                 LOGV("Image loaded (packed) [%d]: %s %dx%d\n", ii, image_cue.asset_key, image_texes[ii].width, image_texes[ii].height);
+                if (g_logfile) {
+                    fprintf(g_logfile, "Image loaded (packed) [%d]: %s %dx%d\n",
+                            ii, image_cue.asset_key, image_texes[ii].width, image_texes[ii].height);
+                    fflush(g_logfile);
+                }
             } else {
-                printf("FAILED to load packed image [%d]: %s\n", ii, image_cue.asset_key);
+                printf("FAILED to decode embedded image [%d]: %s\n", ii, image_cue.asset_key);
             }
-        } else {
-            printf("Packed asset not found [%d]: %s\n", ii, image_cue.asset_key);
+        }
+        if (!image_loaded[ii] && !pa) {
+            printf("Embedded image asset not found [%d]: %s\n", ii, image_cue.asset_key);
         }
 #else
         char image_path[512];
@@ -2181,15 +2291,35 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
         LOGV("\nPreparing text cue [%d]: \"%s\"\n", ti, text_cue.text);
         text_force_baked[ti] = (text_cue.bake_mode == 1);
+        if (!text_force_baked[ti]) {
+            CreateTextGlyphAtlas(text_cue.font_name, text_cue.size, &text_atlases[ti]);
+        }
         bool has_color_curve = (text_cue.curve_color_r >= 0 || text_cue.curve_color_g >= 0 || text_cue.curve_color_b >= 0);
         bool requires_dynamic_text = ((!text_force_baked[ti]) && (text_cue.effect_type >= 3)) || has_color_curve;
 
+        bool baked_loaded = false;
+        if (text_cue.baked_asset_key[0] != '\0') {
+    #ifdef HIMYM_PACKED_ASSETS
+            const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(text_cue.baked_asset_key, kPackedAssets, kPackedAssetCount);
+            if (pa && LoadImageTextureFromMemory(pa->data, pa->size, &text_texes[ti])) {
+            baked_loaded = true;
+            LOGV("Text fallback loaded (packed): %s %dx%d\n",
+                 text_cue.baked_asset_key, text_texes[ti].width, text_texes[ti].height);
+            }
+    #else
+            if (text_cue.baked_asset_path[0] != '\0') {
+            char baked_path[512] = {};
+            ResolveRuntimeAssetPath(text_cue.baked_asset_path, cues_path, baked_path, sizeof(baked_path));
+            baked_loaded = LoadImageTexture(baked_path, &text_texes[ti]);
+            }
+    #endif
+        }
+
         if (!requires_dynamic_text) {
-            bool baked_loaded = false;
             if (text_cue.baked_asset_key[0] != '\0') {
 #ifdef HIMYM_PACKED_ASSETS
                 const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(text_cue.baked_asset_key, kPackedAssets, kPackedAssetCount);
-                if (pa && LoadImageTextureFromMemory(pa->data, pa->size, &text_texes[ti])) {
+            if (!baked_loaded && pa && LoadImageTextureFromMemory(pa->data, pa->size, &text_texes[ti])) {
                     baked_loaded = true;
                     LOGV("Text baked image loaded (packed): %s %dx%d\n",
                          text_cue.baked_asset_key, text_texes[ti].width, text_texes[ti].height);
@@ -2198,7 +2328,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 if (text_cue.baked_asset_path[0] != '\0') {
                     char baked_path[512] = {};
                     ResolveRuntimeAssetPath(text_cue.baked_asset_path, cues_path, baked_path, sizeof(baked_path));
-                    if (LoadImageTexture(baked_path, &text_texes[ti])) {
+                    if (!baked_loaded && LoadImageTexture(baked_path, &text_texes[ti])) {
                         baked_loaded = true;
                         LOGV("Text baked image loaded: %s %dx%d\n",
                              baked_path, text_texes[ti].width, text_texes[ti].height);
@@ -2227,8 +2357,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 LOGV("Text cue [%d] has color curves and will still render dynamically in runtime\n", ti);
             }
         } else {
-            // Dynamic effects and color-curved text are rasterized per frame.
-            text_loaded[ti] = true;
+            // Dynamic glyphs are preferred; the exported full-text image remains a fallback.
+            text_loaded[ti] = baked_loaded || text_atlases[ti].texture_id != 0;
             LOGV("Text cue [%d] effect mode %d renders dynamically per frame\n", ti, text_cue.effect_type);
         }
     }
@@ -2239,7 +2369,26 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         if (scroll_cue.text[0] == '\0') continue;
 
         scroll_text_force_baked[si] = (scroll_cue.bake_mode == 1);
-        if (!scroll_text_force_baked[si]) continue;
+        bool atlas_loaded = false;
+#ifdef HIMYM_PACKED_ASSETS
+        if (!scroll_text_force_baked[si] && scroll_cue.glyph_atlas_key[0] != '\0' && scroll_cue.glyph_meta_key[0] != '\0') {
+            const rev::pack::PackedAsset* atlas_asset = rev::pack::GetPackedAsset(
+                scroll_cue.glyph_atlas_key, kPackedAssets, kPackedAssetCount);
+            const rev::pack::PackedAsset* meta_asset = rev::pack::GetPackedAsset(
+                scroll_cue.glyph_meta_key, kPackedAssets, kPackedAssetCount);
+            if (atlas_asset && meta_asset) {
+                atlas_loaded = LoadTextGlyphAtlasFromMemory(
+                    atlas_asset->data, atlas_asset->size,
+                    meta_asset->data, meta_asset->size,
+                    &scroll_text_atlases[si]);
+                LOGV("Scroll glyph atlas [%d] %s\n", si, atlas_loaded ? "loaded (packed)" : "failed to load (packed)");
+            }
+        }
+#endif
+        if (!scroll_text_force_baked[si] && !atlas_loaded) {
+            CreateTextGlyphAtlas(scroll_cue.font_name, scroll_cue.size, &scroll_text_atlases[si]);
+        }
+        if (!scroll_text_force_baked[si] && scroll_text_atlases[si].texture_id != 0) continue;
 
         bool baked_loaded = false;
         if (scroll_cue.baked_asset_key[0] != '\0') {
@@ -3151,6 +3300,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     }
                     ApplySpriteBlendMode(image_cue.blend_mode);
                     rev::shader::Use(sprite_shader);
+                    int image_uv = rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect");
+                    if (image_uv >= 0) rev::shader::SetVec4(sprite_shader, image_uv, 0.0f, 0.0f, 1.0f, 1.0f);
 
                     // Evaluate curves for animation
                     float anim_x = image_cue.x;
@@ -3221,6 +3372,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     }
                     ApplySpriteBlendMode(cue.blend_mode);
                     rev::shader::Use(sprite_shader);
+                    int animated_uv = rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect");
+                    if (animated_uv >= 0) rev::shader::SetVec4(sprite_shader, animated_uv, 0.0f, 0.0f, 1.0f, 1.0f);
 
                     float elapsed_time = time - cue.cue_start;
                     if (elapsed_time < 0.0f) elapsed_time = 0.0f;
@@ -3395,13 +3548,28 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         continue;
                     }
 
-                    TextTexture frame_text_tex = base_text_tex;
-                    bool has_frame_text = (frame_text_tex.texture_id != 0);
-                    bool frame_tex_transient = false;
                     bool has_color_curve = (text_cue.curve_color_r >= 0 || text_cue.curve_color_g >= 0 || text_cue.curve_color_b >= 0);
                     bool requires_dynamic_text = ((!force_baked) && (text_cue.effect_type >= 3)) || has_color_curve;
 
-                    if (requires_dynamic_text) {
+                    float opacity = ComputeEffectOpacity(text_cue.effect_type,
+                        text_cue.fade_in_start, text_cue.fade_in_end,
+                        text_cue.fade_out_start, text_cue.fade_out_end, time) * fx.opacity_mul;
+
+                    if (requires_dynamic_text && text_atlases[text_idx].texture_id != 0) {
+                        DrawGlyphRun(sprite_shader, &text_atlases[text_idx], fx.text,
+                                     anim_text_x + fx.offset_x, anim_text_y + fx.offset_y,
+                                     anim_text_size / text_cue.size, 1.0f, opacity,
+                                     anim_text_color_r, anim_text_color_g, anim_text_color_b,
+                                     (float)config.width, (float)config.height,
+                                     0.0f, 0.0f, 0.0f, 0.0f, time, true);
+                        continue;
+                    }
+
+                    TextTexture frame_text_tex = base_text_tex;
+                    bool has_frame_text = (frame_text_tex.texture_id != 0);
+                    bool frame_tex_transient = false;
+
+                    if (requires_dynamic_text && !has_frame_text) {
                         frame_text_tex = {};
                         if (!RenderTextToTexture(
                                 fx.text, text_cue.font_name, anim_text_size,
@@ -3422,9 +3590,6 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float h = ((float)frame_text_tex.height * size_scale) / (float)config.height * 2.0f;
                     float x =  ((anim_text_x + fx.offset_x) * 2.0f - 1.0f);
                     float y = -(((anim_text_y + fx.offset_y) * 2.0f) - 1.0f);
-                    float opacity = ComputeEffectOpacity(text_cue.effect_type,
-                        text_cue.fade_in_start, text_cue.fade_in_end,
-                        text_cue.fade_out_start, text_cue.fade_out_end, time) * fx.opacity_mul;
                     int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
                     int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                     int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
@@ -3435,6 +3600,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa, opacity);
                     if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
+                    int u_uv = rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect");
+                    if (u_uv >= 0) rev::shader::SetVec4(sprite_shader, u_uv, 0.0f, 0.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, frame_text_tex.texture_id);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -3578,6 +3745,13 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float effective_size = anim_size * (1.0f + cue.outline * 0.08f + fabsf(distortion) * 0.05f);
                     if (effective_size < 4.0f) effective_size = 4.0f;
 
+                    char glyph_scroll_text[512] = {};
+                    if (cue.direction <= 1) {
+                        snprintf(glyph_scroll_text, sizeof(glyph_scroll_text), "%s   %s", cue.text, cue.text);
+                    } else {
+                        strncpy_s(glyph_scroll_text, sizeof(glyph_scroll_text), cue.text, _TRUNCATE);
+                    }
+
                     TextTexture frame_text_tex = {};
                     bool frame_tex_transient = false;
                     bool force_baked = scroll_text_force_baked[scroll_idx];
@@ -3586,36 +3760,36 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         if (frame_text_tex.texture_id == 0) {
                             continue;
                         }
-                    } else {
-                        char scroll_text_buffer[512] = {};
-                        if (cue.direction <= 1) {
-                            snprintf(scroll_text_buffer, sizeof(scroll_text_buffer), "%s   %s", cue.text, cue.text);
-                        } else {
-                            strncpy_s(scroll_text_buffer, sizeof(scroll_text_buffer), cue.text, _TRUNCATE);
-                        }
-                        if (!RenderTextToTexture(scroll_text_buffer, cue.font_name, effective_size,
-                                                 draw_r, draw_g, draw_b, &frame_text_tex)) {
-                            continue;
-                        }
-                        frame_tex_transient = true;
                     }
 
-                    float spacing_mul = (cue.spacing <= 0.01f) ? 0.01f : cue.spacing;
-                    float size_scale = cue.size > 0.0f ? (anim_size / cue.size) : 1.0f;
-                    float w = ((float)frame_text_tex.width  * spacing_mul * size_scale) / (float)config.width  * 2.0f;
-                    float h = ((float)frame_text_tex.height * size_scale) / (float)config.height * 2.0f;
-                    float scroll_x = anim_x + dir_x * wrapped + jitter_x + distortion;
-                    float scroll_y = anim_y + dir_y * wrapped + jitter_y;
-                    if (cue.direction <= 1) scroll_y += wave_offset;
-                    else scroll_x += wave_offset;
-                    float x = (scroll_x * 2.0f - 1.0f);
-                    float y = -((scroll_y * 2.0f) - 1.0f);
                     float fade_mul = ComputeEffectOpacity(1,
                         cue.fade_in_start, cue.fade_in_end,
                         cue.fade_out_start, cue.fade_out_end,
                         time);
                     float opacity = clamp01(anim_opacity * fade_mul * (1.0f + cue.shadow * 0.1f));
+                    float glyph_scale = cue.size > 0.0f ? (anim_size / cue.size) : 1.0f;
 
+                    float spacing_mul = (cue.spacing <= 0.01f) ? 0.01f : cue.spacing;
+                    float size_scale = cue.size > 0.0f ? (anim_size / cue.size) : 1.0f;
+                    float scroll_x = anim_x + dir_x * wrapped + jitter_x + distortion;
+                    float scroll_y = anim_y + dir_y * wrapped + jitter_y;
+                    if (cue.direction <= 1) scroll_y += wave_offset;
+                    else scroll_x += wave_offset;
+                    if (!force_baked && scroll_text_atlases[scroll_idx].texture_id != 0) {
+                        DrawGlyphRun(sprite_shader, &scroll_text_atlases[scroll_idx], glyph_scroll_text,
+                                     scroll_x - jitter_x, scroll_y - jitter_y - wave_offset,
+                                     glyph_scale, cue.spacing, opacity,
+                                     draw_r, draw_g, draw_b,
+                                     (float)config.width, (float)config.height,
+                                     anim_wave_amp, anim_wave_freq,
+                                     anim_jitter_amp, anim_jitter_freq, elapsed_time,
+                                     cue.direction <= 1);
+                        continue;
+                    }
+                    float w = ((float)frame_text_tex.width  * spacing_mul * size_scale) / (float)config.width  * 2.0f;
+                    float h = ((float)frame_text_tex.height * size_scale) / (float)config.height * 2.0f;
+                    float x = (scroll_x * 2.0f - 1.0f);
+                    float y = -((scroll_y * 2.0f) - 1.0f);
                     int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
                     int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                     int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
@@ -3626,6 +3800,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa, opacity);
                     if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
+                    int u_uv = rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect");
+                    if (u_uv >= 0) rev::shader::SetVec4(sprite_shader, u_uv, 0.0f, 0.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, frame_text_tex.texture_id);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -4253,6 +4429,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             glDeleteTextures(1, &scroll_text_texes[si].texture_id);
             scroll_text_texes[si].texture_id = 0;
         }
+        DestroyTextGlyphAtlas(&scroll_text_atlases[si]);
+    }
+    for (int ti = 0; ti < text_cue_count; ++ti) {
+        DestroyTextGlyphAtlas(&text_atlases[ti]);
     }
     if (mesh_shader) {
         rev::shader::DestroyProgram(mesh_shader);

@@ -564,6 +564,12 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->preview_shader = nullptr;
     editor->sprite_shader = nullptr;
     editor->preview_current_shader_id = -1;
+    memset(&editor->preview_text_atlas, 0, sizeof(editor->preview_text_atlas));
+    editor->preview_text_atlas_font[0] = '\0';
+    editor->preview_text_atlas_size = 0.0f;
+    memset(&editor->preview_scroll_atlas, 0, sizeof(editor->preview_scroll_atlas));
+    editor->preview_scroll_atlas_font[0] = '\0';
+    editor->preview_scroll_atlas_size = 0.0f;
     editor->shader_modal_open = false;
     editor->shader_modal_request_open = false;
     editor->music_modal_open = false;
@@ -3241,10 +3247,11 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             }
             *dst = '\0';
 
-            // Bake static text cues to PNG so they can be packed into runtime assets.
+            // Bake every text cue as a packed fallback. Dynamic glyph rendering remains preferred,
+            // but a machine without the authored font can still display the cue.
             char baked_asset_key[64] = {};
             char baked_asset_path[512] = {};
-            if ((cue->effect_type <= 2 || cue->bake_mode == 1) && cue->text[0] != '\0') {
+            if (cue->text[0] != '\0') {
                 snprintf(baked_asset_key, sizeof(baked_asset_key), "text_s%02d_c%02d.png", scene_idx, cue_idx);
 
                 char baked_abs_path[640] = {};
@@ -3287,7 +3294,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 
     // [scroll_text_cues] section
     fprintf(f, "[scroll_text_cues]\n");
-    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path\n");
+    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path|glyph_atlas_key|glyph_atlas_path|glyph_meta_key|glyph_meta_path\n");
 
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
@@ -3321,7 +3328,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 
             char baked_asset_key[64] = {};
             char baked_asset_path[512] = {};
-            if (cue->bake_mode == 1 && cue->text[0] != '\0') {
+            // Keep a packed fallback even for dynamic scroll cues when the destination lacks the font.
+            if (cue->text[0] != '\0') {
                 snprintf(baked_asset_key, sizeof(baked_asset_key), "scroll_s%02d_c%02d.png", scene_idx, cue_idx);
 
                 char baked_abs_path[640] = {};
@@ -3350,7 +3358,29 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 strncpy_s(baked_asset_path, sizeof(baked_asset_path), cue->baked_asset_path, _TRUNCATE);
             }
 
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%.3f|%d|%s|%s\n",
+            char glyph_atlas_key[64] = {};
+            char glyph_atlas_path[512] = {};
+            char glyph_meta_key[64] = {};
+            char glyph_meta_path[512] = {};
+            if (cue->text[0] != '\0') {
+                snprintf(glyph_atlas_key, sizeof(glyph_atlas_key), "scroll_glyph_s%02d_c%02d.png", scene_idx, cue_idx);
+                snprintf(glyph_meta_key, sizeof(glyph_meta_key), "scroll_glyph_s%02d_c%02d.txt", scene_idx, cue_idx);
+                char atlas_abs_path[640] = {};
+                char meta_abs_path[640] = {};
+                snprintf(atlas_abs_path, sizeof(atlas_abs_path), "%s\\%s", editor->project->assets_path, glyph_atlas_key);
+                snprintf(meta_abs_path, sizeof(meta_abs_path), "%s\\%s", editor->project->assets_path, glyph_meta_key);
+                if (rev::runtime::SaveTextGlyphAtlas(cue->font_name, cue->size, atlas_abs_path, meta_abs_path) &&
+                    IsFileReadableWithRetry(atlas_abs_path, 60, 25) && IsFileReadableWithRetry(meta_abs_path, 60, 25)) {
+                    snprintf(glyph_atlas_path, sizeof(glyph_atlas_path), "%s/%s", rel_assets_prefix, glyph_atlas_key);
+                    snprintf(glyph_meta_path, sizeof(glyph_meta_path), "%s/%s", rel_assets_prefix, glyph_meta_key);
+                    strncpy_s(cue->glyph_atlas_key, sizeof(cue->glyph_atlas_key), glyph_atlas_key, _TRUNCATE);
+                    strncpy_s(cue->glyph_atlas_path, sizeof(cue->glyph_atlas_path), glyph_atlas_path, _TRUNCATE);
+                    strncpy_s(cue->glyph_meta_key, sizeof(cue->glyph_meta_key), glyph_meta_key, _TRUNCATE);
+                    strncpy_s(cue->glyph_meta_path, sizeof(cue->glyph_meta_path), glyph_meta_path, _TRUNCATE);
+                }
+            }
+
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%.3f|%d|%s|%s|%s|%s|%s|%s\n",
                 encoded_text, cue->font_name,
                 cue->x, cue->y, cue->size,
                 cue->color.r, cue->color.g, cue->color.b,
@@ -3365,7 +3395,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->curve_wave_amp, cue->curve_wave_freq, cue->curve_jitter_amp, cue->curve_jitter_freq,
                 cue->loop_mode, cue->chroma_shift, cue->distortion,
                 cue->bake_mode,
-                baked_asset_key, baked_asset_path);
+                baked_asset_key, baked_asset_path,
+                glyph_atlas_key, glyph_atlas_path, glyph_meta_key, glyph_meta_path);
         }
     }
 
@@ -4335,11 +4366,13 @@ out vec2 uv;
 uniform vec2 u_position;  // -1 to 1
 uniform vec2 u_size;      // width, height in normalized coords
 uniform float u_flip_v;
+uniform vec4 u_uv_rect;
 void main() {
     float x = -1.0 + float((gl_VertexID & 1) << 1);
     float y = -1.0 + float((gl_VertexID >> 1) << 1);
     float base_v = (y + 1.0) * 0.5;
-    uv = vec2((x + 1.0) * 0.5, mix(base_v, 1.0 - base_v, u_flip_v));
+    vec2 local_uv = vec2((x + 1.0) * 0.5, mix(base_v, 1.0 - base_v, u_flip_v));
+    uv = mix(u_uv_rect.xy, u_uv_rect.zw, local_uv);
     // Use Z = 0.999 to ensure sprites render in front of 3D meshes even if depth state isn't fully reset
     gl_Position = vec4(u_position.x + x * u_size.x, u_position.y + y * u_size.y, 0.999, 1.0);
 }
@@ -4358,6 +4391,90 @@ void main() {
     fragColor = vec4(texColor.rgb * u_color_tint, texColor.a * u_opacity);
 }
 )";
+
+static bool DrawPreviewGlyphRun(rev::shader::Program* program,
+                                const rev::runtime::TextGlyphAtlas* atlas,
+                                const char* text, float x, float y, float size_scale,
+                                float spacing, float opacity, float r, float g, float b,
+                                float viewport_width, float viewport_height,
+                                float wave_amp, float wave_freq,
+                                float jitter_amp, float jitter_freq, float time,
+                                bool horizontal_scroll) {
+    if (!program || !atlas || atlas->texture_id == 0 || !text) return false;
+    int u_pos = rev::shader::GetUniformLocation(program, "u_position");
+    int u_sz = rev::shader::GetUniformLocation(program, "u_size");
+    int u_tex = rev::shader::GetUniformLocation(program, "u_texture");
+    int u_opa = rev::shader::GetUniformLocation(program, "u_opacity");
+    int u_col = rev::shader::GetUniformLocation(program, "u_color_tint");
+    int u_uv = rev::shader::GetUniformLocation(program, "u_uv_rect");
+    if (u_tex >= 0) rev::shader::SetInt(program, u_tex, 0);
+    if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity);
+    if (u_col >= 0) rev::shader::SetVec3(program, u_col, r, g, b);
+    if (spacing < 0.01f) spacing = 0.01f;
+    float line_width = 0.0f;
+    for (const unsigned char* p = (const unsigned char*)text; *p && *p != '\n'; ++p) {
+        const rev::runtime::TextGlyph* glyph = rev::runtime::FindTextGlyph(atlas, *p);
+        if (glyph) line_width += glyph->advance * spacing * size_scale;
+    }
+    float cursor_x = x - line_width / viewport_width;
+    float cursor_y = y;
+    bool drew_glyph = false;
+    int glyph_index = 0;
+    glBindTexture(GL_TEXTURE_2D, atlas->texture_id);
+    for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
+        if (*p == '\n') {
+            cursor_x = x - line_width / viewport_width;
+            cursor_y -= atlas->line_height * size_scale / viewport_height * 2.0f;
+            continue;
+        }
+        const rev::runtime::TextGlyph* glyph = rev::runtime::FindTextGlyph(atlas, *p);
+        if (!glyph) continue;
+        float w = glyph->width * size_scale / viewport_width * 2.0f;
+        float h = glyph->height * size_scale / viewport_height * 2.0f;
+        float phase = time * wave_freq * 6.2831853f + (float)glyph_index * 0.72f;
+        float jitter_phase = time * jitter_freq * 6.2831853f + (float)glyph_index * 1.19f;
+        float wave = sinf(phase) * wave_amp;
+        float jitter_x = sinf(jitter_phase * 1.7f) * jitter_amp;
+        float jitter_y = cosf(jitter_phase * 1.3f) * jitter_amp;
+        float glyph_x = cursor_x + glyph->width * 0.5f * size_scale / viewport_width * 2.0f;
+        float glyph_y = cursor_y;
+        if (horizontal_scroll) {
+            glyph_x += jitter_x;
+            glyph_y += wave + jitter_y;
+        } else {
+            glyph_x += wave + jitter_x;
+            glyph_y += jitter_y;
+        }
+        if (u_pos >= 0) rev::shader::SetVec2(program, u_pos, glyph_x * 2.0f - 1.0f, -((glyph_y * 2.0f) - 1.0f));
+        if (u_sz >= 0) rev::shader::SetVec2(program, u_sz, w, h);
+        if (u_uv >= 0) rev::shader::SetVec4(program, u_uv, glyph->u0, glyph->v0, glyph->u1, glyph->v1);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        cursor_x += glyph->advance * spacing * size_scale / viewport_width * 2.0f;
+        ++glyph_index;
+        drew_glyph = true;
+    }
+    return drew_glyph;
+}
+
+static rev::runtime::TextGlyphAtlas* EnsurePreviewAtlas(EditorContext* editor,
+                                                        bool scroll, const char* font_name,
+                                                        float size) {
+    rev::runtime::TextGlyphAtlas* atlas = scroll ? &editor->preview_scroll_atlas : &editor->preview_text_atlas;
+    char* cached_font = scroll ? editor->preview_scroll_atlas_font : editor->preview_text_atlas_font;
+    float* cached_size = scroll ? &editor->preview_scroll_atlas_size : &editor->preview_text_atlas_size;
+    if (atlas->texture_id != 0 && strcmp(cached_font, font_name) == 0 && fabsf(*cached_size - size) < 0.01f) {
+        return atlas;
+    }
+    rev::runtime::DestroyTextGlyphAtlas(atlas);
+    if (!rev::runtime::CreateTextGlyphAtlas(font_name, size, atlas)) {
+        cached_font[0] = '\0';
+        *cached_size = 0.0f;
+        return nullptr;
+    }
+    strncpy_s(cached_font, 64, font_name, _TRUNCATE);
+    *cached_size = size;
+    return atlas;
+}
 
 // Mesh (3D Phong) shaders
 static const char* mesh_vertex_shader = R"(
@@ -4592,6 +4709,9 @@ void InitializePreview(EditorContext* editor, int width, int height) {
     rev::shader::Use((rev::shader::Program*)editor->sprite_shader);
     rev::shader::SetFloat((rev::shader::Program*)editor->sprite_shader,
                           rev::shader::GetUniformLocation((rev::shader::Program*)editor->sprite_shader, "u_flip_v"), 1.0f);
+    rev::shader::SetVec4((rev::shader::Program*)editor->sprite_shader,
+                         rev::shader::GetUniformLocation((rev::shader::Program*)editor->sprite_shader, "u_uv_rect"),
+                         0.0f, 0.0f, 1.0f, 1.0f);
 
     editor->post_shader = rev::shader::CompileFromSource(preview_vertex_shader, GetPostEffectFragmentSource());
     if (!editor->post_shader) {
@@ -4615,6 +4735,11 @@ void InitializePreview(EditorContext* editor, int width, int height) {
 
 void CleanupPreview(EditorContext* editor) {
     if (!editor || !editor->preview_initialized) return;
+
+    rev::runtime::DestroyTextGlyphAtlas(&editor->preview_text_atlas);
+    rev::runtime::DestroyTextGlyphAtlas(&editor->preview_scroll_atlas);
+    editor->preview_text_atlas_font[0] = '\0';
+    editor->preview_scroll_atlas_font[0] = '\0';
     
     typedef void (*PFNGLDELETEFRAMEBUFFERSPROC)(int n, const unsigned int* framebuffers);
     typedef void (*PFNGLDELETERENDERBUFFERSPROC)(int n, const unsigned int* renderbuffers);
@@ -5116,6 +5241,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                 ApplySpriteBlendMode(sprite_blend_mode);
                 
                 rev::shader::Use(sprite_prog);
+                int sprite_uv = rev::shader::GetUniformLocation(sprite_prog, "u_uv_rect");
+                if (sprite_uv >= 0) rev::shader::SetVec4(sprite_prog, sprite_uv, 0.0f, 0.0f, 1.0f, 1.0f);
 
                 unsigned int tex = 0;
                 float norm_w = 0, norm_h = 0, pos_x = 0, pos_y = 0, opacity = 1.0f;
@@ -5326,6 +5453,22 @@ void RenderPreviewFrame(EditorContext* editor) {
                         float scene_time = editor->current_time - item.scene_start_time;
                         if (!rev::runtime::BuildTextEffectFrame(cue, scene_time, &fx)) continue;
 
+                        rev::runtime::TextGlyphAtlas* atlas = EnsurePreviewAtlas(editor, false,
+                            cue->font_name, cue->size);
+                        if (atlas && glActiveTexture_fn) glActiveTexture_fn(0x84C0);
+                        if (atlas && DrawPreviewGlyphRun(sprite_prog, atlas, fx.text,
+                            anim_x + fx.offset_x, anim_y + fx.offset_y,
+                            cue->size > 0.0f ? anim_size / cue->size : 1.0f,
+                            1.0f,
+                            rev::runtime::ComputeEffectOpacity(
+                                cue->effect_type, cue->fade_in_start, cue->fade_in_end,
+                                cue->fade_out_start, cue->fade_out_end, scene_time) * fx.opacity_mul,
+                            anim_color_r, anim_color_g, anim_color_b,
+                            (float)editor->preview_width, (float)editor->preview_height,
+                            0.0f, 0.0f, 0.0f, 0.0f, scene_time, true)) {
+                            continue;
+                        }
+
                         rev::runtime::TextTexture rt_txt{};
                         if (!rev::runtime::RenderTextToTexture(
                             fx.text, cue->font_name, anim_size,
@@ -5479,6 +5622,30 @@ void RenderPreviewFrame(EditorContext* editor) {
                         strncpy_s(scroll_text_buffer, sizeof(scroll_text_buffer), cue->text, _TRUNCATE);
                     }
 
+                    float scroll_x = anim_x + dir_x * wrapped + jitter_x + distortion;
+                    float scroll_y = anim_y + dir_y * wrapped + jitter_y;
+                    if (cue->direction <= 1) scroll_y += wave_offset;
+                    else scroll_x += wave_offset;
+                    float fade_mul = rev::runtime::ComputeEffectOpacity(
+                        1, cue->fade_in_start, cue->fade_in_end,
+                        cue->fade_out_start, cue->fade_out_end, scene_time);
+                    float style_mul = 1.0f + cue->shadow * 0.1f;
+                    float scroll_opacity = clamp01(anim_opacity * fade_mul * style_mul);
+                    rev::runtime::TextGlyphAtlas* atlas = EnsurePreviewAtlas(editor, true,
+                        cue->font_name, cue->size);
+                    if (atlas && glActiveTexture_fn) glActiveTexture_fn(0x84C0);
+                    if (atlas && DrawPreviewGlyphRun(sprite_prog, atlas, scroll_text_buffer,
+                        scroll_x - jitter_x, scroll_y - jitter_y - wave_offset,
+                        cue->size > 0.0f ? effective_size / cue->size : 1.0f,
+                        cue->spacing, scroll_opacity,
+                        draw_r, draw_g, draw_b,
+                        (float)editor->preview_width, (float)editor->preview_height,
+                        anim_wave_amp, anim_wave_freq,
+                        anim_jitter_amp, anim_jitter_freq, elapsed_time,
+                        cue->direction <= 1)) {
+                        continue;
+                    }
+
                     rev::runtime::TextTexture rt_txt{};
                     if (!rev::runtime::RenderTextToTexture(scroll_text_buffer, cue->font_name, effective_size,
                         draw_r, draw_g, draw_b, &rt_txt)) {
@@ -5490,20 +5657,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                     norm_w = ((float)rt_txt.width * spacing_mul) / editor->preview_width * 2.0f;
                     norm_h = (float)rt_txt.height / editor->preview_height * 2.0f;
 
-                    float scroll_x = anim_x + dir_x * wrapped + jitter_x + distortion;
-                    float scroll_y = anim_y + dir_y * wrapped + jitter_y;
-                    if (cue->direction <= 1) scroll_y += wave_offset;
-                    else scroll_x += wave_offset;
-
                     pos_x = (scroll_x * 2.0f) - 1.0f;
                     pos_y = -((scroll_y * 2.0f) - 1.0f);
 
-                    float fade_mul = rev::runtime::ComputeEffectOpacity(
-                        1, cue->fade_in_start, cue->fade_in_end,
-                        cue->fade_out_start, cue->fade_out_end,
-                        scene_time);
-                    float style_mul = 1.0f + cue->shadow * 0.1f;
-                    opacity = clamp01(anim_opacity * fade_mul * style_mul);
+                    opacity = scroll_opacity;
                 }
 
                 LayerPostEffect* layer_effects = nullptr;

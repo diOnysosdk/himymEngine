@@ -231,8 +231,10 @@ static bool ParseMeshAssetLine(const char* line, char* key_out, char* path_out) 
     return key_out[0] != '\0' && path_out[0] != '\0';
 }
 
-// Parse [text_cues] line and read optional trailing baked_asset_key|baked_asset_path.
-static bool ParseTextAssetLine(const char* line, char* key_out, char* path_out) {
+// Parse [text_cues] line and read baked and optional glyph atlas asset pairs.
+static bool ParseTextAssetLine(const char* line, char* key_out, char* path_out,
+                               char* atlas_key_out, char* atlas_path_out,
+                               char* meta_key_out, char* meta_path_out) {
     char tmp[1024];
     strncpy_s(tmp, line, sizeof(tmp) - 1);
 
@@ -257,6 +259,35 @@ static bool ParseTextAssetLine(const char* line, char* key_out, char* path_out) 
 
     strncpy_s(key_out, 128, key, _TRUNCATE);
     strncpy_s(path_out, 512, path, _TRUNCATE);
+
+    if (atlas_key_out) atlas_key_out[0] = '\0';
+    if (atlas_path_out) atlas_path_out[0] = '\0';
+    if (meta_key_out) meta_key_out[0] = '\0';
+    if (meta_path_out) meta_path_out[0] = '\0';
+    char source[8192] = {};
+    char fields[64][512] = {};
+    strncpy_s(source, sizeof(source), line, _TRUNCATE);
+    int field_count = 0;
+    char* context = nullptr;
+    char* token = strtok_s(source, "|\r\n", &context);
+    while (token && field_count < 64) {
+        strncpy_s(fields[field_count], sizeof(fields[field_count]), token, _TRUNCATE);
+        ++field_count;
+        token = strtok_s(nullptr, "|\r\n", &context);
+    }
+    if (field_count >= 4 && strstr(fields[field_count - 4], "glyph") &&
+        strstr(fields[field_count - 3], ".png") &&
+        strstr(fields[field_count - 2], "glyph") &&
+        strstr(fields[field_count - 1], ".txt")) {
+        if (field_count >= 6) {
+            strncpy_s(key_out, 128, fields[field_count - 6], _TRUNCATE);
+            strncpy_s(path_out, 512, fields[field_count - 5], _TRUNCATE);
+        }
+        if (atlas_key_out) strncpy_s(atlas_key_out, 128, fields[field_count - 4], _TRUNCATE);
+        if (atlas_path_out) strncpy_s(atlas_path_out, 512, fields[field_count - 3], _TRUNCATE);
+        if (meta_key_out) strncpy_s(meta_key_out, 128, fields[field_count - 2], _TRUNCATE);
+        if (meta_path_out) strncpy_s(meta_path_out, 512, fields[field_count - 1], _TRUNCATE);
+    }
     return true;
 }
 
@@ -368,8 +399,22 @@ PackResult PackAssets(const char* cues_path,
             if (ParseMeshAssetLine(s, refs[ref_count].key, refs[ref_count].path))
                 ref_count++;
         } else if ((in_text || in_scroll_text) && ref_count < kMaxAssets) {
-            if (ParseTextAssetLine(s, refs[ref_count].key, refs[ref_count].path))
+            char atlas_key[128] = {}, atlas_path[512] = {};
+            char meta_key[128] = {}, meta_path[512] = {};
+            if (ParseTextAssetLine(s, refs[ref_count].key, refs[ref_count].path,
+                                   atlas_key, atlas_path, meta_key, meta_path)) {
                 ref_count++;
+                if (atlas_key[0] && ref_count < kMaxAssets) {
+                    strncpy_s(refs[ref_count].key, atlas_key, _TRUNCATE);
+                    strncpy_s(refs[ref_count].path, atlas_path, _TRUNCATE);
+                    ref_count++;
+                }
+                if (meta_key[0] && ref_count < kMaxAssets) {
+                    strncpy_s(refs[ref_count].key, meta_key, _TRUNCATE);
+                    strncpy_s(refs[ref_count].path, meta_path, _TRUNCATE);
+                    ref_count++;
+                }
+            }
         } else if (in_animated_sprite && ref_count < kMaxAssets) {
             AssetRef parsed[64] = {};
             int parsed_count = ParseAnimatedSpriteAssetLine(s, parsed, 64);
@@ -555,7 +600,9 @@ PackResult PackAssets(const char* cues_path,
     // Embed cues.txt content so the packed exe is fully standalone (no disk access needed).
     {
         char full_cues[640] = {};
-        if (workspace_root && workspace_root[0])
+        if (IsAbsolutePath(cues_path))
+            strncpy_s(full_cues, cues_path, sizeof(full_cues) - 1);
+        else if (workspace_root && workspace_root[0])
             snprintf(full_cues, sizeof(full_cues), "%s\\%s", workspace_root, cues_path);
         else
             strncpy_s(full_cues, cues_path, sizeof(full_cues) - 1);

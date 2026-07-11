@@ -377,6 +377,298 @@ bool RenderTextToTexture(const char* text, const char* font_name, float size,
     return true;
 }
 
+bool CreateTextGlyphAtlas(const char* font_name, float size, TextGlyphAtlas* atlas)
+{
+    if (!font_name || !font_name[0] || !atlas || size <= 0.0f) return false;
+    memset(atlas, 0, sizeof(*atlas));
+
+    wchar_t wfont[64] = {};
+    MultiByteToWideChar(CP_UTF8, 0, font_name, -1, wfont, (int)_countof(wfont));
+    Gdiplus::Bitmap measure_bitmap(1, 1, PixelFormat32bppARGB);
+    Gdiplus::Graphics measure_graphics(&measure_bitmap);
+    Gdiplus::Font font(wfont, (Gdiplus::REAL)size,
+                       Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::StringFormat format;
+    format.SetAlignment(Gdiplus::StringAlignmentNear);
+    format.SetLineAlignment(Gdiplus::StringAlignmentNear);
+    format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+    format.SetTrimming(Gdiplus::StringTrimmingNone);
+
+    const int padding = 4;
+    const int atlas_width = 2048;
+    int row_x = padding;
+    int row_y = padding;
+    int row_height = 0;
+    int atlas_height = padding;
+    Gdiplus::RectF bounds;
+
+    for (int codepoint = 32; codepoint < 127; ++codepoint) {
+        wchar_t glyph_text[2] = {(wchar_t)codepoint, L'\0'};
+        measure_graphics.MeasureString(glyph_text, -1, &font,
+                                       Gdiplus::RectF(0.0f, 0.0f, 2048.0f, 2048.0f),
+                                       &format, &bounds);
+        int glyph_width = (int)ceilf(bounds.Width) + padding * 2;
+        int glyph_height = (int)ceilf(bounds.Height) + padding * 2;
+        if (glyph_width < padding * 2 + 1) glyph_width = padding * 2 + 1;
+        if (glyph_height < padding * 2 + 1) glyph_height = padding * 2 + 1;
+        if (row_x + glyph_width > atlas_width) {
+            row_x = padding;
+            row_y += row_height;
+            row_height = 0;
+        }
+        if (row_y + glyph_height > 2048) return false;
+
+        TextGlyph& glyph = atlas->glyphs[codepoint];
+        glyph.codepoint = codepoint;
+        glyph.u0 = (float)row_x / 2048.0f;
+        glyph.v0 = (float)row_y / 2048.0f;
+        glyph.u1 = (float)(row_x + glyph_width) / 2048.0f;
+        glyph.v1 = (float)(row_y + glyph_height) / 2048.0f;
+        glyph.width = (float)glyph_width;
+        glyph.height = (float)glyph_height;
+        glyph.advance = bounds.Width;
+        glyph.bearing_y = bounds.Y;
+        row_x += glyph_width;
+        if (glyph_height > row_height) row_height = glyph_height;
+        if (row_y + row_height > atlas_height) atlas_height = row_y + row_height;
+    }
+
+    atlas->width = atlas_width;
+    atlas->height = atlas_height;
+    atlas->font_size = size;
+    atlas->line_height = size * 1.25f;
+    if (atlas->line_height < 1.0f) atlas->line_height = 1.0f;
+    for (int codepoint = 32; codepoint < 127; ++codepoint) {
+        TextGlyph& glyph = atlas->glyphs[codepoint];
+        glyph.v0 *= 2048.0f / (float)atlas->height;
+        glyph.v1 *= 2048.0f / (float)atlas->height;
+    }
+
+    Gdiplus::Bitmap bitmap(atlas->width, atlas->height, PixelFormat32bppARGB);
+    Gdiplus::Graphics graphics(&bitmap);
+    graphics.Clear(Gdiplus::Color(0, 0, 0, 0));
+    graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
+    Gdiplus::SolidBrush brush(Gdiplus::Color(255, 255, 255, 255));
+    row_x = padding;
+    row_y = padding;
+    row_height = 0;
+    for (int codepoint = 32; codepoint < 127; ++codepoint) {
+        const TextGlyph& glyph = atlas->glyphs[codepoint];
+        int glyph_width = (int)ceilf(glyph.width);
+        int glyph_height = (int)ceilf(glyph.height);
+        if (row_x + glyph_width > atlas->width) {
+            row_x = padding;
+            row_y += row_height;
+            row_height = 0;
+        }
+        wchar_t glyph_text[2] = {(wchar_t)codepoint, L'\0'};
+        graphics.DrawString(glyph_text, -1, &font,
+                            Gdiplus::RectF((Gdiplus::REAL)row_x + padding,
+                                           (Gdiplus::REAL)row_y + padding,
+                                           (Gdiplus::REAL)glyph_width - padding * 2,
+                                           (Gdiplus::REAL)glyph_height - padding * 2),
+                            &format, &brush);
+        row_x += glyph_width;
+        if (glyph_height > row_height) row_height = glyph_height;
+    }
+
+    Gdiplus::Rect rect(0, 0, atlas->width, atlas->height);
+    Gdiplus::BitmapData bitmap_data;
+    if (bitmap.LockBits(&rect, Gdiplus::ImageLockModeRead,
+                        PixelFormat32bppARGB, &bitmap_data) != Gdiplus::Ok) {
+        return false;
+    }
+    unsigned char* pixels = new unsigned char[atlas->width * atlas->height * 4];
+    unsigned char* src = (unsigned char*)bitmap_data.Scan0;
+    for (int i = 0; i < atlas->width * atlas->height; ++i) {
+        pixels[i * 4 + 0] = 255;
+        pixels[i * 4 + 1] = 255;
+        pixels[i * 4 + 2] = 255;
+        pixels[i * 4 + 3] = src[i * 4 + 3];
+    }
+    glGenTextures(1, &atlas->texture_id);
+    glBindTexture(GL_TEXTURE_2D, atlas->texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, atlas->width, atlas->height, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    delete[] pixels;
+    bitmap.UnlockBits(&bitmap_data);
+    return atlas->texture_id != 0;
+}
+
+static bool GetPngEncoderClsid(CLSID* clsid)
+{
+    if (!clsid) return false;
+    UINT count = 0, bytes = 0;
+    if (Gdiplus::GetImageEncodersSize(&count, &bytes) != Gdiplus::Ok || bytes == 0) return false;
+    unsigned char* buffer = new unsigned char[bytes];
+    Gdiplus::ImageCodecInfo* codecs = (Gdiplus::ImageCodecInfo*)buffer;
+    bool found = false;
+    if (Gdiplus::GetImageEncoders(count, bytes, codecs) == Gdiplus::Ok) {
+        for (UINT i = 0; i < count; ++i) {
+            if (wcscmp(codecs[i].MimeType, L"image/png") == 0) {
+                *clsid = codecs[i].Clsid;
+                found = true;
+                break;
+            }
+        }
+    }
+    delete[] buffer;
+    return found;
+}
+
+bool SaveTextGlyphAtlas(const char* font_name, float size,
+                        const char* image_path, const char* metadata_path)
+{
+    if (!font_name || !font_name[0] || !image_path || !metadata_path || size <= 0.0f) return false;
+
+    wchar_t wfont[64] = {};
+    wchar_t wimage[512] = {};
+    MultiByteToWideChar(CP_UTF8, 0, font_name, -1, wfont, (int)_countof(wfont));
+    MultiByteToWideChar(CP_UTF8, 0, image_path, -1, wimage, (int)_countof(wimage));
+
+    Gdiplus::Bitmap measure_bitmap(1, 1, PixelFormat32bppARGB);
+    Gdiplus::Graphics measure_graphics(&measure_bitmap);
+    Gdiplus::Font font(wfont, (Gdiplus::REAL)size, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::StringFormat format;
+    format.SetAlignment(Gdiplus::StringAlignmentNear);
+    format.SetLineAlignment(Gdiplus::StringAlignmentNear);
+    format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+    format.SetTrimming(Gdiplus::StringTrimmingNone);
+
+    const int padding = 4;
+    const int atlas_width = 2048;
+    const int atlas_height = 2048;
+    TextGlyph glyphs[128] = {};
+    int row_x = padding, row_y = padding, row_height = 0;
+    for (int codepoint = 32; codepoint < 127; ++codepoint) {
+        wchar_t glyph_text[2] = {(wchar_t)codepoint, L'\0'};
+        Gdiplus::RectF bounds;
+        measure_graphics.MeasureString(glyph_text, -1, &font,
+            Gdiplus::RectF(0.0f, 0.0f, 2048.0f, 2048.0f), &format, &bounds);
+        int glyph_width = (int)ceilf(bounds.Width) + padding * 2;
+        int glyph_height = (int)ceilf(bounds.Height) + padding * 2;
+        if (glyph_width < padding * 2 + 1) glyph_width = padding * 2 + 1;
+        if (glyph_height < padding * 2 + 1) glyph_height = padding * 2 + 1;
+        if (row_x + glyph_width > atlas_width) {
+            row_x = padding;
+            row_y += row_height;
+            row_height = 0;
+        }
+        if (row_y + glyph_height > atlas_height) return false;
+        TextGlyph& glyph = glyphs[codepoint];
+        glyph.codepoint = codepoint;
+        glyph.u0 = (float)row_x / atlas_width;
+        glyph.v0 = (float)row_y / atlas_height;
+        glyph.u1 = (float)(row_x + glyph_width) / atlas_width;
+        glyph.v1 = (float)(row_y + glyph_height) / atlas_height;
+        glyph.width = (float)glyph_width;
+        glyph.height = (float)glyph_height;
+        glyph.advance = bounds.Width;
+        glyph.bearing_y = bounds.Y;
+        row_x += glyph_width;
+        if (glyph_height > row_height) row_height = glyph_height;
+    }
+
+    Gdiplus::Bitmap bitmap(atlas_width, atlas_height, PixelFormat32bppARGB);
+    Gdiplus::Graphics graphics(&bitmap);
+    graphics.Clear(Gdiplus::Color(0, 0, 0, 0));
+    graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
+    Gdiplus::SolidBrush brush(Gdiplus::Color(255, 255, 255, 255));
+    row_x = padding;
+    row_y = padding;
+    row_height = 0;
+    for (int codepoint = 32; codepoint < 127; ++codepoint) {
+        const TextGlyph& glyph = glyphs[codepoint];
+        int glyph_width = (int)ceilf(glyph.width);
+        int glyph_height = (int)ceilf(glyph.height);
+        if (row_x + glyph_width > atlas_width) {
+            row_x = padding;
+            row_y += row_height;
+            row_height = 0;
+        }
+        wchar_t glyph_text[2] = {(wchar_t)codepoint, L'\0'};
+        graphics.DrawString(glyph_text, -1, &font,
+            Gdiplus::RectF((Gdiplus::REAL)row_x + padding,
+                           (Gdiplus::REAL)row_y + padding,
+                           (Gdiplus::REAL)glyph_width - padding * 2,
+                           (Gdiplus::REAL)glyph_height - padding * 2),
+            &format, &brush);
+        row_x += glyph_width;
+        if (glyph_height > row_height) row_height = glyph_height;
+    }
+
+    CLSID png_clsid;
+    if (!GetPngEncoderClsid(&png_clsid) || bitmap.Save(wimage, &png_clsid, nullptr) != Gdiplus::Ok) return false;
+    FILE* meta = nullptr;
+    fopen_s(&meta, metadata_path, "wb");
+    if (!meta) return false;
+    fprintf(meta, "REV_GLYPH_ATLAS_V1|%d|%d|%.6f|%.6f\n", atlas_width, atlas_height, size, size * 1.25f);
+    for (int codepoint = 32; codepoint < 127; ++codepoint) {
+        const TextGlyph& glyph = glyphs[codepoint];
+        fprintf(meta, "%d|%.9f|%.9f|%.9f|%.9f|%.6f|%.6f|%.6f|%.6f\n",
+                glyph.codepoint, glyph.u0, glyph.v0, glyph.u1, glyph.v1,
+                glyph.width, glyph.height, glyph.advance, glyph.bearing_y);
+    }
+    fclose(meta);
+    return true;
+}
+
+bool LoadTextGlyphAtlasFromMemory(const unsigned char* image_data, size_t image_size,
+                                  const unsigned char* metadata_data, size_t metadata_size,
+                                  TextGlyphAtlas* atlas)
+{
+    if (!image_data || image_size == 0 || !metadata_data || metadata_size == 0 || !atlas) return false;
+    memset(atlas, 0, sizeof(*atlas));
+    ImageTexture texture = {};
+    if (!LoadImageTextureFromMemory(image_data, image_size, &texture)) return false;
+    char* metadata = new char[metadata_size + 1];
+    memcpy(metadata, metadata_data, metadata_size);
+    metadata[metadata_size] = '\0';
+    char* line = strtok(metadata, "\r\n");
+    int width = 0, height = 0;
+    float font_size = 0.0f, line_height = 0.0f;
+    bool header_ok = line && sscanf_s(line, "REV_GLYPH_ATLAS_V1|%d|%d|%f|%f",
+                                      &width, &height, &font_size, &line_height) == 4;
+    if (!header_ok) {
+        delete[] metadata;
+        glDeleteTextures(1, &texture.texture_id);
+        return false;
+    }
+    while ((line = strtok(nullptr, "\r\n")) != nullptr) {
+        TextGlyph glyph = {};
+        if (sscanf_s(line, "%d|%f|%f|%f|%f|%f|%f|%f|%f",
+                     &glyph.codepoint, &glyph.u0, &glyph.v0, &glyph.u1, &glyph.v1,
+                     &glyph.width, &glyph.height, &glyph.advance, &glyph.bearing_y) == 9 &&
+            glyph.codepoint >= 0 && glyph.codepoint < 128) {
+            atlas->glyphs[glyph.codepoint] = glyph;
+        }
+    }
+    delete[] metadata;
+    atlas->texture_id = texture.texture_id;
+    atlas->width = width > 0 ? width : texture.width;
+    atlas->height = height > 0 ? height : texture.height;
+    atlas->font_size = font_size;
+    atlas->line_height = line_height > 0.0f ? line_height : font_size * 1.25f;
+    return true;
+}
+
+void DestroyTextGlyphAtlas(TextGlyphAtlas* atlas)
+{
+    if (!atlas) return;
+    if (atlas->texture_id != 0) glDeleteTextures(1, &atlas->texture_id);
+    memset(atlas, 0, sizeof(*atlas));
+}
+
+const TextGlyph* FindTextGlyph(const TextGlyphAtlas* atlas, unsigned int codepoint)
+{
+    if (!atlas || codepoint >= 128 || atlas->glyphs[codepoint].codepoint == 0) return nullptr;
+    return &atlas->glyphs[codepoint];
+}
+
 // ------------------------------------------------------------------
 // Cue file parsers
 // ------------------------------------------------------------------

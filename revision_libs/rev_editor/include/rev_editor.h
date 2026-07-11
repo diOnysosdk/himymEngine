@@ -246,6 +246,12 @@ struct EditorContext {
     void* mesh_shader;               // rev::shader::Program* for 3D mesh rendering
     void* post_shader;               // rev::shader::Program* for post-production effects
     int preview_current_shader_id;   // Currently compiled shader preset ID (-1 = none)
+    rev::runtime::TextGlyphAtlas preview_text_atlas;
+    char preview_text_atlas_font[64];
+    float preview_text_atlas_size;
+    rev::runtime::TextGlyphAtlas preview_scroll_atlas;
+    char preview_scroll_atlas_font[64];
+    float preview_scroll_atlas_size;
     
     // Shader modal state
     ShaderCue editing_shader;

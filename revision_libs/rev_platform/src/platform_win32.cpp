@@ -90,6 +90,10 @@ Window* CreateIntroWindow(const WindowConfig& config) {
     );
     
     window->hwnd = hwnd;
+    if (!hwnd) {
+        delete window;
+        return nullptr;
+    }
     SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(window));
     
     // Get device context
@@ -107,11 +111,23 @@ Window* CreateIntroWindow(const WindowConfig& config) {
     pfd.cStencilBits = 8;
     
     int pixel_format = ChoosePixelFormat(hdc, &pfd);
+    if (pixel_format == 0 || !SetPixelFormat(hdc, pixel_format, &pfd)) {
+        ReleaseDC(hwnd, hdc);
+        DestroyWindow(hwnd);
+        delete window;
+        return nullptr;
+    }
     SetPixelFormat(hdc, pixel_format, &pfd);
     
     // Create temporary context to load WGL extensions
     HGLRC temp_context = wglCreateContext(hdc);
-    wglMakeCurrent(hdc, temp_context);
+    if (!temp_context || !wglMakeCurrent(hdc, temp_context)) {
+        if (temp_context) wglDeleteContext(temp_context);
+        ReleaseDC(hwnd, hdc);
+        DestroyWindow(hwnd);
+        delete window;
+        return nullptr;
+    }
     
     // Load WGL extensions
     wglCreateContextAttribsARB = (PFNWGLCREATECONTEXTATTRIBSARBPROC)wglGetProcAddress("wglCreateContextAttribsARB");
@@ -124,9 +140,19 @@ Window* CreateIntroWindow(const WindowConfig& config) {
         0
     };
     
-    HGLRC hglrc = wglCreateContextAttribsARB(hdc, nullptr, attribs);
-    wglMakeCurrent(hdc, hglrc);
-    wglDeleteContext(temp_context);
+    HGLRC hglrc = nullptr;
+    if (wglCreateContextAttribsARB) {
+        hglrc = wglCreateContextAttribsARB(hdc, nullptr, attribs);
+    }
+    if (hglrc) {
+        wglMakeCurrent(hdc, hglrc);
+        wglDeleteContext(temp_context);
+    } else {
+        // Some drivers expose only the legacy WGL context creation path.
+        // Keep the temporary context alive so startup fails gracefully instead
+        // of calling a missing extension function.
+        hglrc = temp_context;
+    }
     
     window->hglrc = hglrc;
     
