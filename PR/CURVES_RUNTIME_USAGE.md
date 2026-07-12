@@ -13,7 +13,7 @@ The curve system allows you to animate cue parameters over time. When you export
 asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end
 
 # NEW FORMAT (18 fields):
-asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity
+asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity|blend_mode|rotation|curve_rotation
 ```
 
 **Curves Section** format:
@@ -41,7 +41,7 @@ int curve_count = rev::runtime::LoadCurves("intros/myintro/cues.txt", curves, 32
 // Load cues (now includes curve assignments)
 rev::runtime::ImageCue img_cue;
 if (rev::runtime::LoadImageCue("intros/myintro/cues.txt", &img_cue)) {
-    // img_cue.curve_x, curve_y, curve_scale, curve_opacity are now loaded
+    // img_cue.curve_x, curve_y, curve_scale, curve_opacity, and curve_rotation are now loaded
     // (-1 means no curve assigned)
 }
 ```

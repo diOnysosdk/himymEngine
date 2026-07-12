@@ -253,13 +253,6 @@ static bool ParseTextAssetLine(const char* line, char* key_out, char* path_out,
     *prev = '\0';
     char* key = prev + 1;
 
-    // Must look like path/key, not numeric legacy fields.
-    if (key[0] == '\0' || path[0] == '\0') return false;
-    if (!strchr(path, '/') && !strchr(path, '\\') && !strstr(path, ".png") && !strstr(path, ".dds")) return false;
-
-    strncpy_s(key_out, 128, key, _TRUNCATE);
-    strncpy_s(path_out, 512, path, _TRUNCATE);
-
     if (atlas_key_out) atlas_key_out[0] = '\0';
     if (atlas_path_out) atlas_path_out[0] = '\0';
     if (meta_key_out) meta_key_out[0] = '\0';
@@ -275,19 +268,27 @@ static bool ParseTextAssetLine(const char* line, char* key_out, char* path_out,
         ++field_count;
         token = strtok_s(nullptr, "|\r\n", &context);
     }
-    if (field_count >= 4 && strstr(fields[field_count - 4], "glyph") &&
-        strstr(fields[field_count - 3], ".png") &&
-        strstr(fields[field_count - 2], "glyph") &&
-        strstr(fields[field_count - 1], ".txt")) {
-        if (field_count >= 6) {
-            strncpy_s(key_out, 128, fields[field_count - 6], _TRUNCATE);
-            strncpy_s(path_out, 512, fields[field_count - 5], _TRUNCATE);
+    for (int i = 0; i + 3 < field_count; ++i) {
+        if (!strstr(fields[i], "glyph") || !strstr(fields[i + 1], ".png") ||
+            !strstr(fields[i + 2], "glyph") || !strstr(fields[i + 3], ".txt")) {
+            continue;
         }
-        if (atlas_key_out) strncpy_s(atlas_key_out, 128, fields[field_count - 4], _TRUNCATE);
-        if (atlas_path_out) strncpy_s(atlas_path_out, 512, fields[field_count - 3], _TRUNCATE);
-        if (meta_key_out) strncpy_s(meta_key_out, 128, fields[field_count - 2], _TRUNCATE);
-        if (meta_path_out) strncpy_s(meta_path_out, 512, fields[field_count - 1], _TRUNCATE);
+        if (i >= 2) {
+            strncpy_s(key_out, 128, fields[i - 2], _TRUNCATE);
+            strncpy_s(path_out, 512, fields[i - 1], _TRUNCATE);
+        }
+        if (atlas_key_out) strncpy_s(atlas_key_out, 128, fields[i], _TRUNCATE);
+        if (atlas_path_out) strncpy_s(atlas_path_out, 512, fields[i + 1], _TRUNCATE);
+        if (meta_key_out) strncpy_s(meta_key_out, 128, fields[i + 2], _TRUNCATE);
+        if (meta_path_out) strncpy_s(meta_path_out, 512, fields[i + 3], _TRUNCATE);
+        return true;
     }
+
+    // Legacy text rows without glyph assets use the final key/path pair.
+    if (key[0] == '\0' || path[0] == '\0') return false;
+    if (!strchr(path, '/') && !strchr(path, '\\') && !strstr(path, ".png") && !strstr(path, ".dds")) return false;
+    strncpy_s(key_out, 128, key, _TRUNCATE);
+    strncpy_s(path_out, 512, path, _TRUNCATE);
     return true;
 }
 

@@ -224,6 +224,7 @@ struct EditorContext {
     // Playback
     float current_time;
     bool playing;
+    void* audio_state;          // Editor-owned XM preview state
     
     // Preview viewport
     bool show_preview;

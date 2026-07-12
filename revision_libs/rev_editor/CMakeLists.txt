@@ -57,8 +57,13 @@ target_link_libraries(rev_editor PUBLIC
     rev_pack
     rev_mesh
     rev_gltf
+    rev_xm
     imgui
 )
+
+if(WIN32)
+    target_link_libraries(rev_editor PUBLIC winmm)
+endif()
 
 # Size optimization
 if(MSVC)

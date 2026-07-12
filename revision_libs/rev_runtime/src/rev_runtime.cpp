@@ -695,7 +695,7 @@ bool LoadImageCue(const char* cues_path, ImageCue* cue)
 
         // Format: asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|
         //         layer_order|effect_type|fade_in_start|fade_in_end|
-        //         fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity|blend_mode
+        //         fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity|blend_mode|rotation|curve_rotation
         char* pipe1 = strchr(s, '|');
         if (!pipe1) continue;
         *pipe1 = '\0';
@@ -707,17 +707,17 @@ bool LoadImageCue(const char* cues_path, ImageCue* cue)
         strncpy_s(cue->asset_path, pipe1 + 1, _TRUNCATE);
 
         int layer_order = 0;
-        int curve_x = -1, curve_y = -1, curve_scale = -1, curve_opacity = -1;
+        int curve_x = -1, curve_y = -1, curve_scale = -1, curve_opacity = -1, curve_rotation = -1;
         int blend_mode = 0;
         int scanned = sscanf_s(pipe2 + 1,
-                 "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%d|%d|%d|%d",
+                 "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%d|%d|%d|%d|%f|%d",
                      &cue->x, &cue->y, &cue->scale, &cue->opacity,
                      &cue->cue_start, &cue->cue_end,
                      &layer_order, &cue->effect_type,
                      &cue->fade_in_start,  &cue->fade_in_end,
                      &cue->fade_out_start, &cue->fade_out_end,
                  &curve_x, &curve_y, &curve_scale, &curve_opacity,
-                 &blend_mode);
+                 &blend_mode, &cue->rotation, &curve_rotation);
         
         if (scanned >= 6) {
             cue->layer_order = layer_order;
@@ -726,9 +726,10 @@ bool LoadImageCue(const char* cues_path, ImageCue* cue)
                 cue->curve_x = curve_x;
                 cue->curve_y = curve_y;
                 cue->curve_scale = curve_scale;
+                cue->curve_rotation = curve_rotation;
                 cue->curve_opacity = curve_opacity;
             } else {
-                cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_opacity = -1;
+                cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_rotation = cue->curve_opacity = -1;
             }
             cue->blend_mode = (scanned >= 17) ? blend_mode : 0;
             found = true;
@@ -753,7 +754,7 @@ bool LoadAnimatedSpriteCue(const char* cues_path, AnimatedSpriteCue* cue)
     cue->fps = 12.0f;
     cue->playback_mode = 0;
     cue->start_frame = 0;
-    cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_opacity = cue->curve_frame = -1;
+    cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_rotation = cue->curve_opacity = cue->curve_frame = -1;
 
     while (fgets(line, sizeof(line), f)) {
         char* s = line; TrimLeft(s);
@@ -777,7 +778,7 @@ bool LoadAnimatedSpriteCue(const char* cues_path, AnimatedSpriteCue* cue)
         strncpy_s(cue->frame_paths_csv, pipe2 + 1, _TRUNCATE);
 
         int parsed = sscanf_s(pipe3 + 1,
-            "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d",
+            "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%f|%d",
             &cue->x, &cue->y, &cue->scale, &cue->opacity,
             &cue->cue_start, &cue->cue_end,
             &cue->layer_order, &cue->effect_type,
@@ -787,7 +788,8 @@ bool LoadAnimatedSpriteCue(const char* cues_path, AnimatedSpriteCue* cue)
             &cue->fps,
             &cue->playback_mode,
             &cue->start_frame,
-            &cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_opacity, &cue->curve_frame);
+            &cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_opacity, &cue->curve_frame,
+            &cue->rotation, &cue->curve_rotation);
 
         if (parsed >= 6) {
             found = true;

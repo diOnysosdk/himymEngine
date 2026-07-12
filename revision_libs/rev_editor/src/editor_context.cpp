@@ -3,16 +3,26 @@
 #include "rev_pack.h"
 #include "rev_mesh.h"
 #include "rev_gltf.h"
+#include "rev_xm.h"
 #include <cstring>
 #include <cstdio>
 #include <cmath>
 #include <vector>
 #include <string>
+#include <atomic>
+#include <mutex>
+#include <cstdint>
 #include <windows.h>
+#include <mmsystem.h>
 #include <gl/gl.h>
 #include <gdiplus.h>
 
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "winmm.lib")
+
+#ifndef WAVE_FORMAT_IEEE_FLOAT
+#define WAVE_FORMAT_IEEE_FLOAT 0x0003
+#endif
 
 // OpenGL constants not in gl.h
 #ifndef GL_CLAMP_TO_EDGE
@@ -46,6 +56,278 @@ namespace rev {
 namespace editor {
 
 static bool ParseLayerPostEffectField(const char* line, LayerPostEffect* effects, int* effect_count);
+
+struct EditorAudioState {
+    static const int kBufferCount = 4;
+    static const int kFramesPerBuffer = 2048;
+
+    HWAVEOUT wave_out = nullptr;
+    HANDLE thread = nullptr;
+    std::atomic<bool> stop{false};
+    std::atomic<bool> playing{false};
+    std::atomic<unsigned int> generation{0};
+    std::mutex player_mutex;
+    rev::xm::Player* player = nullptr;
+    char cue_key[512] = {};
+    float cue_start = 0.0f;
+    float last_time = 0.0f;
+    bool initialized = false;
+};
+
+static bool FileExists(const char* path);
+
+static void FillEditorAudioBuffer(EditorAudioState* state, float* output, int frame_count) {
+    memset(output, 0, (size_t)frame_count * 2 * sizeof(float));
+    if (!state->playing.load(std::memory_order_acquire)) return;
+
+    std::lock_guard<std::mutex> lock(state->player_mutex);
+    if (state->player) rev::xm::Update(state->player, output, frame_count);
+}
+
+static DWORD WINAPI EditorAudioThreadProc(LPVOID param) {
+    EditorAudioState* state = (EditorAudioState*)param;
+    WAVEFORMATEX format = {};
+    format.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+    format.nChannels = 2;
+    format.nSamplesPerSec = 48000;
+    format.wBitsPerSample = 32;
+    format.nBlockAlign = (WORD)(format.nChannels * sizeof(float));
+    format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
+
+    float buffers[EditorAudioState::kBufferCount][EditorAudioState::kFramesPerBuffer * 2] = {};
+    WAVEHDR headers[EditorAudioState::kBufferCount] = {};
+    for (int i = 0; i < EditorAudioState::kBufferCount; ++i) {
+        headers[i].lpData = (LPSTR)buffers[i];
+        headers[i].dwBufferLength = sizeof(buffers[i]);
+        waveOutPrepareHeader(state->wave_out, &headers[i], sizeof(WAVEHDR));
+        FillEditorAudioBuffer(state, buffers[i], EditorAudioState::kFramesPerBuffer);
+        waveOutWrite(state->wave_out, &headers[i], sizeof(WAVEHDR));
+    }
+    unsigned int generation = state->generation.load(std::memory_order_acquire);
+
+    while (!state->stop.load(std::memory_order_acquire)) {
+        unsigned int current_generation = state->generation.load(std::memory_order_acquire);
+        if (current_generation != generation) {
+            waveOutReset(state->wave_out);
+            for (int i = 0; i < EditorAudioState::kBufferCount; ++i) {
+                FillEditorAudioBuffer(state, buffers[i], EditorAudioState::kFramesPerBuffer);
+                waveOutWrite(state->wave_out, &headers[i], sizeof(WAVEHDR));
+            }
+            generation = current_generation;
+        }
+        for (int i = 0; i < EditorAudioState::kBufferCount; ++i) {
+            if ((headers[i].dwFlags & WHDR_DONE) == 0) continue;
+            FillEditorAudioBuffer(state, buffers[i], EditorAudioState::kFramesPerBuffer);
+            waveOutWrite(state->wave_out, &headers[i], sizeof(WAVEHDR));
+        }
+        Sleep(1);
+    }
+
+    waveOutReset(state->wave_out);
+    for (int i = 0; i < EditorAudioState::kBufferCount; ++i) {
+        waveOutUnprepareHeader(state->wave_out, &headers[i], sizeof(WAVEHDR));
+    }
+    return 0;
+}
+
+static EditorAudioState* CreateEditorAudio() {
+    EditorAudioState* state = new EditorAudioState();
+    WAVEFORMATEX format = {};
+    format.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+    format.nChannels = 2;
+    format.nSamplesPerSec = 48000;
+    format.wBitsPerSample = 32;
+    format.nBlockAlign = (WORD)(format.nChannels * sizeof(float));
+    format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
+    if (waveOutOpen(&state->wave_out, WAVE_MAPPER, &format, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) {
+        delete state;
+        return nullptr;
+    }
+    state->thread = CreateThread(nullptr, 0, EditorAudioThreadProc, state, 0, nullptr);
+    if (!state->thread) {
+        waveOutClose(state->wave_out);
+        delete state;
+        return nullptr;
+    }
+    return state;
+}
+
+static void DestroyEditorAudio(EditorAudioState* state) {
+    if (!state) return;
+    state->stop.store(true, std::memory_order_release);
+    if (state->thread) {
+        WaitForSingleObject(state->thread, 2000);
+        CloseHandle(state->thread);
+        state->thread = nullptr;
+    }
+    if (state->wave_out) {
+        waveOutClose(state->wave_out);
+        state->wave_out = nullptr;
+    }
+    std::lock_guard<std::mutex> lock(state->player_mutex);
+    if (state->player) {
+        rev::xm::DestroyPlayer(state->player);
+        state->player = nullptr;
+    }
+    delete state;
+}
+
+static bool ReadEditorFile(const char* path, std::vector<unsigned char>* bytes) {
+    if (!path || !path[0] || !bytes) return false;
+    FILE* f = nullptr;
+    fopen_s(&f, path, "rb");
+    if (!f) return false;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size <= 0) {
+        fclose(f);
+        return false;
+    }
+    bytes->resize((size_t)size);
+    bool ok = fread(bytes->data(), 1, bytes->size(), f) == bytes->size();
+    fclose(f);
+    return ok;
+}
+
+static bool ResolveEditorMusicPath(const ProjectData* project, const MusicCue* cue,
+                                   char* out_path, size_t out_size) {
+    if (!project || !cue || !out_path || out_size == 0) return false;
+    out_path[0] = '\0';
+    const char* candidates[4] = { cue->asset_path, nullptr, nullptr, nullptr };
+    char asset_path[512] = {};
+    char workspace_path[512] = {};
+    char project_asset_path[512] = {};
+    if (project->assets_path[0] && cue->asset_key[0]) {
+        snprintf(asset_path, sizeof(asset_path), "%s\\%s", project->assets_path, cue->asset_key);
+        candidates[1] = asset_path;
+    }
+    if (project->workspace_path[0] && cue->asset_path[0]) {
+        snprintf(workspace_path, sizeof(workspace_path), "%s\\%s", project->workspace_path, cue->asset_path);
+        candidates[2] = workspace_path;
+    }
+    if (project->assets_path[0] && cue->asset_key[0]) {
+        snprintf(project_asset_path, sizeof(project_asset_path), "%s\\%s", project->assets_path, cue->asset_key);
+        candidates[3] = project_asset_path;
+    }
+    for (const char* candidate : candidates) {
+        if (candidate && candidate[0] && FileExists(candidate)) {
+            strncpy_s(out_path, out_size, candidate, _TRUNCATE);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool FindEditorMusicCue(EditorContext* editor, float time, const MusicCue** out_cue,
+                               float* out_start) {
+    if (!editor || !editor->project || !out_cue || !out_start) return false;
+    float scene_start = 0.0f;
+    const MusicCue* best = nullptr;
+    float best_start = -1.0f;
+    for (int si = 0; si < editor->project->scene_count; ++si) {
+        SceneBlock* scene = &editor->project->scenes[si];
+        float local_time = time - scene_start;
+        if (local_time >= 0.0f && local_time <= scene->duration) {
+            for (int i = 0; i < scene->music_cue_count; ++i) {
+                const MusicCue* cue = &scene->music_cues[i];
+                float cue_end = cue->cue_end < 0.0f ? scene->duration : cue->cue_end;
+                if (local_time >= cue->cue_start && local_time <= cue_end && cue->cue_start >= best_start) {
+                    best = cue;
+                    best_start = cue->cue_start;
+                }
+            }
+            break;
+        }
+        scene_start += scene->duration;
+    }
+    if (!best) return false;
+    *out_cue = best;
+    *out_start = scene_start + best->cue_start;
+    return true;
+}
+
+static bool ReplaceEditorMusic(EditorContext* editor, const MusicCue* cue, float cue_start,
+                               float timeline_time) {
+    EditorAudioState* state = editor ? (EditorAudioState*)editor->audio_state : nullptr;
+    if (!state || !cue) return false;
+    char path[512] = {};
+    std::vector<unsigned char> bytes;
+    if (!ResolveEditorMusicPath(editor->project, cue, path, sizeof(path)) ||
+        !ReadEditorFile(path, &bytes)) return false;
+    rev::xm::Player* replacement = rev::xm::CreatePlayer(bytes.data(), bytes.size());
+    if (!replacement) return false;
+
+    float offset = timeline_time - cue_start;
+    if (offset < 0.0f) offset = 0.0f;
+    float duration = rev::xm::GetDuration(replacement);
+    if (duration > 0.0f && editor->project->loop_music) offset = fmodf(offset, duration);
+    if (duration > 0.0f && offset > duration) offset = duration;
+    float scratch[2048 * 2] = {};
+    int frames_left = (int)(offset * 48000.0f);
+    while (frames_left > 0) {
+        int frames = frames_left > 2048 ? 2048 : frames_left;
+        rev::xm::Update(replacement, scratch, frames);
+        frames_left -= frames;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(state->player_mutex);
+        if (state->player) rev::xm::DestroyPlayer(state->player);
+        state->player = replacement;
+        strncpy_s(state->cue_key, sizeof(state->cue_key), path, _TRUNCATE);
+        state->cue_start = cue_start;
+        state->generation.fetch_add(1, std::memory_order_release);
+    }
+    return true;
+}
+
+static void SyncEditorAudio(EditorContext* editor, float delta_time) {
+    EditorAudioState* state = editor ? (EditorAudioState*)editor->audio_state : nullptr;
+    if (!state) return;
+    const MusicCue* cue = nullptr;
+    float cue_start = 0.0f;
+    bool has_cue = FindEditorMusicCue(editor, editor->current_time, &cue, &cue_start);
+    bool playing_changed = state->initialized && state->playing.load(std::memory_order_acquire) != editor->playing;
+    float time_delta = editor->current_time - state->last_time;
+    bool timeline_jump = !state->initialized || playing_changed ||
+        (!editor->playing && fabsf(time_delta) > 0.0001f) ||
+        (editor->playing && fabsf(time_delta - delta_time) > 0.03f);
+    char resolved_path[512] = {};
+    bool path_resolved = has_cue && ResolveEditorMusicPath(editor->project, cue, resolved_path, sizeof(resolved_path));
+    bool cue_changed = has_cue && path_resolved &&
+        (strcmp(state->cue_key, resolved_path) != 0 || fabsf(state->cue_start - cue_start) > 0.0001f);
+
+    if (!has_cue) {
+        std::lock_guard<std::mutex> lock(state->player_mutex);
+        if (state->player) {
+            rev::xm::DestroyPlayer(state->player);
+            state->player = nullptr;
+        }
+        state->cue_key[0] = '\0';
+        state->generation.fetch_add(1, std::memory_order_release);
+    } else if (timeline_jump || cue_changed) {
+        ReplaceEditorMusic(editor, cue, cue_start, editor->current_time);
+    }
+
+    state->playing.store(editor->playing && has_cue, std::memory_order_release);
+    state->last_time = editor->current_time;
+    state->initialized = true;
+}
+
+static void ResetEditorAudio(EditorContext* editor) {
+    EditorAudioState* state = editor ? (EditorAudioState*)editor->audio_state : nullptr;
+    if (!state) return;
+    state->playing.store(false, std::memory_order_release);
+    state->generation.fetch_add(1, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(state->player_mutex);
+    if (state->player) {
+        rev::xm::DestroyPlayer(state->player);
+        state->player = nullptr;
+    }
+    state->cue_key[0] = '\0';
+    state->initialized = false;
+}
 
 // Helper: get file modification time as uint64 (Windows FILETIME)
 uint64_t GetFileModificationTime(const char* path) {
@@ -600,6 +882,7 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->editing_scroll_text.wrap_gap = 0.2f;
     editor->editing_scroll_text.spacing = 1.0f;
     editor->editing_scroll_text.wave_freq = 1.0f;
+    editor->editing_scroll_text.wave_length = 9.0f;
     editor->editing_scroll_text.jitter_freq = 1.0f;
     editor->editing_scroll_text.bake_mode = 0;
     editor->editing_scroll_text.curve_x = -1;
@@ -612,6 +895,7 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->editing_scroll_text.curve_color_b = -1;
     editor->editing_scroll_text.curve_wave_amp = -1;
     editor->editing_scroll_text.curve_wave_freq = -1;
+    editor->editing_scroll_text.curve_wave_length = -1;
     editor->editing_scroll_text.curve_jitter_amp = -1;
     editor->editing_scroll_text.curve_jitter_freq = -1;
     editor->installed_fonts = nullptr;
@@ -680,6 +964,8 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
+
+    editor->audio_state = CreateEditorAudio();
     
     // Enumerate installed Windows fonts for font picker
     EnumerateInstalledFonts(&editor->installed_fonts, &editor->installed_font_count);
@@ -690,6 +976,9 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
 
 void DestroyEditor(EditorContext* editor) {
     if (!editor) return;
+
+    DestroyEditorAudio((EditorAudioState*)editor->audio_state);
+    editor->audio_state = nullptr;
     
     // Unregister message callback
     rev::platform::SetMessageCallback(editor->window, nullptr);
@@ -772,6 +1061,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_shader_cue.curve_opacity = current_shader_cue.curve_exposure_ramp = current_shader_cue.curve_fade_ramp = -1;
     
     ImageCue current_image_cue = {};
+    current_image_cue.curve_rotation = -1;
     AnimatedSpriteCue current_animated_sprite_cue = {};
     current_animated_sprite_cue.fps = 12.0f;
     current_animated_sprite_cue.playback_mode = 0;
@@ -779,12 +1069,14 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_animated_sprite_cue.curve_x = -1;
     current_animated_sprite_cue.curve_y = -1;
     current_animated_sprite_cue.curve_scale = -1;
+    current_animated_sprite_cue.curve_rotation = -1;
     current_animated_sprite_cue.curve_opacity = -1;
     current_animated_sprite_cue.curve_frame = -1;
     TextCue current_text_cue = {};
     current_text_cue.curve_x = -1;
     current_text_cue.curve_y = -1;
     current_text_cue.curve_size = -1;
+    current_text_cue.curve_rotation = -1;
     current_text_cue.curve_color_r = -1;
     current_text_cue.curve_color_g = -1;
     current_text_cue.curve_color_b = -1;
@@ -799,18 +1091,21 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_scroll_text_cue.speed = 0.25f;
     current_scroll_text_cue.spacing = 1.0f;
     current_scroll_text_cue.wave_freq = 1.0f;
+    current_scroll_text_cue.wave_length = 9.0f;
     current_scroll_text_cue.jitter_freq = 1.0f;
     current_scroll_text_cue.bake_mode = 0;
     current_scroll_text_cue.curve_x = -1;
     current_scroll_text_cue.curve_y = -1;
     current_scroll_text_cue.curve_speed = -1;
     current_scroll_text_cue.curve_size = -1;
+    current_scroll_text_cue.curve_rotation = -1;
     current_scroll_text_cue.curve_opacity = -1;
     current_scroll_text_cue.curve_color_r = -1;
     current_scroll_text_cue.curve_color_g = -1;
     current_scroll_text_cue.curve_color_b = -1;
     current_scroll_text_cue.curve_wave_amp = -1;
     current_scroll_text_cue.curve_wave_freq = -1;
+    current_scroll_text_cue.curve_wave_length = -1;
     current_scroll_text_cue.curve_jitter_amp = -1;
     current_scroll_text_cue.curve_jitter_freq = -1;
     MusicCue current_music_cue = {};
@@ -1040,6 +1335,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"y\": %f", &current_animated_sprite_cue.y);
             } else if (strstr(start, "\"scale\":")) {
                 sscanf_s(start, "\"scale\": %f", &current_animated_sprite_cue.scale);
+            } else if (strstr(start, "\"rotation\":")) {
+                sscanf_s(start, "\"rotation\": %f", &current_animated_sprite_cue.rotation);
             } else if (strstr(start, "\"opacity\":")) {
                 sscanf_s(start, "\"opacity\": %f", &current_animated_sprite_cue.opacity);
             } else if (strstr(start, "\"effect_type\":")) {
@@ -1072,6 +1369,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_y\": %d", &current_animated_sprite_cue.curve_y);
             } else if (strstr(start, "\"curve_scale\":")) {
                 sscanf_s(start, "\"curve_scale\": %d", &current_animated_sprite_cue.curve_scale);
+            } else if (strstr(start, "\"curve_rotation\":")) {
+                sscanf_s(start, "\"curve_rotation\": %d", &current_animated_sprite_cue.curve_rotation);
             } else if (strstr(start, "\"curve_opacity\":")) {
                 sscanf_s(start, "\"curve_opacity\": %d", &current_animated_sprite_cue.curve_opacity);
             } else if (strstr(start, "\"curve_frame\":")) {
@@ -1085,6 +1384,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 current_animated_sprite_cue.curve_x = -1;
                 current_animated_sprite_cue.curve_y = -1;
                 current_animated_sprite_cue.curve_scale = -1;
+                current_animated_sprite_cue.curve_rotation = -1;
                 current_animated_sprite_cue.curve_opacity = -1;
                 current_animated_sprite_cue.curve_frame = -1;
             }
@@ -1198,6 +1498,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"y\": %f", &current_image_cue.y);
             } else if (strstr(start, "\"scale\":")) {
                 sscanf_s(start, "\"scale\": %f", &current_image_cue.scale);
+            } else if (strstr(start, "\"rotation\":")) {
+                sscanf_s(start, "\"rotation\": %f", &current_image_cue.rotation);
             } else if (strstr(start, "\"opacity\":")) {
                 sscanf_s(start, "\"opacity\": %f", &current_image_cue.opacity);
             } else if (strstr(start, "\"effect_type\":")) {
@@ -1228,6 +1530,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_y\": %d", &current_image_cue.curve_y);
             } else if (strstr(start, "\"curve_scale\":")) {
                 sscanf_s(start, "\"curve_scale\": %d", &current_image_cue.curve_scale);
+            } else if (strstr(start, "\"curve_rotation\":")) {
+                sscanf_s(start, "\"curve_rotation\": %d", &current_image_cue.curve_rotation);
             } else if (strstr(start, "\"curve_opacity\":")) {
                 sscanf_s(start, "\"curve_opacity\": %d", &current_image_cue.curve_opacity);
             } else if (start[0] == '}' && current_image_cue.asset_key[0] != '\0') {
@@ -1238,12 +1542,15 @@ bool LoadProject(EditorContext* editor, const char* path) {
                     current_image_cue.curve_x = -1;
                     current_image_cue.curve_y = -1;
                     current_image_cue.curve_scale = -1;
+                    current_image_cue.curve_rotation = -1;
                     current_image_cue.curve_opacity = -1;
                 }
                 printf("[LoadProject] Loaded image cue: %s pos=(%.2f,%.2f) scale=%.2f\n",
                        current_image_cue.asset_key, current_image_cue.x, current_image_cue.y, current_image_cue.scale);
                 AddImageCue(current_scene, current_image_cue);
                 memset(&current_image_cue, 0, sizeof(current_image_cue));
+                current_image_cue.curve_x = current_image_cue.curve_y = current_image_cue.curve_scale = -1;
+                current_image_cue.curve_rotation = current_image_cue.curve_opacity = -1;
             }
         }
 
@@ -1334,6 +1641,10 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_y\": %d", &current_text_cue.curve_y);
             } else if (strstr(start, "\"curve_size\":")) {
                 sscanf_s(start, "\"curve_size\": %d", &current_text_cue.curve_size);
+            } else if (strstr(start, "\"rotation\":")) {
+                sscanf_s(start, "\"rotation\": %f", &current_text_cue.rotation);
+            } else if (strstr(start, "\"curve_rotation\":")) {
+                sscanf_s(start, "\"curve_rotation\": %d", &current_text_cue.curve_rotation);
             } else if (strstr(start, "\"curve_color_r\":")) {
                 sscanf_s(start, "\"curve_color_r\": %d", &current_text_cue.curve_color_r);
             } else if (strstr(start, "\"curve_color_g\":")) {
@@ -1360,6 +1671,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 current_text_cue.curve_x = -1;
                 current_text_cue.curve_y = -1;
                 current_text_cue.curve_size = -1;
+                current_text_cue.curve_rotation = -1;
                 current_text_cue.curve_color_r = -1;
                 current_text_cue.curve_color_g = -1;
                 current_text_cue.curve_color_b = -1;
@@ -1419,6 +1731,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"wave_amp\": %f", &current_scroll_text_cue.wave_amp);
             } else if (strstr(start, "\"wave_freq\":")) {
                 sscanf_s(start, "\"wave_freq\": %f", &current_scroll_text_cue.wave_freq);
+            } else if (strstr(start, "\"wave_length\":")) {
+                sscanf_s(start, "\"wave_length\": %f", &current_scroll_text_cue.wave_length);
             } else if (strstr(start, "\"jitter_amp\":")) {
                 sscanf_s(start, "\"jitter_amp\": %f", &current_scroll_text_cue.jitter_amp);
             } else if (strstr(start, "\"jitter_freq\":")) {
@@ -1447,6 +1761,10 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_speed\": %d", &current_scroll_text_cue.curve_speed);
             } else if (strstr(start, "\"curve_size\":")) {
                 sscanf_s(start, "\"curve_size\": %d", &current_scroll_text_cue.curve_size);
+            } else if (strstr(start, "\"rotation\":")) {
+                sscanf_s(start, "\"rotation\": %f", &current_scroll_text_cue.rotation);
+            } else if (strstr(start, "\"curve_rotation\":")) {
+                sscanf_s(start, "\"curve_rotation\": %d", &current_scroll_text_cue.curve_rotation);
             } else if (strstr(start, "\"curve_opacity\":")) {
                 sscanf_s(start, "\"curve_opacity\": %d", &current_scroll_text_cue.curve_opacity);
             } else if (strstr(start, "\"curve_color_r\":")) {
@@ -1459,6 +1777,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_wave_amp\": %d", &current_scroll_text_cue.curve_wave_amp);
             } else if (strstr(start, "\"curve_wave_freq\":")) {
                 sscanf_s(start, "\"curve_wave_freq\": %d", &current_scroll_text_cue.curve_wave_freq);
+            } else if (strstr(start, "\"curve_wave_length\":")) {
+                sscanf_s(start, "\"curve_wave_length\": %d", &current_scroll_text_cue.curve_wave_length);
             } else if (strstr(start, "\"curve_jitter_amp\":")) {
                 sscanf_s(start, "\"curve_jitter_amp\": %d", &current_scroll_text_cue.curve_jitter_amp);
             } else if (strstr(start, "\"curve_jitter_freq\":")) {
@@ -1474,18 +1794,21 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 current_scroll_text_cue.speed = 0.25f;
                 current_scroll_text_cue.spacing = 1.0f;
                 current_scroll_text_cue.wave_freq = 1.0f;
+                current_scroll_text_cue.wave_length = 9.0f;
                 current_scroll_text_cue.jitter_freq = 1.0f;
                 current_scroll_text_cue.bake_mode = 0;
                 current_scroll_text_cue.curve_x = -1;
                 current_scroll_text_cue.curve_y = -1;
                 current_scroll_text_cue.curve_speed = -1;
                 current_scroll_text_cue.curve_size = -1;
+                current_scroll_text_cue.curve_rotation = -1;
                 current_scroll_text_cue.curve_opacity = -1;
                 current_scroll_text_cue.curve_color_r = -1;
                 current_scroll_text_cue.curve_color_g = -1;
                 current_scroll_text_cue.curve_color_b = -1;
                 current_scroll_text_cue.curve_wave_amp = -1;
                 current_scroll_text_cue.curve_wave_freq = -1;
+                current_scroll_text_cue.curve_wave_length = -1;
                 current_scroll_text_cue.curve_jitter_amp = -1;
                 current_scroll_text_cue.curve_jitter_freq = -1;
             }
@@ -1732,6 +2055,7 @@ static bool ParseLayerPostEffectField(const char* line, LayerPostEffect* effects
     if (sscanf_s(line, "\"post_effect_%d_type\": %d", &index, &int_value) == 2) effects[index].type = int_value;
     else if (sscanf_s(line, "\"post_effect_%d_enabled\": %d", &index, &int_value) == 2) effects[index].enabled = int_value != 0;
     else if (sscanf_s(line, "\"post_effect_%d_order\": %d", &index, &int_value) == 2) effects[index].order = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_blend_mode\": %d", &index, &int_value) == 2) effects[index].blend_mode = int_value;
     else if (sscanf_s(line, "\"post_effect_%d_intensity\": %f", &index, &float_value) == 2) effects[index].intensity = float_value;
     else if (sscanf_s(line, "\"post_effect_%d_threshold\": %f", &index, &float_value) == 2) effects[index].threshold = float_value;
     else if (sscanf_s(line, "\"post_effect_%d_radius\": %f", &index, &float_value) == 2) effects[index].radius = float_value;
@@ -1752,6 +2076,44 @@ static bool ParseLayerPostEffectField(const char* line, LayerPostEffect* effects
     return true;
 }
 
+static void ParseLayerPostEffectsPipe(char* data, int base_field_count,
+                                      LayerPostEffect* effects, int* effect_count) {
+    if (!data || !effects || !effect_count) return;
+    char* field = data;
+    for (int i = 0; i < base_field_count; ++i) {
+        field = strchr(field, '|');
+        if (!field) return;
+        ++field;
+    }
+    int count = atoi(field);
+    if (count < 0) count = 0;
+    if (count > rev::runtime::kMaxLayerPostEffects) count = rev::runtime::kMaxLayerPostEffects;
+    *effect_count = count;
+    for (int i = 0; i < count; ++i) {
+        field = strchr(field, '|');
+        if (!field) break;
+        ++field;
+        LayerPostEffect& effect = effects[i];
+        int enabled = 0;
+        effect.blend_mode = 0;
+        int parsed = sscanf_s(field,
+            "%d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+            &effect.type, &enabled, &effect.order,
+            &effect.intensity, &effect.threshold, &effect.radius,
+            &effect.color[0], &effect.color[1], &effect.color[2], &effect.color[3],
+            &effect.start_time, &effect.end_time,
+            &effect.curve_intensity, &effect.curve_threshold, &effect.curve_radius,
+            &effect.curve_color_r, &effect.curve_color_g, &effect.curve_color_b,
+            &effect.curve_color_a, &effect.curve_amount, &effect.blend_mode);
+        effect.enabled = enabled != 0;
+        if (parsed < 21) effect.blend_mode = 0;
+        if (parsed < 20) {
+            *effect_count = i;
+            break;
+        }
+    }
+}
+
 static void WriteLayerPostEffectFields(FILE* f, const LayerPostEffect* effects, int effect_count) {
     fprintf(f, "          \"post_effect_count\": %d,\n", effect_count);
     for (int i = 0; i < rev::runtime::kMaxLayerPostEffects; ++i) {
@@ -1759,6 +2121,7 @@ static void WriteLayerPostEffectFields(FILE* f, const LayerPostEffect* effects, 
         fprintf(f, "          \"post_effect_%d_type\": %d,\n", i, effect.type);
         fprintf(f, "          \"post_effect_%d_enabled\": %d,\n", i, effect.enabled ? 1 : 0);
         fprintf(f, "          \"post_effect_%d_order\": %d,\n", i, effect.order);
+        fprintf(f, "          \"post_effect_%d_blend_mode\": %d,\n", i, effect.blend_mode);
         fprintf(f, "          \"post_effect_%d_intensity\": %.3f,\n", i, effect.intensity);
         fprintf(f, "          \"post_effect_%d_threshold\": %.3f,\n", i, effect.threshold);
         fprintf(f, "          \"post_effect_%d_radius\": %.3f,\n", i, effect.radius);
@@ -1868,6 +2231,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"x\": %.3f,\n", cue->x);
             fprintf(f, "          \"y\": %.3f,\n", cue->y);
             fprintf(f, "          \"scale\": %.3f,\n", cue->scale);
+            fprintf(f, "          \"rotation\": %.3f,\n", cue->rotation);
             fprintf(f, "          \"opacity\": %.3f,\n", cue->opacity);
             fprintf(f, "          \"effect_type\": %d,\n", cue->effect_type);
             fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
@@ -1881,6 +2245,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"curve_x\": %d,\n", cue->curve_x);
             fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
             fprintf(f, "          \"curve_scale\": %d,\n", cue->curve_scale);
+            fprintf(f, "          \"curve_rotation\": %d,\n", cue->curve_rotation);
             fprintf(f, "          \"curve_opacity\": %d,\n", cue->curve_opacity);
             WriteLayerPostEffectFields(f, cue->post_effects, cue->post_effect_count);
             fprintf(f, "        }%s\n", (i < scene->image_cue_count - 1) ? "," : "");
@@ -1904,6 +2269,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"x\": %.3f,\n", cue->x);
             fprintf(f, "          \"y\": %.3f,\n", cue->y);
             fprintf(f, "          \"scale\": %.3f,\n", cue->scale);
+            fprintf(f, "          \"rotation\": %.3f,\n", cue->rotation);
             fprintf(f, "          \"opacity\": %.3f,\n", cue->opacity);
             fprintf(f, "          \"effect_type\": %d,\n", cue->effect_type);
             fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
@@ -1920,6 +2286,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"curve_x\": %d,\n", cue->curve_x);
             fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
             fprintf(f, "          \"curve_scale\": %d,\n", cue->curve_scale);
+            fprintf(f, "          \"curve_rotation\": %d,\n", cue->curve_rotation);
             fprintf(f, "          \"curve_opacity\": %d,\n", cue->curve_opacity);
             fprintf(f, "          \"curve_frame\": %d,\n", cue->curve_frame);
             WriteLayerPostEffectFields(f, cue->post_effects, cue->post_effect_count);
@@ -1953,6 +2320,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"x\": %.3f,\n", cue->x);
             fprintf(f, "          \"y\": %.3f,\n", cue->y);
             fprintf(f, "          \"size\": %.3f,\n", cue->size);
+            fprintf(f, "          \"rotation\": %.3f,\n", cue->rotation);
             fprintf(f, "          \"color\": [%.3f, %.3f, %.3f],\n",
                 cue->color.r, cue->color.g, cue->color.b);
             fprintf(f, "          \"effect_type\": %d,\n", cue->effect_type);
@@ -1967,6 +2335,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"curve_x\": %d,\n", cue->curve_x);
             fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
             fprintf(f, "          \"curve_size\": %d,\n", cue->curve_size);
+            fprintf(f, "          \"curve_rotation\": %d,\n", cue->curve_rotation);
             fprintf(f, "          \"curve_color_r\": %d,\n", cue->curve_color_r);
             fprintf(f, "          \"curve_color_g\": %d,\n", cue->curve_color_g);
             fprintf(f, "          \"curve_color_b\": %d,\n", cue->curve_color_b);
@@ -1999,6 +2368,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"x\": %.3f,\n", cue->x);
             fprintf(f, "          \"y\": %.3f,\n", cue->y);
             fprintf(f, "          \"size\": %.3f,\n", cue->size);
+            fprintf(f, "          \"rotation\": %.3f,\n", cue->rotation);
             fprintf(f, "          \"color\": [%.3f, %.3f, %.3f],\n", cue->color.r, cue->color.g, cue->color.b);
             fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
             fprintf(f, "          \"cue_end\": %.3f,\n", cue->cue_end);
@@ -2018,6 +2388,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"slant_deg\": %.3f,\n", cue->slant_deg);
             fprintf(f, "          \"wave_amp\": %.3f,\n", cue->wave_amp);
             fprintf(f, "          \"wave_freq\": %.3f,\n", cue->wave_freq);
+            fprintf(f, "          \"wave_length\": %.3f,\n", cue->wave_length);
             fprintf(f, "          \"jitter_amp\": %.3f,\n", cue->jitter_amp);
             fprintf(f, "          \"jitter_freq\": %.3f,\n", cue->jitter_freq);
             fprintf(f, "          \"glow\": %.3f,\n", cue->glow);
@@ -2030,12 +2401,14 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
             fprintf(f, "          \"curve_speed\": %d,\n", cue->curve_speed);
             fprintf(f, "          \"curve_size\": %d,\n", cue->curve_size);
+            fprintf(f, "          \"curve_rotation\": %d,\n", cue->curve_rotation);
             fprintf(f, "          \"curve_opacity\": %d,\n", cue->curve_opacity);
             fprintf(f, "          \"curve_color_r\": %d,\n", cue->curve_color_r);
             fprintf(f, "          \"curve_color_g\": %d,\n", cue->curve_color_g);
             fprintf(f, "          \"curve_color_b\": %d,\n", cue->curve_color_b);
             fprintf(f, "          \"curve_wave_amp\": %d,\n", cue->curve_wave_amp);
             fprintf(f, "          \"curve_wave_freq\": %d,\n", cue->curve_wave_freq);
+            fprintf(f, "          \"curve_wave_length\": %d,\n", cue->curve_wave_length);
             fprintf(f, "          \"curve_jitter_amp\": %d,\n", cue->curve_jitter_amp);
             fprintf(f, "          \"curve_jitter_freq\": %d,\n", cue->curve_jitter_freq);
             fprintf(f, "          \"baked_asset_key\": \"%s\",\n", escaped_baked_key);
@@ -2223,6 +2596,8 @@ bool SaveProject(EditorContext* editor, const char* path) {
 
 bool NewProject(EditorContext* editor) {
     if (!editor) return false;
+
+    ResetEditorAudio(editor);
     
     // Clean up existing scenes
     for (int i = 0; i < editor->project->scene_count; ++i) {
@@ -2712,25 +3087,31 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             char* p1 = strchr(start, '|');
             if (!p1) continue;
             ImageCue cue = {};
+            cue.curve_rotation = -1;
             size_t key_len = (size_t)(p1 - start);
             if (key_len >= sizeof(cue.asset_key)) key_len = sizeof(cue.asset_key) - 1;
             strncpy_s(cue.asset_key, start, key_len);
             char* p2 = strchr(p1 + 1, '|'); // skip asset_path field
             if (!p2) continue;
             float abs_start = 0.0f, abs_end = 0.0f;
-            int parsed = sscanf_s(p2 + 1, "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d",
+            int parsed = sscanf_s(p2 + 1, "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%d|%d|%d|%d|%f|%d",
                 &cue.x, &cue.y, &cue.scale, &cue.opacity,
                 &abs_start, &abs_end, &cue.layer_order,
                 &cue.effect_type, &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end,
-                &cue.blend_mode
+                &cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_opacity,
+                &cue.blend_mode, &cue.rotation, &cue.curve_rotation
             );
             if (parsed >= 7) {
-                if (parsed < 13) cue.blend_mode = 0;
+                if (parsed < 17) {
+                    cue.blend_mode = (parsed >= 13) ? cue.curve_x : 0;
+                    cue.curve_x = cue.curve_y = cue.curve_scale = cue.curve_opacity = -1;
+                }
                 cue.cue_start = abs_start;
                 cue.cue_end = abs_end;
                 if (editor->project->scene_count == 0)
                     AddScene(editor, "Imported Scene", total_duration);
                 SceneBlock* scene = &editor->project->scenes[0];
+                ParseLayerPostEffectsPipe(start, 21, cue.post_effects, &cue.post_effect_count);
                 AddImageCue(scene, cue);
                 printf("[ImportFromCues] Imported image cue: %s\n", cue.asset_key);
             }
@@ -2746,7 +3127,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             cue.fps = 12.0f;
             cue.playback_mode = 0;
             cue.start_frame = 0;
-            cue.curve_x = cue.curve_y = cue.curve_scale = cue.curve_opacity = cue.curve_frame = -1;
+            cue.curve_x = cue.curve_y = cue.curve_scale = cue.curve_rotation = cue.curve_opacity = cue.curve_frame = -1;
 
             size_t sprite_name_len = (size_t)(p1 - start);
             if (sprite_name_len >= sizeof(cue.sprite_name)) sprite_name_len = sizeof(cue.sprite_name) - 1;
@@ -2764,17 +3145,19 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             if (paths_len >= sizeof(cue.frame_paths_csv)) paths_len = sizeof(cue.frame_paths_csv) - 1;
             strncpy_s(cue.frame_paths_csv, p2 + 1, paths_len);
 
-            int parsed = sscanf_s(p3 + 1, "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d",
+            int parsed = sscanf_s(p3 + 1, "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%f|%d",
                 &cue.x, &cue.y, &cue.scale, &cue.opacity,
                 &cue.cue_start, &cue.cue_end,
                 &cue.layer_order, &cue.effect_type,
                 &cue.fade_in_start, &cue.fade_in_end, &cue.fade_out_start, &cue.fade_out_end,
                 &cue.blend_mode, &cue.fps, &cue.playback_mode, &cue.start_frame,
-                &cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_opacity, &cue.curve_frame);
+                &cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_opacity, &cue.curve_frame,
+                &cue.rotation, &cue.curve_rotation);
             if (parsed >= 6) {
                 if (editor->project->scene_count == 0)
                     AddScene(editor, "Imported Scene", total_duration);
                 SceneBlock* scene = &editor->project->scenes[0];
+                ParseLayerPostEffectsPipe(start, 26, cue.post_effects, &cue.post_effect_count);
                 AddAnimatedSpriteCue(scene, cue);
                 printf("[ImportFromCues] Imported animated sprite cue: %s\n", cue.sprite_name);
             }
@@ -2859,7 +3242,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         }
 
         // Parse scroll text cues:
-        // text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path
+        // text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path|wave_length|curve_wave_length
         if (current_section == SCROLL_TEXT_CUES) {
             char* p1 = strchr(start, '|');
             if (!p1) continue;
@@ -2870,10 +3253,12 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             cue.wrap_gap = 0.2f;
             cue.spacing = 1.0f;
             cue.wave_freq = 1.0f;
+            cue.wave_length = 9.0f;
             cue.jitter_freq = 1.0f;
             cue.curve_x = cue.curve_y = cue.curve_speed = cue.curve_size = cue.curve_opacity = -1;
             cue.curve_color_r = cue.curve_color_g = cue.curve_color_b = -1;
             cue.curve_wave_amp = cue.curve_wave_freq = cue.curve_jitter_amp = cue.curve_jitter_freq = -1;
+            cue.curve_wave_length = -1;
 
             size_t text_len = (size_t)(p1 - start);
             if (text_len >= sizeof(cue.text)) text_len = sizeof(cue.text) - 1;
@@ -2910,6 +3295,21 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
 
             if (parsed >= 45) strncpy_s(cue.baked_asset_key, baked_key, _TRUNCATE);
             if (parsed >= 46) strncpy_s(cue.baked_asset_path, baked_path, _TRUNCATE);
+
+            char* last_separator = strrchr(p2 + 1, '|');
+            if (last_separator) {
+                char* previous_separator = last_separator - 1;
+                while (previous_separator > p2 + 1 && *previous_separator != '|') --previous_separator;
+                if (previous_separator > p2 + 1) {
+                    float wave_length = 0.0f;
+                    int curve_wave_length = -1;
+                    if (sscanf_s(previous_separator, "|%f", &wave_length) == 1 &&
+                        sscanf_s(last_separator, "|%d", &curve_wave_length) == 1) {
+                        cue.wave_length = wave_length;
+                        cue.curve_wave_length = curve_wave_length;
+                    }
+                }
+            }
 
             if (parsed < 44) {
                 parsed = sscanf_s(p2 + 1,
@@ -3040,14 +3440,14 @@ static void WriteLayerPostEffectsPipe(FILE* f, const LayerPostEffect* effects, i
     fprintf(f, "|%d", effect_count);
     for (int i = 0; i < effect_count && i < rev::runtime::kMaxLayerPostEffects; ++i) {
         const LayerPostEffect& effect = effects[i];
-        fprintf(f, "|%d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%d,%d,%d,%d,%d,%d,%d,%d",
+        fprintf(f, "|%d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%d,%d,%d,%d,%d,%d,%d,%d,%d",
                 effect.type, effect.enabled ? 1 : 0, effect.order,
                 effect.intensity, effect.threshold, effect.radius,
                 effect.color[0], effect.color[1], effect.color[2], effect.color[3],
                 effect.start_time, effect.end_time,
                 effect.curve_intensity, effect.curve_threshold, effect.curve_radius,
                 effect.curve_color_r, effect.curve_color_g, effect.curve_color_b,
-                effect.curve_color_a, effect.curve_amount);
+                effect.curve_color_a, effect.curve_amount, effect.blend_mode);
     }
 }
 
@@ -3130,7 +3530,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     
     // [image_cues] section
     fprintf(f, "[image_cues]\n");
-    fprintf(f, "# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity|blend_mode\n");
+    fprintf(f, "# asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity|blend_mode|rotation|curve_rotation\n");
     
     // Compute workspace-root-relative prefix for asset paths once.
     // assets_path is absolute (e.g. E:\himym\intros\test\test_assets).
@@ -3180,12 +3580,12 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             char full_path[640];
             snprintf(full_path, sizeof(full_path), "%s/%s", rel_assets_prefix, cue->asset_key);
             
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d",
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%.3f|%d",
                 cue->asset_key, full_path, cue->x, cue->y, cue->scale, cue->opacity,
                 abs_start, abs_end, cue->layer_order,
                 cue->effect_type, abs_fade_in_start, abs_fade_in_end, abs_fade_out_start, abs_fade_out_end,
                 cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_opacity,
-                cue->blend_mode
+                cue->blend_mode, cue->rotation, cue->curve_rotation
             );
             WriteLayerPostEffectsPipe(f, cue->post_effects, cue->post_effect_count);
             fprintf(f, "\n");
@@ -3196,7 +3596,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 
     // [animated_sprite_cues] section
     fprintf(f, "[animated_sprite_cues]\n");
-    fprintf(f, "# sprite_name|frame_keys_csv|frame_paths_csv|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|blend_mode|fps|playback_mode|start_frame|curve_x|curve_y|curve_scale|curve_opacity|curve_frame\n");
+    fprintf(f, "# sprite_name|frame_keys_csv|frame_paths_csv|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|blend_mode|fps|playback_mode|start_frame|curve_x|curve_y|curve_scale|curve_opacity|curve_frame|rotation|curve_rotation\n");
 
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
@@ -3215,7 +3615,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             float abs_fade_out_start = scene_start + cue->fade_out_start;
             float abs_fade_out_end   = scene_start + cue->fade_out_end;
 
-            fprintf(f, "%s|%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%d|%d|%d|%d|%d|%d|%d",
+            fprintf(f, "%s|%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%d|%d|%d|%d|%d|%d|%d|%.3f|%d",
                 cue->sprite_name, cue->frame_keys_csv, cue->frame_paths_csv,
                 cue->x, cue->y, cue->scale, cue->opacity,
                 abs_start, abs_end,
@@ -3223,7 +3623,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 abs_fade_in_start, abs_fade_in_end, abs_fade_out_start, abs_fade_out_end,
                 cue->blend_mode,
                 cue->fps, cue->playback_mode, cue->start_frame,
-                cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_opacity, cue->curve_frame);
+                cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_opacity, cue->curve_frame,
+                cue->rotation, cue->curve_rotation);
             WriteLayerPostEffectsPipe(f, cue->post_effects, cue->post_effect_count);
             fprintf(f, "\n");
         }
@@ -3322,7 +3723,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 }
             }
             
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s\n",
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%.3f|%d\n",
                 encoded_text, cue->font_name, cue->x, cue->y, cue->size,
                 cue->color.r, cue->color.g, cue->color.b,
                 cue->effect_type, abs_start, abs_end,
@@ -3333,7 +3734,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->curve_color_r, cue->curve_color_g, cue->curve_color_b,
                 cue->bake_mode,
                 baked_asset_key, baked_asset_path,
-                glyph_atlas_key, glyph_atlas_path, glyph_meta_key, glyph_meta_path
+                glyph_atlas_key, glyph_atlas_path, glyph_meta_key, glyph_meta_path,
+                cue->rotation, cue->curve_rotation
             );
         }
     }
@@ -3342,7 +3744,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 
     // [scroll_text_cues] section
     fprintf(f, "[scroll_text_cues]\n");
-    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path|glyph_atlas_key|glyph_atlas_path|glyph_meta_key|glyph_meta_path\n");
+    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path|glyph_atlas_key|glyph_atlas_path|glyph_meta_key|glyph_meta_path|wave_length|curve_wave_length|rotation|curve_rotation\n");
 
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
@@ -3428,7 +3830,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 }
             }
 
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%.3f|%d|%s|%s|%s|%s|%s|%s\n",
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%.3f|%d|%s|%s|%s|%s|%s|%s|%.3f|%d|%.3f|%d\n",
                 encoded_text, cue->font_name,
                 cue->x, cue->y, cue->size,
                 cue->color.r, cue->color.g, cue->color.b,
@@ -3444,7 +3846,9 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->loop_mode, cue->chroma_shift, cue->distortion,
                 cue->bake_mode,
                 baked_asset_key, baked_asset_path,
-                glyph_atlas_key, glyph_atlas_path, glyph_meta_key, glyph_meta_path);
+                glyph_atlas_key, glyph_atlas_path, glyph_meta_key, glyph_meta_path,
+                cue->wave_length, cue->curve_wave_length,
+                cue->rotation, cue->curve_rotation);
         }
     }
 
@@ -4413,6 +4817,7 @@ static const char* sprite_vertex_shader = R"(
 out vec2 uv;
 uniform vec2 u_position;  // -1 to 1
 uniform vec2 u_size;      // width, height in normalized coords
+uniform float u_rotation; // degrees around the sprite centre
 uniform float u_flip_v;
 uniform vec4 u_uv_rect;
 void main() {
@@ -4422,7 +4827,11 @@ void main() {
     vec2 local_uv = vec2((x + 1.0) * 0.5, mix(base_v, 1.0 - base_v, u_flip_v));
     uv = mix(u_uv_rect.xy, u_uv_rect.zw, local_uv);
     // Use Z = 0.999 to ensure sprites render in front of 3D meshes even if depth state isn't fully reset
-    gl_Position = vec4(u_position.x + x * u_size.x, u_position.y + y * u_size.y, 0.999, 1.0);
+    float angle = radians(u_rotation);
+    float c = cos(angle);
+    float s = sin(angle);
+    vec2 rotated = vec2(x * c - y * s, x * s + y * c);
+    gl_Position = vec4(u_position + rotated * u_size, 0.999, 1.0);
 }
 )";
 
@@ -4445,8 +4854,8 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
                                 const char* text, float x, float y, float size_scale,
                                 float spacing, float opacity, float r, float g, float b,
                                 float viewport_width, float viewport_height,
-                                float wave_amp, float wave_freq,
-                                float jitter_amp, float jitter_freq, float time,
+                                float wave_amp, float wave_freq, float wave_length,
+                                float jitter_amp, float jitter_freq, float time, float rotation,
                                 bool horizontal_scroll) {
     if (!program || !atlas || atlas->texture_id == 0 || !text) return false;
     int u_pos = rev::shader::GetUniformLocation(program, "u_position");
@@ -4454,10 +4863,12 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
     int u_tex = rev::shader::GetUniformLocation(program, "u_texture");
     int u_opa = rev::shader::GetUniformLocation(program, "u_opacity");
     int u_col = rev::shader::GetUniformLocation(program, "u_color_tint");
+    int u_rot = rev::shader::GetUniformLocation(program, "u_rotation");
     int u_uv = rev::shader::GetUniformLocation(program, "u_uv_rect");
     if (u_tex >= 0) rev::shader::SetInt(program, u_tex, 0);
     if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity);
     if (u_col >= 0) rev::shader::SetVec3(program, u_col, r, g, b);
+    if (u_rot >= 0) rev::shader::SetFloat(program, u_rot, rotation);
     if (spacing < 0.01f) spacing = 0.01f;
     float line_width = 0.0f;
     for (const unsigned char* p = (const unsigned char*)text; *p && *p != '\n'; ++p) {
@@ -4479,7 +4890,8 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
         if (!glyph) continue;
         float w = glyph->width * size_scale / viewport_width * 2.0f;
         float h = glyph->height * size_scale / viewport_height * 2.0f;
-        float phase = time * wave_freq * 6.2831853f + (float)glyph_index * 0.72f;
+        float safe_wave_length = wave_length < 2.0f ? 2.0f : wave_length;
+        float phase = time * wave_freq * 6.2831853f + (float)glyph_index * 6.2831853f / safe_wave_length;
         float jitter_phase = time * jitter_freq * 6.2831853f + (float)glyph_index * 1.19f;
         float wave = sinf(phase) * wave_amp;
         float jitter_x = sinf(jitter_phase * 1.7f) * jitter_amp;
@@ -5157,6 +5569,7 @@ void RenderPreviewFrame(EditorContext* editor) {
         int sp_tex = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_texture")  : -1;
         int sp_pos = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_position") : -1;
         int sp_sz  = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_size")     : -1;
+        int sp_rot = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_rotation") : -1;
         int sp_opa = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_opacity")  : -1;
         int sp_col = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_color_tint") : -1;
 
@@ -5293,7 +5706,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                 if (sprite_uv >= 0) rev::shader::SetVec4(sprite_prog, sprite_uv, 0.0f, 0.0f, 1.0f, 1.0f);
 
                 unsigned int tex = 0;
-                float norm_w = 0, norm_h = 0, pos_x = 0, pos_y = 0, opacity = 1.0f;
+                float norm_w = 0, norm_h = 0, pos_x = 0, pos_y = 0, rotation = 0.0f, opacity = 1.0f;
 
                 if (item.type == 0) {
                     ImageCue* cue = (ImageCue*)item.cue;
@@ -5302,6 +5715,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float anim_x = cue->x;
                     float anim_y = cue->y;
                     float anim_scale = cue->scale;
+                    float anim_rotation = cue->rotation;
                     float anim_opacity = cue->opacity;
                     
                     // Calculate elapsed time from cue start (convert scene-relative to absolute)
@@ -5323,6 +5737,11 @@ void RenderPreviewFrame(EditorContext* editor) {
                             float t = elapsed_time / curve->duration;
                             anim_scale = rev::curve::Evaluate(*curve, t);
                         }
+                        if (cue->curve_rotation >= 0 && cue->curve_rotation < editor->project->curve_count) {
+                            rev::curve::Curve* curve = &editor->project->curves[cue->curve_rotation];
+                            float t = elapsed_time / curve->duration;
+                            anim_rotation = rev::curve::Evaluate(*curve, t);
+                        }
                         if (cue->curve_opacity >= 0 && cue->curve_opacity < editor->project->curve_count) {
                             rev::curve::Curve* curve = &editor->project->curves[cue->curve_opacity];
                             float t = elapsed_time / curve->duration;
@@ -5340,6 +5759,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     norm_h = (rt_img.height * anim_scale) / editor->preview_height * 2.0f;
                     pos_x  =  (anim_x * 2.0f) - 1.0f;
                     pos_y  = -((anim_y * 2.0f) - 1.0f);
+                    rotation = anim_rotation;
                     opacity = anim_opacity * rev::runtime::ComputeEffectOpacity(
                         cue->effect_type, cue->fade_in_start, cue->fade_in_end,
                         cue->fade_out_start, cue->fade_out_end, editor->current_time - item.scene_start_time);
@@ -5349,6 +5769,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float anim_x = cue->x;
                     float anim_y = cue->y;
                     float anim_scale = cue->scale;
+                    float anim_rotation = cue->rotation;
                     float anim_opacity = cue->opacity;
                     float anim_frame = (float)cue->start_frame;
 
@@ -5369,6 +5790,11 @@ void RenderPreviewFrame(EditorContext* editor) {
                             rev::curve::Curve* curve = &editor->project->curves[cue->curve_scale];
                             float t = elapsed_time / curve->duration;
                             anim_scale = rev::curve::Evaluate(*curve, t);
+                        }
+                        if (cue->curve_rotation >= 0 && cue->curve_rotation < editor->project->curve_count) {
+                            rev::curve::Curve* curve = &editor->project->curves[cue->curve_rotation];
+                            float t = elapsed_time / curve->duration;
+                            anim_rotation = rev::curve::Evaluate(*curve, t);
                         }
                         if (cue->curve_opacity >= 0 && cue->curve_opacity < editor->project->curve_count) {
                             rev::curve::Curve* curve = &editor->project->curves[cue->curve_opacity];
@@ -5447,6 +5873,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     norm_h = (rt_img.height * anim_scale) / editor->preview_height * 2.0f;
                     pos_x  =  (anim_x * 2.0f) - 1.0f;
                     pos_y  = -((anim_y * 2.0f) - 1.0f);
+                    rotation = anim_rotation;
                     opacity = anim_opacity * rev::runtime::ComputeEffectOpacity(
                         cue->effect_type, cue->fade_in_start, cue->fade_in_end,
                         cue->fade_out_start, cue->fade_out_end, editor->current_time - item.scene_start_time);
@@ -5457,6 +5884,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float anim_x = cue->x;
                     float anim_y = cue->y;
                     float anim_size = cue->size;
+                    float anim_rotation = cue->rotation;
                     float anim_color_r = cue->color.r;
                     float anim_color_g = cue->color.g;
                     float anim_color_b = cue->color.b;
@@ -5479,6 +5907,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                             rev::curve::Curve* curve = &editor->project->curves[cue->curve_size];
                             float t = elapsed_time / curve->duration;
                             anim_size = rev::curve::Evaluate(*curve, t);
+                        }
+                        if (cue->curve_rotation >= 0 && cue->curve_rotation < editor->project->curve_count) {
+                            rev::curve::Curve* curve = &editor->project->curves[cue->curve_rotation];
+                            anim_rotation = rev::curve::Evaluate(*curve, elapsed_time / curve->duration);
                         }
                         if (cue->curve_color_r >= 0 && cue->curve_color_r < editor->project->curve_count) {
                             rev::curve::Curve* curve = &editor->project->curves[cue->curve_color_r];
@@ -5513,7 +5945,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 cue->fade_out_start, cue->fade_out_end, scene_time) * fx.opacity_mul,
                             anim_color_r, anim_color_g, anim_color_b,
                             (float)editor->preview_width, (float)editor->preview_height,
-                            0.0f, 0.0f, 0.0f, 0.0f, scene_time, true)) {
+                            0.0f, 0.0f, 9.0f, 0.0f, 0.0f, scene_time, anim_rotation, true)) {
                             continue;
                         }
 
@@ -5526,6 +5958,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     norm_h = (float)rt_txt.height / editor->preview_height * 2.0f;
                         pos_x  =  ((anim_x + fx.offset_x) * 2.0f) - 1.0f;
                         pos_y  = -(((anim_y + fx.offset_y) * 2.0f) - 1.0f);
+                        rotation = anim_rotation;
                         opacity = rev::runtime::ComputeEffectOpacity(
                         cue->effect_type, cue->fade_in_start, cue->fade_in_end,
                         cue->fade_out_start, cue->fade_out_end, scene_time) * fx.opacity_mul;
@@ -5536,12 +5969,14 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float anim_y = cue->y;
                     float anim_speed = cue->speed;
                     float anim_size = cue->size;
+                    float anim_rotation = cue->rotation;
                     float anim_opacity = cue->opacity;
                     float anim_color_r = cue->color.r;
                     float anim_color_g = cue->color.g;
                     float anim_color_b = cue->color.b;
                     float anim_wave_amp = cue->wave_amp;
                     float anim_wave_freq = cue->wave_freq;
+                    float anim_wave_length = cue->wave_length;
                     float anim_jitter_amp = cue->jitter_amp;
                     float anim_jitter_freq = cue->jitter_freq;
 
@@ -5568,6 +6003,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                         rev::curve::Curve* curve = &editor->project->curves[cue->curve_size];
                         float t = elapsed_time / curve->duration;
                         anim_size = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_rotation >= 0 && cue->curve_rotation < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_rotation];
+                        anim_rotation = rev::curve::Evaluate(*curve, elapsed_time / curve->duration);
                     }
                     if (cue->curve_opacity >= 0 && cue->curve_opacity < editor->project->curve_count) {
                         rev::curve::Curve* curve = &editor->project->curves[cue->curve_opacity];
@@ -5598,6 +6037,11 @@ void RenderPreviewFrame(EditorContext* editor) {
                         rev::curve::Curve* curve = &editor->project->curves[cue->curve_wave_freq];
                         float t = elapsed_time / curve->duration;
                         anim_wave_freq = rev::curve::Evaluate(*curve, t);
+                    }
+                    if (cue->curve_wave_length >= 0 && cue->curve_wave_length < editor->project->curve_count) {
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_wave_length];
+                        float t = elapsed_time / curve->duration;
+                        anim_wave_length = rev::curve::Evaluate(*curve, t);
                     }
                     if (cue->curve_jitter_amp >= 0 && cue->curve_jitter_amp < editor->project->curve_count) {
                         rev::curve::Curve* curve = &editor->project->curves[cue->curve_jitter_amp];
@@ -5689,7 +6133,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                         draw_r, draw_g, draw_b,
                         (float)editor->preview_width, (float)editor->preview_height,
                         anim_wave_amp, anim_wave_freq,
-                        anim_jitter_amp, anim_jitter_freq, elapsed_time,
+                        anim_wave_length,
+                        anim_jitter_amp, anim_jitter_freq, elapsed_time, anim_rotation,
                         cue->direction <= 1)) {
                         continue;
                     }
@@ -5709,6 +6154,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     pos_y = -((scroll_y * 2.0f) - 1.0f);
 
                     opacity = scroll_opacity;
+                    rotation = anim_rotation;
                 }
 
                 LayerPostEffect* layer_effects = nullptr;
@@ -5737,6 +6183,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (sp_tex >= 0) rev::shader::SetInt(sprite_prog, sp_tex, 0);
                     if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, pos_x, pos_y);
                     if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
+                    if (sp_rot >= 0) rev::shader::SetFloat(sprite_prog, sp_rot, rotation);
                     if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
                     if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -5746,6 +6193,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float threshold[PostEffectCount] = {};
                     float radius[PostEffectCount] = {};
                     float color[PostEffectCount][4] = {};
+                    int layer_blend_mode = 0;
                     float layer_time = editor->current_time - item.scene_start_time;
                     for (int effect_index = 0; effect_index < layer_effect_count && effect_index < rev::runtime::kMaxLayerPostEffects; ++effect_index) {
                         LayerPostEffect& effect = layer_effects[effect_index];
@@ -5753,6 +6201,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                         if (!effect.enabled || effect.type < 0 || effect.type >= PostEffectCount ||
                             effect.type >= 20 ||
                             layer_time < effect.start_time || layer_time > effect_end) continue;
+                        layer_blend_mode = (effect.blend_mode >= 0 && effect.blend_mode <= 3)
+                            ? effect.blend_mode : 0;
                         auto evaluate_layer_curve = [&](int curve_index, float fallback) {
                             if (curve_index < 0 || curve_index >= editor->project->curve_count) return fallback;
                             const rev::curve::Curve& curve = editor->project->curves[curve_index];
@@ -5802,13 +6252,14 @@ void RenderPreviewFrame(EditorContext* editor) {
 
                     glBindFramebuffer(0x8D40, editor->preview_fbo);
                     glEnable(GL_BLEND);
-                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    ApplySpriteBlendMode(layer_blend_mode);
                     rev::shader::Use(sprite_prog);
                     if (glActiveTexture_fn) glActiveTexture_fn(0x84C0);
                     glBindTexture(GL_TEXTURE_2D, editor->post_texture);
                     if (sp_tex >= 0) rev::shader::SetInt(sprite_prog, sp_tex, 0);
                     if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, 0.0f, 0.0f);
                     if (sp_sz >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, 1.0f, 1.0f);
+                    if (sp_rot >= 0) rev::shader::SetFloat(sprite_prog, sp_rot, 0.0f);
                     if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, 1.0f);
                     if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
                     rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_flip_v"), 0.0f);
@@ -5820,6 +6271,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (sp_tex >= 0) rev::shader::SetInt(sprite_prog, sp_tex, 0);
                     if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, pos_x, pos_y);
                     if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
+                    if (sp_rot >= 0) rev::shader::SetFloat(sprite_prog, sp_rot, rotation);
                     if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
                     if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -6704,12 +7156,14 @@ void RenderPreviewFrame(EditorContext* editor) {
 }
 
 void UpdatePlayback(EditorContext* editor, float delta_time) {
-    if (!editor || !editor->playing) return;
-    
-    editor->current_time += delta_time;
+    if (!editor) return;
+
+    if (editor->playing) {
+        editor->current_time += delta_time;
+    }
     
     // Clamp to project duration (use 10s default if duration is 0)
-    if (editor->project) {
+    if (editor->project && editor->playing) {
         float max_duration = editor->project->total_duration;
         if (max_duration <= 0.0f) max_duration = 10.0f; // Default playback duration
         
@@ -6718,6 +7172,8 @@ void UpdatePlayback(EditorContext* editor, float delta_time) {
             editor->playing = false; // Stop at end
         }
     }
+
+    SyncEditorAudio(editor, delta_time);
 }
 
 void ReloadEditorAssets(EditorContext* editor) {

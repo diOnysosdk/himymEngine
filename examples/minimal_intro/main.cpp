@@ -626,6 +626,8 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
         int blend_mode = 0;
         int curve_x = -1, curve_y = -1, curve_size = -1;
         int curve_color_r = -1, curve_color_g = -1, curve_color_b = -1;
+        int curve_rotation = -1;
+        float rotation = 0.0f;
         int bake_mode = 0;
         char baked_asset_key[64] = {};
         char baked_asset_path[512] = {};
@@ -636,7 +638,7 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
 
         bool parsed_with_bake_mode = true;
         int parsed = sscanf_s(pipe2 + 1,
-                 "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%63[^|]|%511[^|]|%63[^|]|%511[^|]|%63[^|]|%511[^|\r\n]",
+                 "%f|%f|%f|%f|%f|%f|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%63[^|]|%511[^|]|%63[^|]|%511[^|]|%63[^|]|%511[^|\r\n]|%f|%d",
                      &cue->x, &cue->y, &cue->size,
                      &cue->color.r, &cue->color.g, &cue->color.b,
                      &cue->effect_type,
@@ -653,7 +655,8 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
                      glyph_atlas_key, (unsigned)_countof(glyph_atlas_key),
                      glyph_atlas_path, (unsigned)_countof(glyph_atlas_path),
                      glyph_meta_key, (unsigned)_countof(glyph_meta_key),
-                     glyph_meta_path, (unsigned)_countof(glyph_meta_path));
+                     glyph_meta_path, (unsigned)_countof(glyph_meta_path),
+                     &rotation, &curve_rotation);
         if (parsed < 23) {
             parsed_with_bake_mode = false;
             parsed = sscanf_s(pipe2 + 1,
@@ -690,6 +693,8 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
                 cue->curve_color_b = (parsed >= 20) ? curve_color_b : -1;
             }
             cue->bake_mode = (parsed_with_bake_mode && parsed >= 22) ? bake_mode : 0;
+            cue->rotation = (parsed_with_bake_mode && parsed >= 29) ? rotation : 0.0f;
+            cue->curve_rotation = (parsed_with_bake_mode && parsed >= 30) ? curve_rotation : -1;
             if (parsed_with_bake_mode) {
                 if (parsed >= 23) strncpy_s(cue->baked_asset_key, baked_asset_key, _TRUNCATE);
                 if (parsed >= 24) strncpy_s(cue->baked_asset_path, baked_asset_path, _TRUNCATE);
@@ -735,11 +740,13 @@ int LoadAllScrollTextCues(const char* path, ScrollTextCue* cues, int max_cues) {
         cue->wrap_gap = 0.2f;
         cue->spacing = 1.0f;
         cue->wave_freq = 1.0f;
+        cue->wave_length = 9.0f;
         cue->jitter_freq = 1.0f;
         cue->bake_mode = 0;
         cue->curve_x = cue->curve_y = cue->curve_speed = cue->curve_size = cue->curve_opacity = -1;
         cue->curve_color_r = cue->curve_color_g = cue->curve_color_b = -1;
         cue->curve_wave_amp = cue->curve_wave_freq = cue->curve_jitter_amp = cue->curve_jitter_freq = -1;
+        cue->curve_wave_length = -1;
 
         char* pipe1 = strchr(s, '|');
         if (!pipe1) continue;
@@ -827,6 +834,41 @@ int LoadAllScrollTextCues(const char* path, ScrollTextCue* cues, int max_cues) {
         }
 
         ParseScrollGlyphAssetRefs(pipe2 + 1, cue);
+        char* last_separator = strrchr(pipe2 + 1, '|');
+        if (last_separator) {
+            char* curve_rotation_separator = last_separator;
+            char* rotation_separator = curve_rotation_separator - 1;
+            while (rotation_separator > pipe2 + 1 && *rotation_separator != '|') --rotation_separator;
+            char* curve_wave_length_separator = rotation_separator - 1;
+            while (curve_wave_length_separator > pipe2 + 1 && *curve_wave_length_separator != '|') --curve_wave_length_separator;
+            char* wave_length_separator = curve_wave_length_separator - 1;
+            while (wave_length_separator > pipe2 + 1 && *wave_length_separator != '|') --wave_length_separator;
+            if (wave_length_separator > pipe2 + 1) {
+                float wave_length = 0.0f;
+                int curve_wave_length = -1;
+                float rotation = 0.0f;
+                int curve_rotation = -1;
+                if (sscanf_s(wave_length_separator, "|%f", &wave_length) == 1 &&
+                    sscanf_s(curve_wave_length_separator, "|%d", &curve_wave_length) == 1 &&
+                    sscanf_s(rotation_separator, "|%f", &rotation) == 1 &&
+                    sscanf_s(curve_rotation_separator, "|%d", &curve_rotation) == 1) {
+                    cue->wave_length = wave_length;
+                    cue->curve_wave_length = curve_wave_length;
+                    cue->rotation = rotation;
+                    cue->curve_rotation = curve_rotation;
+                } else {
+                    char* legacy_curve_separator = last_separator;
+                    char* legacy_wave_separator = legacy_curve_separator - 1;
+                    while (legacy_wave_separator > pipe2 + 1 && *legacy_wave_separator != '|') --legacy_wave_separator;
+                    if (legacy_wave_separator > pipe2 + 1 &&
+                        sscanf_s(legacy_wave_separator, "|%f", &wave_length) == 1 &&
+                        sscanf_s(legacy_curve_separator, "|%d", &curve_wave_length) == 1) {
+                        cue->wave_length = wave_length;
+                        cue->curve_wave_length = curve_wave_length;
+                    }
+                }
+            }
+        }
         if (parsed >= 12) {
             count++;
         }
@@ -855,16 +897,18 @@ static void ParseLayerPostEffectsPipe(char* data, int base_field_count,
         ++field;
         rev::runtime::LayerPostEffect& effect = effects[i];
         int enabled = 0;
+        effect.blend_mode = 0;
         int parsed = sscanf_s(field,
-            "%d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%d,%d,%d,%d,%d,%d,%d,%d",
+            "%d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%d,%d,%d,%d,%d,%d,%d,%d,%d",
             &effect.type, &enabled, &effect.order,
             &effect.intensity, &effect.threshold, &effect.radius,
             &effect.color[0], &effect.color[1], &effect.color[2], &effect.color[3],
             &effect.start_time, &effect.end_time,
             &effect.curve_intensity, &effect.curve_threshold, &effect.curve_radius,
             &effect.curve_color_r, &effect.curve_color_g, &effect.curve_color_b,
-            &effect.curve_color_a, &effect.curve_amount);
+            &effect.curve_color_a, &effect.curve_amount, &effect.blend_mode);
         effect.enabled = enabled != 0;
+        if (parsed < 21) effect.blend_mode = 0;
         if (parsed < 20) {
             *effect_count = i;
             break;
@@ -905,16 +949,17 @@ int LoadAllImageCues(const char* path, ImageCue* cues, int max_cues) {
 
         int layer_order = 0;
         int curve_x = -1, curve_y = -1, curve_scale = -1, curve_opacity = -1;
+        int curve_rotation = -1;
         int blend_mode = 0;
         int scanned = sscanf_s(pipe2 + 1,
-                 "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%d|%d|%d|%d",
+                 "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%d|%d|%d|%d|%f|%d",
                      &cue->x, &cue->y, &cue->scale, &cue->opacity,
                      &cue->cue_start, &cue->cue_end,
                      &layer_order, &cue->effect_type,
                      &cue->fade_in_start, &cue->fade_in_end,
                      &cue->fade_out_start, &cue->fade_out_end,
                      &curve_x, &curve_y, &curve_scale, &curve_opacity,
-                     &blend_mode);
+                     &blend_mode, &cue->rotation, &curve_rotation);
         if (scanned >= 6) {
             cue->layer_order = layer_order;
             cue->curve_x     = (scanned >= 13) ? curve_x     : -1;
@@ -922,7 +967,9 @@ int LoadAllImageCues(const char* path, ImageCue* cues, int max_cues) {
             cue->curve_scale = (scanned >= 15) ? curve_scale : -1;
             cue->curve_opacity = (scanned >= 16) ? curve_opacity : -1;
             cue->blend_mode  = (scanned >= 17) ? blend_mode  : 0;
-            ParseLayerPostEffectsPipe(pipe2 + 1, 17, cue->post_effects, &cue->post_effect_count);
+            cue->curve_rotation = (scanned >= 19) ? curve_rotation : -1;
+            ParseLayerPostEffectsPipe(pipe2 + 1, scanned >= 19 ? 19 : 17,
+                                      cue->post_effects, &cue->post_effect_count);
             count++;
         }
     }
@@ -970,7 +1017,7 @@ int LoadAllAnimatedSpriteCues(const char* path, AnimatedSpriteCue* cues, int max
         strncpy_s(cue->frame_paths_csv, pipe2 + 1, _TRUNCATE);
 
         int parsed = sscanf_s(pipe3 + 1,
-            "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d",
+            "%f|%f|%f|%f|%f|%f|%d|%d|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%f|%d",
             &cue->x, &cue->y, &cue->scale, &cue->opacity,
             &cue->cue_start, &cue->cue_end,
             &cue->layer_order, &cue->effect_type,
@@ -980,9 +1027,11 @@ int LoadAllAnimatedSpriteCues(const char* path, AnimatedSpriteCue* cues, int max
             &cue->fps,
             &cue->playback_mode,
             &cue->start_frame,
-            &cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_opacity, &cue->curve_frame);
+            &cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_opacity, &cue->curve_frame,
+            &cue->rotation, &cue->curve_rotation);
         if (parsed >= 6) {
-            ParseLayerPostEffectsPipe(pipe3 + 1, 21, cue->post_effects, &cue->post_effect_count);
+            ParseLayerPostEffectsPipe(pipe3 + 1, parsed >= 23 ? 23 : 21,
+                                      cue->post_effects, &cue->post_effect_count);
             ++count;
         }
     }
@@ -1184,6 +1233,7 @@ const char* sprite_vertex_shader = R"(
 out vec2 uv;
 uniform vec2 u_position;  // -1 to 1
 uniform vec2 u_size;      // width, height in normalized coords
+uniform float u_rotation; // degrees around the sprite centre
 uniform float u_flip_v;
 uniform vec4 u_uv_rect;   // atlas rectangle, or full texture for sprites
 void main() {
@@ -1192,7 +1242,11 @@ void main() {
     float base_v = (y + 1.0) * 0.5;
     vec2 local_uv = vec2((x + 1.0) * 0.5, mix(base_v, 1.0 - base_v, u_flip_v));
     uv = mix(u_uv_rect.xy, u_uv_rect.zw, local_uv);
-    gl_Position = vec4(u_position.x + x * u_size.x, u_position.y + y * u_size.y, 0.0, 1.0);
+    float angle = radians(u_rotation);
+    float c = cos(angle);
+    float s = sin(angle);
+    vec2 rotated = vec2(x * c - y * s, x * s + y * c);
+    gl_Position = vec4(u_position + rotated * u_size, 0.0, 1.0);
 }
 )";
 
@@ -1204,6 +1258,7 @@ struct SpriteUniformCache {
     int opacity = -1;
     int color = -1;
     int uv_rect = -1;
+    int rotation = -1;
 };
 
 static bool IsSpriteVisible(float center_x, float center_y, float width, float height)
@@ -1223,6 +1278,7 @@ static SpriteUniformCache GetSpriteUniformCache(rev::shader::Program* program)
         cache.opacity = rev::shader::GetUniformLocation(program, "u_opacity");
         cache.color = rev::shader::GetUniformLocation(program, "u_color_tint");
         cache.uv_rect = rev::shader::GetUniformLocation(program, "u_uv_rect");
+        cache.rotation = rev::shader::GetUniformLocation(program, "u_rotation");
     }
     return cache;
 }
@@ -1231,8 +1287,8 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
                          const char* text, float x, float y, float size_scale,
                          float spacing, float opacity, float r, float g, float b,
                          float viewport_width, float viewport_height,
-                         float wave_amp, float wave_freq,
-                         float jitter_amp, float jitter_freq, float time,
+                         float wave_amp, float wave_freq, float wave_length,
+                         float jitter_amp, float jitter_freq, float time, float rotation,
                          bool horizontal_scroll) {
     if (!program || !atlas || atlas->texture_id == 0 || !text) return false;
     const SpriteUniformCache uniforms = GetSpriteUniformCache(program);
@@ -1242,9 +1298,11 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
     int u_opa = uniforms.opacity;
     int u_col = uniforms.color;
     int u_uv = uniforms.uv_rect;
+    int u_rot = uniforms.rotation;
     if (u_tex >= 0) rev::shader::SetInt(program, u_tex, 0);
     if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity);
     if (u_col >= 0) rev::shader::SetVec3(program, u_col, r, g, b);
+    if (u_rot >= 0) rev::shader::SetFloat(program, u_rot, rotation);
     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, atlas->texture_id);
 
@@ -1269,7 +1327,8 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
         if (!glyph) continue;
         float w = glyph->width * size_scale / viewport_width * 2.0f;
         float h = glyph->height * size_scale / viewport_height * 2.0f;
-        float phase = time * wave_freq * 6.2831853f + (float)glyph_index * 0.72f;
+        float safe_wave_length = wave_length < 2.0f ? 2.0f : wave_length;
+        float phase = time * wave_freq * 6.2831853f + (float)glyph_index * 6.2831853f / safe_wave_length;
         float jitter_phase = time * jitter_freq * 6.2831853f + (float)glyph_index * 1.19f;
         float wave = sinf(phase) * wave_amp;
         float jitter_x = sinf(jitter_phase * 1.7f) * jitter_amp;
@@ -3261,6 +3320,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             bool blend_on = false, depth_on = false;
 
             auto render_layer_post = [&](unsigned int source_texture, float x, float y, float width, float height,
+                                         float rotation,
                                          float opacity, const rev::runtime::LayerPostEffect* effects, int effect_count,
                                          float layer_time) -> bool {
                 if (!layer_fbo || !layer_texture || !post_fbo || !post_texture || !post_shader ||
@@ -3270,12 +3330,15 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 float threshold[kPostEffectCount] = {};
                 float radius[kPostEffectCount] = {};
                 float color[kPostEffectCount][4] = {};
+                int layer_blend_mode = 0;
                 for (int i = 0; i < effect_count && i < rev::runtime::kMaxLayerPostEffects; ++i) {
                     const rev::runtime::LayerPostEffect& effect = effects[i];
                     float end_time = effect.end_time < 0.0f ? 1.0e30f : effect.end_time;
                     if (!effect.enabled || effect.type < 0 || effect.type >= kPostEffectCount ||
                         effect.type >= 20 ||
                         layer_time < effect.start_time || layer_time > end_time) continue;
+                    layer_blend_mode = (effect.blend_mode >= 0 && effect.blend_mode <= 3)
+                        ? effect.blend_mode : 0;
                     auto evaluate_layer_curve = [&](int curve_index, float fallback) {
                         if (curve_index < 0 || curve_index >= curve_count) return fallback;
                         float duration = curves[curve_index].duration;
@@ -3303,10 +3366,12 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 int sprite_size = rev::shader::GetUniformLocation(sprite_shader, "u_size");
                 int sprite_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
                 int sprite_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
+                int sprite_rot = rev::shader::GetUniformLocation(sprite_shader, "u_rotation");
                 if (sprite_pos >= 0) rev::shader::SetVec2(sprite_shader, sprite_pos, x, y);
                 if (sprite_size >= 0) rev::shader::SetVec2(sprite_shader, sprite_size, width, height);
                 if (sprite_tex >= 0) rev::shader::SetInt(sprite_shader, sprite_tex, 0);
                 if (sprite_opa >= 0) rev::shader::SetFloat(sprite_shader, sprite_opa, opacity);
+                if (sprite_rot >= 0) rev::shader::SetFloat(sprite_shader, sprite_rot, rotation);
                 if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D, source_texture);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -3341,12 +3406,13 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
                 glBindFramebuffer_rt(0x8D40, scene_fbo);
                 glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                ApplySpriteBlendMode(layer_blend_mode);
                 rev::shader::Use(sprite_shader);
                 if (sprite_pos >= 0) rev::shader::SetVec2(sprite_shader, sprite_pos, 0.0f, 0.0f);
                 if (sprite_size >= 0) rev::shader::SetVec2(sprite_shader, sprite_size, 1.0f, 1.0f);
                 if (sprite_tex >= 0) rev::shader::SetInt(sprite_shader, sprite_tex, 0);
                 if (sprite_opa >= 0) rev::shader::SetFloat(sprite_shader, sprite_opa, 1.0f);
+                if (sprite_rot >= 0) rev::shader::SetFloat(sprite_shader, sprite_rot, 0.0f);
                 rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_flip_v"), 0.0f);
                 if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D, post_texture);
@@ -3386,6 +3452,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float anim_x = image_cue.x;
                     float anim_y = image_cue.y;
                     float anim_scale = image_cue.scale;
+                    float anim_rotation = image_cue.rotation;
                     float anim_opacity = image_cue.opacity;
 
                     float elapsed_time = time - image_cue.cue_start;
@@ -3402,6 +3469,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             float t = elapsed_time / curves[image_cue.curve_scale].duration;
                             anim_scale = rev::curve::Evaluate(curves[image_cue.curve_scale], t);
                         }
+                        if (image_cue.curve_rotation >= 0 && image_cue.curve_rotation < curve_count) {
+                            float t = elapsed_time / curves[image_cue.curve_rotation].duration;
+                            anim_rotation = rev::curve::Evaluate(curves[image_cue.curve_rotation], t);
+                        }
                         if (image_cue.curve_opacity >= 0 && image_cue.curve_opacity < curve_count) {
                             float t = elapsed_time / curves[image_cue.curve_opacity].duration;
                             anim_opacity = rev::curve::Evaluate(curves[image_cue.curve_opacity], t);
@@ -3413,13 +3484,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float x =  (anim_x * 2.0f - 1.0f);
                     float y = -((anim_y * 2.0f) - 1.0f);
                     if (!IsSpriteVisible(x, y, w, h)) continue;
-                    int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
-                    int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
-                    int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
-                    int u_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
-                    int u_col = rev::shader::GetUniformLocation(sprite_shader, "u_color_tint");
+                    const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
+                    int u_pos = uniforms.position;
+                    int u_sz  = uniforms.size;
+                    int u_rot = uniforms.rotation;
+                    int u_tex = uniforms.texture;
+                    int u_opa = uniforms.opacity;
+                    int u_col = uniforms.color;
                     if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
                     if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
+                    if (u_rot >= 0) rev::shader::SetFloat(sprite_shader, u_rot, anim_rotation);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa,
                         anim_opacity * ComputeEffectOpacity(
@@ -3427,7 +3501,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             image_cue.fade_out_start, image_cue.fade_out_end, time));
                     if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
-                    if (!render_layer_post(image_tex.texture_id, x, y, w, h,
+                    if (!render_layer_post(image_tex.texture_id, x, y, w, h, anim_rotation,
                                            anim_opacity * ComputeEffectOpacity(
                                                image_cue.effect_type, image_cue.fade_in_start, image_cue.fade_in_end,
                                                image_cue.fade_out_start, image_cue.fade_out_end, time),
@@ -3461,6 +3535,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float anim_x = cue.x;
                     float anim_y = cue.y;
                     float anim_scale = cue.scale;
+                    float anim_rotation = cue.rotation;
                     float anim_opacity = cue.opacity;
                     float anim_frame = (float)cue.start_frame;
 
@@ -3475,6 +3550,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (cue.curve_scale >= 0 && cue.curve_scale < curve_count) {
                         float t = elapsed_time / curves[cue.curve_scale].duration;
                         anim_scale = rev::curve::Evaluate(curves[cue.curve_scale], t);
+                    }
+                    if (cue.curve_rotation >= 0 && cue.curve_rotation < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_rotation].duration;
+                        anim_rotation = rev::curve::Evaluate(curves[cue.curve_rotation], t);
                     }
                     if (cue.curve_opacity >= 0 && cue.curve_opacity < curve_count) {
                         float t = elapsed_time / curves[cue.curve_opacity].duration;
@@ -3543,13 +3622,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         glDeleteTextures(1, &frame_tex.texture_id);
                         continue;
                     }
-                    int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
-                    int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
-                    int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
-                    int u_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
-                    int u_col = rev::shader::GetUniformLocation(sprite_shader, "u_color_tint");
+                    const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
+                    int u_pos = uniforms.position;
+                    int u_sz  = uniforms.size;
+                    int u_rot = uniforms.rotation;
+                    int u_tex = uniforms.texture;
+                    int u_opa = uniforms.opacity;
+                    int u_col = uniforms.color;
                     if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
                     if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
+                    if (u_rot >= 0) rev::shader::SetFloat(sprite_shader, u_rot, anim_rotation);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa,
                         anim_opacity * ComputeEffectOpacity(
@@ -3557,7 +3639,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             cue.fade_out_start, cue.fade_out_end, time));
                     if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
-                    if (!render_layer_post(frame_tex.texture_id, x, y, w, h,
+                    if (!render_layer_post(frame_tex.texture_id, x, y, w, h, anim_rotation,
                                            anim_opacity * ComputeEffectOpacity(
                                                cue.effect_type, cue.fade_in_start, cue.fade_in_end,
                                                cue.fade_out_start, cue.fade_out_end, time),
@@ -3596,6 +3678,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float anim_text_x = text_cue.x;
                     float anim_text_y = text_cue.y;
                     float anim_text_size = text_cue.size;
+                    float anim_text_rotation = text_cue.rotation;
                     float anim_text_color_r = text_cue.color.r;
                     float anim_text_color_g = text_cue.color.g;
                     float anim_text_color_b = text_cue.color.b;
@@ -3612,6 +3695,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         if (text_cue.curve_size >= 0 && text_cue.curve_size < curve_count) {
                             float t = elapsed_time / curves[text_cue.curve_size].duration;
                             anim_text_size = rev::curve::Evaluate(curves[text_cue.curve_size], t);
+                        }
+                        if (text_cue.curve_rotation >= 0 && text_cue.curve_rotation < curve_count) {
+                            float t = elapsed_time / curves[text_cue.curve_rotation].duration;
+                            anim_text_rotation = rev::curve::Evaluate(curves[text_cue.curve_rotation], t);
                         }
                         if (text_cue.curve_color_r >= 0 && text_cue.curve_color_r < curve_count) {
                             float t = elapsed_time / curves[text_cue.curve_color_r].duration;
@@ -3645,7 +3732,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                      anim_text_size / text_cue.size, 1.0f, opacity,
                                      anim_text_color_r, anim_text_color_g, anim_text_color_b,
                                      (float)config.width, (float)config.height,
-                                     0.0f, 0.0f, 0.0f, 0.0f, time, true);
+                                     0.0f, 0.0f, 9.0f, 0.0f, 0.0f, time, anim_text_rotation, true);
                         continue;
                     }
 
@@ -3679,17 +3766,20 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float x =  ((anim_text_x + fx.offset_x) * 2.0f - 1.0f);
                     float y = -(((anim_text_y + fx.offset_y) * 2.0f) - 1.0f);
                     if (!IsSpriteVisible(x, y, w, h)) continue;
-                    int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
-                    int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
-                    int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
-                    int u_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
-                    int u_col = rev::shader::GetUniformLocation(sprite_shader, "u_color_tint");
+                    const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
+                    int u_pos = uniforms.position;
+                    int u_sz  = uniforms.size;
+                    int u_rot = uniforms.rotation;
+                    int u_tex = uniforms.texture;
+                    int u_opa = uniforms.opacity;
+                    int u_col = uniforms.color;
                     if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
                     if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
+                    if (u_rot >= 0) rev::shader::SetFloat(sprite_shader, u_rot, anim_text_rotation);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa, opacity);
                     if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
-                    int u_uv = rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect");
+                    int u_uv = uniforms.uv_rect;
                     if (u_uv >= 0) rev::shader::SetVec4(sprite_shader, u_uv, 0.0f, 0.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, frame_text_tex.texture_id);
@@ -3724,12 +3814,14 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float anim_y = cue.y;
                     float anim_speed = cue.speed;
                     float anim_size = cue.size;
+                    float anim_rotation = cue.rotation;
                     float anim_opacity = cue.opacity;
                     float anim_color_r = cue.color.r;
                     float anim_color_g = cue.color.g;
                     float anim_color_b = cue.color.b;
                     float anim_wave_amp = cue.wave_amp;
                     float anim_wave_freq = cue.wave_freq;
+                    float anim_wave_length = cue.wave_length;
                     float anim_jitter_amp = cue.jitter_amp;
                     float anim_jitter_freq = cue.jitter_freq;
 
@@ -3748,6 +3840,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (cue.curve_size >= 0 && cue.curve_size < curve_count) {
                         float t = elapsed_time / curves[cue.curve_size].duration;
                         anim_size = rev::curve::Evaluate(curves[cue.curve_size], t);
+                    }
+                    if (cue.curve_rotation >= 0 && cue.curve_rotation < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_rotation].duration;
+                        anim_rotation = rev::curve::Evaluate(curves[cue.curve_rotation], t);
                     }
                     if (cue.curve_opacity >= 0 && cue.curve_opacity < curve_count) {
                         float t = elapsed_time / curves[cue.curve_opacity].duration;
@@ -3772,6 +3868,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (cue.curve_wave_freq >= 0 && cue.curve_wave_freq < curve_count) {
                         float t = elapsed_time / curves[cue.curve_wave_freq].duration;
                         anim_wave_freq = rev::curve::Evaluate(curves[cue.curve_wave_freq], t);
+                    }
+                    if (cue.curve_wave_length >= 0 && cue.curve_wave_length < curve_count) {
+                        float t = elapsed_time / curves[cue.curve_wave_length].duration;
+                        anim_wave_length = rev::curve::Evaluate(curves[cue.curve_wave_length], t);
                     }
                     if (cue.curve_jitter_amp >= 0 && cue.curve_jitter_amp < curve_count) {
                         float t = elapsed_time / curves[cue.curve_jitter_amp].duration;
@@ -3871,7 +3971,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                      draw_r, draw_g, draw_b,
                                      (float)config.width, (float)config.height,
                                      anim_wave_amp, anim_wave_freq,
-                                     anim_jitter_amp, anim_jitter_freq, elapsed_time,
+                                     anim_wave_length,
+                                     anim_jitter_amp, anim_jitter_freq, elapsed_time, anim_rotation,
                                      cue.direction <= 1);
                         continue;
                     }
@@ -3885,17 +3986,20 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         }
                         continue;
                     }
-                    int u_pos = rev::shader::GetUniformLocation(sprite_shader, "u_position");
-                    int u_sz  = rev::shader::GetUniformLocation(sprite_shader, "u_size");
-                    int u_tex = rev::shader::GetUniformLocation(sprite_shader, "u_texture");
-                    int u_opa = rev::shader::GetUniformLocation(sprite_shader, "u_opacity");
-                    int u_col = rev::shader::GetUniformLocation(sprite_shader, "u_color_tint");
+                    const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
+                    int u_pos = uniforms.position;
+                    int u_sz  = uniforms.size;
+                    int u_rot = uniforms.rotation;
+                    int u_tex = uniforms.texture;
+                    int u_opa = uniforms.opacity;
+                    int u_col = uniforms.color;
                     if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
                     if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
+                    if (u_rot >= 0) rev::shader::SetFloat(sprite_shader, u_rot, anim_rotation);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa, opacity);
                     if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
-                    int u_uv = rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect");
+                    int u_uv = uniforms.uv_rect;
                     if (u_uv >= 0) rev::shader::SetVec4(sprite_shader, u_uv, 0.0f, 0.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, frame_text_tex.texture_id);

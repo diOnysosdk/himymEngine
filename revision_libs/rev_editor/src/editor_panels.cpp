@@ -52,6 +52,7 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
             UpdateCurveRefAfterDelete(&cue->curve_x, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_y, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_scale, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_rotation, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_opacity, deleted_curve);
             for (int e = 0; e < cue->post_effect_count; ++e) {
                 LayerPostEffect* effect = &cue->post_effects[e];
@@ -70,6 +71,7 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
             UpdateCurveRefAfterDelete(&cue->curve_x, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_y, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_scale, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_rotation, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_opacity, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_frame, deleted_curve);
             for (int e = 0; e < cue->post_effect_count; ++e) {
@@ -89,9 +91,28 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
             UpdateCurveRefAfterDelete(&cue->curve_x, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_y, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_size, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_rotation, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_color_r, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_color_g, deleted_curve);
             UpdateCurveRefAfterDelete(&cue->curve_color_b, deleted_curve);
+        }
+
+        for (int i = 0; i < scene->scroll_text_cue_count; ++i) {
+            ScrollTextCue* cue = &scene->scroll_text_cues[i];
+            UpdateCurveRefAfterDelete(&cue->curve_x, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_y, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_speed, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_size, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_rotation, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_opacity, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_color_r, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_color_g, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_color_b, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_wave_amp, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_wave_freq, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_wave_length, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_jitter_amp, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_jitter_freq, deleted_curve);
         }
 
         for (int i = 0; i < scene->mesh_cue_count; ++i) {
@@ -194,6 +215,7 @@ void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, s
             RegisterCurveUsage(cue->curve_x, curve_index, "Image X", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_y, curve_index, "Image Y", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_scale, curve_index, "Image Scale", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_rotation, curve_index, "Image Rotation", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_opacity, curve_index, "Image Opacity", owner, &usage_count, first_usage, sizeof(first_usage));
             for (int e = 0; e < cue->post_effect_count; ++e) {
                 LayerPostEffect* effect = &cue->post_effects[e];
@@ -214,6 +236,7 @@ void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, s
             RegisterCurveUsage(cue->curve_x, curve_index, "AnimSprite X", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_y, curve_index, "AnimSprite Y", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_scale, curve_index, "AnimSprite Scale", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(cue->curve_rotation, curve_index, "AnimSprite Rotation", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_opacity, curve_index, "AnimSprite Opacity", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(cue->curve_frame, curve_index, "AnimSprite Frame", owner, &usage_count, first_usage, sizeof(first_usage));
             for (int e = 0; e < cue->post_effect_count; ++e) {
@@ -325,7 +348,7 @@ static int AllocateCurveSlotForPanel(EditorContext* editor, float start_v, float
         }
         for (int i = 0; i < scene->image_cue_count; ++i) {
             ImageCue* cue = &scene->image_cues[i];
-            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_scale); mark(cue->curve_opacity);
+            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_scale); mark(cue->curve_rotation); mark(cue->curve_opacity);
             for (int e = 0; e < cue->post_effect_count; ++e) {
                 LayerPostEffect* effect = &cue->post_effects[e];
                 mark(effect->curve_intensity); mark(effect->curve_threshold); mark(effect->curve_radius);
@@ -334,7 +357,7 @@ static int AllocateCurveSlotForPanel(EditorContext* editor, float start_v, float
         }
         for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
             AnimatedSpriteCue* cue = &scene->animated_sprite_cues[i];
-            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_scale); mark(cue->curve_opacity); mark(cue->curve_frame);
+            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_scale); mark(cue->curve_rotation); mark(cue->curve_opacity); mark(cue->curve_frame);
             for (int e = 0; e < cue->post_effect_count; ++e) {
                 LayerPostEffect* effect = &cue->post_effects[e];
                 mark(effect->curve_intensity); mark(effect->curve_threshold); mark(effect->curve_radius);
@@ -343,14 +366,14 @@ static int AllocateCurveSlotForPanel(EditorContext* editor, float start_v, float
         }
         for (int i = 0; i < scene->text_cue_count; ++i) {
             TextCue* cue = &scene->text_cues[i];
-            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_size);
+            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_size); mark(cue->curve_rotation);
             mark(cue->curve_color_r); mark(cue->curve_color_g); mark(cue->curve_color_b);
         }
         for (int i = 0; i < scene->scroll_text_cue_count; ++i) {
             ScrollTextCue* cue = &scene->scroll_text_cues[i];
-            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_speed); mark(cue->curve_size);
+            mark(cue->curve_x); mark(cue->curve_y); mark(cue->curve_speed); mark(cue->curve_size); mark(cue->curve_rotation);
             mark(cue->curve_opacity); mark(cue->curve_color_r); mark(cue->curve_color_g); mark(cue->curve_color_b);
-            mark(cue->curve_wave_amp); mark(cue->curve_wave_freq); mark(cue->curve_jitter_amp); mark(cue->curve_jitter_freq);
+            mark(cue->curve_wave_amp); mark(cue->curve_wave_freq); mark(cue->curve_wave_length); mark(cue->curve_jitter_amp); mark(cue->curve_jitter_freq);
         }
         for (int i = 0; i < scene->mesh_cue_count; ++i) {
             MeshCue* cue = &scene->mesh_cues[i];
@@ -768,6 +791,7 @@ void RenderProperties(EditorContext* editor) {
                 cue.curve_x = -1;
                 cue.curve_y = -1;
                 cue.curve_scale = -1;
+                cue.curve_rotation = -1;
                 cue.curve_opacity = -1;
                 int new_index = AddImageCue(scene, cue);
                 editor->editing_image = scene->image_cues[new_index];
@@ -794,6 +818,7 @@ void RenderProperties(EditorContext* editor) {
                 cue.curve_x = -1;
                 cue.curve_y = -1;
                 cue.curve_scale = -1;
+                cue.curve_rotation = -1;
                 cue.curve_opacity = -1;
                 cue.curve_frame = -1;
                 int new_index = AddAnimatedSpriteCue(scene, cue);
@@ -822,6 +847,7 @@ void RenderProperties(EditorContext* editor) {
                 cue.curve_x = -1;
                 cue.curve_y = -1;
                 cue.curve_size = -1;
+                cue.curve_rotation = -1;
                 cue.curve_color_r = -1;
                 cue.curve_color_g = -1;
                 cue.curve_color_b = -1;
@@ -869,12 +895,14 @@ void RenderProperties(EditorContext* editor) {
                 cue.curve_y = -1;
                 cue.curve_speed = -1;
                 cue.curve_size = -1;
+                cue.curve_rotation = -1;
                 cue.curve_opacity = -1;
                 cue.curve_color_r = -1;
                 cue.curve_color_g = -1;
                 cue.curve_color_b = -1;
                 cue.curve_wave_amp = -1;
                 cue.curve_wave_freq = -1;
+                cue.curve_wave_length = -1;
                 cue.curve_jitter_amp = -1;
                 cue.curve_jitter_freq = -1;
                 int new_index = AddScrollTextCue(scene, cue);
@@ -1349,6 +1377,7 @@ void RenderCurveEditor(EditorContext* editor) {
                 add_target("Scroll Color B", &cue->curve_color_b);
                 add_target("Scroll Wave Amp", &cue->curve_wave_amp);
                 add_target("Scroll Wave Freq", &cue->curve_wave_freq);
+                add_target("Scroll Wave Length", &cue->curve_wave_length);
                 add_target("Scroll Jitter Amp", &cue->curve_jitter_amp);
                 add_target("Scroll Jitter Freq", &cue->curve_jitter_freq);
             } else if (editor->selected_cue_type == CueTypeMesh && editor->selected_cue_index < scene->mesh_cue_count) {

@@ -27,6 +27,7 @@ static void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effec
         "CRT Warp", "Scanlines", "Lens Distortion", "Palette Cycling", "Heat Distortion",
         "Glitch", "Bloom Pulsing", "Feedback Buffer", "Infinite Zoom", "Recursive Feedback"
     };
+    static const char* blend_names[] = { "Alpha", "Additive", "Multiply", "Screen" };
     char label[96] = {};
     snprintf(label, sizeof(label), "Layer Post Effects (%d)##%s", *effect_count, id_prefix);
     if (!ImGui::CollapsingHeader(label)) return;
@@ -42,6 +43,7 @@ static void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effec
         effect.type = new_type;
         effect.enabled = true;
         effect.order = *effect_count;
+        effect.blend_mode = 0;
         effect.intensity = 1.0f;
         effect.threshold = 1.0f;
         effect.radius = 1.0f;
@@ -73,6 +75,8 @@ static void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effec
             break;
         }
         if (ImGui::SliderFloat("Intensity", &effect.intensity, 0.0f, 2.0f) && modified) *modified = true;
+        if (effect.blend_mode < 0 || effect.blend_mode > 3) effect.blend_mode = 0;
+        if (ImGui::Combo("Blend Mode", &effect.blend_mode, blend_names, 4) && modified) *modified = true;
         if (ImGui::SliderFloat("Threshold", &effect.threshold, 0.0f, 4.0f) && modified) *modified = true;
         if (ImGui::SliderFloat("Radius", &effect.radius, 0.0f, 4.0f) && modified) *modified = true;
         if (ImGui::ColorEdit4("Color", effect.color) && modified) *modified = true;
@@ -161,6 +165,7 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, cue->curve_x);
             MarkCurveUsed(used, cue->curve_y);
             MarkCurveUsed(used, cue->curve_size);
+            MarkCurveUsed(used, cue->curve_rotation);
             MarkCurveUsed(used, cue->curve_color_r);
             MarkCurveUsed(used, cue->curve_color_g);
             MarkCurveUsed(used, cue->curve_color_b);
@@ -172,12 +177,14 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, cue->curve_y);
             MarkCurveUsed(used, cue->curve_speed);
             MarkCurveUsed(used, cue->curve_size);
+            MarkCurveUsed(used, cue->curve_rotation);
             MarkCurveUsed(used, cue->curve_opacity);
             MarkCurveUsed(used, cue->curve_color_r);
             MarkCurveUsed(used, cue->curve_color_g);
             MarkCurveUsed(used, cue->curve_color_b);
             MarkCurveUsed(used, cue->curve_wave_amp);
             MarkCurveUsed(used, cue->curve_wave_freq);
+            MarkCurveUsed(used, cue->curve_wave_length);
             MarkCurveUsed(used, cue->curve_jitter_amp);
             MarkCurveUsed(used, cue->curve_jitter_freq);
         }
@@ -306,6 +313,7 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 add_target("Image X Position", &cue->curve_x, cue->x);
                 add_target("Image Y Position", &cue->curve_y, cue->y);
                 add_target("Image Scale", &cue->curve_scale, cue->scale);
+                add_target("Image Rotation", &cue->curve_rotation, cue->rotation);
                 add_target("Image Opacity", &cue->curve_opacity, cue->opacity);
                 for (int i = 0; i < cue->post_effect_count; ++i) {
                     LayerPostEffect* effect = &cue->post_effects[i];
@@ -326,6 +334,7 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 add_target("AnimSprite X Position", &cue->curve_x, cue->x);
                 add_target("AnimSprite Y Position", &cue->curve_y, cue->y);
                 add_target("AnimSprite Scale", &cue->curve_scale, cue->scale);
+                add_target("AnimSprite Rotation", &cue->curve_rotation, cue->rotation);
                 add_target("AnimSprite Opacity", &cue->curve_opacity, cue->opacity);
                 add_target("AnimSprite Frame", &cue->curve_frame, (float)cue->start_frame);
                 for (int i = 0; i < cue->post_effect_count; ++i) {
@@ -345,6 +354,7 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
             {
                 TextCue* cue = &scene->text_cues[cue_index];
                 add_target("Text Size", &cue->curve_size, cue->size);
+                add_target("Text Rotation", &cue->curve_rotation, cue->rotation);
                 add_target("Text Color R", &cue->curve_color_r, cue->color.r);
                 add_target("Text Color G", &cue->curve_color_g, cue->color.g);
                 add_target("Text Color B", &cue->curve_color_b, cue->color.b);
@@ -360,12 +370,14 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 add_target("Scroll Y", &cue->curve_y, cue->y);
                 add_target("Scroll Speed", &cue->curve_speed, cue->speed);
                 add_target("Scroll Size", &cue->curve_size, cue->size);
+                add_target("Scroll Rotation", &cue->curve_rotation, cue->rotation);
                 add_target("Scroll Opacity", &cue->curve_opacity, cue->opacity);
                 add_target("Scroll Color R", &cue->curve_color_r, cue->color.r);
                 add_target("Scroll Color G", &cue->curve_color_g, cue->color.g);
                 add_target("Scroll Color B", &cue->curve_color_b, cue->color.b);
                 add_target("Scroll Wave Amp", &cue->curve_wave_amp, cue->wave_amp);
                 add_target("Scroll Wave Freq", &cue->curve_wave_freq, cue->wave_freq);
+                add_target("Scroll Wave Length", &cue->curve_wave_length, cue->wave_length);
                 add_target("Scroll Jitter Amp", &cue->curve_jitter_amp, cue->jitter_amp);
                 add_target("Scroll Jitter Freq", &cue->curve_jitter_freq, cue->jitter_freq);
             }
@@ -922,6 +934,7 @@ void RenderCurveEditorModal(EditorContext* editor) {
                             if (cue->curve_x == curve_index) cue->curve_x = -1;
                             if (cue->curve_y == curve_index) cue->curve_y = -1;
                             if (cue->curve_scale == curve_index) cue->curve_scale = -1;
+                            if (cue->curve_rotation == curve_index) cue->curve_rotation = -1;
                             if (cue->curve_opacity == curve_index) cue->curve_opacity = -1;
                             editor->editing_image = *cue; // Update editing copy
                         } else if (cue_type == CueTypeText && editor->selected_cue_index < scene->text_cue_count) {
@@ -1613,6 +1626,38 @@ void RenderImageModal(EditorContext* editor) {
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
         
+        if (ImGui::SliderFloat("Rotation", &cue->rotation, -360.0f, 360.0f, "%.1f deg")) AutoSave();
+        ImGui::SameLine();
+        if (cue->curve_rotation >= 0) {
+            ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_rotation);
+            ImGui::SameLine();
+        }
+        if (ImGui::SmallButton("+##curve_img_rotation")) {
+            if (editor->selected_scene_index >= 0 && editor->selected_cue_index >= 0 &&
+                editor->selected_cue_type == CueTypeImage) {
+                SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+                if (scene && editor->selected_cue_index < scene->image_cue_count) {
+                    ImageCue* actual_cue = &scene->image_cues[editor->selected_cue_index];
+                    if (actual_cue->curve_rotation < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
+                        actual_cue->curve_rotation = editor->project->curve_count++;
+                        auto& curve = editor->project->curves[actual_cue->curve_rotation];
+                        curve = rev::curve::CreateCurve(16);
+                        rev::curve::AddPoint(curve, 0.0f, actual_cue->rotation);
+                        rev::curve::AddPoint(curve, 1.0f, actual_cue->rotation);
+                        editor->project->modified = true;
+                    }
+                    cue->curve_rotation = actual_cue->curve_rotation;
+                    if (actual_cue->curve_rotation >= 0 && actual_cue->curve_rotation < editor->project->curve_count) {
+                        editor->editing_curve_index = actual_cue->curve_rotation;
+                        editor->editing_curve_cue_type = CueTypeImage;
+                        snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "Image Rotation");
+                        editor->curve_editor_modal_request_open = true;
+                    }
+                }
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
+
         if (ImGui::SliderFloat("Opacity", &cue->opacity, 0.0f, 1.0f)) AutoSave();
         ImGui::SameLine();
         if (cue->curve_opacity >= 0) {
@@ -1688,9 +1733,9 @@ void RenderImageModal(EditorContext* editor) {
         if (editor->project->curve_count <= 0) {
             ImGui::TextDisabled("No curves available. Create one first.");
         } else {
-            const char* target_names[] = {"X Position", "Y Position", "Scale", "Opacity"};
-            int* target_fields[] = {&cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_opacity};
-            const int target_count = 4;
+            const char* target_names[] = {"X Position", "Y Position", "Scale", "Rotation", "Opacity"};
+            int* target_fields[] = {&cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_rotation, &cue->curve_opacity};
+            const int target_count = 5;
             static int image_target_idx = 0;
             static int image_curve_idx = 0;
             if (image_target_idx < 0 || image_target_idx >= target_count) image_target_idx = 0;
@@ -1786,6 +1831,7 @@ void RenderAnimatedSpriteModal(EditorContext* editor) {
             if (curve_field == &cue->curve_x) actual_field = &actual_cue->curve_x;
             else if (curve_field == &cue->curve_y) actual_field = &actual_cue->curve_y;
             else if (curve_field == &cue->curve_scale) actual_field = &actual_cue->curve_scale;
+            else if (curve_field == &cue->curve_rotation) actual_field = &actual_cue->curve_rotation;
             else if (curve_field == &cue->curve_opacity) actual_field = &actual_cue->curve_opacity;
             else if (curve_field == &cue->curve_frame) actual_field = &actual_cue->curve_frame;
             if (!actual_field) return;
@@ -1874,6 +1920,11 @@ void RenderAnimatedSpriteModal(EditorContext* editor) {
         ImGui::SameLine();
         if (cue->curve_scale >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_scale); ImGui::SameLine(); }
         if (ImGui::SmallButton("+##curve_anim_scale")) OpenCurveEditor(&cue->curve_scale, cue->scale, "AnimSprite Scale");
+
+        if (ImGui::SliderFloat("Rotation", &cue->rotation, -360.0f, 360.0f, "%.1f deg")) AutoSave();
+        ImGui::SameLine();
+        if (cue->curve_rotation >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_rotation); ImGui::SameLine(); }
+        if (ImGui::SmallButton("+##curve_anim_rotation")) OpenCurveEditor(&cue->curve_rotation, cue->rotation, "AnimSprite Rotation");
 
         if (ImGui::SliderFloat("Opacity", &cue->opacity, 0.0f, 1.0f)) AutoSave();
         ImGui::SameLine();
@@ -2051,6 +2102,39 @@ void RenderTextModal(EditorContext* editor) {
             }
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
+
+        if (ImGui::SliderFloat("Rotation", &cue->rotation, -360.0f, 360.0f)) {
+            cue->curve_rotation = -1;
+            AutoSave();
+        }
+        ImGui::SameLine();
+        if (cue->curve_rotation >= 0) {
+            ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_rotation);
+            ImGui::SameLine();
+        }
+        if (ImGui::SmallButton("+##curve_txt_rotation")) {
+            if (editor->selected_scene_index >= 0 && editor->selected_cue_index >= 0 && editor->selected_cue_type == CueTypeText) {
+                SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+                if (scene && editor->selected_cue_index < scene->text_cue_count) {
+                    TextCue* actual_cue = &scene->text_cues[editor->selected_cue_index];
+                    if (actual_cue->curve_rotation < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
+                        actual_cue->curve_rotation = editor->project->curve_count++;
+                        auto& curve = editor->project->curves[actual_cue->curve_rotation];
+                        curve = rev::curve::CreateCurve(16);
+                        rev::curve::AddPoint(curve, 0.0f, actual_cue->rotation);
+                        rev::curve::AddPoint(curve, 1.0f, actual_cue->rotation);
+                        editor->project->modified = true;
+                    }
+                    cue->curve_rotation = actual_cue->curve_rotation;
+                    if (cue->curve_rotation >= 0) {
+                        editor->editing_curve_index = cue->curve_rotation;
+                        editor->editing_curve_cue_type = CueTypeText;
+                        snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "Text Rotation");
+                        editor->curve_editor_modal_request_open = true;
+                    }
+                }
+            }
+        }
         
         ImGui::Separator();
         
@@ -2304,9 +2388,9 @@ void RenderTextModal(EditorContext* editor) {
         if (editor->project->curve_count <= 0) {
             ImGui::TextDisabled("No curves available. Create one first.");
         } else {
-            const char* target_names[] = {"X Position", "Y Position", "Size", "Color R", "Color G", "Color B"};
-            int* target_fields[] = {&cue->curve_x, &cue->curve_y, &cue->curve_size, &cue->curve_color_r, &cue->curve_color_g, &cue->curve_color_b};
-            const int target_count = 6;
+            const char* target_names[] = {"X Position", "Y Position", "Size", "Rotation", "Color R", "Color G", "Color B"};
+            int* target_fields[] = {&cue->curve_x, &cue->curve_y, &cue->curve_size, &cue->curve_rotation, &cue->curve_color_r, &cue->curve_color_g, &cue->curve_color_b};
+            const int target_count = 7;
             static int text_target_idx = 0;
             static int text_curve_idx = 0;
             if (text_target_idx < 0 || text_target_idx >= target_count) text_target_idx = 0;
@@ -2408,12 +2492,14 @@ void RenderScrollTextModal(EditorContext* editor) {
                         else if (curve_field == &cue->curve_y) actual_field = &actual_cue->curve_y;
                         else if (curve_field == &cue->curve_speed) actual_field = &actual_cue->curve_speed;
                         else if (curve_field == &cue->curve_size) actual_field = &actual_cue->curve_size;
+                        else if (curve_field == &cue->curve_rotation) actual_field = &actual_cue->curve_rotation;
                         else if (curve_field == &cue->curve_opacity) actual_field = &actual_cue->curve_opacity;
                         else if (curve_field == &cue->curve_color_r) actual_field = &actual_cue->curve_color_r;
                         else if (curve_field == &cue->curve_color_g) actual_field = &actual_cue->curve_color_g;
                         else if (curve_field == &cue->curve_color_b) actual_field = &actual_cue->curve_color_b;
                         else if (curve_field == &cue->curve_wave_amp) actual_field = &actual_cue->curve_wave_amp;
                         else if (curve_field == &cue->curve_wave_freq) actual_field = &actual_cue->curve_wave_freq;
+                        else if (curve_field == &cue->curve_wave_length) actual_field = &actual_cue->curve_wave_length;
                         else if (curve_field == &cue->curve_jitter_amp) actual_field = &actual_cue->curve_jitter_amp;
                         else if (curve_field == &cue->curve_jitter_freq) actual_field = &actual_cue->curve_jitter_freq;
 
@@ -2565,6 +2651,11 @@ void RenderScrollTextModal(EditorContext* editor) {
         ShowCurveQuickButton("+##curve_scroll_y", &cue->curve_y, cue->y, "Scroll Y Position");
         if (ImGui::SliderFloat("Size", &cue->size, 8.0f, 128.0f)) AutoSave();
         ShowCurveQuickButton("+##curve_scroll_size", &cue->curve_size, cue->size, "Scroll Size");
+        if (ImGui::SliderFloat("Rotation", &cue->rotation, -360.0f, 360.0f)) {
+            cue->curve_rotation = -1;
+            AutoSave();
+        }
+        ShowCurveQuickButton("+##curve_scroll_rotation", &cue->curve_rotation, cue->rotation, "Scroll Rotation");
         if (ImGui::SliderFloat("Opacity", &cue->opacity, 0.0f, 1.0f)) AutoSave();
         ShowCurveQuickButton("+##curve_scroll_opacity", &cue->curve_opacity, cue->opacity, "Scroll Opacity");
         if (ImGui::SliderFloat("Speed", &cue->speed, -2.0f, 2.0f)) AutoSave();
@@ -2588,6 +2679,8 @@ void RenderScrollTextModal(EditorContext* editor) {
             ShowCurveQuickButton("+##curve_scroll_wave_amp", &cue->curve_wave_amp, cue->wave_amp, "Scroll Wave Amp");
             if (ImGui::SliderFloat("Wave Freq", &cue->wave_freq, 0.1f, 30.0f)) AutoSave();
             ShowCurveQuickButton("+##curve_scroll_wave_freq", &cue->curve_wave_freq, cue->wave_freq, "Scroll Wave Freq");
+            if (ImGui::SliderFloat("Wave Length", &cue->wave_length, 2.0f, 64.0f, "%.1f glyphs")) AutoSave();
+            ShowCurveQuickButton("+##curve_scroll_wave_length", &cue->curve_wave_length, cue->wave_length, "Scroll Wave Length");
             if (ImGui::SliderFloat("Jitter Amp", &cue->jitter_amp, 0.0f, 0.08f)) AutoSave();
             ShowCurveQuickButton("+##curve_scroll_jitter_amp", &cue->curve_jitter_amp, cue->jitter_amp, "Scroll Jitter Amp");
             if (ImGui::SliderFloat("Jitter Freq", &cue->jitter_freq, 0.1f, 40.0f)) AutoSave();
@@ -2615,15 +2708,16 @@ void RenderScrollTextModal(EditorContext* editor) {
             ImGui::TextDisabled("No curves available. Create one first.");
         } else {
             const char* target_names[] = {
-                "X Position", "Y Position", "Speed", "Size", "Opacity", "Color R", "Color G", "Color B",
-                "Wave Amp", "Wave Freq", "Jitter Amp", "Jitter Freq"
+                "X Position", "Y Position", "Speed", "Size", "Rotation", "Opacity", "Color R", "Color G", "Color B",
+                "Wave Amp", "Wave Freq", "Wave Length", "Jitter Amp", "Jitter Freq"
             };
             int* target_fields[] = {
                 &cue->curve_x, &cue->curve_y, &cue->curve_speed, &cue->curve_size,
-                &cue->curve_opacity, &cue->curve_color_r, &cue->curve_color_g, &cue->curve_color_b,
-                &cue->curve_wave_amp, &cue->curve_wave_freq, &cue->curve_jitter_amp, &cue->curve_jitter_freq
+                &cue->curve_rotation, &cue->curve_opacity, &cue->curve_color_r, &cue->curve_color_g, &cue->curve_color_b,
+                &cue->curve_wave_amp, &cue->curve_wave_freq, &cue->curve_wave_length,
+                &cue->curve_jitter_amp, &cue->curve_jitter_freq
             };
-            const int target_count = 12;
+            const int target_count = 14;
             static int target_idx = 0;
             static int curve_idx = 0;
             if (target_idx < 0 || target_idx >= target_count) target_idx = 0;

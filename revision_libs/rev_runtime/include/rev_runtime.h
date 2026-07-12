@@ -25,6 +25,7 @@ struct LayerPostEffect {
     int type;
     bool enabled;
     int order;
+    int blend_mode;  // 0=alpha, 1=additive, 2=multiply, 3=screen
     float intensity;
     float threshold;
     float radius;
@@ -51,6 +52,7 @@ struct ImageCue {
     char  asset_path[512];  // Full path on disk (populated by runtime loader)
     float x, y;             // Centre position [0..1] where y=0 is top
     float scale;
+    float rotation;         // Rotation in degrees around the image centre
     float opacity;
     int   effect_type;      // 0=none  1=fade_in_out
     float cue_start;
@@ -66,6 +68,7 @@ struct ImageCue {
     int   curve_x;
     int   curve_y;
     int   curve_scale;
+    int   curve_rotation;
     int   curve_opacity;
 
     int post_effect_count;
@@ -79,6 +82,7 @@ struct AnimatedSpriteCue {
     char  frame_paths_csv[4096]; // Semicolon-separated frame asset paths
     float x, y;                  // Centre position [0..1] where y=0 is top
     float scale;
+    float rotation;              // Rotation in degrees around the sprite centre
     float opacity;
     int   effect_type;           // 0=none  1=fade_in_out
     float cue_start;
@@ -97,6 +101,7 @@ struct AnimatedSpriteCue {
     int   curve_x;
     int   curve_y;
     int   curve_scale;
+    int   curve_rotation;
     int   curve_opacity;
     int   curve_frame;
 
@@ -110,6 +115,7 @@ struct TextCue {
     char     font_name[64];
     float    x, y;          // Centre position [0..1] where y=0 is top
     float    size;          // Font size in pixels
+    float    rotation;      // Rotation in degrees around each glyph centre
     ColorRGB color;
     int      effect_type;   // 0=none 1=fade_in_out 2=scroll 3=line_by_line 4=typewriter 5=sandstorm
     float    cue_start;
@@ -125,6 +131,7 @@ struct TextCue {
     int      curve_x;
     int      curve_y;
     int      curve_size;
+    int      curve_rotation;
     int      curve_color_r;
     int      curve_color_g;
     int      curve_color_b;
@@ -150,6 +157,7 @@ struct ScrollTextCue {
     char     font_name[64];
     float    x, y;          // Anchor in normalized screen space [0..1]
     float    size;          // Font size in pixels
+    float    rotation;      // Rotation in degrees around each glyph centre
     ColorRGB color;
 
     // Timing and layering
@@ -173,6 +181,7 @@ struct ScrollTextCue {
     float    slant_deg;     // Italic/slant style hint
     float    wave_amp;      // Optional vertical wobble amount
     float    wave_freq;     // Wobble frequency
+    float    wave_length;   // Glyphs per sinus cycle
     float    jitter_amp;    // Per-frame jitter amount
     float    jitter_freq;   // Jitter speed
     float    glow;          // Style intensity helper
@@ -186,12 +195,14 @@ struct ScrollTextCue {
     int      curve_y;
     int      curve_speed;
     int      curve_size;
+    int      curve_rotation;
     int      curve_opacity;
     int      curve_color_r;
     int      curve_color_g;
     int      curve_color_b;
     int      curve_wave_amp;
     int      curve_wave_freq;
+    int      curve_wave_length;
     int      curve_jitter_amp;
     int      curve_jitter_freq;
 
