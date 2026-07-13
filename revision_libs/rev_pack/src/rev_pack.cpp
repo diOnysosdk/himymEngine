@@ -483,6 +483,7 @@ PackResult PackAssets(const char* cues_path,
         size_t            size;
         uint32_t          crc32;
         bool              changed;
+        int               data_owner;
     };
     LoadedAsset* loaded = (LoadedAsset*)malloc(ref_count * sizeof(LoadedAsset));
     if (!loaded) { snprintf(result.error, sizeof(result.error), "OOM"); return result; }
@@ -568,6 +569,20 @@ PackResult PackAssets(const char* cues_path,
         loaded[loaded_count].size    = sz;
         loaded[loaded_count].crc32   = crc;
         loaded[loaded_count].changed = (crc != cached_crc);
+        loaded[loaded_count].data_owner = loaded_count;
+
+        // Multiple cues may reference the same file, or different keys may
+        // resolve to byte-identical files. Keep the keys as lookup aliases,
+        // but emit and own the payload only once.
+        for (int prior = 0; prior < loaded_count; ++prior) {
+            if (loaded[prior].size == sz && loaded[prior].crc32 == crc &&
+                memcmp(loaded[prior].data, data, sz) == 0) {
+                free(data);
+                loaded[loaded_count].data = loaded[prior].data;
+                loaded[loaded_count].data_owner = loaded[prior].data_owner;
+                break;
+            }
+        }
         loaded_count++;
 
         if (loaded[loaded_count - 1].changed) result.packed++;
@@ -620,6 +635,7 @@ PackResult PackAssets(const char* cues_path,
     }
 
     for (int i = 0; i < loaded_count; ++i) {
+        if (loaded[i].data_owner != i) continue;
         fprintf(hdr, "// %s  CRC32=0x%08X  size=%zu\n", loaded[i].key, loaded[i].crc32, loaded[i].size);
         fprintf(hdr, "static const unsigned char kAsset_%d[] = {\n", i);
         WriteHexArray(hdr, loaded[i].data, loaded[i].size);
@@ -633,7 +649,7 @@ PackResult PackAssets(const char* cues_path,
     } else {
         for (int i = 0; i < loaded_count; ++i) {
             fprintf(hdr, "    { \"%s\", kAsset_%d, sizeof(kAsset_%d), 0x%08Xu },\n",
-                    loaded[i].key, i, i, loaded[i].crc32);
+                loaded[i].key, loaded[i].data_owner, loaded[i].data_owner, loaded[i].crc32);
         }
     }
     fprintf(hdr, "};\n");
@@ -649,7 +665,8 @@ PackResult PackAssets(const char* cues_path,
         fclose(cache_f);
     }
 
-    for (int i = 0; i < loaded_count; ++i) free(loaded[i].data);
+    for (int i = 0; i < loaded_count; ++i)
+        if (loaded[i].data_owner == i) free(loaded[i].data);
     free(loaded);
 
     result.ok = true;
