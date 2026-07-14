@@ -13,6 +13,7 @@ namespace runtime {
 
 constexpr int kMaxCurves = 128;
 constexpr int kMaxLayerPostEffects = 8;
+constexpr int kMaxAssetShaders = 4;
 
 // ------------------------------------------------------------------
 // Basic types
@@ -40,6 +41,26 @@ struct LayerPostEffect {
     int curve_color_b;
     int curve_color_a;
     int curve_amount;
+};
+
+struct AssetShader {
+    int shader_id;
+    bool enabled;
+    int order;
+    int blend_mode;  // 0=alpha, 1=additive, 2=multiply, 3=screen
+    float opacity;
+    float speed;
+    float intensity;
+    float warp;
+    float exposure_base;
+    float exposure_ramp;
+    float fade_base;
+    float fade_ramp;
+    float palette_low[3];
+    float palette_mid[3];
+    float palette_high[3];
+    float start_time;
+    float end_time;
 };
 
 // ------------------------------------------------------------------
@@ -73,6 +94,8 @@ struct ImageCue {
 
     int post_effect_count;
     LayerPostEffect post_effects[kMaxLayerPostEffects];
+    int shader_count;
+    AssetShader shaders[kMaxAssetShaders];
 };
 
 // Animated sprite cue (frame-by-frame image sequence)
@@ -107,6 +130,8 @@ struct AnimatedSpriteCue {
 
     int post_effect_count;
     LayerPostEffect post_effects[kMaxLayerPostEffects];
+    int shader_count;
+    AssetShader shaders[kMaxAssetShaders];
 };
 
 // Text cue

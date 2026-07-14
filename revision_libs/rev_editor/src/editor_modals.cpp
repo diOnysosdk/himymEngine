@@ -17,6 +17,66 @@ struct CurveTargetBinding {
     float base_value;
 };
 
+static const char* GetAssetShaderPresetName(void*, int index) {
+    const ShaderPreset* preset = GetPresetById(index);
+    return preset ? preset->name : "Unknown Shader";
+}
+
+static void AssetShaderToShaderCue(const AssetShader& source, ShaderCue* target) {
+    if (!target) return;
+    memset(target, 0, sizeof(*target));
+    target->shader_scene_id = source.shader_id;
+    const ShaderPreset* preset = GetPresetById(source.shader_id);
+    if (preset) strncpy_s(target->shader_name, sizeof(target->shader_name), preset->name, _TRUNCATE);
+    target->palette_low = {source.palette_low[0], source.palette_low[1], source.palette_low[2]};
+    target->palette_mid = {source.palette_mid[0], source.palette_mid[1], source.palette_mid[2]};
+    target->palette_high = {source.palette_high[0], source.palette_high[1], source.palette_high[2]};
+    target->speed = source.speed;
+    target->intensity = source.intensity;
+    target->warp = source.warp;
+    target->exposure_base = source.exposure_base;
+    target->exposure_ramp = source.exposure_ramp;
+    target->fade_base = source.fade_base;
+    target->fade_ramp = source.fade_ramp;
+    target->opacity = source.opacity;
+    target->blend_mode = source.blend_mode;
+    target->layer_order = source.order;
+    target->cue_start = source.start_time;
+    target->cue_end = source.end_time;
+    target->curve_speed = target->curve_intensity = target->curve_warp = -1;
+    target->curve_exposure = target->curve_fade = -1;
+    target->curve_palette_low_r = target->curve_palette_low_g = target->curve_palette_low_b = -1;
+    target->curve_palette_mid_r = target->curve_palette_mid_g = target->curve_palette_mid_b = -1;
+    target->curve_palette_high_r = target->curve_palette_high_g = target->curve_palette_high_b = -1;
+    target->curve_opacity = target->curve_exposure_ramp = target->curve_fade_ramp = -1;
+}
+
+static void ShaderCueToAssetShader(const ShaderCue& source, AssetShader* target) {
+    if (!target) return;
+    target->shader_id = source.shader_scene_id;
+    target->order = source.layer_order;
+    target->blend_mode = source.blend_mode;
+    target->opacity = source.opacity;
+    target->speed = source.speed;
+    target->intensity = source.intensity;
+    target->warp = source.warp;
+    target->exposure_base = source.exposure_base;
+    target->exposure_ramp = source.exposure_ramp;
+    target->fade_base = source.fade_base;
+    target->fade_ramp = source.fade_ramp;
+    target->palette_low[0] = source.palette_low.r;
+    target->palette_low[1] = source.palette_low.g;
+    target->palette_low[2] = source.palette_low.b;
+    target->palette_mid[0] = source.palette_mid.r;
+    target->palette_mid[1] = source.palette_mid.g;
+    target->palette_mid[2] = source.palette_mid.b;
+    target->palette_high[0] = source.palette_high.r;
+    target->palette_high[1] = source.palette_high.g;
+    target->palette_high[2] = source.palette_high.b;
+    target->start_time = source.cue_start;
+    target->end_time = source.cue_end;
+}
+
 static void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int* effect_count,
                                    bool* modified, const char* id_prefix, int cue_type, int cue_index) {
     if (!effects || !effect_count) return;
@@ -103,6 +163,82 @@ static void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effec
                 if (editor->editing_curve_index >= 0) editor->curve_editor_modal_request_open = true;
             }
         }
+        ImGui::PopID();
+    }
+}
+
+static void RenderAssetShaders(EditorContext* editor, AssetShader* shaders, int* shader_count,
+                               bool* modified, const char* id_prefix, int cue_type, int cue_index) {
+    if (!shaders || !shader_count) return;
+    char label[96] = {};
+    snprintf(label, sizeof(label), "Asset Shaders (%d)##%s", *shader_count, id_prefix);
+    if (!ImGui::CollapsingHeader(label)) return;
+
+    static int new_shader_id = 0;
+    ImGui::SetNextItemWidth(220.0f);
+    snprintf(label, sizeof(label), "Shader##%s_add", id_prefix);
+    if (ImGui::Combo(label, &new_shader_id, GetAssetShaderPresetName,
+                     nullptr, g_shader_preset_count, -1) && modified) {
+        *modified = true;
+    }
+    snprintf(label, sizeof(label), "+ Add Asset Shader##%s_add", id_prefix);
+    if (ImGui::Button(label) && *shader_count < rev::runtime::kMaxAssetShaders) {
+        AssetShader& shader = shaders[*shader_count];
+        memset(&shader, 0, sizeof(shader));
+        shader.shader_id = new_shader_id;
+        shader.enabled = true;
+        shader.order = *shader_count;
+        shader.opacity = 1.0f;
+        shader.speed = 1.0f;
+        shader.intensity = 1.0f;
+        shader.warp = 0.5f;
+        shader.exposure_base = 1.0f;
+        shader.fade_base = 1.0f;
+        shader.palette_mid[0] = shader.palette_mid[1] = shader.palette_mid[2] = 0.5f;
+        shader.palette_high[0] = shader.palette_high[1] = shader.palette_high[2] = 1.0f;
+        shader.end_time = -1.0f;
+        ++*shader_count;
+        if (modified) *modified = true;
+    }
+    for (int i = 0; i < *shader_count; ++i) {
+        AssetShader& shader = shaders[i];
+        ImGui::PushID(i);
+        bool enabled = shader.enabled;
+        if (ImGui::Checkbox("##enabled", &enabled)) {
+            shader.enabled = enabled;
+            if (modified) *modified = true;
+        }
+        ImGui::SameLine();
+        const ShaderPreset* preset = GetPresetById(shader.shader_id);
+        char shader_label[128] = {};
+        snprintf(shader_label, sizeof(shader_label), "%d. %s", i + 1, preset ? preset->name : "Unknown Shader");
+        if (ImGui::Button(shader_label)) {
+            editor->selected_cue_type = cue_type;
+            editor->selected_cue_index = cue_index;
+            editor->shader_modal_asset_mode = true;
+            editor->shader_modal_asset_cue_type = cue_type;
+            editor->shader_modal_asset_index = i;
+            editor->editing_asset_shader = shader;
+            AssetShaderToShaderCue(shader, &editor->editing_shader);
+            editor->shader_modal_request_open = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X")) {
+            for (int move = i; move + 1 < *shader_count; ++move) shaders[move] = shaders[move + 1];
+            --*shader_count;
+            if (modified) *modified = true;
+            ImGui::PopID();
+            break;
+        }
+        const char* blend_modes[] = {"Alpha", "Additive", "Multiply", "Screen"};
+        if (ImGui::Combo("Blend Mode", &shader.blend_mode, blend_modes, 4) && modified) *modified = true;
+        if (ImGui::SliderFloat("Opacity", &shader.opacity, 0.0f, 1.0f) && modified) *modified = true;
+        if (ImGui::SliderFloat("Speed", &shader.speed, 0.0f, 4.0f) && modified) *modified = true;
+        if (ImGui::SliderFloat("Intensity", &shader.intensity, 0.0f, 4.0f) && modified) *modified = true;
+        if (ImGui::SliderFloat("Warp", &shader.warp, 0.0f, 1.0f) && modified) *modified = true;
+        if (ImGui::InputFloat("Start", &shader.start_time, 0.1f, 1.0f) && modified) *modified = true;
+        if (ImGui::InputFloat("End (-1 = asset end)", &shader.end_time, 0.1f, 1.0f) && modified) *modified = true;
+        if (ImGui::InputInt("Order", &shader.order) && modified) *modified = true;
         ImGui::PopID();
     }
 }
@@ -1014,7 +1150,24 @@ void RenderShaderModal(EditorContext* editor) {
         
         // Auto-save: Apply changes to scene continuously
         auto AutoSave = [&]() {
-            if (editor->selected_scene_index >= 0 && 
+            if (editor->shader_modal_asset_mode) {
+                if (editor->selected_scene_index >= 0 && editor->selected_cue_index >= 0) {
+                    SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+                    if (scene && editor->shader_modal_asset_cue_type == CueTypeImage &&
+                        editor->selected_cue_index < scene->image_cue_count &&
+                        editor->shader_modal_asset_index < scene->image_cues[editor->selected_cue_index].shader_count) {
+                        ShaderCueToAssetShader(*cue, &scene->image_cues[editor->selected_cue_index].shaders[editor->shader_modal_asset_index]);
+                        editor->editing_asset_shader = scene->image_cues[editor->selected_cue_index].shaders[editor->shader_modal_asset_index];
+                        editor->project->modified = true;
+                    } else if (scene && editor->shader_modal_asset_cue_type == CueTypeAnimatedSprite &&
+                               editor->selected_cue_index < scene->animated_sprite_cue_count &&
+                               editor->shader_modal_asset_index < scene->animated_sprite_cues[editor->selected_cue_index].shader_count) {
+                        ShaderCueToAssetShader(*cue, &scene->animated_sprite_cues[editor->selected_cue_index].shaders[editor->shader_modal_asset_index]);
+                        editor->editing_asset_shader = scene->animated_sprite_cues[editor->selected_cue_index].shaders[editor->shader_modal_asset_index];
+                        editor->project->modified = true;
+                    }
+                }
+            } else if (editor->selected_scene_index >= 0 && 
                 editor->selected_cue_index >= 0 && 
                 editor->selected_cue_type == CueTypeShader) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
@@ -1313,6 +1466,7 @@ void RenderShaderModal(EditorContext* editor) {
         // Close button (changes auto-saved continuously)
         if (ImGui::Button("Close", ImVec2(240, 0))) {
             editor->shader_modal_open = false;
+            editor->shader_modal_asset_mode = false;
             ImGui::CloseCurrentPopup();
         }
         
@@ -1321,6 +1475,7 @@ void RenderShaderModal(EditorContext* editor) {
         // If popup was closed, reset the flag
         if (editor->shader_modal_open) {
             editor->shader_modal_open = false;
+            editor->shader_modal_asset_mode = false;
         }
     }
 }
@@ -1720,6 +1875,11 @@ void RenderImageModal(EditorContext* editor) {
         RenderLayerPostEffects(editor, cue->post_effects, &cue->post_effect_count,
                        &layer_effects_modified, "image", CueTypeImage, editor->selected_cue_index);
         if (layer_effects_modified) AutoSave();
+
+        bool asset_shaders_modified = false;
+        RenderAssetShaders(editor, cue->shaders, &cue->shader_count,
+               &asset_shaders_modified, "image_shaders", CueTypeImage, editor->selected_cue_index);
+        if (asset_shaders_modified) AutoSave();
         
         ImGui::Separator();
         
@@ -1966,6 +2126,12 @@ void RenderAnimatedSpriteModal(EditorContext* editor) {
         RenderLayerPostEffects(editor, cue->post_effects, &cue->post_effect_count,
                        &layer_effects_modified, "animated_sprite", CueTypeAnimatedSprite, editor->selected_cue_index);
         if (layer_effects_modified) AutoSave();
+
+        bool asset_shaders_modified = false;
+        RenderAssetShaders(editor, cue->shaders, &cue->shader_count,
+               &asset_shaders_modified, "animated_sprite_shaders",
+               CueTypeAnimatedSprite, editor->selected_cue_index);
+        if (asset_shaders_modified) AutoSave();
 
         ImGui::Separator();
         ImGui::Text("Timing (seconds):");

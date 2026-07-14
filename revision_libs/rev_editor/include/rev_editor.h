@@ -18,6 +18,7 @@ using rev::runtime::ScrollTextCue;
 using rev::runtime::MusicCue;
 using rev::runtime::MeshCue;
 using rev::runtime::LayerPostEffect;
+using rev::runtime::AssetShader;
 
 enum CueType {
     CueTypeShader = 0,
@@ -258,6 +259,10 @@ struct EditorContext {
     ShaderCue editing_shader;
     bool shader_modal_open;
     bool shader_modal_request_open;  // Set to true to request opening the modal
+    bool shader_modal_asset_mode;
+    int shader_modal_asset_cue_type;
+    int shader_modal_asset_index;
+    AssetShader editing_asset_shader;
     
     // Music modal state
     MusicCue editing_music;
