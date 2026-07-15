@@ -365,6 +365,13 @@ bool LoadImageTexture(const char* path, ImageTexture* tex);
 bool LoadImageTextureFromMemory(const unsigned char* data, size_t size,
                                 ImageTexture* tex);
 
+// Load a specific animation frame from an image. Frame 0 is the first frame.
+bool LoadImageTextureFrame(const char* path, int frame_index, ImageTexture* tex);
+bool LoadImageTextureFrameFromMemory(const unsigned char* data, size_t size,
+                                     int frame_index, ImageTexture* tex);
+int GetImageFrameCount(const char* path);
+int GetImageFrameCountFromMemory(const unsigned char* data, size_t size);
+
 // Rasterise text via GDI+ and upload to an OpenGL texture.
 bool RenderTextToTexture(const char* text, const char* font_name, float size,
                          float r, float g, float b, TextTexture* tex);

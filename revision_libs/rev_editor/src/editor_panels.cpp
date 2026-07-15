@@ -1142,7 +1142,7 @@ void RenderAssetBrowser(EditorContext* editor) {
             }
         }
         
-        if (ImGui::CollapsingHeader("Images (.png, .jpg)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Images (.png, .jpg, .webp)", ImGuiTreeNodeFlags_DefaultOpen)) {
             bool found_any = false;
             
             // PNG files
@@ -1164,6 +1164,21 @@ void RenderAssetBrowser(EditorContext* editor) {
             // JPG files
             h_find = FindFirstFileA("assets/*.jpg", &find_data);
             
+            if (h_find != INVALID_HANDLE_VALUE) {
+                found_any = true;
+                do {
+                    if (!(find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+                        if (ImGui::Selectable(find_data.cFileName)) {
+                            // TODO: Use this file
+                        }
+                    }
+                } while (FindNextFileA(h_find, &find_data));
+                FindClose(h_find);
+            }
+
+            // WebP files
+            h_find = FindFirstFileA("assets/*.webp", &find_data);
+
             if (h_find != INVALID_HANDLE_VALUE) {
                 found_any = true;
                 do {

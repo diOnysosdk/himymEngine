@@ -13,5 +13,6 @@ target_include_directories(rev_runtime PUBLIC
 target_link_libraries(rev_runtime PUBLIC
     opengl32
     gdiplus
+    windowscodecs
     rev_curve
 )

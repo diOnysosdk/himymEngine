@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <gl/gl.h>
 #include <gdiplus.h>
+#include <wincodec.h>
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -188,15 +189,168 @@ bool BuildTextEffectFrame(const TextCue* cue, float time, TextEffectFrame* out)
 // ------------------------------------------------------------------
 // LoadImageTexture  (file path -> GL texture)
 // ------------------------------------------------------------------
+static bool UploadRgbaTexture(const unsigned char* pixels, int width, int height,
+                              ImageTexture* tex)
+{
+    if (!pixels || width <= 0 || height <= 0 || !tex) return false;
+
+    tex->width = width;
+    tex->height = height;
+    glGenTextures(1, &tex->texture_id);
+    glBindTexture(GL_TEXTURE_2D, tex->texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    return true;
+}
+
+static bool LoadWicImageTextureFromStream(IStream* stream, int frame_index,
+                                          ImageTexture* tex, int* out_frame_count)
+{
+    if (!stream || !tex) return false;
+
+    HRESULT com_result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool uninitialize_com = SUCCEEDED(com_result);
+
+    IWICImagingFactory* factory = nullptr;
+    IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* converter = nullptr;
+    bool loaded = false;
+    UINT frame_count = 0;
+
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                                   CLSCTX_INPROC_SERVER,
+                                   IID_PPV_ARGS(&factory))) &&
+        SUCCEEDED(factory->CreateDecoderFromStream(
+            stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder)) &&
+        SUCCEEDED(decoder->GetFrameCount(&frame_count)) &&
+        SUCCEEDED(decoder->GetFrame(
+            frame_count > 0 ? (UINT)(frame_index < 0 ? 0 : frame_index) % frame_count : 0,
+            &frame)) &&
+        SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+        SUCCEEDED(converter->Initialize(
+            frame, GUID_WICPixelFormat32bppRGBA,
+            WICBitmapDitherTypeNone, nullptr, 0.0,
+            WICBitmapPaletteTypeCustom))) {
+        UINT width = 0;
+        UINT height = 0;
+        if (SUCCEEDED(converter->GetSize(&width, &height)) &&
+            width <= static_cast<UINT>(INT_MAX / 4) &&
+            height <= static_cast<UINT>(INT_MAX / 4)) {
+            UINT stride = width * 4;
+            UINT buffer_size = stride * height;
+            unsigned char* pixels = new unsigned char[buffer_size];
+            if (SUCCEEDED(converter->CopyPixels(nullptr, stride, buffer_size, pixels))) {
+                loaded = UploadRgbaTexture(pixels, (int)width, (int)height, tex);
+            }
+            delete[] pixels;
+        }
+    }
+
+    if (converter) converter->Release();
+    if (frame) frame->Release();
+    if (decoder) decoder->Release();
+    if (factory) factory->Release();
+    if (uninitialize_com) CoUninitialize();
+    if (out_frame_count) *out_frame_count = (int)frame_count;
+    return loaded;
+}
+
+static bool LoadWicImageTextureFromMemory(const unsigned char* data, size_t size,
+                                          int frame_index, ImageTexture* tex,
+                                          int* out_frame_count)
+{
+    if (!data || size == 0 || !tex) return false;
+
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, size);
+    if (!memory) return false;
+    void* destination = GlobalLock(memory);
+    if (!destination) {
+        GlobalFree(memory);
+        return false;
+    }
+    memcpy(destination, data, size);
+    GlobalUnlock(memory);
+
+    IStream* stream = nullptr;
+    HRESULT result = CreateStreamOnHGlobal(memory, TRUE, &stream);
+    if (FAILED(result)) {
+        GlobalFree(memory);
+        return false;
+    }
+
+    bool loaded = LoadWicImageTextureFromStream(stream, frame_index, tex, out_frame_count);
+    stream->Release();
+    return loaded;
+}
+
+static bool LoadWicImageTextureFromFile(const wchar_t* path, int frame_index,
+                                        ImageTexture* tex, int* out_frame_count)
+{
+    if (!path || !tex) return false;
+
+    HRESULT com_result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool uninitialize_com = SUCCEEDED(com_result);
+    IWICImagingFactory* factory = nullptr;
+    IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* converter = nullptr;
+    bool loaded = false;
+    UINT frame_count = 0;
+
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                                   CLSCTX_INPROC_SERVER,
+                                   IID_PPV_ARGS(&factory))) &&
+        SUCCEEDED(factory->CreateDecoderFromFilename(
+            path, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad,
+            &decoder)) &&
+        SUCCEEDED(decoder->GetFrameCount(&frame_count)) &&
+        SUCCEEDED(decoder->GetFrame(
+            frame_count > 0 ? (UINT)(frame_index < 0 ? 0 : frame_index) % frame_count : 0,
+            &frame)) &&
+        SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+        SUCCEEDED(converter->Initialize(
+            frame, GUID_WICPixelFormat32bppRGBA,
+            WICBitmapDitherTypeNone, nullptr, 0.0,
+            WICBitmapPaletteTypeCustom))) {
+        UINT width = 0;
+        UINT height = 0;
+        if (SUCCEEDED(converter->GetSize(&width, &height)) &&
+            width <= static_cast<UINT>(INT_MAX / 4) &&
+            height <= static_cast<UINT>(INT_MAX / 4)) {
+            UINT stride = width * 4;
+            UINT buffer_size = stride * height;
+            unsigned char* pixels = new unsigned char[buffer_size];
+            if (SUCCEEDED(converter->CopyPixels(nullptr, stride, buffer_size, pixels))) {
+                loaded = UploadRgbaTexture(pixels, (int)width, (int)height, tex);
+            }
+            delete[] pixels;
+        }
+    }
+
+    if (converter) converter->Release();
+    if (frame) frame->Release();
+    if (decoder) decoder->Release();
+    if (factory) factory->Release();
+    if (uninitialize_com) CoUninitialize();
+    if (out_frame_count) *out_frame_count = (int)frame_count;
+    return loaded;
+}
+
 bool LoadImageTexture(const char* path, ImageTexture* tex)
 {
+    if (!path || !tex) return false;
     wchar_t wpath[512];
     MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, 512);
 
     Gdiplus::Bitmap* bitmap = new Gdiplus::Bitmap(wpath);
     if (!bitmap || bitmap->GetLastStatus() != Gdiplus::Ok) {
         delete bitmap;
-        return false;
+        return LoadWicImageTextureFromFile(wpath, 0, tex, nullptr);
     }
 
     tex->width  = (int)bitmap->GetWidth();
@@ -240,6 +394,7 @@ bool LoadImageTexture(const char* path, ImageTexture* tex)
 bool LoadImageTextureFromMemory(const unsigned char* data, size_t size,
                                 ImageTexture* tex)
 {
+    if (!data || size == 0 || !tex) return false;
     HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, size);
     if (!hMem) return false;
     void* pMem = GlobalLock(hMem);
@@ -258,7 +413,7 @@ bool LoadImageTextureFromMemory(const unsigned char* data, size_t size,
     if (!bitmap || bitmap->GetLastStatus() != Gdiplus::Ok) {
         delete bitmap;
         stream->Release();
-        return false;
+        return LoadWicImageTextureFromMemory(data, size, 0, tex, nullptr);
     }
 
     tex->width  = (int)bitmap->GetWidth();
@@ -296,6 +451,41 @@ bool LoadImageTextureFromMemory(const unsigned char* data, size_t size,
     delete bitmap;
     stream->Release(); // safe: all pixel data is now in GL
     return true;
+}
+
+bool LoadImageTextureFrame(const char* path, int frame_index, ImageTexture* tex)
+{
+    if (!path || !tex) return false;
+    wchar_t wpath[512] = {};
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, 512);
+    return LoadWicImageTextureFromFile(wpath, frame_index, tex, nullptr);
+}
+
+bool LoadImageTextureFrameFromMemory(const unsigned char* data, size_t size,
+                                     int frame_index, ImageTexture* tex)
+{
+    return LoadWicImageTextureFromMemory(data, size, frame_index, tex, nullptr);
+}
+
+int GetImageFrameCount(const char* path)
+{
+    if (!path) return 0;
+    wchar_t wpath[512] = {};
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, 512);
+    ImageTexture unused = {};
+    int frame_count = 0;
+    LoadWicImageTextureFromFile(wpath, 0, &unused, &frame_count);
+    if (unused.texture_id != 0) glDeleteTextures(1, &unused.texture_id);
+    return frame_count;
+}
+
+int GetImageFrameCountFromMemory(const unsigned char* data, size_t size)
+{
+    ImageTexture unused = {};
+    int frame_count = 0;
+    LoadWicImageTextureFromMemory(data, size, 0, &unused, &frame_count);
+    if (unused.texture_id != 0) glDeleteTextures(1, &unused.texture_id);
+    return frame_count;
 }
 
 // ------------------------------------------------------------------

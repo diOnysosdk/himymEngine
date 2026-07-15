@@ -1627,7 +1627,7 @@ void RenderImageModal(EditorContext* editor) {
             ofn.hwndOwner = (HWND)editor->window->hwnd;
             ofn.lpstrFile = filepath;
             ofn.nMaxFile = sizeof(filepath);
-            ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0All Files\0*.*\0";
+            ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0WebP\0*.webp\0All Files\0*.*\0";
             ofn.nFilterIndex = 1;
             ofn.lpstrInitialDir = "assets";
             ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
@@ -2031,7 +2031,7 @@ void RenderAnimatedSpriteModal(EditorContext* editor) {
             ofn.hwndOwner = (HWND)editor->window->hwnd;
             ofn.lpstrFile = filepath;
             ofn.nMaxFile = sizeof(filepath);
-            ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0All Files\0*.*\0";
+            ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0WebP\0*.webp\0All Files\0*.*\0";
             ofn.nFilterIndex = 1;
             ofn.lpstrInitialDir = "assets";
             ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;

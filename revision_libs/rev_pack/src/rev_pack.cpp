@@ -269,7 +269,8 @@ static bool ParseTextAssetLine(const char* line, char* key_out, char* path_out,
         token = strtok_s(nullptr, "|\r\n", &context);
     }
     for (int i = 0; i + 3 < field_count; ++i) {
-        if (!strstr(fields[i], "glyph") || !strstr(fields[i + 1], ".png") ||
+        if (!strstr(fields[i], "glyph") ||
+            (!strstr(fields[i + 1], ".png") && !strstr(fields[i + 1], ".webp")) ||
             !strstr(fields[i + 2], "glyph") || !strstr(fields[i + 3], ".txt")) {
             continue;
         }
@@ -286,7 +287,8 @@ static bool ParseTextAssetLine(const char* line, char* key_out, char* path_out,
 
     // Legacy text rows without glyph assets use the final key/path pair.
     if (key[0] == '\0' || path[0] == '\0') return false;
-    if (!strchr(path, '/') && !strchr(path, '\\') && !strstr(path, ".png") && !strstr(path, ".dds")) return false;
+    if (!strchr(path, '/') && !strchr(path, '\\') &&
+        !strstr(path, ".png") && !strstr(path, ".webp") && !strstr(path, ".dds")) return false;
     strncpy_s(key_out, 128, key, _TRUNCATE);
     strncpy_s(path_out, 512, path, _TRUNCATE);
     return true;
@@ -295,7 +297,7 @@ static bool ParseTextAssetLine(const char* line, char* key_out, char* path_out,
 static bool IsOptionalBakedTextAsset(const char* key, const char* path) {
     if (!key || !path) return false;
     if (strncmp(key, "text_s", 6) != 0 && strncmp(key, "scroll_s", 8) != 0) return false;
-    if (!strstr(path, ".png")) return false;
+    if (!strstr(path, ".png") && !strstr(path, ".webp")) return false;
     if (!strstr(path, "project_assets")) return false;
     return true;
 }

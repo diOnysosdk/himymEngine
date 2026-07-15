@@ -1692,7 +1692,9 @@ void main() {
         vec3 previous = texture(u_history, clamp(recursive_uv, vec2(0.0), vec2(1.0))).rgb;
         color = mix(color, previous * (0.8 + 0.2 * sin(u_time * 3.0)), clamp(u_intensity[22] * 0.8, 0.0, 0.92));
     }
-    float output_alpha = u_unpremultiply_scene == 1 ? scene_alpha : 1.0;
+    // Sprite layers store straight RGB with meaningful alpha. Preserve that
+    // alpha for both layer-local and full-scene post-processing passes.
+    float output_alpha = scene_alpha;
     fragColor = vec4(max(color, vec3(0.0)), output_alpha);
 }
 )";

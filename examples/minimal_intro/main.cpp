@@ -34,6 +34,10 @@ using rev::runtime::ComputeEffectOpacity;
 using rev::runtime::BuildTextEffectFrame;
 using rev::runtime::LoadImageTexture;
 using rev::runtime::LoadImageTextureFromMemory;
+using rev::runtime::LoadImageTextureFrame;
+using rev::runtime::LoadImageTextureFrameFromMemory;
+using rev::runtime::GetImageFrameCount;
+using rev::runtime::GetImageFrameCountFromMemory;
 using rev::runtime::RenderTextToTexture;
 using rev::runtime::CreateTextGlyphAtlas;
 using rev::runtime::DestroyTextGlyphAtlas;
@@ -214,25 +218,21 @@ static void ApplySpriteBlendMode(int blend_mode) {
 }
 
 static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
-    (void)opacity;
-
+    float clamped_opacity = opacity < 0.0f ? 0.0f : (opacity > 1.0f ? 1.0f : opacity);
+    if (glBlendColor) glBlendColor(0.0f, 0.0f, 0.0f, clamped_opacity);
     switch (blend_mode) {
         case 1: // Additive
-            // src * opacity + dst
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE);
             break;
         case 2: // Multiply
-            // Classic multiply; opacity contribution is primarily controlled via shader params.
-            glBlendFunc(GL_DST_COLOR, GL_ZERO);
+            glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
             break;
         case 3: // Screen
-            // Classic screen; opacity contribution is primarily controlled via shader params.
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
+            glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_SRC_COLOR);
             break;
         case 0:
         default: // Alpha
-            // src * opacity + dst * (1 - opacity)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
             break;
     }
 }
@@ -1817,6 +1817,8 @@ int main(int argc, char* argv[]) {
     ImageCue image_cues[kMaxImageCues] = {};
     ImageTexture image_texes[kMaxImageCues] = {};
     bool image_loaded[kMaxImageCues] = {};
+    int image_frame_counts[kMaxImageCues] = {};
+    char image_runtime_paths[kMaxImageCues][512] = {};
     int image_cue_count = LoadAllImageCues(cues_path, image_cues, kMaxImageCues);
     bool has_image = (image_cue_count > 0);
     LOGV("Image cues loaded: %d\n", image_cue_count);
@@ -2423,6 +2425,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         if (pa) {
             if (LoadImageTextureFromMemory(pa->data, pa->size, &image_texes[ii])) {
                 image_loaded[ii] = true;
+                image_frame_counts[ii] = rev::runtime::GetImageFrameCountFromMemory(pa->data, pa->size);
                 LOGV("Image loaded (packed) [%d]: %s %dx%d\n", ii, image_cue.asset_key, image_texes[ii].width, image_texes[ii].height);
                 if (g_logfile) {
                     fprintf(g_logfile, "Image loaded (packed) [%d]: %s %dx%d\n",
@@ -2439,9 +2442,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 #else
         char image_path[512];
     ResolveRuntimeAssetPath(image_cue.asset_path, cues_path, image_path, sizeof(image_path));
+        strncpy_s(image_runtime_paths[ii], image_path, _TRUNCATE);
         LOGV("Loading image [%d]: %s\n", ii, image_path);
         if (LoadImageTexture(image_path, &image_texes[ii])) {
             image_loaded[ii] = true;
+            image_frame_counts[ii] = rev::runtime::GetImageFrameCount(image_path);
             LOGV("  -> %dx%d, show at %.1f-%.1fs\n",
                  image_texes[ii].width, image_texes[ii].height,
                  image_cue.cue_start, image_cue.cue_end);
@@ -3439,7 +3444,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 rev::shader::Use(post_shader);
                 rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, "u_scene"), 0);
                 rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, "u_history"), 1);
-                rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, "u_unpremultiply_scene"), 1);
+                rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, "u_unpremultiply_scene"), 0);
                 rev::shader::SetVec2(post_shader, rev::shader::GetUniformLocation(post_shader, "u_resolution"),
                                      (float)config.width, (float)config.height);
                 rev::shader::SetFloat(post_shader, rev::shader::GetUniformLocation(post_shader, "u_time"), layer_time);
@@ -3589,8 +3594,28 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         }
                     }
 
-                    float w = (image_tex.width  * anim_scale) / (float)config.width  * 2.0f;
-                    float h = (image_tex.height * anim_scale) / (float)config.height * 2.0f;
+                    ImageTexture animated_image_tex = {};
+                    ImageTexture* draw_image_tex = &image_tex;
+                    int image_frame_index = image_frame_counts[img_idx] > 1
+                        ? (int)(elapsed_time * 12.0f) % image_frame_counts[img_idx] : 0;
+#ifdef HIMYM_PACKED_ASSETS
+                    const rev::pack::PackedAsset* animated_image_pa =
+                        rev::pack::GetPackedAsset(image_cue.asset_key, kPackedAssets, kPackedAssetCount);
+                    if (animated_image_pa && image_frame_counts[img_idx] > 1 &&
+                        LoadImageTextureFrameFromMemory(animated_image_pa->data, animated_image_pa->size,
+                                                        image_frame_index, &animated_image_tex)) {
+                        draw_image_tex = &animated_image_tex;
+                    }
+#else
+                    if (image_frame_counts[img_idx] > 1 && image_runtime_paths[img_idx][0] &&
+                        LoadImageTextureFrame(image_runtime_paths[img_idx], image_frame_index,
+                                              &animated_image_tex)) {
+                        draw_image_tex = &animated_image_tex;
+                    }
+#endif
+
+                    float w = (draw_image_tex->width  * anim_scale) / (float)config.width  * 2.0f;
+                    float h = (draw_image_tex->height * anim_scale) / (float)config.height * 2.0f;
                     float x =  (anim_x * 2.0f - 1.0f);
                     float y = -((anim_y * 2.0f) - 1.0f);
                     if (!IsSpriteVisible(x, y, w, h)) continue;
@@ -3611,16 +3636,19 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             image_cue.fade_out_start, image_cue.fade_out_end, time));
                     if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
-                    if (!render_layer_post(image_tex.texture_id, x, y, w, h, anim_rotation,
+                    if (!render_layer_post(draw_image_tex->texture_id, x, y, w, h, anim_rotation,
                                            anim_opacity * ComputeEffectOpacity(
                                                image_cue.effect_type, image_cue.fade_in_start, image_cue.fade_in_end,
                                                image_cue.fade_out_start, image_cue.fade_out_end, time),
                                            image_cue.post_effects, image_cue.post_effect_count, elapsed_time)) {
-                        glBindTexture(GL_TEXTURE_2D, image_tex.texture_id);
+                        glBindTexture(GL_TEXTURE_2D, draw_image_tex->texture_id);
                         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                     }
                     render_asset_shaders(x, y, w, h, anim_rotation, elapsed_time,
-                                         image_cue.shaders, image_cue.shader_count, image_tex.texture_id);
+                                         image_cue.shaders, image_cue.shader_count, draw_image_tex->texture_id);
+                    if (animated_image_tex.texture_id != 0) {
+                        glDeleteTextures(1, &animated_image_tex.texture_id);
+                    }
 
                 } else if (entries[ei].type == 4) {
                     int anim_idx = entries[ei].cue_idx;
@@ -3711,10 +3739,19 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
                     ImageTexture frame_tex = {};
                     bool frame_loaded = false;
+                    int webp_frame_count = 1;
 #ifdef HIMYM_PACKED_ASSETS
                     const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(selected_key, kPackedAssets, kPackedAssetCount);
                     if (pa) {
                         frame_loaded = LoadImageTextureFromMemory(pa->data, pa->size, &frame_tex);
+                        webp_frame_count = GetImageFrameCountFromMemory(pa->data, pa->size);
+                        if (webp_frame_count > 1) {
+                            int webp_frame = (int)(elapsed_time * (cue.fps > 0.0f ? cue.fps : 12.0f)) % webp_frame_count;
+                            if (frame_loaded) glDeleteTextures(1, &frame_tex.texture_id);
+                            frame_tex = {};
+                            frame_loaded = LoadImageTextureFrameFromMemory(pa->data, pa->size,
+                                                                            webp_frame, &frame_tex);
+                        }
                     }
 #else
                     char frame_path[512] = {};
@@ -3723,6 +3760,13 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                             frame_path,
                                             sizeof(frame_path));
                     frame_loaded = LoadImageTexture(frame_path, &frame_tex);
+                    webp_frame_count = GetImageFrameCount(frame_path);
+                    if (webp_frame_count > 1) {
+                        int webp_frame = (int)(elapsed_time * (cue.fps > 0.0f ? cue.fps : 12.0f)) % webp_frame_count;
+                        if (frame_loaded) glDeleteTextures(1, &frame_tex.texture_id);
+                        frame_tex = {};
+                        frame_loaded = LoadImageTextureFrame(frame_path, webp_frame, &frame_tex);
+                    }
 #endif
                     if (!frame_loaded || frame_tex.texture_id == 0) continue;
 
