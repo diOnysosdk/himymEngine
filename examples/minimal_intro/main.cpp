@@ -4046,27 +4046,23 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         return v;
                     };
 
-                    float travel = 1.0f + cue.wrap_gap;
-                    if (travel < 0.001f) travel = 0.001f;
+                    float size_scale = cue.size > 0.0f ? anim_size / cue.size : 1.0f;
+                    float travel = rev::runtime::ComputeScrollTextTravel(
+                        &scroll_text_atlases[scroll_idx], cue.text, cue.direction,
+                        size_scale, cue.spacing, cue.wrap_gap,
+                        (float)config.width, (float)config.height);
                     float wrapped = elapsed_time * anim_speed;
                     if (cue.loop_mode == 0) {
                         float speed_abs = fabsf(anim_speed);
                         if (speed_abs < 0.0001f) speed_abs = 0.0001f;
-                        float raw_cycle_duration = travel / speed_abs;
-                        float cue_duration = cue.cue_end - cue.cue_start;
-                        float loop_cycle_duration = raw_cycle_duration;
-                        if (cue_duration > loop_cycle_duration) {
-                            loop_cycle_duration = cue_duration;
-                        }
-                        if (loop_cycle_duration < 0.0001f) {
-                            loop_cycle_duration = raw_cycle_duration;
-                        }
-                        float local_time = fmodf(elapsed_time, loop_cycle_duration);
-                        if (local_time < 0.0f) local_time += loop_cycle_duration;
+                        float cycle_duration = travel / speed_abs;
+                        float local_time = fmodf(elapsed_time, cycle_duration);
+                        if (local_time < 0.0f) local_time += cycle_duration;
                         wrapped = local_time * anim_speed;
                     } else {
-                        if (wrapped < 0.0f) wrapped = 0.0f;
+                        wrapped = elapsed_time * anim_speed;
                         if (wrapped > travel) wrapped = travel;
+                        if (wrapped < -travel) wrapped = -travel;
                     }
 
                     float dir_x = 0.0f;
@@ -4117,7 +4113,6 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float glyph_scale = cue.size > 0.0f ? (anim_size / cue.size) : 1.0f;
 
                     float spacing_mul = (cue.spacing <= 0.01f) ? 0.01f : cue.spacing;
-                    float size_scale = cue.size > 0.0f ? (anim_size / cue.size) : 1.0f;
                     float scroll_x = anim_x + dir_x * wrapped + jitter_x + distortion;
                     float scroll_y = anim_y + dir_y * wrapped + jitter_y;
                     if (cue.direction <= 1) scroll_y += wave_offset;

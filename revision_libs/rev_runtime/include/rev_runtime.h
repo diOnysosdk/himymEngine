@@ -378,6 +378,12 @@ bool RenderTextToTexture(const char* text, const char* font_name, float size,
 
 // Build a white-alpha atlas for printable ASCII glyphs. Color is supplied at draw time.
 bool CreateTextGlyphAtlas(const char* font_name, float size, TextGlyphAtlas* atlas);
+
+// Distance, in normalized screen coordinates, for one complete scroll cycle.
+float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
+                              int direction, float size_scale, float spacing,
+                              float wrap_gap, float viewport_width,
+                              float viewport_height);
 bool SaveTextGlyphAtlas(const char* font_name, float size,
                         const char* image_path, const char* metadata_path);
 bool LoadTextGlyphAtlasFromMemory(const unsigned char* image_data, size_t image_size,

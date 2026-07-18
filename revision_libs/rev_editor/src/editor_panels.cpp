@@ -680,6 +680,13 @@ void RenderProperties(EditorContext* editor) {
                     editor->project->modified = true;
                 }
                 ImGui::SameLine();
+                if (ImGui::SmallButton("+")) {
+                    PostEffect clone = *effect;
+                    AddPostEffect(scene, clone);
+                    editor->post_frame_rendered = false;
+                    editor->project->modified = true;
+                }
+                ImGui::SameLine();
                 if (ImGui::SmallButton("X")) {
                     DeletePostEffect(scene, i);
                     editor->post_frame_rendered = false;
@@ -748,6 +755,16 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_index = i;
                         editor->selected_cue_type = CueTypeShader;
                         editor->shader_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("+")) {
+                        ShaderCue cue = scene->shader_cues[i];
+                        int new_index = AddShaderCue(scene, cue);
+                        editor->editing_shader = scene->shader_cues[new_index];
+                        editor->selected_cue_index = new_index;
+                        editor->selected_cue_type = CueTypeShader;
+                        editor->shader_modal_request_open = true;
+                        editor->project->modified = true;
                     }
                     ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {
@@ -983,6 +1000,16 @@ void RenderProperties(EditorContext* editor) {
                         editor->image_modal_request_open = true;
                     }
                     ImGui::SameLine();
+                    if (ImGui::SmallButton("+")) {
+                        ImageCue cue = scene->image_cues[i];
+                        int new_index = AddImageCue(scene, cue);
+                        editor->editing_image = scene->image_cues[new_index];
+                        editor->selected_cue_index = new_index;
+                        editor->selected_cue_type = CueTypeImage;
+                        editor->image_modal_request_open = true;
+                        editor->project->modified = true;
+                    }
+                    ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {
                         DeleteImageCue(scene, i);
                         editor->project->modified = true;
@@ -1003,6 +1030,16 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_index = i;
                         editor->selected_cue_type = CueTypeAnimatedSprite;
                         editor->animated_sprite_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("+")) {
+                        AnimatedSpriteCue cue = scene->animated_sprite_cues[i];
+                        int new_index = AddAnimatedSpriteCue(scene, cue);
+                        editor->editing_animated_sprite = scene->animated_sprite_cues[new_index];
+                        editor->selected_cue_index = new_index;
+                        editor->selected_cue_type = CueTypeAnimatedSprite;
+                        editor->animated_sprite_modal_request_open = true;
+                        editor->project->modified = true;
                     }
                     ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {
@@ -1028,6 +1065,16 @@ void RenderProperties(EditorContext* editor) {
                         editor->text_modal_request_open = true;
                     }
                     ImGui::SameLine();
+                    if (ImGui::SmallButton("+")) {
+                        TextCue cue = scene->text_cues[i];
+                        int new_index = AddTextCue(scene, cue);
+                        editor->editing_text = scene->text_cues[new_index];
+                        editor->selected_cue_index = new_index;
+                        editor->selected_cue_type = CueTypeText;
+                        editor->text_modal_request_open = true;
+                        editor->project->modified = true;
+                    }
+                    ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {
                         DeleteTextCue(scene, i);
                         editor->project->modified = true;
@@ -1041,14 +1088,26 @@ void RenderProperties(EditorContext* editor) {
                 ImGui::Text("Scroll Text Cues:");
                 for (int i = 0; i < scene->scroll_text_cue_count; ++i) {
                     ImGui::PushID(3500 + i);
-                    const char* display_text = scene->scroll_text_cues[i].text[0] != '\0'
-                        ? scene->scroll_text_cues[i].text
-                        : "(no scroll text)";
-                    if (ImGui::Button(display_text)) {
+                    char display_label[64] = {};
+                    snprintf(display_label, sizeof(display_label), "Scroll Text %d", i + 1);
+                    if (ImGui::Button(display_label)) {
                         editor->editing_scroll_text = scene->scroll_text_cues[i];
                         editor->selected_cue_index = i;
                         editor->selected_cue_type = CueTypeScrollText;
                         editor->scroll_text_modal_request_open = true;
+                    }
+                    if (ImGui::IsItemHovered() && scene->scroll_text_cues[i].text[0] != '\0') {
+                        ImGui::SetTooltip("%s", scene->scroll_text_cues[i].text);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("+")) {
+                        ScrollTextCue cue = scene->scroll_text_cues[i];
+                        int new_index = AddScrollTextCue(scene, cue);
+                        editor->editing_scroll_text = scene->scroll_text_cues[new_index];
+                        editor->selected_cue_index = new_index;
+                        editor->selected_cue_type = CueTypeScrollText;
+                        editor->scroll_text_modal_request_open = true;
+                        editor->project->modified = true;
                     }
                     ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {
@@ -1072,6 +1131,16 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_index = i;
                         editor->selected_cue_type = CueTypeMusic;
                         editor->music_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("+")) {
+                        MusicCue cue = scene->music_cues[i];
+                        int new_index = AddMusicCue(scene, cue);
+                        editor->editing_music = scene->music_cues[new_index];
+                        editor->selected_cue_index = new_index;
+                        editor->selected_cue_type = CueTypeMusic;
+                        editor->music_modal_request_open = true;
+                        editor->project->modified = true;
                     }
                     ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {
@@ -1098,6 +1167,16 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_index = i;
                         editor->selected_cue_type = CueTypeMesh;
                         editor->mesh_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("+")) {
+                        MeshCue cue = *mc;
+                        int new_index = AddMeshCue(scene, cue);
+                        editor->editing_mesh = scene->mesh_cues[new_index];
+                        editor->selected_cue_index = new_index;
+                        editor->selected_cue_type = CueTypeMesh;
+                        editor->mesh_modal_request_open = true;
+                        editor->project->modified = true;
                     }
                     ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {

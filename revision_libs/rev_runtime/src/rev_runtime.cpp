@@ -689,6 +689,39 @@ bool CreateTextGlyphAtlas(const char* font_name, float size, TextGlyphAtlas* atl
     return atlas->texture_id != 0;
 }
 
+float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
+                              int direction, float size_scale, float spacing,
+                              float wrap_gap, float viewport_width,
+                              float viewport_height)
+{
+    if (!atlas || !text || viewport_width <= 0.0f || viewport_height <= 0.0f) {
+        return 1.0f + wrap_gap;
+    }
+
+    if (size_scale < 0.0f) size_scale = 0.0f;
+    if (spacing < 0.01f) spacing = 0.01f;
+    if (wrap_gap < 0.0f) wrap_gap = 0.0f;
+
+    float travel = 0.0f;
+    if (direction <= 1) {
+        for (const unsigned char* p = (const unsigned char*)text; *p && *p != '\n'; ++p) {
+            const TextGlyph* glyph = FindTextGlyph(atlas, *p);
+            if (glyph) travel += glyph->advance * spacing * size_scale;
+        }
+        const TextGlyph* space = FindTextGlyph(atlas, ' ');
+        if (space) travel += space->advance * spacing * size_scale * 3.0f;
+        travel = travel * 2.0f / viewport_width + wrap_gap;
+    } else {
+        int line_count = 1;
+        for (const char* p = text; *p; ++p) {
+            if (*p == '\n') ++line_count;
+        }
+        travel = (float)line_count * atlas->line_height * size_scale * 2.0f / viewport_height + wrap_gap;
+    }
+
+    return travel < 0.001f ? 0.001f : travel;
+}
+
 static bool GetPngEncoderClsid(CLSID* clsid)
 {
     if (!clsid) return false;

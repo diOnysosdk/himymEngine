@@ -6230,27 +6230,25 @@ void RenderPreviewFrame(EditorContext* editor) {
                     };
 
                     float scene_time = editor->current_time - item.scene_start_time;
-                    float travel = 1.0f + cue->wrap_gap;
-                    if (travel < 0.001f) travel = 0.001f;
+                    rev::runtime::TextGlyphAtlas* atlas = EnsurePreviewAtlas(editor, true,
+                        cue->font_name, cue->size);
+                    float size_scale = cue->size > 0.0f ? anim_size / cue->size : 1.0f;
+                    float travel = rev::runtime::ComputeScrollTextTravel(
+                        atlas, cue->text, cue->direction, size_scale, cue->spacing,
+                        cue->wrap_gap, (float)editor->preview_width,
+                        (float)editor->preview_height);
                     float wrapped = elapsed_time * anim_speed;
                     if (cue->loop_mode == 0) {
                         float speed_abs = fabsf(anim_speed);
                         if (speed_abs < 0.0001f) speed_abs = 0.0001f;
-                        float raw_cycle_duration = travel / speed_abs;
-                        float cue_duration = cue->cue_end - cue->cue_start;
-                        float loop_cycle_duration = raw_cycle_duration;
-                        if (cue_duration > loop_cycle_duration) {
-                            loop_cycle_duration = cue_duration;
-                        }
-                        if (loop_cycle_duration < 0.0001f) {
-                            loop_cycle_duration = raw_cycle_duration;
-                        }
-                        float local_time = fmodf(elapsed_time, loop_cycle_duration);
-                        if (local_time < 0.0f) local_time += loop_cycle_duration;
+                        float cycle_duration = travel / speed_abs;
+                        float local_time = fmodf(elapsed_time, cycle_duration);
+                        if (local_time < 0.0f) local_time += cycle_duration;
                         wrapped = local_time * anim_speed;
                     } else {
-                        if (wrapped < 0.0f) wrapped = 0.0f;
+                        wrapped = elapsed_time * anim_speed;
                         if (wrapped > travel) wrapped = travel;
+                        if (wrapped < -travel) wrapped = -travel;
                     }
 
                     float dir_x = 0.0f;
@@ -6292,8 +6290,6 @@ void RenderPreviewFrame(EditorContext* editor) {
                         cue->fade_out_start, cue->fade_out_end, scene_time);
                     float style_mul = 1.0f + cue->shadow * 0.1f;
                     float scroll_opacity = clamp01(anim_opacity * fade_mul * style_mul);
-                    rev::runtime::TextGlyphAtlas* atlas = EnsurePreviewAtlas(editor, true,
-                        cue->font_name, cue->size);
                     if (atlas && glActiveTexture_fn) glActiveTexture_fn(0x84C0);
                     if (atlas && DrawPreviewGlyphRun(sprite_prog, atlas, scroll_text_buffer,
                         scroll_x - jitter_x, scroll_y - jitter_y - wave_offset,
