@@ -1531,6 +1531,401 @@ void main() {
 }
 )"
     }
+
+    ,
+    {
+        19,
+        "Kaleido Fracture",
+        "Recursive mirrored shards with chromatic separation and hard pulses",
+        R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+uniform float u_warp;
+
+#define PI 3.14159265359
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    float pulse = 0.5 + 0.5 * sin(t * 1.7);
+    float angle_offset = t * 0.18 + u_warp * 2.4;
+    float shard = 0.0;
+    float energy = 0.0;
+
+    for (int i = 0; i < 6; ++i) {
+        float fi = float(i);
+        float radius = length(p) + 0.001;
+        float angle = atan(p.y, p.x) + angle_offset + fi * PI / 3.0;
+        angle = mod(angle, 2.0 * PI / 3.0) - PI / 3.0;
+        vec2 q = vec2(cos(angle), sin(angle)) * radius;
+        q.x -= 0.18 + pulse * 0.08;
+        q.y += sin(t * 1.2 + fi) * 0.06 * u_warp;
+
+        float crack = abs(sin(q.x * (18.0 + fi * 5.0) + q.y * 7.0 - t * (2.0 + fi * 0.3)));
+        float shard_edge = smoothstep(0.94, 1.0, crack);
+        float ring = smoothstep(0.16, 0.0, abs(fract(radius * (3.0 + fi * 0.45) - t * 0.08) - 0.5));
+        shard += shard_edge * (0.25 + ring * 0.9) / (1.0 + fi * 0.35);
+        energy += ring * (0.35 + shard_edge);
+    }
+
+    float split = 0.5 + 0.5 * sin(atan(p.y, p.x) * 9.0 - t * 2.0);
+    vec3 col = mix(u_palette_low * 0.08, u_palette_mid, smoothstep(0.1, 0.8, energy));
+    col = mix(col, u_palette_high, clamp(shard * 0.8 + split * energy * 0.35, 0.0, 1.0));
+    col.r += shard * (0.25 + 0.25 * split) * u_intensity;
+    col.b += energy * (0.16 + 0.22 * (1.0 - split)) * u_intensity;
+    col *= 0.82 + 0.18 * sin(t * 8.0 + length(p) * 20.0);
+    col *= smoothstep(1.45, 0.15, length(p));
+
+    fragColor = vec4(max(col, vec3(0.0)) * (0.8 + u_intensity * 0.45), 1.0);
+}
+ )"
+    },
+
+    {
+        20,
+        "Signal Riot",
+        "Aggressive scanline interference with block tearing and RGB misalignment",
+        R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+uniform float u_warp;
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float signal(vec2 p, float t, float channel_shift) {
+    float bands = sin(p.y * 72.0 + t * 5.0 + channel_shift);
+    bands += sin(p.y * 181.0 - t * 8.0) * 0.35;
+    bands += sin(p.x * 13.0 + p.y * 37.0 + t * 2.0) * 0.22;
+    float blocks = step(0.68, hash21(vec2(floor(p.y * 22.0), floor(t * 2.5))));
+    float tear = hash21(vec2(floor(p.y * 38.0), floor(t * 3.0))) - 0.5;
+    float offset = tear * blocks * u_warp * 0.34;
+    float flare = exp(-abs(fract(p.x + offset + sin(t + p.y * 4.0) * 0.08) - 0.5) * 18.0);
+    return bands * 0.5 + flare * 1.8 + blocks * 0.18;
+}
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    float r = signal(p + vec2(0.035 * u_warp, 0.0), t, 1.7);
+    float g = signal(p, t, 0.0);
+    float b = signal(p - vec2(0.035 * u_warp, 0.0), t, -1.7);
+    vec3 col = max(vec3(r, g, b), vec3(0.0));
+    col = mix(u_palette_low * 0.08 + col * u_palette_mid, col * u_palette_high * 1.8, 0.5 + 0.5 * sin(t * 0.7));
+
+    float scanline = 0.72 + 0.28 * sin(uv.y * u_resolution.y * 1.4);
+    float vignette = smoothstep(1.5, 0.25, length(p));
+    col *= scanline * vignette * (0.65 + u_intensity * 0.65);
+    col += u_palette_high * step(0.93, hash21(vec2(floor(uv.y * 90.0), floor(t * 12.0)))) * u_intensity;
+
+    fragColor = vec4(col, 1.0);
+}
+ )"
+    },
+
+    {
+        21,
+        "Electric Vortex",
+        "Coiling lightning filaments around a breathing singularity",
+        R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+uniform float u_warp;
+
+#define PI 3.14159265359
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    float r = length(p);
+    float a = atan(p.y, p.x);
+    float spiral = a + log(r + 0.08) * (3.5 + u_warp * 5.0) - t * 1.8;
+    float filament = 0.0;
+    float sparks = 0.0;
+
+    for (int i = 0; i < 5; ++i) {
+        float fi = float(i);
+        float lane = sin(spiral * (4.0 + fi * 1.7) + sin(t * 1.4 + fi) * 2.0);
+        float distance_to_lane = abs(lane) * (0.025 + r * 0.11);
+        filament += exp(-distance_to_lane * 85.0) * (1.0 - fi * 0.13);
+        sparks += pow(max(0.0, lane), 18.0) * smoothstep(1.25, 0.18, r);
+    }
+
+    float core = exp(-r * (7.0 - sin(t * 2.0) * 1.2));
+    float event_horizon = smoothstep(0.18, 0.06, r + sin(a * 5.0 - t * 3.0) * 0.018 * u_warp);
+    vec3 col = u_palette_low * (0.05 + core * 0.3);
+    col += u_palette_mid * filament * (0.55 + u_intensity * 0.55);
+    col += u_palette_high * (filament * filament * 0.8 + sparks * 0.35 + core * 0.7);
+    col *= 1.0 - event_horizon * 0.85;
+    col += u_palette_high * exp(-abs(r - 0.21) * 30.0) * (0.35 + 0.25 * sin(t * 4.0));
+    col *= smoothstep(1.35, 0.12, r);
+
+    fragColor = vec4(max(col, vec3(0.0)), 1.0);
+}
+ )"
+    }
+
+    ,
+    {
+        22,
+        "Warped Cathedral",
+        "Domain-warped arches and volumetric light shafts with recursive fBm detail",
+        R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+uniform float u_warp;
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float noise(vec2 p) {
+    vec2 cell = floor(p);
+    vec2 local = fract(p);
+    local = local * local * (3.0 - 2.0 * local);
+    float a = hash21(cell);
+    float b = hash21(cell + vec2(1.0, 0.0));
+    float c = hash21(cell + vec2(0.0, 1.0));
+    float d = hash21(cell + vec2(1.0, 1.0));
+    return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
+}
+
+float fbm(vec2 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    for (int i = 0; i < 5; ++i) {
+        value += amplitude * noise(p);
+        p = p * 2.03 + vec2(17.1, -9.2);
+        amplitude *= 0.5;
+    }
+    return value;
+}
+
+mat2 rotate(float angle) {
+    float s = sin(angle);
+    float c = cos(angle);
+    return mat2(c, -s, s, c);
+}
+
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    vec2 warped = p;
+    float warp_amount = 0.18 + u_warp * 0.48;
+
+    // Nested domain warps turn a simple arch field into a moving architectural texture.
+    for (int i = 0; i < 3; ++i) {
+        float fi = float(i);
+        warped += vec2(
+            sin(warped.y * (3.0 + fi * 2.5) + t * (0.35 + fi * 0.18)),
+            cos(warped.x * (4.0 + fi * 1.7) - t * (0.28 + fi * 0.16))
+        ) * warp_amount / (fi + 1.0);
+        warped = rotate(0.12 * sin(t * 0.35 + fi)) * warped;
+    }
+
+    float n = fbm(warped * 3.2 + vec2(t * 0.08, -t * 0.11));
+    float columns = abs(sin(warped.x * 9.0 + sin(warped.y * 4.0 + t) * 0.8));
+    float arches = abs(sin(warped.y * 7.0 - warped.x * 3.0 + t * 0.55 + n * 3.0));
+    float ribs = smoothstep(0.88, 1.0, columns) + smoothstep(0.91, 1.0, arches);
+
+    float ray_angle = atan(warped.y, warped.x);
+    float rays = pow(max(0.0, cos(ray_angle * 7.0 + t * 0.4 + n * 2.0)), 18.0);
+    rays *= smoothstep(1.45, 0.08, length(warped));
+
+    float void_shape = smoothstep(0.16, 0.38, length(warped + vec2(0.0, 0.12 * sin(t))));
+    vec3 col = mix(u_palette_low * 0.08, u_palette_mid, clamp(n * 0.9 + ribs * 0.22, 0.0, 1.0));
+    col += u_palette_mid * ribs * (0.3 + u_intensity * 0.45);
+    col += u_palette_high * (rays * (0.55 + u_intensity * 0.75) + pow(ribs, 3.0) * 0.8);
+    col = mix(col, col.brg, 0.22 * sin(t * 0.8 + warped.x * 3.0));
+    col *= 0.65 + void_shape * 0.35;
+    col *= smoothstep(1.5, 0.12, length(p));
+
+    fragColor = vec4(max(col, vec3(0.0)), 1.0);
+}
+ )"
+    }
+
+    ,
+    {
+        23,
+        "3D Checkerboard",
+        "Perspective checkerboard plane with XYZ placement, rotation, and texture travel",
+        R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+uniform float u_warp;
+uniform vec3 u_position;
+uniform vec3 u_rotation;
+uniform vec3 u_motion;
+
+#define PI 3.14159265359
+
+vec3 rotate_xyz(vec3 p, vec3 angles) {
+    float cx = cos(angles.x), sx = sin(angles.x);
+    float cy = cos(angles.y), sy = sin(angles.y);
+    float cz = cos(angles.z), sz = sin(angles.z);
+    p.yz = mat2(cx, -sx, sx, cx) * p.yz;
+    p.xz = mat2(cy, -sy, sy, cy) * p.xz;
+    p.xy = mat2(cz, -sz, sz, cz) * p.xy;
+    return p;
+}
+
+void main() {
+    vec2 screen = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    vec3 q = vec3(screen, 0.0) - u_position;
+    q = rotate_xyz(q, -u_rotation * PI / 180.0);
+    q += u_motion * t;
+
+    float perspective = 1.0 / max(0.18, 1.0 + q.z * 0.65);
+    vec2 board = q.xy * perspective * (5.0 + u_warp * 7.0);
+    vec2 cell = floor(board);
+    float parity = mod(cell.x + cell.y, 2.0);
+    vec3 dark = mix(u_palette_low * 0.22, u_palette_mid * 0.28, 0.35);
+    vec3 light = mix(u_palette_mid, u_palette_high, 0.68);
+    vec3 col = mix(dark, light, parity);
+
+    vec2 edge = abs(fract(board) - 0.5);
+    float grout = smoothstep(0.46, 0.50, max(edge.x, edge.y));
+    col = mix(col * 0.35, col, grout);
+    float scan = 0.92 + 0.08 * sin(board.y * 3.14159 + t * 2.0);
+    col *= scan * (0.72 + u_intensity * 0.38);
+    col *= smoothstep(1.55, 0.35, length(screen));
+
+    fragColor = vec4(max(col, vec3(0.0)), 1.0);
+}
+ )"
+    },
+
+    {
+        24,
+        "3D Fog Volume",
+        "Moving rotated volumetric fog with controllable XYZ placement and travel",
+        R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+uniform float u_warp;
+uniform vec3 u_position;
+uniform vec3 u_rotation;
+uniform vec3 u_motion;
+
+float hash31(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+float noise3(vec3 p) {
+    vec3 cell = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float n000 = hash31(cell);
+    float n100 = hash31(cell + vec3(1.0, 0.0, 0.0));
+    float n010 = hash31(cell + vec3(0.0, 1.0, 0.0));
+    float n110 = hash31(cell + vec3(1.0, 1.0, 0.0));
+    float n001 = hash31(cell + vec3(0.0, 0.0, 1.0));
+    float n101 = hash31(cell + vec3(1.0, 0.0, 1.0));
+    float n011 = hash31(cell + vec3(0.0, 1.0, 1.0));
+    float n111 = hash31(cell + vec3(1.0, 1.0, 1.0));
+    return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+               mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
+}
+
+vec3 rotate_xyz(vec3 p, vec3 angles) {
+    float cx = cos(angles.x), sx = sin(angles.x);
+    float cy = cos(angles.y), sy = sin(angles.y);
+    float cz = cos(angles.z), sz = sin(angles.z);
+    p.yz = mat2(cx, -sx, sx, cx) * p.yz;
+    p.xz = mat2(cy, -sy, sy, cy) * p.xz;
+    p.xy = mat2(cz, -sz, sz, cz) * p.xy;
+    return p;
+}
+
+void main() {
+    vec2 screen = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    vec3 origin = vec3(screen, 0.0) - u_position;
+    origin = rotate_xyz(origin, -u_rotation * 3.14159265 / 180.0);
+    origin += u_motion * t;
+
+    vec3 ray = normalize(vec3(screen * 0.35, 1.0));
+    float density = 0.0;
+    float glow = 0.0;
+    for (int i = 0; i < 28; ++i) {
+        float fi = float(i);
+        vec3 sample_pos = origin + ray * (fi * 0.085);
+        float n = noise3(sample_pos * (2.3 + u_warp * 2.7) + vec3(t * 0.12, -t * 0.08, t * 0.16));
+        float pocket = smoothstep(0.40, 0.78, n);
+        float height = 0.5 + 0.5 * sin(sample_pos.y * 3.0 + t + n * 4.0);
+        density += pocket * (0.65 + height * 0.55);
+        glow += exp(-length(sample_pos.xy) * 2.6) * pocket;
+    }
+
+    density /= 28.0;
+    glow /= 28.0;
+    vec3 col = mix(u_palette_low * 0.06, u_palette_mid, smoothstep(0.08, 0.48, density));
+    col = mix(col, u_palette_high, clamp(density * 1.65 + glow * 0.7, 0.0, 1.0));
+    col += u_palette_high * glow * (0.35 + u_intensity * 0.55);
+    col *= 0.72 + u_intensity * 0.48;
+    col *= smoothstep(1.45, 0.08, length(screen));
+
+    fragColor = vec4(max(col, vec3(0.0)), 1.0);
+}
+ )"
+    }
 };
 
 const int g_shader_preset_count = sizeof(g_shader_presets) / sizeof(g_shader_presets[0]);

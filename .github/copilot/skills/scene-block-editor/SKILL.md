@@ -80,7 +80,7 @@ The PRE_BUILD touch on `main.cpp` ensures MSBuild always recompiles main.cpp aga
 - **Preview evaluation**: `RenderPreviewFrame` evaluates all assigned curves at `elapsed_time / curve.duration` and uses animated values for uniforms/transforms.
 - **Runtime evaluation**: `minimal_intro.exe` evaluates curves the same way during render (e.g., shader palette colors, mesh rotation).
 - **JSON round-trip**: `SaveProject` writes all curve fields per cue, `LoadProject` reads them back (must initialize to `-1` first, then parse).
-- **Export format**: Curve indices are appended to existing cue fields in cues.txt (shader_cues: 42 fields, image_cues: 18 fields, text_cues: 22 fields, mesh_cues: 44 fields).
+- **Export format**: Curve indices and shader transform fields are appended to existing cue fields in cues.txt (shader_cues: 51 fields, image_cues: 18 fields, text_cues: 22 fields, mesh_cues: 44 fields).
 
 ## Project-specific assets workflow
 1. User opens/creates `{name}.json`

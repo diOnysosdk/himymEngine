@@ -271,6 +271,15 @@ struct ShaderCue {
     float exposure_ramp;
     float fade_base;
     float fade_ramp;
+    float position_x;
+    float position_y;
+    float position_z;
+    float rotation_x;
+    float rotation_y;
+    float rotation_z;
+    float motion_x;
+    float motion_y;
+    float motion_z;
     float cue_start;
     float cue_end;
     float fade_in;
@@ -313,6 +322,9 @@ struct ShaderProgramState {
     int u_warp;
     int u_exposure_base;
     int u_fade_base;
+    int u_position;
+    int u_rotation;
+    int u_motion;
 };
 
 // Music cue data structure — provided by rev_runtime (MusicCue using above)
@@ -359,7 +371,7 @@ bool LoadShaderCue(const char* path, ShaderCue* cue) {
             cue->curve_opacity = cue->curve_exposure_ramp = cue->curve_fade_ramp = -1;
             
             int parsed = sscanf_s(start,
-                "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+                    "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f",
                 &cue->shader_scene_id,
                 &cue->palette_low[0], &cue->palette_low[1], &cue->palette_low[2],
                 &cue->palette_mid[0], &cue->palette_mid[1], &cue->palette_mid[2],
@@ -375,7 +387,10 @@ bool LoadShaderCue(const char* path, ShaderCue* cue) {
                 &cue->curve_palette_low_r, &cue->curve_palette_low_g, &cue->curve_palette_low_b,
                 &cue->curve_palette_mid_r, &cue->curve_palette_mid_g, &cue->curve_palette_mid_b,
                 &cue->curve_palette_high_r, &cue->curve_palette_high_g, &cue->curve_palette_high_b,
-                &cue->curve_opacity, &cue->curve_exposure_ramp, &cue->curve_fade_ramp);
+                &cue->curve_opacity, &cue->curve_exposure_ramp, &cue->curve_fade_ramp,
+                &cue->position_x, &cue->position_y, &cue->position_z,
+                &cue->rotation_x, &cue->rotation_y, &cue->rotation_z,
+                &cue->motion_x, &cue->motion_y, &cue->motion_z);
             
             LOGV("[LoadShaderCue] Parsed %d fields, shader_scene_id=%d\n", parsed, cue->shader_scene_id);
             
@@ -426,7 +441,7 @@ int LoadAllShaderCues(const char* path, ShaderCue* cues, int max_cues) {
             cue->curve_opacity = cue->curve_exposure_ramp = cue->curve_fade_ramp = -1;
             
             int parsed = sscanf_s(start,
-                "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+                "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f",
                 &cue->shader_scene_id,
                 &cue->palette_low[0], &cue->palette_low[1], &cue->palette_low[2],
                 &cue->palette_mid[0], &cue->palette_mid[1], &cue->palette_mid[2],
@@ -442,7 +457,10 @@ int LoadAllShaderCues(const char* path, ShaderCue* cues, int max_cues) {
                 &cue->curve_palette_low_r, &cue->curve_palette_low_g, &cue->curve_palette_low_b,
                 &cue->curve_palette_mid_r, &cue->curve_palette_mid_g, &cue->curve_palette_mid_b,
                 &cue->curve_palette_high_r, &cue->curve_palette_high_g, &cue->curve_palette_high_b,
-                &cue->curve_opacity, &cue->curve_exposure_ramp, &cue->curve_fade_ramp);
+                &cue->curve_opacity, &cue->curve_exposure_ramp, &cue->curve_fade_ramp,
+                &cue->position_x, &cue->position_y, &cue->position_z,
+                &cue->rotation_x, &cue->rotation_y, &cue->rotation_z,
+                &cue->motion_x, &cue->motion_y, &cue->motion_z);
             
             if (parsed >= 14) {  // At least old format (14 basic fields)
                 LOGV("[LoadAllShaderCues] Loaded cue %d: shader_id=%d, time=%.1f-%.1f\n", 
@@ -2094,6 +2112,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         state.u_warp = rev::shader::GetUniformLocation(state.prog, "u_warp");
         state.u_exposure_base = rev::shader::GetUniformLocation(state.prog, "u_exposure_base");
         state.u_fade_base = rev::shader::GetUniformLocation(state.prog, "u_fade_base");
+        state.u_position = rev::shader::GetUniformLocation(state.prog, "u_position");
+        state.u_rotation = rev::shader::GetUniformLocation(state.prog, "u_rotation");
+        state.u_motion = rev::shader::GetUniformLocation(state.prog, "u_motion");
         return &state;
     };
     ShaderProgramState asset_shader_programs[64] = {};
@@ -3310,6 +3331,18 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 }
                 if (shader_state->u_fade_base >= 0) {
                     rev::shader::SetFloat(shader_state->prog, shader_state->u_fade_base, anim_fade);
+                }
+                if (shader_state->u_position >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->u_position,
+                                         cue.position_x, cue.position_y, cue.position_z);
+                }
+                if (shader_state->u_rotation >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->u_rotation,
+                                         cue.rotation_x, cue.rotation_y, cue.rotation_z);
+                }
+                if (shader_state->u_motion >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->u_motion,
+                                         cue.motion_x, cue.motion_y, cue.motion_z);
                 }
 
                 glDrawArrays(GL_TRIANGLES, 0, 3);

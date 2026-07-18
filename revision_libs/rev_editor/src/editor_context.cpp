@@ -187,7 +187,7 @@ static bool ReadEditorFile(const char* path, std::vector<unsigned char>* bytes) 
         return false;
     }
     bytes->resize((size_t)size);
-    bool ok = fread(bytes->data(), 1, bytes->size(), f) == bytes->size();
+        bool ok = fread(bytes->data(), 1, bytes->size(), f) == bytes->size();
     fclose(f);
     return ok;
 }
@@ -1431,6 +1431,21 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"fade_base\": %f", &current_shader_cue.fade_base);
             } else if (strstr(start, "\"fade_ramp\":")) {
                 sscanf_s(start, "\"fade_ramp\": %f", &current_shader_cue.fade_ramp);
+            } else if (strstr(start, "\"position\":")) {
+                sscanf_s(start, "\"position\": [%f, %f, %f]",
+                    &current_shader_cue.position_x,
+                    &current_shader_cue.position_y,
+                    &current_shader_cue.position_z);
+            } else if (strstr(start, "\"rotation\":")) {
+                sscanf_s(start, "\"rotation\": [%f, %f, %f]",
+                    &current_shader_cue.rotation_x,
+                    &current_shader_cue.rotation_y,
+                    &current_shader_cue.rotation_z);
+            } else if (strstr(start, "\"motion\":")) {
+                sscanf_s(start, "\"motion\": [%f, %f, %f]",
+                    &current_shader_cue.motion_x,
+                    &current_shader_cue.motion_y,
+                    &current_shader_cue.motion_z);
             } else if (strstr(start, "\"cue_start\":")) {
                 sscanf_s(start, "\"cue_start\": %f", &current_shader_cue.cue_start);
             } else if (strstr(start, "\"cue_end\":")) {
@@ -2270,6 +2285,12 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"exposure_ramp\": %.3f,\n", cue->exposure_ramp);
             fprintf(f, "          \"fade_base\": %.3f,\n", cue->fade_base);
             fprintf(f, "          \"fade_ramp\": %.3f,\n", cue->fade_ramp);
+            fprintf(f, "          \"position\": [%.3f, %.3f, %.3f],\n",
+                cue->position_x, cue->position_y, cue->position_z);
+            fprintf(f, "          \"rotation\": [%.3f, %.3f, %.3f],\n",
+                cue->rotation_x, cue->rotation_y, cue->rotation_z);
+            fprintf(f, "          \"motion\": [%.3f, %.3f, %.3f],\n",
+                cue->motion_x, cue->motion_y, cue->motion_z);
             fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
             fprintf(f, "          \"cue_end\": %.3f,\n", cue->cue_end);
             fprintf(f, "          \"fade_in\": %.3f,\n", cue->fade_in);
@@ -3122,7 +3143,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             int shader_id;
             float abs_start, abs_end;
             
-            int parsed = sscanf_s(start, "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d",
+            int parsed = sscanf_s(start, "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f",
                 &shader_id,
                 &cue.palette_low.r, &cue.palette_low.g, &cue.palette_low.b,
                 &cue.palette_mid.r, &cue.palette_mid.g, &cue.palette_mid.b,
@@ -3131,7 +3152,10 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
                 &cue.exposure_base, &cue.exposure_ramp,
                 &cue.fade_base, &cue.fade_ramp,
                 &abs_start, &abs_end, &cue.fade_in, &cue.fade_out,
-                &cue.layer_role, &cue.opacity, &cue.blend_mode, &cue.layer_order
+                &cue.layer_role, &cue.opacity, &cue.blend_mode, &cue.layer_order,
+                &cue.position_x, &cue.position_y, &cue.position_z,
+                &cue.rotation_x, &cue.rotation_y, &cue.rotation_z,
+                &cue.motion_x, &cue.motion_y, &cue.motion_z
             );
             
             if (parsed >= 18) { // At least basic params
@@ -3141,7 +3165,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
                 
                 // Set shader name based on ID
                 const char* preset_name = "Unknown";
-                for (int i = 0; i < 10; i++) {
+                for (int i = 0; i < g_shader_preset_count; i++) {
                     if (g_shader_presets[i].id == shader_id) {
                         preset_name = g_shader_presets[i].name;
                         break;
@@ -3556,7 +3580,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 
     // [shader_cues] section
     fprintf(f, "[shader_cues]\n");
-    fprintf(f, "# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order|curve_speed|curve_intensity|curve_warp|curve_exposure|curve_fade|curve_palette_low_r|curve_palette_low_g|curve_palette_low_b|curve_palette_mid_r|curve_palette_mid_g|curve_palette_mid_b|curve_palette_high_r|curve_palette_high_g|curve_palette_high_b|curve_opacity|curve_exposure_ramp|curve_fade_ramp\n");
+    fprintf(f, "# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order|curve_speed|curve_intensity|curve_warp|curve_exposure|curve_fade|curve_palette_low_r|curve_palette_low_g|curve_palette_low_b|curve_palette_mid_r|curve_palette_mid_g|curve_palette_mid_b|curve_palette_high_r|curve_palette_high_g|curve_palette_high_b|curve_opacity|curve_exposure_ramp|curve_fade_ramp|position_x|position_y|position_z|rotation_x|rotation_y|rotation_z|motion_x|motion_y|motion_z\n");
     
     // Collect all shader cues from all scenes
     int shader_cue_id = 0;
@@ -3576,7 +3600,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             float abs_start = scene_start + cue->cue_start;
             float abs_end = (cue->cue_end < 0.0f) ? (scene_start + scene->duration) : (scene_start + cue->cue_end);
             
-            fprintf(f, "%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d\n",
+            fprintf(f, "%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f\n",
                 cue->shader_scene_id,
                 cue->palette_low.r, cue->palette_low.g, cue->palette_low.b,
                 cue->palette_mid.r, cue->palette_mid.g, cue->palette_mid.b,
@@ -3591,7 +3615,10 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->curve_palette_low_r, cue->curve_palette_low_g, cue->curve_palette_low_b,
                 cue->curve_palette_mid_r, cue->curve_palette_mid_g, cue->curve_palette_mid_b,
                 cue->curve_palette_high_r, cue->curve_palette_high_g, cue->curve_palette_high_b,
-                cue->curve_opacity, cue->curve_exposure_ramp, cue->curve_fade_ramp
+                cue->curve_opacity, cue->curve_exposure_ramp, cue->curve_fade_ramp,
+                cue->position_x, cue->position_y, cue->position_z,
+                cue->rotation_x, cue->rotation_y, cue->rotation_z,
+                cue->motion_x, cue->motion_y, cue->motion_z
             );
             
             shader_cue_id++;
@@ -5563,6 +5590,9 @@ void RenderPreviewFrame(EditorContext* editor) {
             float fade_base = cue->fade_base;
             float fade_ramp = cue->fade_ramp;
             float opacity = cue->opacity;
+            float position[3] = {cue->position_x, cue->position_y, cue->position_z};
+            float rotation[3] = {cue->rotation_x, cue->rotation_y, cue->rotation_z};
+            float motion[3] = {cue->motion_x, cue->motion_y, cue->motion_z};
             float palette_low[3] = { cue->palette_low.r, cue->palette_low.g, cue->palette_low.b };
             float palette_mid[3] = { cue->palette_mid.r, cue->palette_mid.g, cue->palette_mid.b };
             float palette_high[3] = { cue->palette_high.r, cue->palette_high.g, cue->palette_high.b };
@@ -5676,6 +5706,12 @@ void RenderPreviewFrame(EditorContext* editor) {
             rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_warp"), warp);
             rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_exposure_base"), exposure);
             rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_fade_base"), fade);
+            rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_position"),
+                                 position[0], position[1], position[2]);
+            rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_rotation"),
+                                 rotation[0], rotation[1], rotation[2]);
+            rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_motion"),
+                                 motion[0], motion[1], motion[2]);
 
             glDrawArrays(GL_TRIANGLES, 0, 3);
         }
@@ -7526,6 +7562,15 @@ void ResetShaderValues(ShaderCue* cue) {
     cue->exposure_ramp = 0.02f;
     cue->fade_base = 1.0f;  // Full opacity (shaders use this as alpha channel)
     cue->fade_ramp = -0.04f;
+    cue->position_x = 0.0f;
+    cue->position_y = 0.0f;
+    cue->position_z = 0.0f;
+    cue->rotation_x = 0.0f;
+    cue->rotation_y = 0.0f;
+    cue->rotation_z = 0.0f;
+    cue->motion_x = 0.0f;
+    cue->motion_y = 0.0f;
+    cue->motion_z = 0.0f;
     
     // Default timing
     cue->cue_start = 0.0f;

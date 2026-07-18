@@ -18,7 +18,7 @@ Use this skill for runtime changes in `examples/minimal_intro/main.cpp`.
 ## Non-negotiables
 - Keep the main loop deterministic: pump messages, get time, update cues, render.
 - Keep GDI+ initialized (`GdiplusStartup`) before any `LoadImageTexture` call.
-- Keep `LoadShaderCue` parser field count aligned with the export format: currently 42 fields (25 base + 17 curve indices) — palette colors, speed, intensity, warp, exposure, fade, timing, layer controls, and curve assignments.
+- Keep `LoadShaderCue` parser field count aligned with the export format: currently 51 fields (34 base + 17 curve indices) — palette colors, speed, intensity, warp, exposure, fade, timing, layer controls, curve assignments, and XYZ position, rotation, and motion.
 - Keep `LoadImageCue` parser field count aligned with the export format: currently 18 fields (14 base + 4 curve indices) — `asset_key|asset_path|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|curve_x|curve_y|curve_scale|curve_opacity`.
 - Keep `LoadTextCue` parser field count aligned with the export format: currently 22 fields (16 base + 6 curve indices).
 - Keep `LoadMeshCue` parser field count aligned with the export format: currently 44 fields (28 base + 16 curve indices) — `asset_key|asset_path|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|metallic|roughness` + 16 curve indices. mesh_type 4 = glTF/GLB external file (asset_path). Backward compatible: fewer fields default missing curves to -1.

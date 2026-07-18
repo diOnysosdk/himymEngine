@@ -104,6 +104,17 @@ struct ShaderCue {
     float exposure_ramp;
     float fade_base;
     float fade_ramp;
+
+    // Virtual 3D coordinates used by procedural shader presets.
+    float position_x;
+    float position_y;
+    float position_z;
+    float rotation_x;
+    float rotation_y;
+    float rotation_z;
+    float motion_x;
+    float motion_y;
+    float motion_z;
     
     // Timing (scene-relative seconds)
     float cue_start;

@@ -135,7 +135,7 @@ void main() {
 }
 ```
 
-## Current Shader List (IDs 0-11)
+## Current Shader List (IDs 0-24)
 
 0. **Horizontal Gradient Bands** - Black default with three horizontal fade bands
 1. **Plasma Vibrant** - Classic plasma effect
@@ -149,8 +149,26 @@ void main() {
 9. **Glow Orbs** - Glowing orb metaballs
 10. **Matrix Rain** - Matrix-style digital rain
 11. **Spiral Galaxy** - Rotating nebula with stars, spiral arms, multi-layer FBM noise
+12-17. **Additional procedural scenes** - Volumetric, animated, and cinematic variations
+18. **Star Scroller 360** - Directional starfield scroller with warp-controlled heading
+19. **Kaleido Fracture** - Recursive mirrored shards with chromatic separation
+20. **Signal Riot** - Scanline interference, block tearing, and RGB misalignment
+21. **Electric Vortex** - Coiling lightning filaments around a breathing singularity
+22. **Warped Cathedral** - Domain-warped arches, rays, and recursive fBm detail
+23. **3D Checkerboard** - Perspective checkerboard with virtual XYZ placement, Euler rotation, and texture travel
+24. **3D Fog Volume** - Procedural volumetric fog with virtual XYZ placement, Euler rotation, and directional travel
 
-**Next available ID: 12**
+**Next available ID: 25**
+
+### Virtual 3D Shader Controls
+
+Shader cues remain fullscreen compositing passes, but presets 23 and 24 evaluate a virtual 3D coordinate space. Their controls are:
+
+- **Position XYZ** - translates the procedural plane or volume
+- **Rotation XYZ** - Euler rotation in degrees
+- **Motion XYZ** - texture-space velocity, multiplied by time and shader speed
+
+Older project JSON and cues exports default these optional fields to zero.
 
 ## Benefits of This Architecture
 

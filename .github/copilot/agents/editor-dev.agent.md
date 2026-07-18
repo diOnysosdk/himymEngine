@@ -18,7 +18,7 @@ Expert in the HiMYM C++ editor: `rev_editor` lib, ImGui authoring tools, project
 
 - **rev_editor**: `editor_context.cpp` (LoadProject, SaveProject, ExportProject, PackBuildAndRun, RenderPreviewFrame, AddMeshCue, DeleteMeshCue, RenderMeshModal, RenderShaderModal, RenderImageModal, RenderTextModal, RenderMusicModal, RenderCurveEditor, RenderPointPropertiesModal)
 - **rev_editor.h**: `ProjectData`, `SceneBlock`, `ShaderCue` (shared cue types come from rev_runtime via `using`)
-- **Cue types supported**: ShaderCue (42 fields with 17 curve indices), ImageCue (18 fields with 4 curve indices), TextCue (22 fields with 6 curve indices), MusicCue (4 fields), MeshCue (44 fields with 16 curve indices — asset_path + mesh_type 0-4, type 4=glTF/GLB via rev_gltf)
+- **Cue types supported**: ShaderCue (51 fields with 17 curve indices plus XYZ position, rotation, and motion), ImageCue (18 fields with 4 curve indices), TextCue (22 fields with 6 curve indices), MusicCue (4 fields), MeshCue (44 fields with 16 curve indices — asset_path + mesh_type 0-4, type 4=glTF/GLB via rev_gltf)
 - **Curve animation**: Up to 32 curves in `ProjectData.curves[32]`, tracked by `curve_count`. Each cue parameter can reference a curve via `int curve_*` field (-1 = no curve, 0-31 = curve index). Curve editor modal with point editing, endpoint locking (t=0 and t=1), double-click for point properties, unclamped values for rotations.
 - **Auto-save pattern**: All modals (Shader, Image, Text, Mesh, Music) use `AutoSave()` lambda that immediately copies `editing_cue` to `scene->cues[index]` on every UI control change. No Apply/Cancel workflow.
 - **Mesh support**: `mesh_shader` (Phong, compiled at InitializePreview), mesh modal, RenderPreviewFrame 3D layer
@@ -26,7 +26,7 @@ Expert in the HiMYM C++ editor: `rev_editor` lib, ImGui authoring tools, project
 
 ## Non-negotiables
 - Shared cue structs (`ImageCue`, `TextCue`, `MusicCue`, `MeshCue`) live in `rev_runtime.h` — never redefine in `rev_editor.h`
-- cues.txt formats: shader_cues (42 fields), image_cues (18 fields), text_cues (22 fields), mesh_cues (44 fields) — keep aligned with `Load*Cue` in rev_runtime.cpp
+- cues.txt formats: shader_cues (51 fields), image_cues (18 fields), text_cues (22 fields), mesh_cues (44 fields) — keep aligned with `Load*Cue` in rev_runtime.cpp
 - All curve fields MUST be initialized to `-1` in struct constructors and JSON loaders (zero-init causes all params to reference curve 0)
 - Curve buttons validate `curve_field >= 0 && curve_field < curve_count` before opening editor
 - Endpoint times locked: first point at t=0.0, last point at t=1.0 (dragging endpoints only moves value, not time)

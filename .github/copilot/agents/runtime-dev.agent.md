@@ -19,7 +19,7 @@ Specialist in the HiMYM C++ intro runtime: `rev_runtime` shared lib, `minimal_in
 
 - **rev_runtime** (source of truth): `ImageCue`, `TextCue`, `MusicCue`, `MeshCue`, `ShaderCue` (runtime mirror) structs; `LoadImageCue`, `LoadTextCue`, `LoadMusicCue`, `LoadMeshCue`, `LoadShaderCue` parsers; `ComputeEffectOpacity`; `LoadImageTexture`/`LoadImageTextureFromMemory`; `RenderTextToTexture`; 8 Mat4 math functions
 - **Curve evaluation**: `rev::curve` namespace provides `Curve`, `Point`, `EaseMode`, `Evaluate` function. Runtime parses curve indices from cues.txt, evaluates curves at `(elapsed_time / curve.duration)` during render, uses animated values for uniforms/transforms.
-- **Field counts**: ShaderCue (42 fields with 17 curve indices), ImageCue (18 fields with 4 curve indices), TextCue (22 fields with 6 curve indices), MusicCue (4 fields), MeshCue (44 fields with 16 curve indices).
+- **Field counts**: ShaderCue (51 fields with 17 curve indices plus XYZ position, rotation, and motion), ImageCue (18 fields with 4 curve indices), TextCue (22 fields with 6 curve indices), MusicCue (4 fields), MeshCue (44 fields with 16 curve indices).
 - **minimal_intro/main.cpp**: frame loop, cue loading, GDI+/GL rendering, packed build, curve evaluation during shader/image/text/mesh rendering
 - **WinMM audio**: `waveOut` thread, XM streaming
 - **GDI+ patterns**: PNG loading via IStream (lazy LockBits), backslash paths
@@ -27,7 +27,7 @@ Specialist in the HiMYM C++ intro runtime: `rev_runtime` shared lib, `minimal_in
 
 ## Non-negotiables
 - Never redefine `ImageCue`, `TextCue`, `MusicCue`, `MeshCue` outside `rev_runtime.h`
-- `LoadShaderCue` parses 42 fields (25 base + 17 curve indices) — keep aligned with `ExportProject`
+- `LoadShaderCue` parses 51 fields (34 base + 17 curve indices) — keep aligned with `ExportProject`
 - `LoadImageCue` parses 18 fields (14 base + 4 curve indices)
 - `LoadTextCue` parses 22 fields (16 base + 6 curve indices)
 - `LoadMeshCue` parses 44 fields (28 base + 16 curve indices). Field 2 is `asset_path[512]`; mesh_type 4 = external glTF/GLB.

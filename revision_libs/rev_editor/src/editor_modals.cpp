@@ -1346,6 +1346,13 @@ void RenderShaderModal(EditorContext* editor) {
             cue->warp = 0.5f;
             AutoSave();
         }
+
+        ImGui::Separator();
+        ImGui::Text("Virtual 3D Texture Space:");
+        if (ImGui::DragFloat3("Position XYZ", &cue->position_x, 0.01f, -10.0f, 10.0f, "%.3f")) AutoSave();
+        if (ImGui::DragFloat3("Rotation XYZ", &cue->rotation_x, 1.0f, -360.0f, 360.0f, "%.1f deg")) AutoSave();
+        if (ImGui::DragFloat3("Motion XYZ", &cue->motion_x, 0.01f, -5.0f, 5.0f, "%.3f")) AutoSave();
+        ImGui::TextDisabled("Checkerboard and fog use these as 3D coordinates.");
         
         ImGui::Separator();
         
