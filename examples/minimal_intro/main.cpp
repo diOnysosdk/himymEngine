@@ -88,6 +88,29 @@ static const int kPostEffectCount = 23;
 
 // Global debug log file
 static FILE* g_logfile = nullptr;
+
+static void ParseShaderNoiseMapPaths(const char* line, char paths[4][512]) {
+    if (!line || !paths) return;
+    const char* field = line;
+    for (int delimiter = 0; delimiter < 63; ++delimiter) {
+        field = strchr(field, '|');
+        if (!field) return;
+        ++field;
+    }
+    for (int map_index = 0; map_index < 4; ++map_index) {
+        const char* end = strchr(field, '|');
+        size_t length = end ? (size_t)(end - field) : strcspn(field, "\r\n");
+        if (length >= 512) length = 511;
+        if (length == 1 && field[0] == '-') {
+            paths[map_index][0] = '\0';
+        } else {
+            memcpy(paths[map_index], field, length);
+            paths[map_index][length] = '\0';
+        }
+        if (!end) break;
+        field = end + 1;
+    }
+}
 static bool g_verbose_logging = false;
 
 static bool IsVerboseLoggingEnabled() {
@@ -258,6 +281,25 @@ static float ComputeShaderCueEnvelope(float local_time, float cue_duration, floa
     return env;
 }
 
+struct NoiseSettings {
+    int enabled;
+    int type;
+    float scale;
+    float strength;
+    float octaves;
+    float lacunarity;
+    float gain;
+    float warp;
+    float speed_x;
+    float speed_y;
+    float seed;
+    float contrast;
+};
+
+struct NoiseTextureSettings {
+    char paths[4][512];
+};
+
 // Shader cue data structure (runtime-local; editor uses its own ShaderCue with more fields)
 struct ShaderCue {
     int shader_scene_id;
@@ -280,6 +322,8 @@ struct ShaderCue {
     float motion_x;
     float motion_y;
     float motion_z;
+    NoiseSettings noise;
+    NoiseTextureSettings noise_textures;
     float cue_start;
     float cue_end;
     float fade_in;
@@ -325,6 +369,19 @@ struct ShaderProgramState {
     int u_position;
     int u_rotation;
     int u_motion;
+    int u_noise_enabled;
+    int u_noise_type;
+    int u_noise_scale;
+    int u_noise_strength;
+    int u_noise_octaves;
+    int u_noise_lacunarity;
+    int u_noise_gain;
+    int u_noise_warp;
+    int u_noise_speed;
+    int u_noise_seed;
+    int u_noise_contrast;
+    int u_noise_maps[4];
+    int u_noise_map_count;
 };
 
 // Music cue data structure — provided by rev_runtime (MusicCue using above)
@@ -341,7 +398,7 @@ bool LoadShaderCue(const char* path, ShaderCue* cue) {
     fopen_s(&f, path, "r");
     if (!f) return false;
     
-    char line[512];
+    char line[1024];
     bool in_shader_cues = false;
     bool found = false;
     
@@ -369,9 +426,28 @@ bool LoadShaderCue(const char* path, ShaderCue* cue) {
             cue->curve_palette_mid_r = cue->curve_palette_mid_g = cue->curve_palette_mid_b = -1;
             cue->curve_palette_high_r = cue->curve_palette_high_g = cue->curve_palette_high_b = -1;
             cue->curve_opacity = cue->curve_exposure_ramp = cue->curve_fade_ramp = -1;
+            cue->noise.enabled = 0;
+            cue->noise.type = 0;
+            cue->noise.scale = 3.0f;
+            cue->noise.strength = 1.0f;
+            cue->noise.octaves = 4.0f;
+            cue->noise.lacunarity = 2.0f;
+            cue->noise.gain = 0.5f;
+            cue->noise.warp = 0.0f;
+            cue->noise.speed_x = 0.0f;
+            cue->noise.speed_y = 0.0f;
+            cue->noise.seed = 0.0f;
+            cue->noise.contrast = 1.0f;
             
             int parsed = sscanf_s(start,
-                    "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f",
+                "%d|"
+                "%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|"
+                "%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|"
+                "%d|%f|%d|%d|"
+                "%d|%d|%d|%d|%d|%d|%d|%d|%d|"
+                "%d|%d|%d|%d|%d|%d|%d|%d|"
+                "%f|%f|%f|%f|%f|%f|%f|%f|%f|"
+                "%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f",
                 &cue->shader_scene_id,
                 &cue->palette_low[0], &cue->palette_low[1], &cue->palette_low[2],
                 &cue->palette_mid[0], &cue->palette_mid[1], &cue->palette_mid[2],
@@ -390,7 +466,12 @@ bool LoadShaderCue(const char* path, ShaderCue* cue) {
                 &cue->curve_opacity, &cue->curve_exposure_ramp, &cue->curve_fade_ramp,
                 &cue->position_x, &cue->position_y, &cue->position_z,
                 &cue->rotation_x, &cue->rotation_y, &cue->rotation_z,
-                &cue->motion_x, &cue->motion_y, &cue->motion_z);
+                &cue->motion_x, &cue->motion_y, &cue->motion_z,
+                &cue->noise.enabled, &cue->noise.type, &cue->noise.scale,
+                &cue->noise.strength, &cue->noise.octaves, &cue->noise.lacunarity,
+                &cue->noise.gain, &cue->noise.warp, &cue->noise.speed_x,
+                &cue->noise.speed_y, &cue->noise.seed, &cue->noise.contrast);
+            ParseShaderNoiseMapPaths(start, cue->noise_textures.paths);
             
             LOGV("[LoadShaderCue] Parsed %d fields, shader_scene_id=%d\n", parsed, cue->shader_scene_id);
             
@@ -411,7 +492,7 @@ int LoadAllShaderCues(const char* path, ShaderCue* cues, int max_cues) {
     fopen_s(&f, path, "r");
     if (!f) return 0;
     
-    char line[512];
+    char line[1024];
     bool in_shader_cues = false;
     int count = 0;
     
@@ -439,9 +520,29 @@ int LoadAllShaderCues(const char* path, ShaderCue* cues, int max_cues) {
             cue->curve_palette_mid_r = cue->curve_palette_mid_g = cue->curve_palette_mid_b = -1;
             cue->curve_palette_high_r = cue->curve_palette_high_g = cue->curve_palette_high_b = -1;
             cue->curve_opacity = cue->curve_exposure_ramp = cue->curve_fade_ramp = -1;
+            cue->noise.enabled = 0;
+            cue->noise.type = 0;
+            cue->noise.scale = 3.0f;
+            cue->noise.strength = 1.0f;
+            cue->noise.octaves = 4.0f;
+            cue->noise.lacunarity = 2.0f;
+            cue->noise.gain = 0.5f;
+            cue->noise.warp = 0.0f;
+            cue->noise.speed_x = 0.0f;
+            cue->noise.speed_y = 0.0f;
+            cue->noise.seed = 0.0f;
+            cue->noise.contrast = 1.0f;
             
             int parsed = sscanf_s(start,
-                "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f",
+                "%d|"
+                "%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|"
+                "%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|"
+                "%d|%f|%d|%d|"
+                "%d|%d|%d|%d|%d|%d|%d|%d|%d|"
+                "%d|%d|%d|%d|%d|%d|%d|%"
+                "d|"
+                "%f|%f|%f|%f|%f|%f|%f|%f|%f|"
+                "%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f",
                 &cue->shader_scene_id,
                 &cue->palette_low[0], &cue->palette_low[1], &cue->palette_low[2],
                 &cue->palette_mid[0], &cue->palette_mid[1], &cue->palette_mid[2],
@@ -460,7 +561,12 @@ int LoadAllShaderCues(const char* path, ShaderCue* cues, int max_cues) {
                 &cue->curve_opacity, &cue->curve_exposure_ramp, &cue->curve_fade_ramp,
                 &cue->position_x, &cue->position_y, &cue->position_z,
                 &cue->rotation_x, &cue->rotation_y, &cue->rotation_z,
-                &cue->motion_x, &cue->motion_y, &cue->motion_z);
+                &cue->motion_x, &cue->motion_y, &cue->motion_z,
+                &cue->noise.enabled, &cue->noise.type, &cue->noise.scale,
+                &cue->noise.strength, &cue->noise.octaves, &cue->noise.lacunarity,
+                &cue->noise.gain, &cue->noise.warp, &cue->noise.speed_x,
+                &cue->noise.speed_y, &cue->noise.seed, &cue->noise.contrast);
+            ParseShaderNoiseMapPaths(start, cue->noise_textures.paths);
             
             if (parsed >= 14) {  // At least old format (14 basic fields)
                 LOGV("[LoadAllShaderCues] Loaded cue %d: shader_id=%d, time=%.1f-%.1f\n", 
@@ -1784,6 +1890,19 @@ int main(int argc, char* argv[]) {
     int shader_cue_count = LoadAllShaderCues(cues_path, shader_cues, 16);
     LOGV("Loaded %d shader cue(s)\n", shader_cue_count);
 
+    ImageTexture shader_noise_textures[16][4] = {};
+    for (int cue_index = 0; cue_index < shader_cue_count; ++cue_index) {
+        for (int map_index = 0; map_index < 4; ++map_index) {
+            const char* declared_path = shader_cues[cue_index].noise_textures.paths[map_index];
+            if (!declared_path[0]) continue;
+            char resolved_path[512] = {};
+            if (ResolveRuntimeAssetPath(declared_path, cues_path, resolved_path, sizeof(resolved_path)) &&
+                LoadImageTexture(resolved_path, &shader_noise_textures[cue_index][map_index])) {
+                LOGV("Loaded shader noise map %d for cue %d: %s\n", map_index, cue_index, resolved_path);
+            }
+        }
+    }
+
     const int kMaxPostEffects = 64;
     RuntimePostEffect post_effects[kMaxPostEffects] = {};
     int post_effect_count = LoadAllPostEffects(cues_path, post_effects, kMaxPostEffects);
@@ -2115,6 +2234,23 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         state.u_position = rev::shader::GetUniformLocation(state.prog, "u_position");
         state.u_rotation = rev::shader::GetUniformLocation(state.prog, "u_rotation");
         state.u_motion = rev::shader::GetUniformLocation(state.prog, "u_motion");
+        state.u_noise_enabled = rev::shader::GetUniformLocation(state.prog, "u_noise_enabled");
+        state.u_noise_type = rev::shader::GetUniformLocation(state.prog, "u_noise_type");
+        state.u_noise_scale = rev::shader::GetUniformLocation(state.prog, "u_noise_scale");
+        state.u_noise_strength = rev::shader::GetUniformLocation(state.prog, "u_noise_strength");
+        state.u_noise_octaves = rev::shader::GetUniformLocation(state.prog, "u_noise_octaves");
+        state.u_noise_lacunarity = rev::shader::GetUniformLocation(state.prog, "u_noise_lacunarity");
+        state.u_noise_gain = rev::shader::GetUniformLocation(state.prog, "u_noise_gain");
+        state.u_noise_warp = rev::shader::GetUniformLocation(state.prog, "u_noise_warp");
+        state.u_noise_speed = rev::shader::GetUniformLocation(state.prog, "u_noise_speed");
+        state.u_noise_seed = rev::shader::GetUniformLocation(state.prog, "u_noise_seed");
+        state.u_noise_contrast = rev::shader::GetUniformLocation(state.prog, "u_noise_contrast");
+        for (int map_index = 0; map_index < 4; ++map_index) {
+            char uniform_name[32] = {};
+            snprintf(uniform_name, sizeof(uniform_name), "u_noise_map_%d", map_index);
+            state.u_noise_maps[map_index] = rev::shader::GetUniformLocation(state.prog, uniform_name);
+        }
+        state.u_noise_map_count = rev::shader::GetUniformLocation(state.prog, "u_noise_map_count");
         return &state;
     };
     ShaderProgramState asset_shader_programs[64] = {};
@@ -3343,6 +3479,34 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 if (shader_state->u_motion >= 0) {
                     rev::shader::SetVec3(shader_state->prog, shader_state->u_motion,
                                          cue.motion_x, cue.motion_y, cue.motion_z);
+                }
+                if (shader_state->u_noise_enabled >= 0) rev::shader::SetInt(shader_state->prog, shader_state->u_noise_enabled, cue.noise.enabled);
+                if (shader_state->u_noise_type >= 0) rev::shader::SetInt(shader_state->prog, shader_state->u_noise_type, cue.noise.type);
+                if (shader_state->u_noise_scale >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_scale, cue.noise.scale);
+                if (shader_state->u_noise_strength >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_strength, cue.noise.strength);
+                if (shader_state->u_noise_octaves >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_octaves, cue.noise.octaves);
+                if (shader_state->u_noise_lacunarity >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_lacunarity, cue.noise.lacunarity);
+                if (shader_state->u_noise_gain >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_gain, cue.noise.gain);
+                if (shader_state->u_noise_warp >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_warp, cue.noise.warp);
+                if (shader_state->u_noise_speed >= 0) rev::shader::SetVec2(shader_state->prog, shader_state->u_noise_speed, cue.noise.speed_x, cue.noise.speed_y);
+                if (shader_state->u_noise_seed >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_seed, cue.noise.seed);
+                if (shader_state->u_noise_contrast >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_contrast, cue.noise.contrast);
+                if (glActiveTexture) {
+                    int noise_map_count = 0;
+                    for (int map_index = 0; map_index < 4; ++map_index) {
+                        if (shader_noise_textures[active_layers[li].cue_index][map_index].texture_id != 0) ++noise_map_count;
+                        glActiveTexture(0x84C4u + (unsigned int)map_index);
+                        glBindTexture(GL_TEXTURE_2D, shader_noise_textures[active_layers[li].cue_index][map_index].texture_id);
+                        if (shader_state->u_noise_maps[map_index] >= 0) {
+                            rev::shader::SetTextureUnit(shader_state->prog,
+                                                        shader_state->u_noise_maps[map_index],
+                                                        4 + map_index);
+                        }
+                    }
+                    if (shader_state->u_noise_map_count >= 0) {
+                        rev::shader::SetInt(shader_state->prog, shader_state->u_noise_map_count, noise_map_count);
+                    }
+                    glActiveTexture(GL_TEXTURE0);
                 }
 
                 glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -4832,6 +4996,14 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         if (shader_programs[i].prog) {
             rev::shader::DestroyProgram(shader_programs[i].prog);
             shader_programs[i].prog = nullptr;
+        }
+    }
+    for (int cue_index = 0; cue_index < shader_cue_count; ++cue_index) {
+        for (int map_index = 0; map_index < 4; ++map_index) {
+            if (shader_noise_textures[cue_index][map_index].texture_id != 0) {
+                glDeleteTextures(1, &shader_noise_textures[cue_index][map_index].texture_id);
+                shader_noise_textures[cue_index][map_index].texture_id = 0;
+            }
         }
     }
     if (scene_texture) glDeleteTextures(1, &scene_texture);

@@ -79,6 +79,25 @@ Your shader fragment code has access to these uniforms:
 - `float u_warp` - Distortion/warping amount (0.0 - 1.0)
 - `float u_exposure_base` - Exposure control (0.0 - 2.0)
 - `float u_fade_base` - Opacity/fade (0.0 - 1.0)
+- `vec3 u_position` - Virtual texture-space position
+- `vec3 u_rotation` - Virtual texture-space Euler rotation
+- `vec3 u_motion` - Texture-space velocity multiplied by shader time
+
+### Procedural Noise Compatibility
+
+The current noise system is procedural GLSL noise, not sampler-backed image textures. A shader opts in by declaring the `u_noise_*` uniforms and applying the resulting field to its coordinates or material values. The five presets below now evaluate three independently seeded noise layers, so one cue can produce broad, medium, and fine detail from the same settings:
+
+- **11 Spiral Galaxy** - nebula, dust, and spiral distortion
+- **14 Liquid Chrome** - fluid coordinates and metallic reflection bands
+- **16 Fire Shader** - flame turbulence and rising distortion
+- **17 Cosmic Nebula Volumetric** - volumetric ray coordinates and cloud density
+- **22 Warped Cathedral** - domain warp, arches, and light-ray detail
+
+Other presets are viable candidates but are not opted in yet:
+
+- **Easy 2D candidates:** 2 Tunnel Neon, 4 Fractal Mandelbrot, 5 Voronoi Cells, 6 Wave Distortion, 9 Glow Orbs, 10 Matrix Rain, 12 Wormhole, 13 DNA Helix, 15 Kaleidoscope, 18 Star Scroller 360, 19 Kaleido Fracture, 20 Signal Riot, 21 Electric Vortex.
+- **3D or specialized candidates:** 3 Raymarcher SDF, 7 Particle System, 8 Starfield, 23 3D Checkerboard, 24 3D Fog Volume. These need field placement specific to their geometry or ray parameterization.
+- **Already noise-driven but intentionally unchanged:** 1 Plasma Vibrant and 0 Horizontal Gradient Bands already consume the shared noise controls; both now also use `u_motion` for noise travel.
 
 ## Shader Code Guidelines
 
@@ -135,7 +154,7 @@ void main() {
 }
 ```
 
-## Current Shader List (IDs 0-24)
+## Current Shader List (IDs 0-30)
 
 0. **Horizontal Gradient Bands** - Black default with three horizontal fade bands
 1. **Plasma Vibrant** - Classic plasma effect
@@ -157,8 +176,20 @@ void main() {
 22. **Warped Cathedral** - Domain-warped arches, rays, and recursive fBm detail
 23. **3D Checkerboard** - Perspective checkerboard with virtual XYZ placement, Euler rotation, and texture travel
 24. **3D Fog Volume** - Procedural volumetric fog with virtual XYZ placement, Euler rotation, and directional travel
+25. **Cloud Flight** - Layered volumetric cloud flight with broad, detail, and wispy procedural fields
+26. **Noise Triplanar Marble** - Three-axis procedural noise projection with marble veins
+27. **Noise Erosion Mask** - Layered ridges, erosion, and sediment bands
+28. **Noise Reaction Field** - Animated cellular field built from offset noise layers
+29. **Noise Flow Map** - Iterated gradient-driven flow ribbons
+30. **Noise Terrain Relief** - Height-field relief with procedural lighting
 
-**Next available ID: 25**
+**Next available ID: 31**
+
+### Noise Texture Slots
+
+Shader cues support **four optional sampler-backed noise textures**. Their paths are stored in `noise_map_0` through `noise_map_3` and are resolved relative to the project assets directory (with the existing runtime asset fallbacks). The editor and runtime load them through the shared image loader and bind them to texture units 4 through 7 as `u_noise_map_0` through `u_noise_map_3`.
+
+The procedural `u_noise_*` controls remain independent and continue to work when no maps are assigned. The new cloud and specialized noise presets blend assigned maps into their procedural fields; with zero assigned maps they retain their procedural-only behavior. Empty slots are represented by `-` in exported `cues.txt` rows, and older rows without the four trailing fields remain compatible.
 
 ### Virtual 3D Shader Controls
 

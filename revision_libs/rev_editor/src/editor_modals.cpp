@@ -1232,7 +1232,7 @@ void RenderShaderModal(EditorContext* editor) {
         ImGui::Separator();
         
         // Color palette with individual R, G, B sliders and curve buttons
-        ImGui::Text("Color Palette:");
+        if (ImGui::CollapsingHeader("Color Palette", ImGuiTreeNodeFlags_DefaultOpen)) {
         
         // Palette Low
         ImGui::Text("Low:");
@@ -1305,11 +1305,12 @@ void RenderShaderModal(EditorContext* editor) {
             cue->palette_high = {0.0f, 0.0f, 0.0f};
             AutoSave();
         }
+        }
         
         ImGui::Separator();
         
         // Animation parameters with curve buttons
-        ImGui::Text("Animation:");
+        if (ImGui::CollapsingHeader("Animation", ImGuiTreeNodeFlags_DefaultOpen)) {
         
         if (ImGui::SliderFloat("Speed", &cue->speed, 0.1f, 5.0f)) AutoSave();
         ImGui::SameLine();
@@ -1346,17 +1347,51 @@ void RenderShaderModal(EditorContext* editor) {
             cue->warp = 0.5f;
             AutoSave();
         }
+        }
 
         ImGui::Separator();
-        ImGui::Text("Virtual 3D Texture Space:");
+        if (ImGui::CollapsingHeader("Procedural Noise", ImGuiTreeNodeFlags_DefaultOpen)) {
+        bool noise_enabled = cue->noise.enabled != 0;
+        if (ImGui::Checkbox("Enabled##noise", &noise_enabled)) {
+            cue->noise.enabled = noise_enabled ? 1 : 0;
+            AutoSave();
+        }
+        const char* noise_types[] = {"Value", "fBm", "Voronoi", "Turbulence", "Ridged"};
+        if (ImGui::Combo("Type##noise", &cue->noise.type, noise_types, 5)) AutoSave();
+        if (ImGui::SliderFloat("Scale##noise", &cue->noise.scale, 0.1f, 32.0f)) AutoSave();
+        if (ImGui::SliderFloat("Strength##noise", &cue->noise.strength, 0.0f, 2.0f)) AutoSave();
+        if (ImGui::SliderFloat("Octaves##noise", &cue->noise.octaves, 1.0f, 8.0f)) AutoSave();
+        if (ImGui::SliderFloat("Lacunarity##noise", &cue->noise.lacunarity, 1.0f, 4.0f)) AutoSave();
+        if (ImGui::SliderFloat("Gain##noise", &cue->noise.gain, 0.1f, 0.9f)) AutoSave();
+        if (ImGui::SliderFloat("Warp##noise", &cue->noise.warp, 0.0f, 2.0f)) AutoSave();
+        if (ImGui::DragFloat2("Motion##noise", &cue->noise.speed_x, 0.01f, -4.0f, 4.0f)) AutoSave();
+        if (ImGui::SliderFloat("Seed##noise", &cue->noise.seed, 0.0f, 100.0f)) AutoSave();
+        if (ImGui::SliderFloat("Contrast##noise", &cue->noise.contrast, 0.1f, 3.0f)) AutoSave();
+        }
+
+        ImGui::Separator();
+        if (ImGui::CollapsingHeader("Noise Texture Maps")) {
+        ImGui::TextDisabled("Optional project-assets-relative images; bound to u_noise_map_0..3.");
+        for (int map_index = 0; map_index < 4; ++map_index) {
+            char label[64] = {};
+            snprintf(label, sizeof(label), "Map %d##noise_map", map_index);
+            if (ImGui::InputText(label, cue->noise_textures.paths[map_index],
+                                 sizeof(cue->noise_textures.paths[map_index]))) AutoSave();
+        }
+        }
+
+        ImGui::Separator();
+        if (ImGui::CollapsingHeader("Virtual 3D Texture Space", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (ImGui::DragFloat3("Position XYZ", &cue->position_x, 0.01f, -10.0f, 10.0f, "%.3f")) AutoSave();
         if (ImGui::DragFloat3("Rotation XYZ", &cue->rotation_x, 1.0f, -360.0f, 360.0f, "%.1f deg")) AutoSave();
         if (ImGui::DragFloat3("Motion XYZ", &cue->motion_x, 0.01f, -5.0f, 5.0f, "%.3f")) AutoSave();
         ImGui::TextDisabled("Checkerboard and fog use these as 3D coordinates.");
+        }
         
         ImGui::Separator();
         
         // Exposure & fade with curve buttons
+        if (ImGui::CollapsingHeader("Exposure and Fade", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("Exposure:");
         if (ImGui::SliderFloat("Base##exp", &cue->exposure_base, 0.0f, 2.0f)) AutoSave();
         ImGui::SameLine();
@@ -1382,19 +1417,23 @@ void RenderShaderModal(EditorContext* editor) {
         if (ImGui::SmallButton(cue->curve_fade_ramp >= 0 ? "[C]##fade_ramp" : "+##fade_ramp")) {
             OpenShaderCurve(cue->curve_fade_ramp, "Shader Fade Ramp", cue->fade_ramp);
         }
+        }
         
         ImGui::Separator();
         
         // Timing
+        if (ImGui::CollapsingHeader("Timing", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("Timing:");
         if (ImGui::InputFloat("Start", &cue->cue_start, 0.1f, 1.0f)) AutoSave();
         if (ImGui::InputFloat("End", &cue->cue_end, 0.1f, 1.0f)) AutoSave();
         if (ImGui::InputFloat("Fade In", &cue->fade_in, 0.1f, 1.0f)) AutoSave();
         if (ImGui::InputFloat("Fade Out", &cue->fade_out, 0.1f, 1.0f)) AutoSave();
+        }
         
         ImGui::Separator();
         
         // Layer controls
+        if (ImGui::CollapsingHeader("Layer", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("Layer:");
         const char* layer_roles[] = {"Background", "Midground", "Foreground", "Overlay"};
         if (ImGui::Combo("Role", &cue->layer_role, layer_roles, 4)) AutoSave();
@@ -1408,8 +1447,10 @@ void RenderShaderModal(EditorContext* editor) {
         const char* blend_modes[] = {"Alpha", "Add", "Multiply", "Screen"};
         if (ImGui::Combo("Blend", &cue->blend_mode, blend_modes, 4)) AutoSave();
         if (ImGui::InputInt("Order", &cue->layer_order)) AutoSave();
+        }
 
         ImGui::Separator();
+        if (ImGui::CollapsingHeader("Curve Reuse", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("Curve Reuse:");
         if (editor->project->curve_count <= 0) {
             ImGui::TextDisabled("No curves available. Create one first.");
@@ -1466,6 +1507,7 @@ void RenderShaderModal(EditorContext* editor) {
                     editor->curve_editor_modal_request_open = true;
                 }
             }
+        }
         }
         
         ImGui::Separator();

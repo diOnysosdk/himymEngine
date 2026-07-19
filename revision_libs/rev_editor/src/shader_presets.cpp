@@ -18,10 +18,63 @@ out vec4 fragColor;
 uniform vec3 u_palette_low;
 uniform vec3 u_palette_mid;
 uniform vec3 u_palette_high;
+uniform float u_time;
+uniform vec3 u_motion;
+uniform int u_noise_enabled;
+uniform int u_noise_type;
+uniform float u_noise_scale;
+uniform float u_noise_strength;
+uniform float u_noise_octaves;
+uniform float u_noise_lacunarity;
+uniform float u_noise_gain;
+uniform float u_noise_warp;
+uniform vec2 u_noise_speed;
+uniform float u_noise_seed;
+uniform float u_noise_contrast;
+uniform sampler2D u_noise_map_0;
+uniform sampler2D u_noise_map_1;
+uniform sampler2D u_noise_map_2;
+uniform sampler2D u_noise_map_3;
+uniform int u_noise_map_count;
+
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+               mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+float configuredNoise(vec2 p, float time) {
+    p = p * max(u_noise_scale, 0.01) + u_noise_speed * time + vec2(u_noise_seed);
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    int octave_count = int(clamp(u_noise_octaves, 1.0, 8.0));
+    for (int i = 0; i < 8; ++i) {
+        if (i >= octave_count) break;
+        value += noise(p * frequency) * amplitude;
+        frequency *= max(u_noise_lacunarity, 1.0);
+        amplitude *= clamp(u_noise_gain, 0.0, 1.0);
+    }
+    value = clamp((value - 0.5) * u_noise_contrast + 0.5, 0.0, 1.0);
+    if (u_noise_type == 3) value = abs(value * 2.0 - 1.0);
+    if (u_noise_type == 4) value = 1.0 - abs(value * 2.0 - 1.0);
+    return value;
+}
 
 void main() {
     // Smooth vertical blend across low -> mid -> high (no hard band edges).
     float y = uv.y;
+    if (u_noise_enabled != 0) {
+        float map = configuredNoise(uv + u_motion.xy, u_time);
+        float noise_amount = 0.15 * clamp(u_noise_strength, 0.0, 2.0) + u_noise_warp;
+        y = clamp(y + (map - 0.5) * noise_amount, 0.0, 1.0);
+    }
     float low_to_mid = smoothstep(0.20, 0.55, y);
     float mid_to_high = smoothstep(0.45, 0.80, y);
 
@@ -48,6 +101,18 @@ uniform vec3 u_palette_mid;
 uniform vec3 u_palette_high;
 uniform float u_speed;
 uniform float u_intensity;
+uniform int u_noise_enabled;
+uniform int u_noise_type;
+uniform float u_noise_scale;
+uniform float u_noise_strength;
+uniform float u_noise_octaves;
+uniform float u_noise_lacunarity;
+uniform float u_noise_gain;
+uniform float u_noise_warp;
+uniform vec2 u_noise_speed;
+uniform float u_noise_seed;
+uniform float u_noise_contrast;
+uniform vec3 u_motion;
 
 float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -74,6 +139,24 @@ float fbm(vec2 p) {
     return v;
 }
 
+float configuredNoise(vec2 p, float time) {
+    p = p * u_noise_scale + (u_noise_speed + u_motion.xy) * time + vec2(u_noise_seed);
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    int octave_count = int(clamp(u_noise_octaves, 1.0, 8.0));
+    for (int i = 0; i < 8; ++i) {
+        if (i >= octave_count) break;
+        value += noise(p * frequency) * amplitude;
+        frequency *= max(u_noise_lacunarity, 1.0);
+        amplitude *= clamp(u_noise_gain, 0.0, 1.0);
+    }
+    value = clamp((value - 0.5) * u_noise_contrast + 0.5, 0.0, 1.0);
+    if (u_noise_type == 3) value = abs(value * 2.0 - 1.0);
+    if (u_noise_type == 4) value = 1.0 - abs(value * 2.0 - 1.0);
+    return value;
+}
+
 void main() {
     vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
     float t = u_time * u_speed;
@@ -82,6 +165,11 @@ void main() {
     float v1 = sin(p.x * 5.0 + t) + cos(p.y * 5.0 - t * 0.7);
     float v2 = sin(length(p) * 8.0 - t * 1.5);
     float v3 = fbm(p * 3.0 + vec2(t * 0.3, -t * 0.2));
+    if (u_noise_enabled != 0) {
+        float map = configuredNoise(p, t);
+        p += (map - 0.5) * u_noise_warp;
+        v3 = mix(v3, map, clamp(u_noise_strength, 0.0, 1.0));
+    }
     
     // Combine layers with FBM noise
     float plasma = (v1 + v2 + v3 * 2.0) / 4.0;
@@ -620,6 +708,18 @@ uniform vec3 u_palette_high;
 uniform float u_speed;
 uniform float u_intensity;
 uniform float u_warp;
+uniform vec3 u_motion;
+uniform int u_noise_enabled;
+uniform int u_noise_type;
+uniform float u_noise_scale;
+uniform float u_noise_strength;
+uniform float u_noise_octaves;
+uniform float u_noise_lacunarity;
+uniform float u_noise_gain;
+uniform float u_noise_warp;
+uniform vec2 u_noise_speed;
+uniform float u_noise_seed;
+uniform float u_noise_contrast;
 
 uniform float u_exposure_base;
 uniform float u_fade_base;
@@ -662,6 +762,25 @@ float fbm(vec2 p)
     }
 
     return v;
+}
+
+float configuredNoise(vec2 p, float time, float layer) {
+    p = p * max(u_noise_scale, 0.01) * (1.0 + layer * 0.73);
+    p += u_noise_speed * time + u_motion.xy * time + vec2(u_noise_seed + layer * 17.3);
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    int octave_count = int(clamp(u_noise_octaves, 1.0, 8.0));
+    for (int i = 0; i < 8; ++i) {
+        if (i >= octave_count) break;
+        value += noise(p * frequency) * amplitude;
+        frequency *= max(u_noise_lacunarity, 1.0);
+        amplitude *= clamp(u_noise_gain, 0.0, 1.0);
+    }
+    value = clamp((value - 0.5) * u_noise_contrast + 0.5, 0.0, 1.0);
+    if (u_noise_type == 3) value = abs(value * 2.0 - 1.0);
+    if (u_noise_type == 4) value = 1.0 - abs(value * 2.0 - 1.0);
+    return value;
 }
 
 vec2 rotate(vec2 p, float a)
@@ -717,6 +836,17 @@ void main()
     float n1 = fbm(nebulaUV * 2.1 + vec2(t * 0.035, -t * 0.025));
     float n2 = fbm(nebulaUV * 4.3 - vec2(t * 0.02, t * 0.015));
     float n3 = fbm(nebulaUV * 8.0 + n1 * 2.0);
+
+    if (u_noise_enabled != 0) {
+        float m1 = configuredNoise(nebulaUV, t, 0.0);
+        float m2 = configuredNoise(nebulaUV + vec2(4.7, 9.1), t, 1.0);
+        float m3 = configuredNoise(nebulaUV - vec2(8.2, 2.4), t, 2.0);
+        float amount = clamp(u_noise_strength, 0.0, 2.0);
+        n1 = mix(n1, m1, amount * 0.45);
+        n2 = mix(n2, m2, amount * 0.35);
+        n3 = mix(n3, m3, amount * 0.25);
+        nebulaUV += (vec2(m1, m2) - 0.5) * u_noise_warp;
+    }
 
     float nebula = n1 * 0.55 + n2 * 0.32 + n3 * 0.13;
     nebula = smoothstep(0.24, 1.0, nebula);
@@ -924,6 +1054,18 @@ uniform vec3 u_palette_mid;
 uniform vec3 u_palette_high;
 uniform float u_speed;
 uniform float u_intensity;
+uniform vec3 u_motion;
+uniform int u_noise_enabled;
+uniform int u_noise_type;
+uniform float u_noise_scale;
+uniform float u_noise_strength;
+uniform float u_noise_octaves;
+uniform float u_noise_lacunarity;
+uniform float u_noise_gain;
+uniform float u_noise_warp;
+uniform vec2 u_noise_speed;
+uniform float u_noise_seed;
+uniform float u_noise_contrast;
 
 float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -950,6 +1092,25 @@ float fbm(vec2 p) {
     return v;
 }
 
+float configuredNoise(vec2 p, float time, float layer) {
+    p = p * max(u_noise_scale, 0.01) * (1.0 + layer * 0.71);
+    p += (u_noise_speed + u_motion.xy) * time + vec2(u_noise_seed + layer * 13.7);
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    int octave_count = int(clamp(u_noise_octaves, 1.0, 8.0));
+    for (int i = 0; i < 8; ++i) {
+        if (i >= octave_count) break;
+        value += noise(p * frequency) * amplitude;
+        frequency *= max(u_noise_lacunarity, 1.0);
+        amplitude *= clamp(u_noise_gain, 0.0, 1.0);
+    }
+    value = clamp((value - 0.5) * u_noise_contrast + 0.5, 0.0, 1.0);
+    if (u_noise_type == 3) value = abs(value * 2.0 - 1.0);
+    if (u_noise_type == 4) value = 1.0 - abs(value * 2.0 - 1.0);
+    return value;
+}
+
 void main() {
     vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
     float t = u_time * u_speed;
@@ -963,6 +1124,16 @@ void main() {
     float n1 = fbm(fluid * 3.0 + vec2(t * 0.1, -t * 0.15));
     float n2 = fbm(fluid * 5.0 - vec2(t * 0.15, t * 0.1));
     float n3 = fbm(fluid * 8.0 + vec2(sin(t * 0.3), cos(t * 0.25)) * 2.0);
+    if (u_noise_enabled != 0) {
+        float m1 = configuredNoise(fluid, t, 0.0);
+        float m2 = configuredNoise(fluid + vec2(3.1, 7.4), t, 1.0);
+        float m3 = configuredNoise(fluid - vec2(6.2, 1.8), t, 2.0);
+        float amount = clamp(u_noise_strength, 0.0, 2.0);
+        n1 = mix(n1, m1, amount * 0.45);
+        n2 = mix(n2, m2, amount * 0.35);
+        n3 = mix(n3, m3, amount * 0.25);
+        fluid += (vec2(m1, m2) - 0.5) * u_noise_warp;
+    }
     
     // Combine layers
     float metal = n1 * 0.5 + n2 * 0.3 + n3 * 0.2;
@@ -1096,6 +1267,18 @@ uniform vec3 u_palette_mid;
 uniform vec3 u_palette_high;
 uniform float u_speed;
 uniform float u_intensity;
+uniform vec3 u_motion;
+uniform int u_noise_enabled;
+uniform int u_noise_type;
+uniform float u_noise_scale;
+uniform float u_noise_strength;
+uniform float u_noise_octaves;
+uniform float u_noise_lacunarity;
+uniform float u_noise_gain;
+uniform float u_noise_warp;
+uniform vec2 u_noise_speed;
+uniform float u_noise_seed;
+uniform float u_noise_contrast;
 
 float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -1120,6 +1303,25 @@ float fbm(vec2 p) {
     return v;
 }
 
+float configuredNoise(vec2 p, float time, float layer) {
+    p = p * max(u_noise_scale, 0.01) * (1.0 + layer * 0.68);
+    p += (u_noise_speed + u_motion.xy) * time + vec2(u_noise_seed + layer * 19.1);
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    int octave_count = int(clamp(u_noise_octaves, 1.0, 8.0));
+    for (int i = 0; i < 8; ++i) {
+        if (i >= octave_count) break;
+        value += noise(p * frequency) * amplitude;
+        frequency *= max(u_noise_lacunarity, 1.0);
+        amplitude *= clamp(u_noise_gain, 0.0, 1.0);
+    }
+    value = clamp((value - 0.5) * u_noise_contrast + 0.5, 0.0, 1.0);
+    if (u_noise_type == 3) value = abs(value * 2.0 - 1.0);
+    if (u_noise_type == 4) value = 1.0 - abs(value * 2.0 - 1.0);
+    return value;
+}
+
 void main() {
     vec2 p = uv;
     p.x = (p.x * 2.0 - 1.0) * (u_resolution.x / u_resolution.y);
@@ -1130,9 +1332,19 @@ void main() {
     fire_uv.y -= t * 0.5;
     fire_uv.y += sin(p.x * 5.0 + t) * 0.1;
     
-    // Turbulent noise for flame shape
     float turb1 = fbm(fire_uv * vec2(3.0, 5.0));
     float turb2 = fbm(fire_uv * vec2(5.0, 8.0) + vec2(23.7, 11.3));
+    if (u_noise_enabled != 0) {
+        float m1 = configuredNoise(fire_uv, t, 0.0);
+        float m2 = configuredNoise(fire_uv + vec2(4.2, 8.6), t, 1.0);
+        float m3 = configuredNoise(fire_uv - vec2(7.3, 2.1), t, 2.0);
+        float amount = clamp(u_noise_strength, 0.0, 2.0);
+        fire_uv += (vec2(m2, m3) - 0.5) * u_noise_warp;
+        turb1 += fbm(fire_uv * vec2(3.0, 5.0)) * u_noise_warp * 0.35;
+        turb2 += fbm(fire_uv * vec2(5.0, 8.0) + vec2(23.7, 11.3)) * u_noise_warp * 0.25;
+        turb1 = mix(turb1, m1, amount * 0.50);
+        turb2 = mix(turb2, m2, amount * 0.35);
+    }
     
     // Flame shape
     float flame = turb1 * 0.7 + turb2 * 0.3;
@@ -1208,6 +1420,18 @@ uniform vec3 u_palette_high;
 uniform float u_speed;
 uniform float u_intensity;
 uniform float u_warp;
+uniform vec3 u_motion;
+uniform int u_noise_enabled;
+uniform int u_noise_type;
+uniform float u_noise_scale;
+uniform float u_noise_strength;
+uniform float u_noise_octaves;
+uniform float u_noise_lacunarity;
+uniform float u_noise_gain;
+uniform float u_noise_warp;
+uniform vec2 u_noise_speed;
+uniform float u_noise_seed;
+uniform float u_noise_contrast;
 
 uniform float u_exposure_base;
 uniform float u_fade_base;
@@ -1287,6 +1511,26 @@ float fbm3(vec3 p)
     }
 
     return v;
+}
+
+float configuredNoise3(vec3 p, float time, float layer) {
+    p = p * max(u_noise_scale, 0.01) * (1.0 + layer * 0.57);
+    p += vec3((u_noise_speed + u_motion.xy) * time, u_motion.z * time);
+    p += vec3(u_noise_seed + layer * 11.9);
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    int octave_count = int(clamp(u_noise_octaves, 1.0, 6.0));
+    for (int i = 0; i < 6; ++i) {
+        if (i >= octave_count) break;
+        value += noise3(p * frequency) * amplitude;
+        frequency *= max(u_noise_lacunarity, 1.0);
+        amplitude *= clamp(u_noise_gain, 0.0, 1.0);
+    }
+    value = clamp((value - 0.5) * u_noise_contrast + 0.5, 0.0, 1.0);
+    if (u_noise_type == 3) value = abs(value * 2.0 - 1.0);
+    if (u_noise_type == 4) value = 1.0 - abs(value * 2.0 - 1.0);
+    return value;
 }
 
 float warpedFbm(vec3 p, float t)
@@ -1371,6 +1615,15 @@ void main()
     float intensity = max(u_intensity, 0.001);
 
     vec2 pp = p;
+    if (u_noise_enabled != 0) {
+        float m1 = configuredNoise3(vec3(p, 0.0), t, 0.0);
+        float m2 = configuredNoise3(vec3(p.yx, 3.7), t, 1.0);
+        float m3 = configuredNoise3(vec3(p * 1.7, 8.1), t, 2.0);
+        float amount = clamp(u_noise_strength, 0.0, 2.0);
+        pp += (vec2(m1, m2) - 0.5) * (0.04 + u_noise_warp * 0.12) * amount;
+        pp += u_motion.xy * t * 0.04;
+        pp *= 1.0 + (m3 - 0.5) * 0.12 * amount;
+    }
     pp += vec2(
         noise3(vec3(p * 2.0, t * 0.06)),
         noise3(vec3(p.yx * 2.0, t * 0.05 + 4.0))
@@ -1709,6 +1962,18 @@ uniform vec3 u_palette_high;
 uniform float u_speed;
 uniform float u_intensity;
 uniform float u_warp;
+uniform vec3 u_motion;
+uniform int u_noise_enabled;
+uniform int u_noise_type;
+uniform float u_noise_scale;
+uniform float u_noise_strength;
+uniform float u_noise_octaves;
+uniform float u_noise_lacunarity;
+uniform float u_noise_gain;
+uniform float u_noise_warp;
+uniform vec2 u_noise_speed;
+uniform float u_noise_seed;
+uniform float u_noise_contrast;
 
 float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -1738,6 +2003,25 @@ float fbm(vec2 p) {
     return value;
 }
 
+float configuredNoise(vec2 p, float time, float layer) {
+    p = p * max(u_noise_scale, 0.01) * (1.0 + layer * 0.64);
+    p += (u_noise_speed + u_motion.xy) * time + vec2(u_noise_seed + layer * 15.4);
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    int octave_count = int(clamp(u_noise_octaves, 1.0, 8.0));
+    for (int i = 0; i < 8; ++i) {
+        if (i >= octave_count) break;
+        value += noise(p * frequency) * amplitude;
+        frequency *= max(u_noise_lacunarity, 1.0);
+        amplitude *= clamp(u_noise_gain, 0.0, 1.0);
+    }
+    value = clamp((value - 0.5) * u_noise_contrast + 0.5, 0.0, 1.0);
+    if (u_noise_type == 3) value = abs(value * 2.0 - 1.0);
+    if (u_noise_type == 4) value = 1.0 - abs(value * 2.0 - 1.0);
+    return value;
+}
+
 mat2 rotate(float angle) {
     float s = sin(angle);
     float c = cos(angle);
@@ -1761,6 +2045,14 @@ void main() {
     }
 
     float n = fbm(warped * 3.2 + vec2(t * 0.08, -t * 0.11));
+    if (u_noise_enabled != 0) {
+        float m1 = configuredNoise(warped, t, 0.0);
+        float m2 = configuredNoise(warped + vec2(5.3, 2.7), t, 1.0);
+        float m3 = configuredNoise(warped - vec2(1.6, 8.4), t, 2.0);
+        float amount = clamp(u_noise_strength, 0.0, 2.0);
+        n = mix(n, m1 * 0.5 + m2 * 0.3 + m3 * 0.2, amount * 0.75);
+        warped += (vec2(m2, m3) - 0.5) * u_noise_warp * 0.35;
+    }
     float columns = abs(sin(warped.x * 9.0 + sin(warped.y * 4.0 + t) * 0.8));
     float arches = abs(sin(warped.y * 7.0 - warped.x * 3.0 + t * 0.55 + n * 3.0));
     float ribs = smoothstep(0.88, 1.0, columns) + smoothstep(0.91, 1.0, arches);
@@ -1925,6 +2217,176 @@ void main() {
     fragColor = vec4(max(col, vec3(0.0)), 1.0);
 }
  )"
+    },
+
+    {
+        25,
+        "Cloud Flight",
+        "First-person flight through layered volumetric procedural clouds",
+        R"(
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec3 u_palette_low;
+uniform vec3 u_palette_mid;
+uniform vec3 u_palette_high;
+uniform float u_speed;
+uniform float u_intensity;
+uniform float u_warp;
+uniform vec3 u_motion;
+uniform int u_noise_enabled;
+uniform int u_noise_type;
+uniform float u_noise_scale;
+uniform float u_noise_strength;
+uniform float u_noise_octaves;
+uniform float u_noise_lacunarity;
+uniform float u_noise_gain;
+uniform float u_noise_warp;
+uniform vec2 u_noise_speed;
+uniform float u_noise_seed;
+uniform float u_noise_contrast;
+
+float hash3(vec3 p) { p = fract(p * 0.1031); p += dot(p, p.yzx + 33.33); return fract((p.x + p.y) * p.z); }
+float noise3(vec3 p) {
+    vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    float a = hash3(i), b = hash3(i + vec3(1,0,0)), c = hash3(i + vec3(0,1,0)), d = hash3(i + vec3(1,1,0));
+    float e = hash3(i + vec3(0,0,1)), g = hash3(i + vec3(1,0,1)), h = hash3(i + vec3(0,1,1)), j = hash3(i + vec3(1,1,1));
+    return mix(mix(mix(a,b,f.x),mix(c,d,f.x),f.y), mix(mix(e,g,f.x),mix(h,j,f.x),f.y), f.z);
+}
+float cloudNoise(vec3 p, float t, float layer) {
+    p = p * max(u_noise_scale, 0.01) * (1.0 + layer * 0.63);
+    p += vec3((u_noise_speed + u_motion.xy) * t, u_motion.z * t) + u_noise_seed + layer * 13.7;
+    float v = 0.0, a = 0.5, f = 1.0;
+    int count = int(clamp(u_noise_octaves, 1.0, 7.0));
+    for (int i = 0; i < 7; ++i) { if (i >= count) break; v += noise3(p * f) * a; f *= max(u_noise_lacunarity, 1.0); a *= clamp(u_noise_gain, 0.0, 1.0); }
+    v = clamp((v - 0.5) * u_noise_contrast + 0.5, 0.0, 1.0);
+    if (u_noise_type == 3) v = abs(v * 2.0 - 1.0);
+    if (u_noise_type == 4) v = 1.0 - abs(v * 2.0 - 1.0);
+    return v;
+}
+float mapNoise(vec2 p) {
+    if (u_noise_map_count <= 0) return 0.0;
+    float value = texture(u_noise_map_0, p).r;
+    if (u_noise_map_count > 1) value = mix(value, texture(u_noise_map_1, p * 1.37).r, 0.35);
+    if (u_noise_map_count > 2) value = mix(value, texture(u_noise_map_2, p * 2.11).r, 0.25);
+    if (u_noise_map_count > 3) value = mix(value, texture(u_noise_map_3, p * 3.73).r, 0.20);
+    return value;
+}
+void main() {
+    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
+    float t = u_time * u_speed;
+    vec3 ray = normalize(vec3(p * 0.75, 1.0));
+    vec3 origin = vec3(0.0, 0.0, -1.0) + u_motion * t * 0.15;
+    float density = 0.0, light = 0.0;
+    for (int i = 0; i < 32; ++i) {
+        float z = float(i) * 0.16;
+        vec3 pos = origin + ray * z;
+        float broad = cloudNoise(pos * 0.55 + vec3(0, 0, t * 0.12), t, 0.0);
+        float detail = cloudNoise(pos * 1.2 + vec3(7.0, 2.0, -t * 0.18), t, 1.0);
+        float wisps = cloudNoise(pos * 2.4 + vec3(-3.0, 9.0, t * 0.08), t, 2.0);
+        float d = smoothstep(0.43, 0.76, broad * 0.58 + detail * 0.30 + wisps * 0.12);
+        if (u_noise_map_count > 0) d = mix(d, smoothstep(0.35, 0.72, mapNoise(pos.xy * 0.12 + uv * 0.08)), 0.45);
+        if (u_noise_enabled == 0) d = smoothstep(0.52, 0.72, broad);
+        d *= smoothstep(0.0, 0.35, z) * smoothstep(5.2, 1.0, z);
+        float trans = 1.0 - density;
+        density += d * 0.075 * trans;
+        light += d * exp(-length(pos.xy - vec2(0.25, 0.35)) * 1.2) * 0.04 * trans;
+    }
+    vec3 col = mix(u_palette_low * 0.08, u_palette_mid, clamp(density * 2.2, 0.0, 1.0));
+    col = mix(col, u_palette_high, clamp(light * 3.0 + density * 0.45, 0.0, 1.0));
+    col += u_palette_high * light * (0.8 + u_intensity * 0.5);
+    col *= 0.7 + u_intensity * 0.3;
+    fragColor = vec4(max(col, vec3(0.0)), 1.0);
+}
+)"
+    },
+
+    {
+        26,
+        "Noise Triplanar Marble",
+        "Three-axis procedural noise projection with marble veins",
+        R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor;
+uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low; uniform vec3 u_palette_mid; uniform vec3 u_palette_high;
+uniform float u_speed; uniform float u_intensity; uniform float u_warp; uniform vec3 u_motion;
+uniform int u_noise_enabled; uniform int u_noise_type; uniform float u_noise_scale; uniform float u_noise_strength; uniform float u_noise_octaves; uniform float u_noise_lacunarity; uniform float u_noise_gain; uniform float u_noise_warp; uniform vec2 u_noise_speed; uniform float u_noise_seed; uniform float u_noise_contrast;
+uniform sampler2D u_noise_map_0; uniform sampler2D u_noise_map_1; uniform sampler2D u_noise_map_2; uniform sampler2D u_noise_map_3; uniform int u_noise_map_count;
+float h(vec3 p){p=fract(p*.1031);p+=dot(p,p.yzx+33.33);return fract((p.x+p.y)*p.z);} float n(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(mix(h(i),h(i+vec3(1,0,0)),f.x),mix(h(i+vec3(0,1,0)),h(i+vec3(1,1,0)),f.x),f.y),mix(mix(h(i+vec3(0,0,1)),h(i+vec3(1,0,1)),f.x),mix(h(i+vec3(0,1,1)),h(i+vec3(1,1,1)),f.x),f.y),f.z);}
+float f(vec3 p){p=p*max(u_noise_scale,.01)+(u_motion+vec3(u_noise_speed,0))*u_time+u_noise_seed;float v=0.,a=.5,q=1.;for(int i=0;i<7;i++){if(float(i)>=u_noise_octaves)break;v+=n(p*q)*a;q*=max(u_noise_lacunarity,1.);a*=clamp(u_noise_gain,0.,1.);}return clamp((v-.5)*u_noise_contrast+.5,0.,1.);}
+float mapNoise(vec2 p){if(u_noise_map_count<=0)return 0.;float v=texture(u_noise_map_0,p).r;if(u_noise_map_count>1)v=mix(v,texture(u_noise_map_1,p*1.37).r,.35);if(u_noise_map_count>2)v=mix(v,texture(u_noise_map_2,p*2.11).r,.25);if(u_noise_map_count>3)v=mix(v,texture(u_noise_map_3,p*3.73).r,.20);return v;}
+void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.);vec3 q=vec3(p,u_time*u_speed*.12)+u_motion*u_time*.15;float a=f(q),b=f(q.yzx+4.3),c=f(q.zxy-7.1);if(u_noise_map_count>0)a=mix(a,mapNoise(uv),.4);float veins=sin((a*.6+b*.3+c*.1)*18.+u_warp*4.);veins=pow(abs(veins),2.);vec3 col=mix(u_palette_low,u_palette_mid,veins);col=mix(col,u_palette_high,smoothstep(.55,.95,a));fragColor=vec4(col*(.65+u_intensity*.35),1.);}
+)"
+    },
+
+    {
+        27,
+        "Noise Erosion Mask",
+        "Layered procedural erosion, ridges, and sediment bands",
+        R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor;
+uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low; uniform vec3 u_palette_mid; uniform vec3 u_palette_high;
+uniform float u_speed; uniform float u_intensity; uniform float u_warp; uniform vec3 u_motion;
+uniform int u_noise_enabled; uniform int u_noise_type; uniform float u_noise_scale; uniform float u_noise_strength; uniform float u_noise_octaves; uniform float u_noise_lacunarity; uniform float u_noise_gain; uniform float u_noise_warp; uniform vec2 u_noise_speed; uniform float u_noise_seed; uniform float u_noise_contrast;
+    uniform sampler2D u_noise_map_0; uniform sampler2D u_noise_map_1; uniform sampler2D u_noise_map_2; uniform sampler2D u_noise_map_3; uniform int u_noise_map_count;
+float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}float f(vec2 p){p=p*max(u_noise_scale,.01)+(u_noise_speed+u_motion.xy)*u_time+u_noise_seed;float v=0.,a=.5,q=1.;for(int i=0;i<8;i++){if(float(i)>=u_noise_octaves)break;v+=n(p*q)*a;q*=max(u_noise_lacunarity,1.);a*=clamp(u_noise_gain,0.,1.);}return clamp((v-.5)*u_noise_contrast+.5,0.,1.);}
+float mapNoise(vec2 p){if(u_noise_map_count<=0)return 0.;float v=texture(u_noise_map_0,p).r;if(u_noise_map_count>1)v=mix(v,texture(u_noise_map_1,p*1.37).r,.35);if(u_noise_map_count>2)v=mix(v,texture(u_noise_map_2,p*2.11).r,.25);if(u_noise_map_count>3)v=mix(v,texture(u_noise_map_3,p*3.73).r,.20);return v;}
+void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.);float a=f(p),b=f(p*2.1+8.2),c=f(p*4.3-3.7);if(u_noise_map_count>0)a=mix(a,mapNoise(uv),.4);float ridge=1.-abs(a*2.-1.);float mask=smoothstep(.25,.75,ridge*.55+b*.3+c*.15);float bands=step(.5,fract(mask*8.+c*u_noise_warp));vec3 col=mix(u_palette_low,u_palette_mid,mask);col=mix(col,u_palette_high,bands*.55+mask*.35);fragColor=vec4(col*(.6+u_intensity*.4),1.);}
+)"
+    },
+
+    {
+        28,
+        "Noise Reaction Field",
+        "Animated reaction-diffusion-inspired cellular noise field",
+        R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor;
+uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low; uniform vec3 u_palette_mid; uniform vec3 u_palette_high;
+uniform float u_speed; uniform float u_intensity; uniform float u_warp; uniform vec3 u_motion;
+uniform int u_noise_enabled; uniform int u_noise_type; uniform float u_noise_scale; uniform float u_noise_strength; uniform float u_noise_octaves; uniform float u_noise_lacunarity; uniform float u_noise_gain; uniform float u_noise_warp; uniform vec2 u_noise_speed; uniform float u_noise_seed; uniform float u_noise_contrast;
+uniform sampler2D u_noise_map_0; uniform sampler2D u_noise_map_1; uniform sampler2D u_noise_map_2; uniform sampler2D u_noise_map_3; uniform int u_noise_map_count;
+float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}float f(vec2 p){p=p*max(u_noise_scale,.01)+(u_noise_speed+u_motion.xy)*u_time+u_noise_seed;float v=0.,a=.5,q=1.;for(int i=0;i<7;i++){if(float(i)>=u_noise_octaves)break;v+=n(p*q)*a;q*=max(u_noise_lacunarity,1.);a*=clamp(u_noise_gain,0.,1.);}return clamp((v-.5)*u_noise_contrast+.5,0.,1.);}
+float mapNoise(vec2 p){if(u_noise_map_count<=0)return 0.;float v=texture(u_noise_map_0,p).r;if(u_noise_map_count>1)v=mix(v,texture(u_noise_map_1,p*1.37).r,.35);if(u_noise_map_count>2)v=mix(v,texture(u_noise_map_2,p*2.11).r,.25);if(u_noise_map_count>3)v=mix(v,texture(u_noise_map_3,p*3.73).r,.20);return v;}
+void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.);float t=u_time*u_speed;float a=f(p+vec2(sin(t*.7),cos(t*.5))*.2),b=f(p*1.7+vec2(3.1,-5.2)-t*.08),c=f(p*3.4+vec2(-7.,2.)+t*.12);if(u_noise_map_count>0)a=mix(a,mapNoise(uv),.4);float cells=sin((a-b)*22.+c*8.+u_warp*3.);cells= smoothstep(-.15,.35,cells);vec3 col=mix(u_palette_low,u_palette_mid,cells);col=mix(col,u_palette_high,smoothstep(.65,.95,a*c));fragColor=vec4(col*(.65+u_intensity*.35),1.);}
+)"
+    },
+
+    {
+        29,
+        "Noise Flow Map",
+        "Curl-like layered noise flow with directional ribbons",
+        R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor;
+uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low; uniform vec3 u_palette_mid; uniform vec3 u_palette_high;
+uniform float u_speed; uniform float u_intensity; uniform float u_warp; uniform vec3 u_motion;
+uniform int u_noise_enabled; uniform int u_noise_type; uniform float u_noise_scale; uniform float u_noise_strength; uniform float u_noise_octaves; uniform float u_noise_lacunarity; uniform float u_noise_gain; uniform float u_noise_warp; uniform vec2 u_noise_speed; uniform float u_noise_seed; uniform float u_noise_contrast;
+uniform sampler2D u_noise_map_0; uniform sampler2D u_noise_map_1; uniform sampler2D u_noise_map_2; uniform sampler2D u_noise_map_3; uniform int u_noise_map_count;
+float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}float f(vec2 p){p=p*max(u_noise_scale,.01)+(u_noise_speed+u_motion.xy)*u_time+u_noise_seed;float v=0.,a=.5,q=1.;for(int i=0;i<8;i++){if(float(i)>=u_noise_octaves)break;v+=n(p*q)*a;q*=max(u_noise_lacunarity,1.);a*=clamp(u_noise_gain,0.,1.);}return clamp((v-.5)*u_noise_contrast+.5,0.,1.);}
+float mapNoise(vec2 p){if(u_noise_map_count<=0)return 0.;float v=texture(u_noise_map_0,p).r;if(u_noise_map_count>1)v=mix(v,texture(u_noise_map_1,p*1.37).r,.35);if(u_noise_map_count>2)v=mix(v,texture(u_noise_map_2,p*2.11).r,.25);if(u_noise_map_count>3)v=mix(v,texture(u_noise_map_3,p*3.73).r,.20);return v;}
+void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.);float t=u_time*u_speed;for(int i=0;i<4;i++){float e=.003;float dx=f(p+vec2(e,0))-f(p-vec2(e,0));float dy=f(p+vec2(0,e))-f(p-vec2(0,e));p+=vec2(dy,-dx)*(.12+u_noise_warp*.18);p+=u_motion.xy*t*.002;}float a=f(p),b=f(p*2.2+4.);if(u_noise_map_count>0)a=mix(a,mapNoise(uv),.4);float r=sin((a+b*.6)*20.-t*2.);r=pow(abs(r),3.);vec3 col=mix(u_palette_low,u_palette_mid,r);col=mix(col,u_palette_high,smoothstep(.6,.95,a));fragColor=vec4(col*(.7+u_intensity*.3),1.);}
+)"
+    },
+
+    {
+        30,
+        "Noise Terrain Relief",
+        "Layered height-field relief with ridges, valleys, and lighting",
+        R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor;
+uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low; uniform vec3 u_palette_mid; uniform vec3 u_palette_high;
+uniform float u_speed; uniform float u_intensity; uniform float u_warp; uniform vec3 u_motion;
+uniform int u_noise_enabled; uniform int u_noise_type; uniform float u_noise_scale; uniform float u_noise_strength; uniform float u_noise_octaves; uniform float u_noise_lacunarity; uniform float u_noise_gain; uniform float u_noise_warp; uniform vec2 u_noise_speed; uniform float u_noise_seed; uniform float u_noise_contrast;
+uniform sampler2D u_noise_map_0; uniform sampler2D u_noise_map_1; uniform sampler2D u_noise_map_2; uniform sampler2D u_noise_map_3; uniform int u_noise_map_count;
+float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}float f(vec2 p){p=p*max(u_noise_scale,.01)+(u_noise_speed+u_motion.xy)*u_time+u_noise_seed;float v=0.,a=.5,q=1.;for(int i=0;i<8;i++){if(float(i)>=u_noise_octaves)break;v+=n(p*q)*a;q*=max(u_noise_lacunarity,1.);a*=clamp(u_noise_gain,0.,1.);}return clamp((v-.5)*u_noise_contrast+.5,0.,1.);}
+float mapNoise(vec2 p){if(u_noise_map_count<=0)return 0.;float v=texture(u_noise_map_0,p).r;if(u_noise_map_count>1)v=mix(v,texture(u_noise_map_1,p*1.37).r,.35);if(u_noise_map_count>2)v=mix(v,texture(u_noise_map_2,p*2.11).r,.25);if(u_noise_map_count>3)v=mix(v,texture(u_noise_map_3,p*3.73).r,.20);return v;}
+void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.);float t=u_time*u_speed;p+=vec2(0.,t*.04);float h0=f(p),hx=f(p+vec2(.015,0)),hy=f(p+vec2(0,.015));if(u_noise_map_count>0)h0=mix(h0,mapNoise(uv),.4);vec3 normal=normalize(vec3(h0-hx,h0-hy,.06));float light=max(dot(normal,normalize(vec3(-.5,.7,1.))),0.);float ridge=1.-abs(h0*2.-1.);vec3 col=mix(u_palette_low,u_palette_mid,smoothstep(.25,.65,h0));col=mix(col,u_palette_high,ridge*.45);col*=.35+light*.85*u_intensity;fragColor=vec4(col,1.);}
+)"
     }
 };
 

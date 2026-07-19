@@ -78,6 +78,67 @@ struct EditorAudioState {
 
 static bool FileExists(const char* path);
 
+struct EditorNoiseTextureCacheEntry {
+    char path[512];
+    unsigned int texture_id;
+};
+
+static EditorNoiseTextureCacheEntry g_noise_texture_cache[32] = {};
+
+static unsigned int GetEditorNoiseTexture(EditorContext* editor, const char* declared_path) {
+    if (!editor || !editor->project || !declared_path || !declared_path[0]) return 0;
+
+    char resolved[512] = {};
+    if (strchr(declared_path, ':') || declared_path[0] == '\\' || declared_path[0] == '/') {
+        strncpy_s(resolved, declared_path, _TRUNCATE);
+    } else if (editor->project->assets_path[0]) {
+        snprintf(resolved, sizeof(resolved), "%s\\%s", editor->project->assets_path, declared_path);
+        if (!FileExists(resolved) && editor->project->workspace_path[0]) {
+            snprintf(resolved, sizeof(resolved), "%s\\%s", editor->project->workspace_path, declared_path);
+        }
+    }
+    if (!resolved[0] || !FileExists(resolved)) return 0;
+
+    for (EditorNoiseTextureCacheEntry& entry : g_noise_texture_cache) {
+        if (entry.texture_id != 0 && strcmp(entry.path, resolved) == 0) return entry.texture_id;
+    }
+
+    rev::runtime::ImageTexture image = {};
+    if (!rev::runtime::LoadImageTexture(resolved, &image) || image.texture_id == 0) return 0;
+    for (EditorNoiseTextureCacheEntry& entry : g_noise_texture_cache) {
+        if (entry.texture_id == 0) {
+            strncpy_s(entry.path, resolved, _TRUNCATE);
+            entry.texture_id = image.texture_id;
+            return entry.texture_id;
+        }
+    }
+    glDeleteTextures(1, &image.texture_id);
+    return 0;
+}
+
+static void ParseShaderNoiseMapPaths(const char* line, char paths[4][512]) {
+    if (!line || !paths) return;
+    const char* field = line;
+    for (int delimiter = 0; delimiter < 63; ++delimiter) {
+        field = strchr(field, '|');
+        if (!field) return;
+        ++field;
+    }
+    for (int map_index = 0; map_index < 4; ++map_index) {
+        const char* end = strchr(field, '|');
+        size_t length = end ? (size_t)(end - field) : strcspn(field, "\r\n");
+        if (length >= 512) length = 511;
+        if (length == 1 && field[0] == '-') {
+            paths[map_index][0] = '\0';
+        } else {
+            memcpy(paths[map_index], field, length);
+            paths[map_index][length] = '\0';
+        }
+        if (!end) break;
+        field = end + 1;
+    }
+}
+
 static void FillEditorAudioBuffer(EditorAudioState* state, float* output, int frame_count) {
     memset(output, 0, (size_t)frame_count * 2 * sizeof(float));
     if (!state->playing.load(std::memory_order_acquire)) return;
@@ -1446,6 +1507,38 @@ bool LoadProject(EditorContext* editor, const char* path) {
                     &current_shader_cue.motion_x,
                     &current_shader_cue.motion_y,
                     &current_shader_cue.motion_z);
+            } else if (strstr(start, "\"noise_enabled\":")) {
+                sscanf_s(start, "\"noise_enabled\": %d", &current_shader_cue.noise.enabled);
+            } else if (strstr(start, "\"noise_type\":")) {
+                sscanf_s(start, "\"noise_type\": %d", &current_shader_cue.noise.type);
+            } else if (strstr(start, "\"noise_scale\":")) {
+                sscanf_s(start, "\"noise_scale\": %f", &current_shader_cue.noise.scale);
+            } else if (strstr(start, "\"noise_strength\":")) {
+                sscanf_s(start, "\"noise_strength\": %f", &current_shader_cue.noise.strength);
+            } else if (strstr(start, "\"noise_octaves\":")) {
+                sscanf_s(start, "\"noise_octaves\": %f", &current_shader_cue.noise.octaves);
+            } else if (strstr(start, "\"noise_lacunarity\":")) {
+                sscanf_s(start, "\"noise_lacunarity\": %f", &current_shader_cue.noise.lacunarity);
+            } else if (strstr(start, "\"noise_gain\":")) {
+                sscanf_s(start, "\"noise_gain\": %f", &current_shader_cue.noise.gain);
+            } else if (strstr(start, "\"noise_warp\":")) {
+                sscanf_s(start, "\"noise_warp\": %f", &current_shader_cue.noise.warp);
+            } else if (strstr(start, "\"noise_speed\":")) {
+                sscanf_s(start, "\"noise_speed\": [%f, %f]",
+                    &current_shader_cue.noise.speed_x,
+                    &current_shader_cue.noise.speed_y);
+            } else if (strstr(start, "\"noise_seed\":")) {
+                sscanf_s(start, "\"noise_seed\": %f", &current_shader_cue.noise.seed);
+            } else if (strstr(start, "\"noise_contrast\":")) {
+                sscanf_s(start, "\"noise_contrast\": %f", &current_shader_cue.noise.contrast);
+            } else if (strstr(start, "\"noise_map_0\":")) {
+                ParseJsonStringValue(start, current_shader_cue.noise_textures.paths[0], sizeof(current_shader_cue.noise_textures.paths[0]));
+            } else if (strstr(start, "\"noise_map_1\":")) {
+                ParseJsonStringValue(start, current_shader_cue.noise_textures.paths[1], sizeof(current_shader_cue.noise_textures.paths[1]));
+            } else if (strstr(start, "\"noise_map_2\":")) {
+                ParseJsonStringValue(start, current_shader_cue.noise_textures.paths[2], sizeof(current_shader_cue.noise_textures.paths[2]));
+            } else if (strstr(start, "\"noise_map_3\":")) {
+                ParseJsonStringValue(start, current_shader_cue.noise_textures.paths[3], sizeof(current_shader_cue.noise_textures.paths[3]));
             } else if (strstr(start, "\"cue_start\":")) {
                 sscanf_s(start, "\"cue_start\": %f", &current_shader_cue.cue_start);
             } else if (strstr(start, "\"cue_end\":")) {
@@ -2291,6 +2384,24 @@ bool SaveProject(EditorContext* editor, const char* path) {
                 cue->rotation_x, cue->rotation_y, cue->rotation_z);
             fprintf(f, "          \"motion\": [%.3f, %.3f, %.3f],\n",
                 cue->motion_x, cue->motion_y, cue->motion_z);
+            fprintf(f, "          \"noise_enabled\": %d,\n", cue->noise.enabled);
+            fprintf(f, "          \"noise_type\": %d,\n", cue->noise.type);
+            fprintf(f, "          \"noise_scale\": %.3f,\n", cue->noise.scale);
+            fprintf(f, "          \"noise_strength\": %.3f,\n", cue->noise.strength);
+            fprintf(f, "          \"noise_octaves\": %.3f,\n", cue->noise.octaves);
+            fprintf(f, "          \"noise_lacunarity\": %.3f,\n", cue->noise.lacunarity);
+            fprintf(f, "          \"noise_gain\": %.3f,\n", cue->noise.gain);
+            fprintf(f, "          \"noise_warp\": %.3f,\n", cue->noise.warp);
+            fprintf(f, "          \"noise_speed\": [%.3f, %.3f],\n", cue->noise.speed_x, cue->noise.speed_y);
+            fprintf(f, "          \"noise_seed\": %.3f,\n", cue->noise.seed);
+            fprintf(f, "          \"noise_contrast\": %.3f,\n", cue->noise.contrast);
+            for (int map_index = 0; map_index < 4; ++map_index) {
+                char map_key[32] = {};
+                char escaped_map[1024] = {};
+                snprintf(map_key, sizeof(map_key), "noise_map_%d", map_index);
+                JsonEscapeString(cue->noise_textures.paths[map_index], escaped_map, sizeof(escaped_map));
+                fprintf(f, "          \"%s\": \"%s\",\n", map_key, escaped_map);
+            }
             fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
             fprintf(f, "          \"cue_end\": %.3f,\n", cue->cue_end);
             fprintf(f, "          \"fade_in\": %.3f,\n", cue->fade_in);
@@ -3140,10 +3251,20 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         // Parse shader cues
         if (current_section == SHADER_CUES) {
             ShaderCue cue = {};
+            ResetShaderValues(&cue);
             int shader_id;
             float abs_start, abs_end;
             
-            int parsed = sscanf_s(start, "%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f",
+            int parsed = sscanf_s(start,
+                "%d|"
+                "%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|"
+                "%f|%f|%f|%f|%f|%f|%f|%f|%f|%f|"
+                "%d|%f|%d|%d|"
+                "%d|%d|%d|%d|%d|%d|%d|%d|%d|"
+                "%d|%d|%d|%d|%d|%d|%d|%"
+                "d|"
+                "%f|%f|%f|%f|%f|%f|%f|%f|%f|"
+                "%d|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%f",
                 &shader_id,
                 &cue.palette_low.r, &cue.palette_low.g, &cue.palette_low.b,
                 &cue.palette_mid.r, &cue.palette_mid.g, &cue.palette_mid.b,
@@ -3153,10 +3274,21 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
                 &cue.fade_base, &cue.fade_ramp,
                 &abs_start, &abs_end, &cue.fade_in, &cue.fade_out,
                 &cue.layer_role, &cue.opacity, &cue.blend_mode, &cue.layer_order,
+                &cue.curve_speed, &cue.curve_intensity, &cue.curve_warp,
+                &cue.curve_exposure, &cue.curve_fade,
+                &cue.curve_palette_low_r, &cue.curve_palette_low_g, &cue.curve_palette_low_b,
+                &cue.curve_palette_mid_r, &cue.curve_palette_mid_g, &cue.curve_palette_mid_b,
+                &cue.curve_palette_high_r, &cue.curve_palette_high_g, &cue.curve_palette_high_b,
+                &cue.curve_opacity, &cue.curve_exposure_ramp, &cue.curve_fade_ramp,
                 &cue.position_x, &cue.position_y, &cue.position_z,
                 &cue.rotation_x, &cue.rotation_y, &cue.rotation_z,
-                &cue.motion_x, &cue.motion_y, &cue.motion_z
+                &cue.motion_x, &cue.motion_y, &cue.motion_z,
+                &cue.noise.enabled, &cue.noise.type, &cue.noise.scale,
+                &cue.noise.strength, &cue.noise.octaves, &cue.noise.lacunarity,
+                &cue.noise.gain, &cue.noise.warp, &cue.noise.speed_x,
+                &cue.noise.speed_y, &cue.noise.seed, &cue.noise.contrast
             );
+            ParseShaderNoiseMapPaths(start, cue.noise_textures.paths);
             
             if (parsed >= 18) { // At least basic params
                 cue.shader_scene_id = shader_id;
@@ -3580,7 +3712,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 
     // [shader_cues] section
     fprintf(f, "[shader_cues]\n");
-    fprintf(f, "# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order|curve_speed|curve_intensity|curve_warp|curve_exposure|curve_fade|curve_palette_low_r|curve_palette_low_g|curve_palette_low_b|curve_palette_mid_r|curve_palette_mid_g|curve_palette_mid_b|curve_palette_high_r|curve_palette_high_g|curve_palette_high_b|curve_opacity|curve_exposure_ramp|curve_fade_ramp|position_x|position_y|position_z|rotation_x|rotation_y|rotation_z|motion_x|motion_y|motion_z\n");
+    fprintf(f, "# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order|curve_speed|curve_intensity|curve_warp|curve_exposure|curve_fade|curve_palette_low_r|curve_palette_low_g|curve_palette_low_b|curve_palette_mid_r|curve_palette_mid_g|curve_palette_mid_b|curve_palette_high_r|curve_palette_high_g|curve_palette_high_b|curve_opacity|curve_exposure_ramp|curve_fade_ramp|position_x|position_y|position_z|rotation_x|rotation_y|rotation_z|motion_x|motion_y|motion_z|noise_enabled|noise_type|noise_scale|noise_strength|noise_octaves|noise_lacunarity|noise_gain|noise_warp|noise_speed_x|noise_speed_y|noise_seed|noise_contrast|noise_map_0|noise_map_1|noise_map_2|noise_map_3\n");
     
     // Collect all shader cues from all scenes
     int shader_cue_id = 0;
@@ -3600,7 +3732,15 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             float abs_start = scene_start + cue->cue_start;
             float abs_end = (cue->cue_end < 0.0f) ? (scene_start + scene->duration) : (scene_start + cue->cue_end);
             
-            fprintf(f, "%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f\n",
+            fprintf(f,
+                "%d|"
+                "%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|"
+                "%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|"
+                "%d|%.3f|%d|%d|"
+                "%d|%d|%d|%d|%d|%d|%d|%d|%d|"
+                "%d|%d|%d|%d|%d|%d|%d|%d|"
+                "%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|"
+                "%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%s|%s|%s|%s\n",
                 cue->shader_scene_id,
                 cue->palette_low.r, cue->palette_low.g, cue->palette_low.b,
                 cue->palette_mid.r, cue->palette_mid.g, cue->palette_mid.b,
@@ -3618,7 +3758,15 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->curve_opacity, cue->curve_exposure_ramp, cue->curve_fade_ramp,
                 cue->position_x, cue->position_y, cue->position_z,
                 cue->rotation_x, cue->rotation_y, cue->rotation_z,
-                cue->motion_x, cue->motion_y, cue->motion_z
+                cue->motion_x, cue->motion_y, cue->motion_z,
+                cue->noise.enabled, cue->noise.type, cue->noise.scale,
+                cue->noise.strength, cue->noise.octaves, cue->noise.lacunarity,
+                cue->noise.gain, cue->noise.warp, cue->noise.speed_x,
+                cue->noise.speed_y, cue->noise.seed, cue->noise.contrast,
+                cue->noise_textures.paths[0][0] ? cue->noise_textures.paths[0] : "-",
+                cue->noise_textures.paths[1][0] ? cue->noise_textures.paths[1] : "-",
+                cue->noise_textures.paths[2][0] ? cue->noise_textures.paths[2] : "-",
+                cue->noise_textures.paths[3][0] ? cue->noise_textures.paths[3] : "-"
             );
             
             shader_cue_id++;
@@ -5492,6 +5640,10 @@ void RenderPreviewFrame(EditorContext* editor) {
     if (!editor || !editor->preview_initialized) return;
 
     editor->post_frame_rendered = false;
+
+    typedef void (*PFNGLACTIVETEXTUREPROC)(unsigned int texture);
+    PFNGLACTIVETEXTUREPROC glActiveTexture_preview =
+        (PFNGLACTIVETEXTUREPROC)wglGetProcAddress("glActiveTexture");
     
     typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int target, unsigned int framebuffer);
     typedef void (*PFNGLFRAMEBUFFERTEXTURE2DPROC)(unsigned int target, unsigned int attachment, unsigned int textarget, unsigned int texture, int level);
@@ -5712,6 +5864,34 @@ void RenderPreviewFrame(EditorContext* editor) {
                                  rotation[0], rotation[1], rotation[2]);
             rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_motion"),
                                  motion[0], motion[1], motion[2]);
+            rev::shader::SetInt(prog, rev::shader::GetUniformLocation(prog, "u_noise_enabled"), cue->noise.enabled);
+            rev::shader::SetInt(prog, rev::shader::GetUniformLocation(prog, "u_noise_type"), cue->noise.type);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_noise_scale"), cue->noise.scale);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_noise_strength"), cue->noise.strength);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_noise_octaves"), cue->noise.octaves);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_noise_lacunarity"), cue->noise.lacunarity);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_noise_gain"), cue->noise.gain);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_noise_warp"), cue->noise.warp);
+            rev::shader::SetVec2(prog, rev::shader::GetUniformLocation(prog, "u_noise_speed"), cue->noise.speed_x, cue->noise.speed_y);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_noise_seed"), cue->noise.seed);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_noise_contrast"), cue->noise.contrast);
+
+            if (glActiveTexture_preview) {
+                int noise_map_count = 0;
+                for (int map_index = 0; map_index < 4; ++map_index) {
+                    unsigned int texture_id = GetEditorNoiseTexture(editor, cue->noise_textures.paths[map_index]);
+                    if (texture_id != 0) ++noise_map_count;
+                    glActiveTexture_preview(0x84C4u + (unsigned int)map_index);
+                    glBindTexture(GL_TEXTURE_2D, texture_id);
+                    char uniform_name[32] = {};
+                    snprintf(uniform_name, sizeof(uniform_name), "u_noise_map_%d", map_index);
+                    rev::shader::SetTextureUnit(prog,
+                        rev::shader::GetUniformLocation(prog, uniform_name), 4 + map_index);
+                }
+                rev::shader::SetInt(prog,
+                    rev::shader::GetUniformLocation(prog, "u_noise_map_count"), noise_map_count);
+                glActiveTexture_preview(0x84C0u);
+            }
 
             glDrawArrays(GL_TRIANGLES, 0, 3);
         }
@@ -7571,6 +7751,18 @@ void ResetShaderValues(ShaderCue* cue) {
     cue->motion_x = 0.0f;
     cue->motion_y = 0.0f;
     cue->motion_z = 0.0f;
+    cue->noise.enabled = 0;
+    cue->noise.type = 0;
+    cue->noise.scale = 3.0f;
+    cue->noise.strength = 1.0f;
+    cue->noise.octaves = 4.0f;
+    cue->noise.lacunarity = 2.0f;
+    cue->noise.gain = 0.5f;
+    cue->noise.warp = 0.0f;
+    cue->noise.speed_x = 0.0f;
+    cue->noise.speed_y = 0.0f;
+    cue->noise.seed = 0.0f;
+    cue->noise.contrast = 1.0f;
     
     // Default timing
     cue->cue_start = 0.0f;

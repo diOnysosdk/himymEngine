@@ -23,6 +23,7 @@ void SetVec3(Program* program, int location, float x, float y, float z);
 void SetVec4(Program* program, int location, float x, float y, float z, float w);
 void SetMat4(Program* program, int location, const float* matrix);
 void SetInt(Program* program, int location, int value);
+void SetTextureUnit(Program* program, int location, int texture_unit);
 
 }  // namespace shader
 }  // namespace rev

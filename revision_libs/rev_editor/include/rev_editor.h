@@ -86,6 +86,25 @@ struct ProjectData;
 struct SceneBlock;
 struct ShaderCue;
 
+struct NoiseSettings {
+    int enabled;
+    int type;
+    float scale;
+    float strength;
+    float octaves;
+    float lacunarity;
+    float gain;
+    float warp;
+    float speed_x;
+    float speed_y;
+    float seed;
+    float contrast;
+};
+
+struct NoiseTextureSettings {
+    char paths[4][512];
+};
+
 // Shader cue data (per shader instance)
 struct ShaderCue {
     int shader_scene_id;           // Shader preset ID
@@ -115,6 +134,9 @@ struct ShaderCue {
     float motion_x;
     float motion_y;
     float motion_z;
+
+    NoiseSettings noise;
+    NoiseTextureSettings noise_textures;
     
     // Timing (scene-relative seconds)
     float cue_start;

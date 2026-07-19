@@ -214,5 +214,9 @@ void SetInt(Program* program, int location, int value) {
     }
 }
 
+void SetTextureUnit(Program* program, int location, int texture_unit) {
+    SetInt(program, location, texture_unit);
+}
+
 }  // namespace shader
 }  // namespace rev
