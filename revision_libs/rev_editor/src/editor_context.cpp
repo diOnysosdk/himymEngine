@@ -5008,7 +5008,7 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
     for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
         if (*p == '\n') {
             cursor_x = x - line_width / viewport_width;
-            cursor_y -= atlas->line_height * size_scale / viewport_height * 2.0f;
+            cursor_y += atlas->line_height * size_scale / viewport_height * 2.0f;
             continue;
         }
         const rev::runtime::TextGlyph* glyph = rev::runtime::FindTextGlyph(atlas, *p);
