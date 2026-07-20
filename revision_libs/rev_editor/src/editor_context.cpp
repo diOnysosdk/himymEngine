@@ -4,6 +4,8 @@
 #include "rev_mesh.h"
 #include "rev_gltf.h"
 #include "rev_xm.h"
+#include "rev_pixel.h"
+#include "rev_particles.h"
 #include <cstring>
 #include <cstdio>
 #include <cmath>
@@ -77,6 +79,116 @@ struct EditorAudioState {
 };
 
 static bool FileExists(const char* path);
+
+static bool ResolveEditorPixelPath(const ProjectData* project, const PixelCue* cue,
+                                   char* out_path, size_t out_size) {
+    if (!project || !cue || !out_path || out_size == 0) return false;
+    out_path[0] = '\0';
+
+    const char* candidates[4] = { cue->asset_path, nullptr, nullptr, nullptr };
+    char project_asset_path[512] = {};
+    char workspace_path[512] = {};
+    char workspace_asset_path[512] = {};
+    if (project->assets_path[0] && cue->asset_key[0]) {
+        snprintf(project_asset_path, sizeof(project_asset_path), "%s\\%s",
+                 project->assets_path, cue->asset_key);
+        candidates[1] = project_asset_path;
+    }
+    if (project->workspace_path[0] && cue->asset_path[0]) {
+        snprintf(workspace_path, sizeof(workspace_path), "%s\\%s",
+                 project->workspace_path, cue->asset_path);
+        candidates[2] = workspace_path;
+    }
+    if (project->workspace_path[0] && cue->asset_key[0]) {
+        snprintf(workspace_asset_path, sizeof(workspace_asset_path), "%s\\project_assets\\%s",
+                 project->workspace_path, cue->asset_key);
+        candidates[3] = workspace_asset_path;
+    }
+    for (const char* candidate : candidates) {
+        if (candidate && candidate[0] && FileExists(candidate)) {
+            strncpy_s(out_path, out_size, candidate, _TRUNCATE);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool UploadEditorPixelFrame(const rev::pixel::PixelAnimation* animation,
+                                   int frame_index, int palette_offset,
+                                   unsigned int* out_texture) {
+    if (!animation || !animation->pixels || !out_texture || animation->width == 0 ||
+        animation->height == 0 || animation->frame_count == 0 || animation->palette_count == 0) {
+                        return false;
+    }
+
+    size_t pixel_count = (size_t)animation->width * animation->height;
+    unsigned char* rgba = new unsigned char[pixel_count * 4];
+    int frame = frame_index % animation->frame_count;
+    if (frame < 0) frame += animation->frame_count;
+    for (size_t i = 0; i < pixel_count; ++i) {
+        int palette_index = animation->pixels[(size_t)frame * pixel_count + i];
+        palette_index = (palette_index + palette_offset) % animation->palette_count;
+        if (palette_index < 0) palette_index += animation->palette_count;
+        const rev::pixel::PixelColor& color = animation->palette[palette_index];
+        rgba[i * 4 + 0] = color.r;
+        rgba[i * 4 + 1] = color.g;
+        rgba[i * 4 + 2] = color.b;
+        rgba[i * 4 + 3] = color.a;
+    }
+
+    glGenTextures(1, out_texture);
+    glBindTexture(GL_TEXTURE_2D, *out_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, animation->width, animation->height, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    delete[] rgba;
+    return *out_texture != 0;
+}
+
+static bool ResolveEditorPixelEmitterPath(const ProjectData* project, const PixelEmitterCue* cue,
+                                          char* out_path, size_t out_size) {
+    if (!project || !cue || !out_path || out_size == 0) return false;
+    PixelCue pixel = {};
+    strncpy_s(pixel.asset_key, cue->asset_key, _TRUNCATE);
+    strncpy_s(pixel.asset_path, cue->asset_path, _TRUNCATE);
+    return ResolveEditorPixelPath(project, &pixel, out_path, out_size);
+}
+
+static bool UploadPrimitiveEmitterTexture(const PixelEmitterCue* cue, unsigned int* out_texture) {
+    if (!cue || !out_texture) return false;
+    const int size = 16;
+    unsigned char pixels[size * size * 4] = {};
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            float nx = ((float)x + 0.5f) / size * 2.0f - 1.0f;
+            float ny = ((float)y + 0.5f) / size * 2.0f - 1.0f;
+            bool filled = true;
+            if (cue->primitive_shape == rev::particles::PrimitiveShapeCircle) {
+                filled = nx * nx + ny * ny <= 1.0f;
+            } else if (cue->primitive_shape == rev::particles::PrimitiveShapeTriangle) {
+                filled = ny >= -1.0f && ny <= 1.0f && fabsf(nx) <= (1.0f - ny) * 0.5f;
+            } else if (cue->primitive_shape == rev::particles::PrimitiveShapeDiamond) {
+                filled = fabsf(nx) + fabsf(ny) <= 1.0f;
+            }
+            size_t index = ((size_t)y * size + x) * 4;
+            pixels[index + 0] = (unsigned char)(cue->primitive_color[0] * 255.0f);
+            pixels[index + 1] = (unsigned char)(cue->primitive_color[1] * 255.0f);
+            pixels[index + 2] = (unsigned char)(cue->primitive_color[2] * 255.0f);
+            pixels[index + 3] = filled ? (unsigned char)(cue->primitive_color[3] * 255.0f) : 0;
+        }
+    }
+    glGenTextures(1, out_texture);
+    glBindTexture(GL_TEXTURE_2D, *out_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    return *out_texture != 0;
+}
 
 struct EditorNoiseTextureCacheEntry {
     char path[512];
@@ -1053,6 +1165,8 @@ void DestroyEditor(EditorContext* editor) {
             delete[] scene->shader_cues;
             delete[] scene->image_cues;
             delete[] scene->animated_sprite_cues;
+            delete[] scene->pixel_cues;
+            delete[] scene->pixel_emitter_cues;
             delete[] scene->text_cues;
             delete[] scene->scroll_text_cues;
             delete[] scene->music_cues;
@@ -1105,6 +1219,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
     bool in_shader_cues = false;
     bool in_image_cues = false;
     bool in_animated_sprite_cues = false;
+    bool in_pixel_cues = false;
+    bool in_pixel_emitter_cues = false;
     bool in_text_cues = false;
     bool in_scroll_text_cues = false;
     bool in_music_cues = false;
@@ -1134,6 +1250,24 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_animated_sprite_cue.curve_rotation = -1;
     current_animated_sprite_cue.curve_opacity = -1;
     current_animated_sprite_cue.curve_frame = -1;
+    PixelCue current_pixel_cue = {};
+    current_pixel_cue.fps = 12.0f;
+    current_pixel_cue.playback_mode = 0;
+    current_pixel_cue.snap_to_pixels = 1;
+    current_pixel_cue.curve_x = -1;
+    current_pixel_cue.curve_y = -1;
+    current_pixel_cue.curve_scale = -1;
+    current_pixel_cue.curve_rotation = -1;
+    current_pixel_cue.curve_opacity = -1;
+    current_pixel_cue.curve_frame = -1;
+    current_pixel_cue.curve_palette_offset = -1;
+    PixelEmitterCue current_pixel_emitter_cue = {};
+    current_pixel_emitter_cue.curve_x = current_pixel_emitter_cue.curve_y = -1;
+    current_pixel_emitter_cue.curve_scale = current_pixel_emitter_cue.curve_rotation = -1;
+    current_pixel_emitter_cue.curve_opacity = current_pixel_emitter_cue.curve_emission_rate = -1;
+    current_pixel_emitter_cue.curve_speed_min = current_pixel_emitter_cue.curve_speed_max = -1;
+    current_pixel_emitter_cue.curve_lifetime_min = current_pixel_emitter_cue.curve_lifetime_max = -1;
+    current_pixel_emitter_cue.curve_scale_min = current_pixel_emitter_cue.curve_scale_max = -1;
     TextCue current_text_cue = {};
     current_text_cue.curve_x = -1;
     current_text_cue.curve_y = -1;
@@ -1254,6 +1388,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_shader_cues = false;
             in_image_cues = false;
             in_animated_sprite_cues = false;
+            in_pixel_cues = false;
+            in_pixel_emitter_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
@@ -1266,6 +1402,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_shader_cues = true;
             in_image_cues = false;
             in_animated_sprite_cues = false;
+            in_pixel_cues = false;
+            in_pixel_emitter_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
@@ -1273,6 +1411,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_shader_cues = false;
             in_image_cues = true;
             in_animated_sprite_cues = false;
+            in_pixel_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
@@ -1280,6 +1419,25 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_shader_cues = false;
             in_image_cues = false;
             in_animated_sprite_cues = true;
+            in_pixel_cues = false;
+        } else if (strstr(start, "\"pixel_cues\":")) {
+            in_shader_cues = false;
+            in_image_cues = false;
+            in_animated_sprite_cues = false;
+            in_pixel_cues = true;
+            in_pixel_emitter_cues = false;
+            in_text_cues = false;
+            in_scroll_text_cues = false;
+            in_music_cues = false;
+        } else if (strstr(start, "\"pixel_emitter_cues\":")) {
+            in_shader_cues = false;
+            in_image_cues = false;
+            in_animated_sprite_cues = false;
+            in_pixel_cues = false;
+            in_pixel_emitter_cues = true;
+            in_text_cues = false;
+            in_scroll_text_cues = false;
+            in_music_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
@@ -1287,6 +1445,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_shader_cues = false;
             in_image_cues = false;
             in_animated_sprite_cues = false;
+            in_pixel_cues = false;
             in_text_cues = true;
             in_scroll_text_cues = false;
             in_music_cues = false;
@@ -1294,6 +1453,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_shader_cues = false;
             in_image_cues = false;
             in_animated_sprite_cues = false;
+            in_pixel_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = true;
             in_music_cues = false;
@@ -1301,6 +1461,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_shader_cues = false;
             in_image_cues = false;
             in_animated_sprite_cues = false;
+            in_pixel_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = true;
@@ -1309,6 +1470,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_shader_cues = false;
             in_image_cues = false;
             in_animated_sprite_cues = false;
+            in_pixel_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
@@ -1454,6 +1616,78 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 current_animated_sprite_cue.curve_rotation = -1;
                 current_animated_sprite_cue.curve_opacity = -1;
                 current_animated_sprite_cue.curve_frame = -1;
+            }
+        }
+
+        // Parse indexed pixel cue fields
+        if (in_pixel_cues && current_scene) {
+            if (ParseAssetShaderField(start, current_pixel_cue.shaders,
+                                      &current_pixel_cue.shader_count)) {
+            } else if (ParseLayerPostEffectField(start, current_pixel_cue.post_effects,
+                                                  &current_pixel_cue.post_effect_count)) {
+            } else if (strstr(start, "\"asset_key\":")) {
+                ParseJsonStringValue(start, current_pixel_cue.asset_key, sizeof(current_pixel_cue.asset_key));
+            } else if (strstr(start, "\"asset_path\":")) {
+                ParseJsonStringValue(start, current_pixel_cue.asset_path, sizeof(current_pixel_cue.asset_path));
+            } else if (strstr(start, "\"x\":")) {
+                sscanf_s(start, "\"x\": %f", &current_pixel_cue.x);
+            } else if (strstr(start, "\"y\":")) {
+                sscanf_s(start, "\"y\": %f", &current_pixel_cue.y);
+            } else if (strstr(start, "\"scale\":")) {
+                sscanf_s(start, "\"scale\": %f", &current_pixel_cue.scale);
+            } else if (strstr(start, "\"rotation\":")) {
+                sscanf_s(start, "\"rotation\": %f", &current_pixel_cue.rotation);
+            } else if (strstr(start, "\"opacity\":")) {
+                sscanf_s(start, "\"opacity\": %f", &current_pixel_cue.opacity);
+            } else if (strstr(start, "\"cue_start\":")) {
+                sscanf_s(start, "\"cue_start\": %f", &current_pixel_cue.cue_start);
+            } else if (strstr(start, "\"cue_end\":")) {
+                sscanf_s(start, "\"cue_end\": %f", &current_pixel_cue.cue_end);
+            } else if (strstr(start, "\"layer_order\":")) {
+                sscanf_s(start, "\"layer_order\": %d", &current_pixel_cue.layer_order);
+            } else if (strstr(start, "\"blend_mode\":")) {
+                sscanf_s(start, "\"blend_mode\": %d", &current_pixel_cue.blend_mode);
+            } else if (strstr(start, "\"fps\":")) {
+                sscanf_s(start, "\"fps\": %f", &current_pixel_cue.fps);
+            } else if (strstr(start, "\"playback_mode\":")) {
+                sscanf_s(start, "\"playback_mode\": %d", &current_pixel_cue.playback_mode);
+            } else if (strstr(start, "\"start_frame\":")) {
+                sscanf_s(start, "\"start_frame\": %d", &current_pixel_cue.start_frame);
+            } else if (strstr(start, "\"palette_offset\":")) {
+                sscanf_s(start, "\"palette_offset\": %d", &current_pixel_cue.palette_offset);
+            } else if (strstr(start, "\"palette_cycle_speed\":")) {
+                sscanf_s(start, "\"palette_cycle_speed\": %d", &current_pixel_cue.palette_cycle_speed);
+            } else if (strstr(start, "\"snap_to_pixels\":")) {
+                sscanf_s(start, "\"snap_to_pixels\": %d", &current_pixel_cue.snap_to_pixels);
+            } else if (strstr(start, "\"curve_x\":")) {
+                sscanf_s(start, "\"curve_x\": %d", &current_pixel_cue.curve_x);
+            } else if (strstr(start, "\"curve_y\":")) {
+                sscanf_s(start, "\"curve_y\": %d", &current_pixel_cue.curve_y);
+            } else if (strstr(start, "\"curve_scale\":")) {
+                sscanf_s(start, "\"curve_scale\": %d", &current_pixel_cue.curve_scale);
+            } else if (strstr(start, "\"curve_rotation\":")) {
+                sscanf_s(start, "\"curve_rotation\": %d", &current_pixel_cue.curve_rotation);
+            } else if (strstr(start, "\"curve_opacity\":")) {
+                sscanf_s(start, "\"curve_opacity\": %d", &current_pixel_cue.curve_opacity);
+            } else if (strstr(start, "\"curve_frame\":")) {
+                sscanf_s(start, "\"curve_frame\": %d", &current_pixel_cue.curve_frame);
+            } else if (strstr(start, "\"curve_palette_offset\":")) {
+                sscanf_s(start, "\"curve_palette_offset\": %d", &current_pixel_cue.curve_palette_offset);
+            } else if (start[0] == '}' && current_pixel_cue.asset_key[0] != '\0') {
+                NormalizeAssetShaderCount(current_pixel_cue.shaders,
+                                          &current_pixel_cue.shader_count);
+                AddPixelCue(current_scene, current_pixel_cue);
+                memset(&current_pixel_cue, 0, sizeof(current_pixel_cue));
+                current_pixel_cue.fps = 12.0f;
+                current_pixel_cue.playback_mode = 0;
+                current_pixel_cue.snap_to_pixels = 1;
+                current_pixel_cue.curve_x = -1;
+                current_pixel_cue.curve_y = -1;
+                current_pixel_cue.curve_scale = -1;
+                current_pixel_cue.curve_rotation = -1;
+                current_pixel_cue.curve_opacity = -1;
+                current_pixel_cue.curve_frame = -1;
+                current_pixel_cue.curve_palette_offset = -1;
             }
         }
         
@@ -1669,6 +1903,105 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 memset(&current_image_cue, 0, sizeof(current_image_cue));
                 current_image_cue.curve_x = current_image_cue.curve_y = current_image_cue.curve_scale = -1;
                 current_image_cue.curve_rotation = current_image_cue.curve_opacity = -1;
+            }
+        }
+
+        if (in_pixel_emitter_cues && current_scene) {
+            if (strstr(start, "\"asset_key\":")) {
+                ParseJsonStringValue(start, current_pixel_emitter_cue.asset_key,
+                                     sizeof(current_pixel_emitter_cue.asset_key));
+            } else if (strstr(start, "\"asset_path\":")) {
+                ParseJsonStringValue(start, current_pixel_emitter_cue.asset_path,
+                                     sizeof(current_pixel_emitter_cue.asset_path));
+            } else if (strstr(start, "\"visual_source\":")) {
+                sscanf_s(start, "\"visual_source\": %d", &current_pixel_emitter_cue.visual_source);
+            } else if (strstr(start, "\"primitive_shape\":")) {
+                sscanf_s(start, "\"primitive_shape\": %d", &current_pixel_emitter_cue.primitive_shape);
+            } else if (strstr(start, "\"primitive_color_r\":")) {
+                sscanf_s(start, "\"primitive_color_r\": %f", &current_pixel_emitter_cue.primitive_color[0]);
+            } else if (strstr(start, "\"primitive_color_g\":")) {
+                sscanf_s(start, "\"primitive_color_g\": %f", &current_pixel_emitter_cue.primitive_color[1]);
+            } else if (strstr(start, "\"primitive_color_b\":")) {
+                sscanf_s(start, "\"primitive_color_b\": %f", &current_pixel_emitter_cue.primitive_color[2]);
+            } else if (strstr(start, "\"primitive_color_a\":")) {
+                sscanf_s(start, "\"primitive_color_a\": %f", &current_pixel_emitter_cue.primitive_color[3]);
+            } else if (strstr(start, "\"x\":")) {
+                sscanf_s(start, "\"x\": %f", &current_pixel_emitter_cue.x);
+            } else if (strstr(start, "\"y\":")) {
+                sscanf_s(start, "\"y\": %f", &current_pixel_emitter_cue.y);
+            } else if (strstr(start, "\"scale\":")) {
+                sscanf_s(start, "\"scale\": %f", &current_pixel_emitter_cue.scale);
+            } else if (strstr(start, "\"rotation\":")) {
+                sscanf_s(start, "\"rotation\": %f", &current_pixel_emitter_cue.rotation);
+            } else if (strstr(start, "\"opacity\":")) {
+                sscanf_s(start, "\"opacity\": %f", &current_pixel_emitter_cue.opacity);
+            } else if (strstr(start, "\"cue_start\":")) {
+                sscanf_s(start, "\"cue_start\": %f", &current_pixel_emitter_cue.cue_start);
+            } else if (strstr(start, "\"cue_end\":")) {
+                sscanf_s(start, "\"cue_end\": %f", &current_pixel_emitter_cue.cue_end);
+            } else if (strstr(start, "\"layer_order\":")) {
+                sscanf_s(start, "\"layer_order\": %d", &current_pixel_emitter_cue.layer_order);
+            } else if (strstr(start, "\"blend_mode\":")) {
+                sscanf_s(start, "\"blend_mode\": %d", &current_pixel_emitter_cue.blend_mode);
+            } else if (strstr(start, "\"max_particles\":")) {
+                sscanf_s(start, "\"max_particles\": %d", &current_pixel_emitter_cue.max_particles);
+            } else if (strstr(start, "\"emission_rate\":")) {
+                sscanf_s(start, "\"emission_rate\": %f", &current_pixel_emitter_cue.emission_rate);
+            } else if (strstr(start, "\"burst_count\":")) {
+                sscanf_s(start, "\"burst_count\": %d", &current_pixel_emitter_cue.burst_count);
+            } else if (strstr(start, "\"duration\":")) {
+                sscanf_s(start, "\"duration\": %f", &current_pixel_emitter_cue.duration);
+            } else if (strstr(start, "\"loop\":")) {
+                sscanf_s(start, "\"loop\": %d", &current_pixel_emitter_cue.loop);
+            } else if (strstr(start, "\"speed_min\":")) {
+                sscanf_s(start, "\"speed_min\": %f", &current_pixel_emitter_cue.speed_min);
+            } else if (strstr(start, "\"speed_max\":")) {
+                sscanf_s(start, "\"speed_max\": %f", &current_pixel_emitter_cue.speed_max);
+            } else if (strstr(start, "\"lifetime_min\":")) {
+                sscanf_s(start, "\"lifetime_min\": %f", &current_pixel_emitter_cue.lifetime_min);
+            } else if (strstr(start, "\"lifetime_max\":")) {
+                sscanf_s(start, "\"lifetime_max\": %f", &current_pixel_emitter_cue.lifetime_max);
+            } else if (strstr(start, "\"scale_min\":")) {
+                sscanf_s(start, "\"scale_min\": %f", &current_pixel_emitter_cue.scale_min);
+            } else if (strstr(start, "\"scale_max\":")) {
+                sscanf_s(start, "\"scale_max\": %f", &current_pixel_emitter_cue.scale_max);
+            } else if (strstr(start, "\"curve_x\":")) {
+                sscanf_s(start, "\"curve_x\": %d", &current_pixel_emitter_cue.curve_x);
+            } else if (strstr(start, "\"curve_y\":")) {
+                sscanf_s(start, "\"curve_y\": %d", &current_pixel_emitter_cue.curve_y);
+            } else if (strstr(start, "\"curve_scale\":")) {
+                sscanf_s(start, "\"curve_scale\": %d", &current_pixel_emitter_cue.curve_scale);
+            } else if (strstr(start, "\"curve_rotation\":")) {
+                sscanf_s(start, "\"curve_rotation\": %d", &current_pixel_emitter_cue.curve_rotation);
+            } else if (strstr(start, "\"curve_opacity\":")) {
+                sscanf_s(start, "\"curve_opacity\": %d", &current_pixel_emitter_cue.curve_opacity);
+            } else if (strstr(start, "\"curve_emission_rate\":")) {
+                sscanf_s(start, "\"curve_emission_rate\": %d", &current_pixel_emitter_cue.curve_emission_rate);
+            } else if (strstr(start, "\"curve_speed_min\":")) {
+                sscanf_s(start, "\"curve_speed_min\": %d", &current_pixel_emitter_cue.curve_speed_min);
+            } else if (strstr(start, "\"curve_speed_max\":")) {
+                sscanf_s(start, "\"curve_speed_max\": %d", &current_pixel_emitter_cue.curve_speed_max);
+            } else if (strstr(start, "\"curve_lifetime_min\":")) {
+                sscanf_s(start, "\"curve_lifetime_min\": %d", &current_pixel_emitter_cue.curve_lifetime_min);
+            } else if (strstr(start, "\"curve_lifetime_max\":")) {
+                sscanf_s(start, "\"curve_lifetime_max\": %d", &current_pixel_emitter_cue.curve_lifetime_max);
+            } else if (strstr(start, "\"curve_scale_min\":")) {
+                sscanf_s(start, "\"curve_scale_min\": %d", &current_pixel_emitter_cue.curve_scale_min);
+            } else if (strstr(start, "\"curve_scale_max\":")) {
+                sscanf_s(start, "\"curve_scale_max\": %d", &current_pixel_emitter_cue.curve_scale_max);
+            } else if (strstr(start, "\"seed\":")) {
+                sscanf_s(start, "\"seed\": %u", &current_pixel_emitter_cue.seed);
+            } else if (start[0] == '}' &&
+                       (current_pixel_emitter_cue.asset_key[0] != '\0' ||
+                        current_pixel_emitter_cue.visual_source == 1)) {
+                AddPixelEmitterCue(current_scene, current_pixel_emitter_cue);
+                memset(&current_pixel_emitter_cue, 0, sizeof(current_pixel_emitter_cue));
+                current_pixel_emitter_cue.curve_x = current_pixel_emitter_cue.curve_y = -1;
+                current_pixel_emitter_cue.curve_scale = current_pixel_emitter_cue.curve_rotation = -1;
+                current_pixel_emitter_cue.curve_opacity = current_pixel_emitter_cue.curve_emission_rate = -1;
+                current_pixel_emitter_cue.curve_speed_min = current_pixel_emitter_cue.curve_speed_max = -1;
+                current_pixel_emitter_cue.curve_lifetime_min = current_pixel_emitter_cue.curve_lifetime_max = -1;
+                current_pixel_emitter_cue.curve_scale_min = current_pixel_emitter_cue.curve_scale_max = -1;
             }
         }
 
@@ -2506,6 +2839,98 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "        }%s\n", (i < scene->animated_sprite_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
+
+        // Indexed pixel cues
+        fprintf(f, "      \"pixel_cues\": [\n");
+        for (int i = 0; i < scene->pixel_cue_count; ++i) {
+            PixelCue* cue = &scene->pixel_cues[i];
+            char escaped_asset_key[256] = {};
+            char escaped_asset_path[1024] = {};
+            JsonEscapeString(cue->asset_key, escaped_asset_key, sizeof(escaped_asset_key));
+            JsonEscapeString(cue->asset_path, escaped_asset_path, sizeof(escaped_asset_path));
+            fprintf(f, "        {\n");
+            fprintf(f, "          \"asset_key\": \"%s\",\n", escaped_asset_key);
+            fprintf(f, "          \"asset_path\": \"%s\",\n", escaped_asset_path);
+            fprintf(f, "          \"x\": %.3f,\n", cue->x);
+            fprintf(f, "          \"y\": %.3f,\n", cue->y);
+            fprintf(f, "          \"scale\": %.3f,\n", cue->scale);
+            fprintf(f, "          \"rotation\": %.3f,\n", cue->rotation);
+            fprintf(f, "          \"opacity\": %.3f,\n", cue->opacity);
+            fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
+            fprintf(f, "          \"cue_end\": %.3f,\n", cue->cue_end);
+            fprintf(f, "          \"layer_order\": %d,\n", cue->layer_order);
+            fprintf(f, "          \"blend_mode\": %d,\n", cue->blend_mode);
+            fprintf(f, "          \"fps\": %.3f,\n", cue->fps);
+            fprintf(f, "          \"playback_mode\": %d,\n", cue->playback_mode);
+            fprintf(f, "          \"start_frame\": %d,\n", cue->start_frame);
+            fprintf(f, "          \"palette_offset\": %d,\n", cue->palette_offset);
+            fprintf(f, "          \"palette_cycle_speed\": %d,\n", cue->palette_cycle_speed);
+            fprintf(f, "          \"snap_to_pixels\": %d,\n", cue->snap_to_pixels);
+            fprintf(f, "          \"curve_x\": %d,\n", cue->curve_x);
+            fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
+            fprintf(f, "          \"curve_scale\": %d,\n", cue->curve_scale);
+            fprintf(f, "          \"curve_rotation\": %d,\n", cue->curve_rotation);
+            fprintf(f, "          \"curve_opacity\": %d,\n", cue->curve_opacity);
+            fprintf(f, "          \"curve_frame\": %d,\n", cue->curve_frame);
+            fprintf(f, "          \"curve_palette_offset\": %d,\n", cue->curve_palette_offset);
+            WriteAssetShaderFields(f, cue->shaders, cue->shader_count);
+            WriteLayerPostEffectFields(f, cue->post_effects, cue->post_effect_count);
+            fprintf(f, "        }%s\n", (i < scene->pixel_cue_count - 1) ? "," : "");
+        }
+        fprintf(f, "      ],\n");
+
+        fprintf(f, "      \"pixel_emitter_cues\": [\n");
+        for (int i = 0; i < scene->pixel_emitter_cue_count; ++i) {
+            PixelEmitterCue* cue = &scene->pixel_emitter_cues[i];
+            char escaped_asset_key[256] = {};
+            char escaped_asset_path[1024] = {};
+            JsonEscapeString(cue->asset_key, escaped_asset_key, sizeof(escaped_asset_key));
+            JsonEscapeString(cue->asset_path, escaped_asset_path, sizeof(escaped_asset_path));
+            fprintf(f, "        {\n");
+            fprintf(f, "          \"asset_key\": \"%s\",\n", escaped_asset_key);
+            fprintf(f, "          \"asset_path\": \"%s\",\n", escaped_asset_path);
+            fprintf(f, "          \"visual_source\": %d,\n", cue->visual_source);
+            fprintf(f, "          \"primitive_shape\": %d,\n", cue->primitive_shape);
+            fprintf(f, "          \"primitive_color_r\": %.3f,\n", cue->primitive_color[0]);
+            fprintf(f, "          \"primitive_color_g\": %.3f,\n", cue->primitive_color[1]);
+            fprintf(f, "          \"primitive_color_b\": %.3f,\n", cue->primitive_color[2]);
+            fprintf(f, "          \"primitive_color_a\": %.3f,\n", cue->primitive_color[3]);
+            fprintf(f, "          \"x\": %.3f,\n", cue->x);
+            fprintf(f, "          \"y\": %.3f,\n", cue->y);
+            fprintf(f, "          \"scale\": %.3f,\n", cue->scale);
+            fprintf(f, "          \"rotation\": %.3f,\n", cue->rotation);
+            fprintf(f, "          \"opacity\": %.3f,\n", cue->opacity);
+            fprintf(f, "          \"cue_start\": %.3f,\n", cue->cue_start);
+            fprintf(f, "          \"cue_end\": %.3f,\n", cue->cue_end);
+            fprintf(f, "          \"layer_order\": %d,\n", cue->layer_order);
+            fprintf(f, "          \"blend_mode\": %d,\n", cue->blend_mode);
+            fprintf(f, "          \"max_particles\": %d,\n", cue->max_particles);
+            fprintf(f, "          \"emission_rate\": %.3f,\n", cue->emission_rate);
+            fprintf(f, "          \"burst_count\": %d,\n", cue->burst_count);
+            fprintf(f, "          \"duration\": %.3f,\n", cue->duration);
+            fprintf(f, "          \"loop\": %d,\n", cue->loop);
+            fprintf(f, "          \"speed_min\": %.3f,\n", cue->speed_min);
+            fprintf(f, "          \"speed_max\": %.3f,\n", cue->speed_max);
+            fprintf(f, "          \"lifetime_min\": %.3f,\n", cue->lifetime_min);
+            fprintf(f, "          \"lifetime_max\": %.3f,\n", cue->lifetime_max);
+            fprintf(f, "          \"scale_min\": %.3f,\n", cue->scale_min);
+            fprintf(f, "          \"scale_max\": %.3f,\n", cue->scale_max);
+            fprintf(f, "          \"curve_x\": %d,\n", cue->curve_x);
+            fprintf(f, "          \"curve_y\": %d,\n", cue->curve_y);
+            fprintf(f, "          \"curve_scale\": %d,\n", cue->curve_scale);
+            fprintf(f, "          \"curve_rotation\": %d,\n", cue->curve_rotation);
+            fprintf(f, "          \"curve_opacity\": %d,\n", cue->curve_opacity);
+            fprintf(f, "          \"curve_emission_rate\": %d,\n", cue->curve_emission_rate);
+            fprintf(f, "          \"curve_speed_min\": %d,\n", cue->curve_speed_min);
+            fprintf(f, "          \"curve_speed_max\": %d,\n", cue->curve_speed_max);
+            fprintf(f, "          \"curve_lifetime_min\": %d,\n", cue->curve_lifetime_min);
+            fprintf(f, "          \"curve_lifetime_max\": %d,\n", cue->curve_lifetime_max);
+            fprintf(f, "          \"curve_scale_min\": %d,\n", cue->curve_scale_min);
+            fprintf(f, "          \"curve_scale_max\": %d,\n", cue->curve_scale_max);
+            fprintf(f, "          \"seed\": %u\n", cue->seed);
+            fprintf(f, "        }%s\n", (i < scene->pixel_emitter_cue_count - 1) ? "," : "");
+        }
+        fprintf(f, "      ],\n");
         
         // Text cues
         fprintf(f, "      \"text_cues\": [\n");
@@ -2978,6 +3403,13 @@ void RenderUI(EditorContext* editor) {
     if (editor->animated_sprite_modal_open || editor->animated_sprite_modal_request_open) {
         RenderAnimatedSpriteModal(editor);
     }
+
+    if (editor->pixel_modal_open || editor->pixel_modal_request_open) {
+        RenderPixelModal(editor);
+    }
+    if (editor->pixel_emitter_modal_open || editor->pixel_emitter_modal_request_open) {
+        RenderPixelEmitterModal(editor);
+    }
     
     if (editor->text_modal_open || editor->text_modal_request_open) {
         RenderTextModal(editor);
@@ -3209,7 +3641,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     NewProject(editor);
     
     char line[1024];
-    enum Section { NONE, SHADER_CUES, IMAGE_CUES, ANIMATED_SPRITE_CUES, TEXT_CUES, SCROLL_TEXT_CUES, MUSIC_CUES, POST_EFFECTS, CURVES, METADATA };
+    enum Section { NONE, SHADER_CUES, IMAGE_CUES, ANIMATED_SPRITE_CUES, PIXEL_CUES, PIXEL_EMITTER_CUES, TEXT_CUES, SCROLL_TEXT_CUES, MUSIC_CUES, POST_EFFECTS, CURVES, METADATA };
     Section current_section = NONE;
     
     float total_duration = 10.0f; // Default
@@ -3227,6 +3659,8 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         if (strstr(start, "[shader_cues]")) { current_section = SHADER_CUES; continue; }
         if (strstr(start, "[image_cues]")) { current_section = IMAGE_CUES; continue; }
         if (strstr(start, "[animated_sprite_cues]")) { current_section = ANIMATED_SPRITE_CUES; continue; }
+        if (strstr(start, "[pixel_cues]")) { current_section = PIXEL_CUES; continue; }
+        if (strstr(start, "[pixel_emitter_cues]")) { current_section = PIXEL_EMITTER_CUES; continue; }
         if (strstr(start, "[text_cues]")) { current_section = TEXT_CUES; continue; }
         if (strstr(start, "[scroll_text_cues]")) { current_section = SCROLL_TEXT_CUES; continue; }
         if (strstr(start, "[music_cues]")) { current_section = MUSIC_CUES; continue; }
@@ -3397,6 +3831,74 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
                 ParseLayerPostEffectsPipe(start, 26, cue.post_effects, &cue.post_effect_count);
                 AddAnimatedSpriteCue(scene, cue);
                 printf("[ImportFromCues] Imported animated sprite cue: %s\n", cue.sprite_name);
+            }
+            continue;
+        }
+
+        // Parse pixel cues:
+        // asset_key|asset_path|x|y|scale|rotation|opacity|cue_start|cue_end|layer_order|blend_mode|fps|playback_mode|start_frame|palette_offset|palette_cycle_speed|snap_to_pixels|curve_x|curve_y|curve_scale|curve_rotation|curve_opacity|curve_frame|curve_palette_offset
+        if (current_section == PIXEL_CUES) {
+            char* p1 = strchr(start, '|');
+            if (!p1) continue;
+            PixelCue cue = {};
+            cue.fps = 12.0f;
+            cue.snap_to_pixels = 1;
+            cue.curve_x = cue.curve_y = cue.curve_scale = cue.curve_rotation = cue.curve_opacity = cue.curve_frame = cue.curve_palette_offset = -1;
+            size_t key_len = (size_t)(p1 - start);
+            if (key_len >= sizeof(cue.asset_key)) key_len = sizeof(cue.asset_key) - 1;
+            strncpy_s(cue.asset_key, start, key_len);
+            char* p2 = strchr(p1 + 1, '|');
+            if (!p2) continue;
+            size_t path_len = (size_t)(p2 - (p1 + 1));
+            if (path_len >= sizeof(cue.asset_path)) path_len = sizeof(cue.asset_path) - 1;
+            strncpy_s(cue.asset_path, p1 + 1, path_len);
+            int parsed = sscanf_s(p2 + 1, "%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+                &cue.x, &cue.y, &cue.scale, &cue.rotation, &cue.opacity,
+                &cue.cue_start, &cue.cue_end, &cue.layer_order, &cue.blend_mode,
+                &cue.fps, &cue.playback_mode, &cue.start_frame, &cue.palette_offset,
+                &cue.palette_cycle_speed, &cue.snap_to_pixels, &cue.curve_x, &cue.curve_y,
+                &cue.curve_scale, &cue.curve_rotation, &cue.curve_opacity, &cue.curve_frame,
+                &cue.curve_palette_offset);
+            if (parsed >= 7) {
+                if (editor->project->scene_count == 0)
+                    AddScene(editor, "Imported Scene", total_duration);
+                SceneBlock* scene = &editor->project->scenes[0];
+                ParseLayerPostEffectsPipe(start, 25, cue.post_effects, &cue.post_effect_count);
+                AddPixelCue(scene, cue);
+            }
+            continue;
+        }
+
+        if (current_section == PIXEL_EMITTER_CUES) {
+            char* p1 = strchr(start, '|');
+            if (!p1) continue;
+            PixelEmitterCue cue = {};
+            cue.curve_x = cue.curve_y = -1;
+            cue.curve_scale = cue.curve_rotation = -1;
+            cue.curve_opacity = cue.curve_emission_rate = -1;
+            cue.curve_speed_min = cue.curve_speed_max = -1;
+            cue.curve_lifetime_min = cue.curve_lifetime_max = -1;
+            cue.curve_scale_min = cue.curve_scale_max = -1;
+            size_t key_len = (size_t)(p1 - start);
+            if (key_len >= sizeof(cue.asset_key)) key_len = sizeof(cue.asset_key) - 1;
+            strncpy_s(cue.asset_key, start, key_len);
+            char* p2 = strchr(p1 + 1, '|');
+            if (!p2) continue;
+            size_t path_len = (size_t)(p2 - (p1 + 1));
+            if (path_len >= sizeof(cue.asset_path)) path_len = sizeof(cue.asset_path) - 1;
+            strncpy_s(cue.asset_path, p1 + 1, path_len);
+            int parsed = sscanf_s(p2 + 1,
+                "%d|%d|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%f|%d|%f|%d|%f|%f|%f|%f|%f|%f|%u",
+                &cue.visual_source, &cue.primitive_shape, &cue.x, &cue.y,
+                &cue.scale, &cue.rotation, &cue.opacity, &cue.cue_start, &cue.cue_end,
+                &cue.layer_order, &cue.blend_mode, &cue.max_particles, &cue.emission_rate,
+                &cue.burst_count, &cue.duration, &cue.loop, &cue.speed_min, &cue.speed_max,
+                &cue.lifetime_min, &cue.lifetime_max, &cue.scale_min, &cue.scale_max, &cue.seed);
+            if (parsed >= 9) {
+                if (editor->project->scene_count == 0)
+                    AddScene(editor, "Imported Scene", total_duration);
+                SceneBlock* scene = &editor->project->scenes[0];
+                AddPixelEmitterCue(scene, cue);
             }
             continue;
         }
@@ -3900,6 +4402,69 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             WriteLayerPostEffectsPipe(f, cue->post_effects, cue->post_effect_count);
             WriteAssetShadersPipe(f, cue->shaders, cue->shader_count);
             fprintf(f, "\n");
+        }
+    }
+
+    fprintf(f, "\n");
+
+    // [pixel_cues] section
+    fprintf(f, "[pixel_cues]\n");
+    fprintf(f, "# asset_key|asset_path|x|y|scale|rotation|opacity|cue_start|cue_end|layer_order|blend_mode|fps|playback_mode|start_frame|palette_offset|palette_cycle_speed|snap_to_pixels|curve_x|curve_y|curve_scale|curve_rotation|curve_opacity|curve_frame|curve_palette_offset\n");
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        SceneBlock* scene = &editor->project->scenes[scene_idx];
+        float scene_start = 0.0f;
+        for (int i = 0; i < scene_idx; ++i) scene_start += editor->project->scenes[i].duration;
+        for (int cue_idx = 0; cue_idx < scene->pixel_cue_count; ++cue_idx) {
+            PixelCue* cue = &scene->pixel_cues[cue_idx];
+            float abs_start = scene_start + cue->cue_start;
+            float abs_end = (cue->cue_end < 0.0f) ? (scene_start + scene->duration) : (scene_start + cue->cue_end);
+            char asset_path[1024] = {};
+            if (cue->asset_path[0] != '\0') {
+                strncpy_s(asset_path, cue->asset_path, _TRUNCATE);
+            } else {
+                snprintf(asset_path, sizeof(asset_path), "%s/%s", rel_assets_prefix, cue->asset_key);
+            }
+            for (char* p = asset_path; *p; ++p) if (*p == '\\') *p = '/';
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+                cue->asset_key, asset_path, cue->x, cue->y, cue->scale, cue->rotation, cue->opacity,
+                abs_start, abs_end, cue->layer_order, cue->blend_mode, cue->fps, cue->playback_mode,
+                cue->start_frame, cue->palette_offset, cue->palette_cycle_speed, cue->snap_to_pixels,
+                cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_rotation, cue->curve_opacity,
+                cue->curve_frame, cue->curve_palette_offset);
+            WriteLayerPostEffectsPipe(f, cue->post_effects, cue->post_effect_count);
+            WriteAssetShadersPipe(f, cue->shaders, cue->shader_count);
+            fprintf(f, "\n");
+        }
+    }
+
+    fprintf(f, "\n[pixel_emitter_cues]\n");
+    fprintf(f, "# asset_key|asset_path|visual_source|primitive_shape|x|y|scale|rotation|opacity|cue_start|cue_end|layer_order|blend_mode|max_particles|emission_rate|burst_count|duration|loop|speed_min|speed_max|lifetime_min|lifetime_max|scale_min|scale_max|seed|primitive_color_r|primitive_color_g|primitive_color_b|primitive_color_a|curve_x|curve_y|curve_scale|curve_rotation|curve_opacity|curve_emission_rate|curve_speed_min|curve_speed_max|curve_lifetime_min|curve_lifetime_max|curve_scale_min|curve_scale_max\n");
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        SceneBlock* scene = &editor->project->scenes[scene_idx];
+        float scene_start = 0.0f;
+        for (int i = 0; i < scene_idx; ++i) scene_start += editor->project->scenes[i].duration;
+        for (int cue_idx = 0; cue_idx < scene->pixel_emitter_cue_count; ++cue_idx) {
+            PixelEmitterCue* cue = &scene->pixel_emitter_cues[cue_idx];
+            char asset_path[1024] = {};
+            if (cue->asset_path[0] != '\0') {
+                strncpy_s(asset_path, cue->asset_path, _TRUNCATE);
+            } else if (cue->asset_key[0] != '\0') {
+                snprintf(asset_path, sizeof(asset_path), "%s/%s", rel_assets_prefix, cue->asset_key);
+            }
+            for (char* p = asset_path; *p; ++p) if (*p == '\\') *p = '/';
+            float abs_start = scene_start + cue->cue_start;
+            float abs_end = cue->cue_end < 0.0f ? scene_start + scene->duration : scene_start + cue->cue_end;
+            fprintf(f, "%s|%s|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%.3f|%d|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%u|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d\n",
+                cue->asset_key, asset_path, cue->visual_source, cue->primitive_shape,
+                cue->x, cue->y, cue->scale, cue->rotation, cue->opacity,
+                abs_start, abs_end, cue->layer_order, cue->blend_mode,
+                cue->max_particles, cue->emission_rate, cue->burst_count, cue->duration,
+                cue->loop, cue->speed_min, cue->speed_max, cue->lifetime_min,
+                cue->lifetime_max, cue->scale_min, cue->scale_max, cue->seed,
+                cue->primitive_color[0], cue->primitive_color[1], cue->primitive_color[2], cue->primitive_color[3],
+                cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_rotation,
+                cue->curve_opacity, cue->curve_emission_rate, cue->curve_speed_min, cue->curve_speed_max,
+                cue->curve_lifetime_min, cue->curve_lifetime_max, cue->curve_scale_min, cue->curve_scale_max);
         }
     }
 
@@ -4588,6 +5153,14 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
     scene->animated_sprite_cues = nullptr;
     scene->animated_sprite_cue_count = 0;
     scene->animated_sprite_cue_capacity = 0;
+
+    scene->pixel_cues = nullptr;
+    scene->pixel_cue_count = 0;
+    scene->pixel_cue_capacity = 0;
+
+    scene->pixel_emitter_cues = nullptr;
+    scene->pixel_emitter_cue_count = 0;
+    scene->pixel_emitter_cue_capacity = 0;
     
     scene->text_cues = nullptr;
     scene->text_cue_count = 0;
@@ -4628,6 +5201,8 @@ void DeleteScene(EditorContext* editor, int scene_index) {
     delete[] scene->shader_cues;
     delete[] scene->image_cues;
     delete[] scene->animated_sprite_cues;
+    delete[] scene->pixel_cues;
+    delete[] scene->pixel_emitter_cues;
     delete[] scene->text_cues;
     delete[] scene->scroll_text_cues;
     delete[] scene->music_cues;
@@ -4737,6 +5312,44 @@ int AddAnimatedSpriteCue(SceneBlock* scene, const AnimatedSpriteCue& cue) {
     return index;
 }
 
+int AddPixelCue(SceneBlock* scene, const PixelCue& cue) {
+    if (!scene) return -1;
+
+    if (scene->pixel_cue_count >= scene->pixel_cue_capacity) {
+        int new_capacity = scene->pixel_cue_capacity == 0 ? 4 : scene->pixel_cue_capacity * 2;
+        PixelCue* new_cues = new PixelCue[new_capacity];
+        for (int i = 0; i < scene->pixel_cue_count; ++i) {
+            new_cues[i] = scene->pixel_cues[i];
+        }
+        delete[] scene->pixel_cues;
+        scene->pixel_cues = new_cues;
+        scene->pixel_cue_capacity = new_capacity;
+    }
+
+    int index = scene->pixel_cue_count++;
+    scene->pixel_cues[index] = cue;
+    return index;
+}
+
+int AddPixelEmitterCue(SceneBlock* scene, const PixelEmitterCue& cue) {
+    if (!scene) return -1;
+
+    if (scene->pixel_emitter_cue_count >= scene->pixel_emitter_cue_capacity) {
+        int new_capacity = scene->pixel_emitter_cue_capacity == 0 ? 4 : scene->pixel_emitter_cue_capacity * 2;
+        PixelEmitterCue* new_cues = new PixelEmitterCue[new_capacity];
+        for (int i = 0; i < scene->pixel_emitter_cue_count; ++i) {
+            new_cues[i] = scene->pixel_emitter_cues[i];
+        }
+        delete[] scene->pixel_emitter_cues;
+        scene->pixel_emitter_cues = new_cues;
+        scene->pixel_emitter_cue_capacity = new_capacity;
+    }
+
+    int index = scene->pixel_emitter_cue_count++;
+    scene->pixel_emitter_cues[index] = cue;
+    return index;
+}
+
 int AddTextCue(SceneBlock* scene, const TextCue& cue) {
     if (!scene) return -1;
     
@@ -4825,6 +5438,24 @@ void DeleteAnimatedSpriteCue(SceneBlock* scene, int cue_index) {
         scene->animated_sprite_cues[i] = scene->animated_sprite_cues[i + 1];
     }
     scene->animated_sprite_cue_count--;
+}
+
+void DeletePixelCue(SceneBlock* scene, int cue_index) {
+    if (!scene || cue_index < 0 || cue_index >= scene->pixel_cue_count) return;
+
+    for (int i = cue_index; i < scene->pixel_cue_count - 1; ++i) {
+        scene->pixel_cues[i] = scene->pixel_cues[i + 1];
+    }
+    scene->pixel_cue_count--;
+}
+
+void DeletePixelEmitterCue(SceneBlock* scene, int cue_index) {
+    if (!scene || cue_index < 0 || cue_index >= scene->pixel_emitter_cue_count) return;
+
+    for (int i = cue_index; i < scene->pixel_emitter_cue_count - 1; ++i) {
+        scene->pixel_emitter_cues[i] = scene->pixel_emitter_cues[i + 1];
+    }
+    scene->pixel_emitter_cue_count--;
 }
 
 void DeleteTextCue(SceneBlock* scene, int cue_index) {
@@ -5958,7 +6589,7 @@ void RenderPreviewFrame(EditorContext* editor) {
         int sp_opa = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_opacity")  : -1;
         int sp_col = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_color_tint") : -1;
 
-        // Build unified draw list: type 0=image 1=text 2=mesh 3=scroll text 4=animated sprite
+        // Build unified draw list: type 0=image 1=text 2=mesh 3=scroll text 4=animated sprite 5=pixel 6=emitter
         struct DrawItem { int type; void* cue; int layer_order; float scene_start_time; };
         static const int kMaxItems = 512;
         DrawItem items[kMaxItems];
@@ -5991,6 +6622,28 @@ void RenderPreviewFrame(EditorContext* editor) {
                     : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
                 if (time_in_range && cue->frame_keys_csv[0])
                     items[item_count++] = { 4, cue, cue->layer_order, item_scene_start };
+            }
+            for (int i = 0; i < scene->pixel_cue_count && item_count < kMaxItems; i++) {
+                PixelCue* cue = &scene->pixel_cues[i];
+                float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                float absolute_start = item_scene_start + cue->cue_start;
+                float absolute_end = item_scene_start + end;
+                bool time_in_range = is_last_scene
+                    ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
+                    : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
+                if (time_in_range && cue->asset_key[0])
+                    items[item_count++] = { 5, cue, cue->layer_order, item_scene_start };
+            }
+            for (int i = 0; i < scene->pixel_emitter_cue_count && item_count < kMaxItems; i++) {
+                PixelEmitterCue* cue = &scene->pixel_emitter_cues[i];
+                float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
+                float absolute_start = item_scene_start + cue->cue_start;
+                float absolute_end = item_scene_start + end;
+                bool time_in_range = is_last_scene
+                    ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
+                    : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
+                if (time_in_range)
+                    items[item_count++] = { 6, cue, cue->layer_order, item_scene_start };
             }
             for (int i = 0; i < scene->text_cue_count && item_count < kMaxItems; i++) {
                 TextCue* cue = &scene->text_cues[i];
@@ -6033,9 +6686,9 @@ void RenderPreviewFrame(EditorContext* editor) {
         // Stable bubble sort by layer_order ascending
         // Tie-break rule for same layer: mesh behind image/sprite behind text/scroll.
         auto draw_priority = [](int type) {
-            // type: 0=image, 1=text, 2=mesh, 3=scroll text, 4=animated sprite
+            // type: 0=image, 1=text, 2=mesh, 3=scroll text, 4=animated sprite, 5=pixel, 6=emitter
             if (type == 2) return 0; // mesh first (back)
-            if (type == 0 || type == 4) return 1; // image middle
+            if (type == 0 || type == 4 || type == 5 || type == 6) return 1; // image middle
             return 2;                // text/scroll front
         };
         for (int i = 0; i < item_count - 1; i++)
@@ -6052,7 +6705,7 @@ void RenderPreviewFrame(EditorContext* editor) {
             DrawItem& item = items[idx];
             glDisable(GL_CULL_FACE);
 
-            if (item.type == 0 || item.type == 1 || item.type == 3 || item.type == 4) {
+            if (item.type == 0 || item.type == 1 || item.type == 3 || item.type == 4 || item.type == 5 || item.type == 6) {
                 // Sprite (image, text, scroll text, animated sprite)
                 if (!sprite_prog) continue;
                 
@@ -6081,6 +6734,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                     sprite_blend_mode = ((AnimatedSpriteCue*)item.cue)->blend_mode;
                 } else if (item.type == 1) {
                     sprite_blend_mode = ((TextCue*)item.cue)->blend_mode;
+                } else if (item.type == 5) {
+                    sprite_blend_mode = ((PixelCue*)item.cue)->blend_mode;
+                } else if (item.type == 6) {
+                    sprite_blend_mode = ((PixelEmitterCue*)item.cue)->blend_mode;
                 } else {
                     sprite_blend_mode = ((ScrollTextCue*)item.cue)->blend_mode;
                 }
@@ -6089,6 +6746,120 @@ void RenderPreviewFrame(EditorContext* editor) {
                 rev::shader::Use(sprite_prog);
                 int sprite_uv = rev::shader::GetUniformLocation(sprite_prog, "u_uv_rect");
                 if (sprite_uv >= 0) rev::shader::SetVec4(sprite_prog, sprite_uv, 0.0f, 0.0f, 1.0f, 1.0f);
+
+                if (item.type == 6) {
+                    PixelEmitterCue* cue = (PixelEmitterCue*)item.cue;
+                    float elapsed_time = editor->current_time - (item.scene_start_time + cue->cue_start);
+                    if (elapsed_time < 0.0f) continue;
+
+                    rev::particles::EmitterSettings settings = {};
+                    auto EvaluateEmitterCurve = [&](int curve_index, float fallback) {
+                        if (curve_index < 0 || curve_index >= editor->project->curve_count) return fallback;
+                        const rev::curve::Curve& curve = editor->project->curves[curve_index];
+                        float curve_time = curve.duration > 0.0f ? elapsed_time / curve.duration : 0.0f;
+                        return rev::curve::Evaluate(curve, curve_time);
+                    };
+                    float emitter_x = EvaluateEmitterCurve(cue->curve_x, cue->x);
+                    float emitter_y = EvaluateEmitterCurve(cue->curve_y, cue->y);
+                    float emitter_scale = EvaluateEmitterCurve(cue->curve_scale, cue->scale);
+                    float emitter_rotation = EvaluateEmitterCurve(cue->curve_rotation, cue->rotation);
+                    float emitter_opacity = EvaluateEmitterCurve(cue->curve_opacity, cue->opacity);
+                    float emission_rate = EvaluateEmitterCurve(cue->curve_emission_rate, cue->emission_rate);
+                    float speed_min = EvaluateEmitterCurve(cue->curve_speed_min, cue->speed_min);
+                    float speed_max = EvaluateEmitterCurve(cue->curve_speed_max, cue->speed_max);
+                    float lifetime_min = EvaluateEmitterCurve(cue->curve_lifetime_min, cue->lifetime_min);
+                    float lifetime_max = EvaluateEmitterCurve(cue->curve_lifetime_max, cue->lifetime_max);
+                    float scale_min = EvaluateEmitterCurve(cue->curve_scale_min, cue->scale_min);
+                    float scale_max = EvaluateEmitterCurve(cue->curve_scale_max, cue->scale_max);
+                    settings.seed = cue->seed;
+                    settings.visual_source = cue->visual_source == 0
+                        ? rev::particles::VisualSourceAsset : rev::particles::VisualSourcePrimitive;
+                    settings.primitive_shape = (rev::particles::PrimitiveShape)cue->primitive_shape;
+                    settings.max_particles = cue->max_particles > 0 ? cue->max_particles : 1;
+                    settings.emission_rate = emission_rate;
+                    settings.burst_count = cue->burst_count;
+                    settings.duration = cue->duration;
+                    settings.loop = cue->loop != 0;
+                    settings.start_delay = cue->start_delay;
+                    settings.simulation_space = (rev::particles::SimulationSpace)cue->simulation_space;
+                    settings.position = {0.0f, 0.0f, 0.0f};
+                    settings.direction = {cue->direction_x, cue->direction_y, 0.0f};
+                    settings.cone_angle_degrees = cue->cone_angle_degrees;
+                    settings.speed = {speed_min, speed_max};
+                    settings.lifetime = {lifetime_min, lifetime_max};
+                    settings.scale = {scale_min, scale_max};
+                    settings.rotation = {cue->rotation_min, cue->rotation_max};
+                    settings.angular_velocity = {cue->angular_velocity_min, cue->angular_velocity_max};
+                    settings.animation_speed = {0.0f, 0.0f};
+                    settings.acceleration = {cue->acceleration_x, cue->acceleration_y, 0.0f};
+                    settings.drag = cue->drag;
+
+                    int capacity = settings.max_particles > 256 ? 256 : settings.max_particles;
+                    rev::particles::Particle storage[256] = {};
+                    rev::particles::ParticleSystem system = {};
+                    if (!rev::particles::Initialize(&system, storage, capacity, settings)) continue;
+                    const float step = 1.0f / 120.0f;
+                    int steps = (int)floorf(elapsed_time / step);
+                    for (int step_index = 0; step_index < steps; ++step_index)
+                        rev::particles::Update(&system, step);
+                    float remainder = elapsed_time - (float)steps * step;
+                    if (remainder > 0.0f) rev::particles::Update(&system, remainder);
+
+                    unsigned int emitter_tex = 0;
+                    int emitter_width = 1;
+                    int emitter_height = 1;
+                    rev::runtime::ImageTexture emitter_image = {};
+                    if (cue->visual_source == rev::particles::VisualSourceAsset) {
+                        char emitter_path[512] = {};
+                        if (ResolveEditorPixelEmitterPath(editor->project, cue,
+                                                           emitter_path, sizeof(emitter_path))) {
+                            if (rev::runtime::LoadImageTexture(emitter_path, &emitter_image)) {
+                                emitter_tex = emitter_image.texture_id;
+                                emitter_width = emitter_image.width;
+                                emitter_height = emitter_image.height;
+                            }
+                        }
+                    } else {
+                        UploadPrimitiveEmitterTexture(cue, &emitter_tex);
+                        emitter_width = 16;
+                        emitter_height = 16;
+                    }
+                    if (!emitter_tex) {
+                        continue;
+                    }
+                    if (glActiveTexture_fn) glActiveTexture_fn(0x84C0);
+                    glBindTexture(GL_TEXTURE_2D, emitter_tex);
+                    if (sp_tex >= 0) rev::shader::SetInt(sprite_prog, sp_tex, 0);
+                    if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col,
+                        cue->visual_source == rev::particles::VisualSourceAsset ? 1.0f : cue->primitive_color[0],
+                        cue->visual_source == rev::particles::VisualSourceAsset ? 1.0f : cue->primitive_color[1],
+                        cue->visual_source == rev::particles::VisualSourceAsset ? 1.0f : cue->primitive_color[2]);
+                    const rev::particles::Particle* particles = rev::particles::GetParticles(&system);
+                    for (int particle_index = 0; particle_index < capacity; ++particle_index) {
+                        const rev::particles::Particle& particle = particles[particle_index];
+                        if (!particle.active) continue;
+                        float particle_x = emitter_x + particle.position.x;
+                        float particle_y = emitter_y + particle.position.y;
+                        float particle_size = emitter_scale * particle.scale;
+                        float particle_opacity = emitter_opacity;
+                        if (particle.lifetime > 0.0f) {
+                            float life = particle.age / particle.lifetime;
+                            if (life > 0.8f) particle_opacity *= (1.0f - life) * 5.0f;
+                        }
+                        if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos,
+                            particle_x * 2.0f - 1.0f, -((particle_y * 2.0f) - 1.0f));
+                        if (sp_sz >= 0) rev::shader::SetVec2(sprite_prog, sp_sz,
+                            particle_size * emitter_width * 2.0f / editor->preview_width,
+                            particle_size * emitter_height * 2.0f / editor->preview_height);
+                        if (sp_rot >= 0) rev::shader::SetFloat(sprite_prog, sp_rot,
+                            emitter_rotation + particle.rotation);
+                        if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, particle_opacity);
+                        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                    }
+                    glDeleteTextures(1, &emitter_tex);
+                    if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
+                    continue;
+                }
 
                 unsigned int tex = 0;
                 float norm_w = 0, norm_h = 0, pos_x = 0, pos_y = 0, rotation = 0.0f, opacity = 1.0f;
@@ -6262,6 +7033,74 @@ void RenderPreviewFrame(EditorContext* editor) {
                     opacity = anim_opacity * rev::runtime::ComputeEffectOpacity(
                         cue->effect_type, cue->fade_in_start, cue->fade_in_end,
                         cue->fade_out_start, cue->fade_out_end, editor->current_time - item.scene_start_time);
+                } else if (item.type == 5) {
+                    PixelCue* cue = (PixelCue*)item.cue;
+                    float anim_x = cue->x;
+                    float anim_y = cue->y;
+                    float anim_scale = cue->scale;
+                    float anim_rotation = cue->rotation;
+                    float anim_opacity = cue->opacity;
+                    float anim_frame = (float)cue->start_frame;
+                    float palette_offset = (float)cue->palette_offset;
+                    float elapsed_time = editor->current_time - (item.scene_start_time + cue->cue_start);
+                    if (elapsed_time < 0.0f) elapsed_time = 0.0f;
+
+                    auto evaluate_pixel_curve = [&](int curve_index, float fallback) {
+                        if (curve_index < 0 || curve_index >= editor->project->curve_count) return fallback;
+                        rev::curve::Curve* curve = &editor->project->curves[curve_index];
+                        return curve->duration > 0.0f
+                            ? rev::curve::Evaluate(*curve, elapsed_time / curve->duration) : fallback;
+                    };
+                    anim_x = evaluate_pixel_curve(cue->curve_x, anim_x);
+                    anim_y = evaluate_pixel_curve(cue->curve_y, anim_y);
+                    anim_scale = evaluate_pixel_curve(cue->curve_scale, anim_scale);
+                    anim_rotation = evaluate_pixel_curve(cue->curve_rotation, anim_rotation);
+                    anim_opacity = evaluate_pixel_curve(cue->curve_opacity, anim_opacity);
+                    anim_frame = evaluate_pixel_curve(cue->curve_frame, anim_frame);
+                    palette_offset = evaluate_pixel_curve(cue->curve_palette_offset, palette_offset);
+
+                    char pixel_path[512] = {};
+                    if (!ResolveEditorPixelPath(editor->project, cue, pixel_path, sizeof(pixel_path))) continue;
+                    rev::pixel::PixelAnimation* animation = rev::pixel::LoadAnimation(pixel_path);
+                    if (!animation) continue;
+
+                    int frame_idx = cue->start_frame;
+                    if (cue->fps > 0.0f && elapsed_time > 0.0f) {
+                        int frame_value = (int)(elapsed_time * cue->fps);
+                        if (cue->playback_mode == 1) {
+                            frame_idx = frame_value < animation->frame_count ? frame_value : animation->frame_count - 1;
+                        } else if (cue->playback_mode == 2 && animation->frame_count > 1) {
+                            int period = animation->frame_count * 2 - 2;
+                            int ping_idx = frame_value % period;
+                            if (ping_idx < 0) ping_idx += period;
+                            frame_idx = ping_idx < animation->frame_count ? ping_idx : period - ping_idx;
+                        } else {
+                            frame_idx = frame_value % animation->frame_count;
+                            if (frame_idx < 0) frame_idx += animation->frame_count;
+                        }
+                    }
+                    if (cue->curve_frame >= 0) frame_idx = (int)anim_frame;
+                    if (frame_idx < 0) frame_idx = 0;
+                    if (frame_idx >= animation->frame_count) frame_idx = animation->frame_count - 1;
+                    palette_offset += elapsed_time * (float)cue->palette_cycle_speed;
+
+                    if (cue->snap_to_pixels) {
+                        anim_x = floorf(anim_x * editor->preview_width + 0.5f) / editor->preview_width;
+                        anim_y = floorf(anim_y * editor->preview_height + 0.5f) / editor->preview_height;
+                    }
+                    int pixel_width = animation->width;
+                    int pixel_height = animation->height;
+                    if (!UploadEditorPixelFrame(animation, frame_idx, (int)palette_offset, &tex)) {
+                        rev::pixel::DestroyAnimation(animation);
+                        continue;
+                    }
+                    rev::pixel::DestroyAnimation(animation);
+                    norm_w = (pixel_width * anim_scale) / editor->preview_width * 2.0f;
+                    norm_h = (pixel_height * anim_scale) / editor->preview_height * 2.0f;
+                    pos_x = (anim_x * 2.0f) - 1.0f;
+                    pos_y = -((anim_y * 2.0f) - 1.0f);
+                    rotation = anim_rotation;
+                    opacity = anim_opacity;
                 } else if (item.type == 1) {
                     TextCue* cue = (TextCue*)item.cue;
                     
@@ -6548,6 +7387,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                     AnimatedSpriteCue* cue = (AnimatedSpriteCue*)item.cue;
                     layer_effects = cue->post_effects;
                     layer_effect_count = cue->post_effect_count;
+                } else if (item.type == 5) {
+                    PixelCue* cue = (PixelCue*)item.cue;
+                    layer_effects = cue->post_effects;
+                    layer_effect_count = cue->post_effect_count;
                 }
 
                 bool has_layer_post = editor->layer_fbo && editor->layer_texture && editor->post_shader &&
@@ -6666,6 +7509,12 @@ void RenderPreviewFrame(EditorContext* editor) {
                 } else if (item.type == 4) {
                     AnimatedSpriteCue* animated_sprite = (AnimatedSpriteCue*)item.cue;
                     RenderAssetShaderOverlays(animated_sprite->shaders, animated_sprite->shader_count,
+                                              pos_x, pos_y, norm_w, norm_h, rotation,
+                                              editor->current_time - item.scene_start_time,
+                                              editor->preview_width, editor->preview_height, tex);
+                } else if (item.type == 5) {
+                    PixelCue* pixel = (PixelCue*)item.cue;
+                    RenderAssetShaderOverlays(pixel->shaders, pixel->shader_count,
                                               pos_x, pos_y, norm_w, norm_h, rotation,
                                               editor->current_time - item.scene_start_time,
                                               editor->preview_width, editor->preview_height, tex);

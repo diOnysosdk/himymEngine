@@ -48,6 +48,19 @@ Animated sprite cue contract (editor export + runtime):
 - Playback semantics:
     - `playback_mode`: `0=loop`, `1=once`, `2=pingpong`
     - `fps` controls frame advance speed
+
+Indexed pixel cue contract (editor export + runtime):
+
+- Asset format: `.pix` files use `HPIX` version `1`, a fixed maximum palette of 16 RGBA colors, and raw indexed frame bytes.
+- Runtime API: `rev::pixel::LoadAnimation()` loads disk assets and `rev::pixel::LoadAnimationFromMemory()` loads packed assets. Both return a `PixelAnimation*` released by `DestroyAnimation()`.
+- Cue section: `[pixel_cues]` rows begin with `asset_key|asset_path`, followed by transform, timing, playback, palette, and curve fields.
+- Playback: `playback_mode` is `0=loop`, `1=once`, `2=pingpong`; `fps` controls frame selection. `palette_offset` and `palette_cycle_speed` rotate palette indices before upload.
+- Rendering: active frames are expanded to RGBA and uploaded with nearest-neighbor minification and magnification filters. Pixel cues share the unified layered sprite pass and can use the existing asset shader and layer post-effect contracts.
+- Editor import: the PixelCue Browse action accepts `.pix` directly or common GDI+ image formats (`png`, `jpg/jpeg`, `bmp`, `gif`, `tif/tiff`), quantizes source pixels to the fixed palette, and writes a same-name `.pix` asset into the project asset directory.
+- Particle core: `rev::particles::ParticleSystem` uses caller-owned fixed storage. `Initialize()` binds a pool and `EmitterSettings`, `Update()` performs deterministic burst/rate emission and integrates active particles, and `GetParticles()` exposes the active pool for a renderer. It has no OpenGL or pixel-asset dependency.
+- Particle visuals: `EmitterSettings.visual_source` selects `VisualSourceAsset` or `VisualSourcePrimitive`; primitive visuals use `PrimitiveShapeSquare`, `PrimitiveShapeCircle`, `PrimitiveShapeTriangle`, or `PrimitiveShapeDiamond`. Asset key/path fields belong to the future `PixelEmitterCue`, not to individual particles.
+- Emitter migration: `PixelEmitterCue` is a separate timeline type whose asset source accepts ordinary image formats supported by the runtime image loader. Keep `PixelCue` as the single-sprite compatibility path for existing indexed `.pix` projects.
+- Editor persistence: `PixelEmitterCue` is stored in the JSON `pixel_emitter_cues` array and exported/imported through `[pixel_emitter_cues]` in `cues.txt`; its `visual_source` and `primitive_shape` values are preserved alongside emitter ranges.
     - `start_frame` sets initial offset
     - `curve_frame` (when assigned) can override frame index over time
 - Packing semantics:

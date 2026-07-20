@@ -134,6 +134,99 @@ struct AnimatedSpriteCue {
     AssetShader shaders[kMaxAssetShaders];
 };
 
+// Indexed pixel animation cue. The referenced .pix asset owns the palette and frames.
+struct PixelCue {
+    char asset_key[64];
+    char asset_path[512];
+    float x, y;
+    float scale;
+    float rotation;
+    float opacity;
+    float cue_start;
+    float cue_end;
+    int layer_order;
+    int blend_mode;
+    float fps;
+    int playback_mode;       // 0=loop, 1=once, 2=pingpong
+    int start_frame;
+    int palette_offset;
+    int palette_cycle_speed;
+    int snap_to_pixels;
+
+    int curve_x;
+    int curve_y;
+    int curve_scale;
+    int curve_rotation;
+    int curve_opacity;
+    int curve_frame;
+    int curve_palette_offset;
+
+    int post_effect_count;
+    LayerPostEffect post_effects[kMaxLayerPostEffects];
+    int shader_count;
+    AssetShader shaders[kMaxAssetShaders];
+};
+
+// Particle emitter cue. visual_source is 0 for an image asset and 1 for a
+// built-in primitive; primitive_shape is square, circle, triangle, or diamond.
+struct PixelEmitterCue {
+    char asset_key[64];
+    char asset_path[512];
+    int visual_source;
+    int primitive_shape;
+    float primitive_color[4];
+    float x, y;
+    float scale;
+    float rotation;
+    float opacity;
+    float cue_start;
+    float cue_end;
+    int layer_order;
+    int blend_mode;
+    int max_particles;
+    float emission_rate;
+    int burst_count;
+    float duration;
+    int loop;
+    float start_delay;
+    int simulation_space;
+    float direction_x;
+    float direction_y;
+    float cone_angle_degrees;
+    float speed_min;
+    float speed_max;
+    float lifetime_min;
+    float lifetime_max;
+    float scale_min;
+    float scale_max;
+    float rotation_min;
+    float rotation_max;
+    float angular_velocity_min;
+    float angular_velocity_max;
+    float acceleration_x;
+    float acceleration_y;
+    float drag;
+    unsigned int seed;
+
+    int curve_x;
+    int curve_y;
+    int curve_scale;
+    int curve_rotation;
+    int curve_opacity;
+    int curve_emission_rate;
+    int curve_speed_min;
+    int curve_speed_max;
+    int curve_lifetime_min;
+    int curve_lifetime_max;
+    int curve_scale_min;
+    int curve_scale_max;
+
+    int post_effect_count;
+    LayerPostEffect post_effects[kMaxLayerPostEffects];
+    int shader_count;
+    AssetShader shaders[kMaxAssetShaders];
+};
+
 // Text cue
 struct TextCue {
     char     text[256];

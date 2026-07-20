@@ -845,8 +845,79 @@ void RenderProperties(EditorContext* editor) {
                 editor->animated_sprite_modal_request_open = true;
                 editor->project->modified = true;
             }
-            if (!project_saved && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Save the project first to set up the assets folder");
+
+            if (!project_saved) {
+                ImGui::EndDisabled();
+            }
+
+            if (ImGui::Button("+ Pixel Cue")) {
+                PixelCue cue = {};
+                snprintf(cue.asset_key, sizeof(cue.asset_key), "pixel_%d.pix", scene->pixel_cue_count);
+                cue.x = 0.5f;
+                cue.y = 0.5f;
+                cue.scale = 1.0f;
+                cue.opacity = 1.0f;
+                cue.cue_start = 0.0f;
+                cue.cue_end = scene->duration;
+                cue.layer_order = 0;
+                cue.blend_mode = 0;
+                cue.fps = 12.0f;
+                cue.playback_mode = 0;
+                cue.snap_to_pixels = 1;
+                cue.curve_x = -1;
+                cue.curve_y = -1;
+                cue.curve_scale = -1;
+                cue.curve_rotation = -1;
+                cue.curve_opacity = -1;
+                cue.curve_frame = -1;
+                cue.curve_palette_offset = -1;
+                int new_index = AddPixelCue(scene, cue);
+                editor->editing_pixel = scene->pixel_cues[new_index];
+                editor->selected_cue_index = new_index;
+                editor->selected_cue_type = CueTypePixel;
+                editor->pixel_modal_request_open = true;
+                editor->project->modified = true;
+            }
+
+            if (ImGui::Button("+ Pixel Emitter")) {
+                PixelEmitterCue cue = {};
+                cue.curve_x = cue.curve_y = -1;
+                cue.curve_scale = cue.curve_rotation = -1;
+                cue.curve_opacity = cue.curve_emission_rate = -1;
+                cue.curve_speed_min = cue.curve_speed_max = -1;
+                cue.curve_lifetime_min = cue.curve_lifetime_max = -1;
+                cue.curve_scale_min = cue.curve_scale_max = -1;
+                cue.visual_source = 1;
+                cue.primitive_shape = 1;
+                cue.primitive_color[0] = 1.0f;
+                cue.primitive_color[1] = 1.0f;
+                cue.primitive_color[2] = 1.0f;
+                cue.primitive_color[3] = 1.0f;
+                cue.x = 0.5f;
+                cue.y = 0.5f;
+                cue.scale = 1.0f;
+                cue.opacity = 1.0f;
+                cue.cue_start = 0.0f;
+                cue.cue_end = scene->duration;
+                cue.layer_order = 0;
+                cue.max_particles = 128;
+                cue.emission_rate = 24.0f;
+                cue.burst_count = 8;
+                cue.duration = scene->duration;
+                cue.loop = 1;
+                cue.speed_min = 0.05f;
+                cue.speed_max = 0.15f;
+                cue.lifetime_min = 0.5f;
+                cue.lifetime_max = 1.5f;
+                cue.scale_min = 0.5f;
+                cue.scale_max = 1.0f;
+                cue.seed = 1;
+                int new_index = AddPixelEmitterCue(scene, cue);
+                editor->editing_pixel_emitter = scene->pixel_emitter_cues[new_index];
+                editor->selected_cue_index = new_index;
+                editor->selected_cue_type = CueTypePixelEmitter;
+                editor->pixel_emitter_modal_request_open = true;
+                editor->project->modified = true;
             }
             
             if (ImGui::Button("+ Text Cue")) {
@@ -979,10 +1050,6 @@ void RenderProperties(EditorContext* editor) {
                 ImGui::SetTooltip("Save the project first to set up the assets folder");
             }
             
-            if (!project_saved) {
-                ImGui::EndDisabled();
-            }
-            
             ImGui::Separator();
             
             // Display existing image cues
@@ -1044,6 +1111,69 @@ void RenderProperties(EditorContext* editor) {
                     ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {
                         DeleteAnimatedSpriteCue(scene, i);
+                        editor->project->modified = true;
+                    }
+                    ImGui::PopID();
+                }
+            }
+
+            if (scene->pixel_cue_count > 0) {
+                ImGui::Text("Pixel Cues:");
+                for (int i = 0; i < scene->pixel_cue_count; ++i) {
+                    ImGui::PushID(2750 + i);
+                    const char* display_name = scene->pixel_cues[i].asset_key[0] != '\0'
+                        ? scene->pixel_cues[i].asset_key : "(pixel asset)";
+                    if (ImGui::Button(display_name)) {
+                        editor->editing_pixel = scene->pixel_cues[i];
+                        editor->selected_cue_index = i;
+                        editor->selected_cue_type = CueTypePixel;
+                        editor->pixel_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("+")) {
+                        PixelCue cue = scene->pixel_cues[i];
+                        int new_index = AddPixelCue(scene, cue);
+                        editor->editing_pixel = scene->pixel_cues[new_index];
+                        editor->selected_cue_index = new_index;
+                        editor->selected_cue_type = CueTypePixel;
+                        editor->pixel_modal_request_open = true;
+                        editor->project->modified = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X")) {
+                        DeletePixelCue(scene, i);
+                        editor->project->modified = true;
+                    }
+                    ImGui::PopID();
+                }
+            }
+
+            if (scene->pixel_emitter_cue_count > 0) {
+                ImGui::Text("Pixel Emitters:");
+                for (int i = 0; i < scene->pixel_emitter_cue_count; ++i) {
+                    ImGui::PushID(2850 + i);
+                    const PixelEmitterCue& cue = scene->pixel_emitter_cues[i];
+                    const char* display_name = cue.visual_source == 0
+                        ? (cue.asset_key[0] != '\0' ? cue.asset_key : "(pixel asset emitter)")
+                        : "(primitive emitter)";
+                    if (ImGui::Button(display_name)) {
+                        editor->editing_pixel_emitter = cue;
+                        editor->selected_cue_index = i;
+                        editor->selected_cue_type = CueTypePixelEmitter;
+                        editor->pixel_emitter_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("+")) {
+                        int new_index = AddPixelEmitterCue(scene, cue);
+                        editor->editing_pixel_emitter = scene->pixel_emitter_cues[new_index];
+                        editor->selected_cue_index = new_index;
+                        editor->selected_cue_type = CueTypePixelEmitter;
+                        editor->pixel_emitter_modal_request_open = true;
+                        editor->project->modified = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X")) {
+                        DeletePixelEmitterCue(scene, i);
                         editor->project->modified = true;
                     }
                     ImGui::PopID();

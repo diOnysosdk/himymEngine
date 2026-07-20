@@ -13,6 +13,8 @@ namespace editor {
 using rev::runtime::ColorRGB;
 using rev::runtime::ImageCue;
 using rev::runtime::AnimatedSpriteCue;
+using rev::runtime::PixelCue;
+using rev::runtime::PixelEmitterCue;
 using rev::runtime::TextCue;
 using rev::runtime::ScrollTextCue;
 using rev::runtime::MusicCue;
@@ -28,7 +30,9 @@ enum CueType {
     CueTypeMusic = 4,
     CueTypeMesh = 5,
     CueTypeAnimatedSprite = 6,
-    CueTypePostEffect = 7,
+    CueTypePixel = 7,
+    CueTypePixelEmitter = 8,
+    CueTypePostEffect = 9,
 };
 
 enum PostEffectType {
@@ -189,6 +193,14 @@ struct SceneBlock {
     AnimatedSpriteCue* animated_sprite_cues;
     int animated_sprite_cue_count;
     int animated_sprite_cue_capacity;
+
+    PixelCue* pixel_cues;
+    int pixel_cue_count;
+    int pixel_cue_capacity;
+
+    PixelEmitterCue* pixel_emitter_cues;
+    int pixel_emitter_cue_count;
+    int pixel_emitter_cue_capacity;
     
     TextCue* text_cues;
     int text_cue_count;
@@ -317,6 +329,14 @@ struct EditorContext {
     bool animated_sprite_modal_open;
     bool animated_sprite_modal_request_open;
 
+    PixelCue editing_pixel;
+    bool pixel_modal_open;
+    bool pixel_modal_request_open;
+
+    PixelEmitterCue editing_pixel_emitter;
+    bool pixel_emitter_modal_open;
+    bool pixel_emitter_modal_request_open;
+
     // Scroll text modal state
     ScrollTextCue editing_scroll_text;
     bool scroll_text_modal_open;
@@ -391,6 +411,8 @@ void RenderShaderModal(EditorContext* editor);
 void RenderMusicModal(EditorContext* editor);
 void RenderImageModal(EditorContext* editor);
 void RenderAnimatedSpriteModal(EditorContext* editor);
+void RenderPixelModal(EditorContext* editor);
+void RenderPixelEmitterModal(EditorContext* editor);
 void RenderTextModal (EditorContext* editor);
 void RenderScrollTextModal(EditorContext* editor);
 void RenderMeshModal (EditorContext* editor);
@@ -416,6 +438,8 @@ SceneBlock* GetScene(EditorContext* editor, int scene_index);
 int AddShaderCue(SceneBlock* scene, const ShaderCue& cue);
 int AddImageCue (SceneBlock* scene, const ImageCue&  cue);
 int AddAnimatedSpriteCue(SceneBlock* scene, const AnimatedSpriteCue& cue);
+int AddPixelCue(SceneBlock* scene, const PixelCue& cue);
+int AddPixelEmitterCue(SceneBlock* scene, const PixelEmitterCue& cue);
 int AddTextCue  (SceneBlock* scene, const TextCue&   cue);
 int AddScrollTextCue(SceneBlock* scene, const ScrollTextCue& cue);
 int AddMusicCue (SceneBlock* scene, const MusicCue&  cue);
@@ -426,6 +450,8 @@ void DeletePostEffect(SceneBlock* scene, int effect_index);
 void DeleteShaderCue(SceneBlock* scene, int cue_index);
 void DeleteImageCue (SceneBlock* scene, int cue_index);
 void DeleteAnimatedSpriteCue(SceneBlock* scene, int cue_index);
+void DeletePixelCue(SceneBlock* scene, int cue_index);
+void DeletePixelEmitterCue(SceneBlock* scene, int cue_index);
 void DeleteTextCue  (SceneBlock* scene, int cue_index);
 void DeleteScrollTextCue(SceneBlock* scene, int cue_index);
 void DeleteMusicCue (SceneBlock* scene, int cue_index);

@@ -5,6 +5,8 @@
 #include "rev_shader.h"
 #include "rev_xm.h"
 #include "rev_runtime.h"
+#include "rev_pixel.h"
+#include "rev_particles.h"
 #include "rev_mesh.h"
 #if defined(REV_GLTF_AVAILABLE)
 #include "rev_gltf.h"
@@ -22,6 +24,8 @@
 using rev::runtime::ColorRGB;
 using rev::runtime::ImageCue;
 using rev::runtime::AnimatedSpriteCue;
+using rev::runtime::PixelCue;
+using rev::runtime::PixelEmitterCue;
 using rev::runtime::ImageTexture;
 using rev::runtime::TextCue;
 using rev::runtime::ScrollTextCue;
@@ -47,6 +51,10 @@ using rev::runtime::LoadImageCue;
 using rev::runtime::LoadAnimatedSpriteCue;
 using rev::runtime::LoadTextCue;
 using rev::runtime::LoadMeshCue;
+using rev::pixel::PixelAnimation;
+using rev::pixel::LoadAnimation;
+using rev::pixel::LoadAnimationFromMemory;
+using rev::pixel::DestroyAnimation;
 using rev::runtime::LoadCurves;
 using rev::runtime::Mat4Perspective;
 using rev::runtime::Mat4LookAt;
@@ -200,6 +208,9 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
 #endif
 #ifndef GL_CLAMP
 #define GL_CLAMP 0x2900
+#endif
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
 #endif
 #ifndef GL_TEXTURE0
 #define GL_TEXTURE0 0x84C0
@@ -1202,6 +1213,177 @@ int LoadAllAnimatedSpriteCues(const char* path, AnimatedSpriteCue* cues, int max
     return count;
 }
 
+int LoadAllPixelCues(const char* path, PixelCue* cues, int max_cues) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+
+    char line[8192];
+    bool in_section = false;
+    int count = 0;
+    while (fgets(line, sizeof(line), f) && count < max_cues) {
+        char* s = line;
+        while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+        if (strstr(s, "[pixel_cues]")) { in_section = true; continue; }
+        if (s[0] == '[' && in_section) break;
+        if (!in_section || s[0] == '#' || s[0] == '\0' || s[0] == '\n') continue;
+
+        PixelCue* cue = &cues[count];
+        memset(cue, 0, sizeof(PixelCue));
+        cue->fps = 12.0f;
+        cue->snap_to_pixels = 1;
+        cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_rotation =
+            cue->curve_opacity = cue->curve_frame = cue->curve_palette_offset = -1;
+
+        char* pipe1 = strchr(s, '|');
+        if (!pipe1) continue;
+        *pipe1 = '\0';
+        strncpy_s(cue->asset_key, s, _TRUNCATE);
+        char* pipe2 = strchr(pipe1 + 1, '|');
+        if (!pipe2) continue;
+        *pipe2 = '\0';
+        strncpy_s(cue->asset_path, pipe1 + 1, _TRUNCATE);
+
+        int parsed = sscanf_s(pipe2 + 1,
+            "%f|%f|%f|%f|%f|%f|%f|%d|%d|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+            &cue->x, &cue->y, &cue->scale, &cue->rotation, &cue->opacity,
+            &cue->cue_start, &cue->cue_end, &cue->layer_order, &cue->blend_mode,
+            &cue->fps, &cue->playback_mode, &cue->start_frame, &cue->palette_offset,
+            &cue->palette_cycle_speed, &cue->snap_to_pixels, &cue->curve_x, &cue->curve_y,
+            &cue->curve_scale, &cue->curve_rotation, &cue->curve_opacity, &cue->curve_frame,
+            &cue->curve_palette_offset);
+        if (parsed >= 7) {
+            ParseLayerPostEffectsPipe(pipe2 + 1, parsed >= 22 ? 22 : 7,
+                                      cue->post_effects, &cue->post_effect_count);
+            ParseAssetShadersPipe(pipe2 + 1, parsed >= 22 ? 22 : 7,
+                                  cue->shaders, &cue->shader_count);
+            ++count;
+        }
+    }
+    fclose(f);
+    return count;
+}
+
+int LoadAllPixelEmitterCues(const char* path, PixelEmitterCue* cues, int max_cues) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+
+    char line[8192];
+    bool in_section = false;
+    int count = 0;
+    while (fgets(line, sizeof(line), f) && count < max_cues) {
+        char* s = line;
+        while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') ++s;
+        if (strncmp(s, "[pixel_emitter_cues]", 20) == 0) { in_section = true; continue; }
+        if (s[0] == '[') {
+            if (in_section) break;
+            continue;
+        }
+        if (!in_section || s[0] == '#' || s[0] == '\0' || s[0] == '\n') continue;
+
+        PixelEmitterCue* cue = &cues[count];
+        memset(cue, 0, sizeof(PixelEmitterCue));
+        cue->primitive_color[0] = cue->primitive_color[1] = cue->primitive_color[2] = 1.0f;
+        cue->primitive_color[3] = 1.0f;
+        cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_rotation = -1;
+        cue->curve_opacity = cue->curve_emission_rate = -1;
+        cue->curve_speed_min = cue->curve_speed_max = -1;
+        cue->curve_lifetime_min = cue->curve_lifetime_max = -1;
+        cue->curve_scale_min = cue->curve_scale_max = -1;
+        char* pipe1 = strchr(s, '|');
+        if (!pipe1) continue;
+        *pipe1 = '\0';
+        strncpy_s(cue->asset_key, s, _TRUNCATE);
+        char* pipe2 = strchr(pipe1 + 1, '|');
+        if (!pipe2) continue;
+        *pipe2 = '\0';
+        strncpy_s(cue->asset_path, pipe1 + 1, _TRUNCATE);
+        int parsed = sscanf_s(pipe2 + 1,
+            "%d|%d|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%f|%d|%f|%d|%f|%f|%f|%f|%f|%f|%u|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+            &cue->visual_source, &cue->primitive_shape, &cue->x, &cue->y,
+            &cue->scale, &cue->rotation, &cue->opacity, &cue->cue_start,
+            &cue->cue_end, &cue->layer_order, &cue->blend_mode, &cue->max_particles,
+            &cue->emission_rate, &cue->burst_count, &cue->duration, &cue->loop,
+            &cue->speed_min, &cue->speed_max, &cue->lifetime_min, &cue->lifetime_max,
+            &cue->scale_min, &cue->scale_max, &cue->seed,
+            &cue->primitive_color[0], &cue->primitive_color[1], &cue->primitive_color[2], &cue->primitive_color[3],
+            &cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_rotation,
+            &cue->curve_opacity, &cue->curve_emission_rate, &cue->curve_speed_min, &cue->curve_speed_max,
+            &cue->curve_lifetime_min, &cue->curve_lifetime_max, &cue->curve_scale_min, &cue->curve_scale_max);
+        if (parsed >= 23) ++count;
+    }
+    fclose(f);
+    return count;
+}
+
+static bool UploadPixelFrame(const PixelAnimation* animation, int frame_index,
+                             int palette_offset, unsigned int* out_texture) {
+    if (!animation || !animation->pixels || !out_texture ||
+        animation->width == 0 || animation->height == 0 || animation->frame_count == 0 ||
+        animation->palette_count == 0) return false;
+
+    size_t pixel_count = static_cast<size_t>(animation->width) * animation->height;
+    unsigned char* rgba = new unsigned char[pixel_count * 4];
+    int palette_count = animation->palette_count;
+    int frame = frame_index % animation->frame_count;
+    if (frame < 0) frame += animation->frame_count;
+    for (size_t i = 0; i < pixel_count; ++i) {
+        int palette_index = animation->pixels[static_cast<size_t>(frame) * pixel_count + i];
+        palette_index = (palette_index + palette_offset) % palette_count;
+        if (palette_index < 0) palette_index += palette_count;
+        const rev::pixel::PixelColor& color = animation->palette[palette_index];
+        rgba[i * 4 + 0] = color.r;
+        rgba[i * 4 + 1] = color.g;
+        rgba[i * 4 + 2] = color.b;
+        rgba[i * 4 + 3] = color.a;
+    }
+
+    glGenTextures(1, out_texture);
+    glBindTexture(GL_TEXTURE_2D, *out_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, animation->width, animation->height, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    delete[] rgba;
+    return *out_texture != 0;
+}
+
+static bool UploadPrimitiveEmitterTexture(const PixelEmitterCue* cue, unsigned int* out_texture) {
+    if (!cue || !out_texture) return false;
+    const int size = 16;
+    unsigned char pixels[size * size * 4] = {};
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            float nx = ((float)x + 0.5f) / size * 2.0f - 1.0f;
+            float ny = ((float)y + 0.5f) / size * 2.0f - 1.0f;
+            bool filled = true;
+            if (cue->primitive_shape == rev::particles::PrimitiveShapeCircle) {
+                filled = nx * nx + ny * ny <= 1.0f;
+            } else if (cue->primitive_shape == rev::particles::PrimitiveShapeTriangle) {
+                filled = ny >= -1.0f && ny <= 1.0f && fabsf(nx) <= (1.0f - ny) * 0.5f;
+            } else if (cue->primitive_shape == rev::particles::PrimitiveShapeDiamond) {
+                filled = fabsf(nx) + fabsf(ny) <= 1.0f;
+            }
+            size_t index = ((size_t)y * size + x) * 4;
+            pixels[index + 0] = (unsigned char)(cue->primitive_color[0] * 255.0f);
+            pixels[index + 1] = (unsigned char)(cue->primitive_color[1] * 255.0f);
+            pixels[index + 2] = (unsigned char)(cue->primitive_color[2] * 255.0f);
+            pixels[index + 3] = filled ? (unsigned char)(cue->primitive_color[3] * 255.0f) : 0;
+        }
+    }
+    glGenTextures(1, out_texture);
+    glBindTexture(GL_TEXTURE_2D, *out_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    return *out_texture != 0;
+}
+
 struct RuntimePlaybackSettings {
     float total_duration;
     bool intro_loop;
@@ -1972,6 +2154,65 @@ int main(int argc, char* argv[]) {
     AnimatedSpriteCue animated_sprite_cues[kMaxAnimatedSpriteCues] = {};
     int animated_sprite_cue_count = LoadAllAnimatedSpriteCues(cues_path, animated_sprite_cues, kMaxAnimatedSpriteCues);
     LOGV("Animated sprite cues loaded: %d\n", animated_sprite_cue_count);
+    if (g_logfile) fflush(g_logfile);
+
+    const int kMaxPixelCues = 32;
+    PixelCue pixel_cues[kMaxPixelCues] = {};
+    PixelAnimation* pixel_animations[kMaxPixelCues] = {};
+    int pixel_cue_count = LoadAllPixelCues(cues_path, pixel_cues, kMaxPixelCues);
+    LOGV("Pixel cues loaded: %d\n", pixel_cue_count);
+    if (g_logfile) fflush(g_logfile);
+    for (int i = 0; i < pixel_cue_count; ++i) {
+#ifdef HIMYM_PACKED_ASSETS
+        const rev::pack::PackedAsset* pixel_asset = rev::pack::GetPackedAsset(
+            pixel_cues[i].asset_key, kPackedAssets, kPackedAssetCount);
+        if (pixel_asset) {
+            pixel_animations[i] = LoadAnimationFromMemory(pixel_asset->data, pixel_asset->size);
+        }
+#else
+        char pixel_path[512] = {};
+        if (ResolveRuntimeAssetPath(pixel_cues[i].asset_path[0] ? pixel_cues[i].asset_path : pixel_cues[i].asset_key,
+                                    cues_path, pixel_path, sizeof(pixel_path))) {
+            pixel_animations[i] = LoadAnimation(pixel_path);
+        }
+#endif
+        if (!pixel_animations[i]) {
+            LOGV("Pixel asset unavailable: %s\n", pixel_cues[i].asset_key);
+        }
+    }
+
+    const int kMaxPixelEmitterCues = 32;
+    PixelEmitterCue pixel_emitter_cues[kMaxPixelEmitterCues] = {};
+    ImageTexture pixel_emitter_images[kMaxPixelEmitterCues] = {};
+    int pixel_emitter_cue_count = LoadAllPixelEmitterCues(cues_path, pixel_emitter_cues, kMaxPixelEmitterCues);
+    LOGV("Pixel emitter cues loaded: %d\n", pixel_emitter_cue_count);
+    if (g_logfile) fflush(g_logfile);
+    for (int i = 0; i < pixel_emitter_cue_count; ++i) {
+        LOGV("  Emitter [%d]: key=%s path=%s source=%d\n", i,
+             pixel_emitter_cues[i].asset_key, pixel_emitter_cues[i].asset_path,
+             pixel_emitter_cues[i].visual_source);
+        if (pixel_emitter_cues[i].visual_source != 0) continue;
+#ifdef HIMYM_PACKED_ASSETS
+        const rev::pack::PackedAsset* emitter_asset = rev::pack::GetPackedAsset(
+            pixel_emitter_cues[i].asset_key, kPackedAssets, kPackedAssetCount);
+        LOGV("    Packed lookup: %s\n", emitter_asset ? "found" : "missing");
+        if (emitter_asset) {
+            bool loaded = LoadImageTextureFromMemory(emitter_asset->data, emitter_asset->size, &pixel_emitter_images[i]);
+            LOGV("    Image load: %s (%dx%d)\n", loaded ? "ok" : "failed",
+                 pixel_emitter_images[i].width, pixel_emitter_images[i].height);
+        }
+#else
+        char emitter_path[512] = {};
+        const char* declared_path = pixel_emitter_cues[i].asset_path[0] ? pixel_emitter_cues[i].asset_path : pixel_emitter_cues[i].asset_key;
+        bool resolved = ResolveRuntimeAssetPath(declared_path, cues_path, emitter_path, sizeof(emitter_path));
+        LOGV("    Path: %s -> %s\n", declared_path, resolved ? emitter_path : "missing");
+        if (resolved) {
+            bool loaded = LoadImageTexture(emitter_path, &pixel_emitter_images[i]);
+            LOGV("    Image load: %s (%dx%d)\n", loaded ? "ok" : "failed",
+                 pixel_emitter_images[i].width, pixel_emitter_images[i].height);
+        }
+#endif
+    }
     
     // Load text cues (multi-cue support)
     const int kMaxTextCues = 32;
@@ -2018,6 +2259,12 @@ int main(int argc, char* argv[]) {
     }
     for (int i = 0; i < animated_sprite_cue_count; ++i) {
         if (animated_sprite_cues[i].cue_end > total_duration) total_duration = animated_sprite_cues[i].cue_end;
+    }
+    for (int i = 0; i < pixel_cue_count; ++i) {
+        if (pixel_cues[i].cue_end > total_duration) total_duration = pixel_cues[i].cue_end;
+    }
+    for (int i = 0; i < pixel_emitter_cue_count; ++i) {
+        if (pixel_emitter_cues[i].cue_end > total_duration) total_duration = pixel_emitter_cues[i].cue_end;
     }
     for (int i = 0; i < text_cue_count; ++i) {
         if (text_cues[i].cue_end > total_duration) total_duration = text_cues[i].cue_end;
@@ -3518,8 +3765,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         // --- Unified layered draw pass ---
         // Collect active image/text/scroll/mesh cues, sort by layer_order, draw in order.
         {
-            struct DrawEntry { int type; int layer; int cue_idx; }; // 0=image 1=text 2=mesh 3=scroll 4=animated sprite
-            DrawEntry entries[kMaxImageCues + kMaxAnimatedSpriteCues + kMaxTextCues + kMaxScrollTextCues + kMaxMeshCues]; int ne = 0;
+            struct DrawEntry { int type; int layer; int cue_idx; }; // 0=image 1=text 2=mesh 3=scroll 4=animated sprite 5=pixel 6=emitter
+            DrawEntry entries[kMaxImageCues + kMaxAnimatedSpriteCues + kMaxPixelCues + kMaxPixelEmitterCues + kMaxTextCues + kMaxScrollTextCues + kMaxMeshCues]; int ne = 0;
 
             for (int ii = 0; ii < image_cue_count; ++ii) {
                 ImageCue& icue = image_cues[ii];
@@ -3532,6 +3779,17 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 bool asp_active = sprite_shader && cue.frame_keys_csv[0]
                                   && time >= cue.cue_start && time <= cue.cue_end;
                 if (asp_active) entries[ne++] = {4, cue.layer_order, ai};
+            }
+            for (int pi = 0; pi < pixel_cue_count; ++pi) {
+                PixelCue& cue = pixel_cues[pi];
+                bool pixel_active = sprite_shader && pixel_animations[pi]
+                                  && time >= cue.cue_start && time <= cue.cue_end;
+                if (pixel_active) entries[ne++] = {5, cue.layer_order, pi};
+            }
+            for (int ei = 0; ei < pixel_emitter_cue_count; ++ei) {
+                PixelEmitterCue& cue = pixel_emitter_cues[ei];
+                bool emitter_active = sprite_shader && time >= cue.cue_start && time <= cue.cue_end;
+                if (emitter_active) entries[ne++] = {6, cue.layer_order, ei};
             }
             for (int ti = 0; ti < text_cue_count; ++ti) {
                 TextCue& text_cue = text_cues[ti];
@@ -3556,9 +3814,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             // Bubble sort ascending (lower layer_order draws first = further back)
             // Tie-break rule for same layer: mesh behind image behind text/scroll.
             auto draw_priority = [](int type) {
-                // type: 0=image, 1=text, 2=mesh, 3=scroll, 4=animated sprite
+                // type: 0=image, 1=text, 2=mesh, 3=scroll, 4=animated sprite, 5=pixel, 6=emitter
                 if (type == 2) return 0; // mesh first (back)
-                if (type == 0 || type == 4) return 1; // image middle
+                if (type == 0 || type == 4 || type == 5 || type == 6) return 1; // image middle
                 return 2;                // text/scroll front
             };
             for (int i = 0; i < ne - 1; i++)
@@ -3572,7 +3830,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             if (g_verbose_logging && (debug_frame < 240) && (debug_frame % 30 == 0)) {
                 LOGV("           draw_entries=%d", ne);
                 for (int di = 0; di < ne && di < 8; ++di) {
-                    const char* type_name = (entries[di].type == 0) ? "img" : (entries[di].type == 1) ? "txt" : (entries[di].type == 3) ? "scr" : (entries[di].type == 4) ? "asp" : "msh";
+                    const char* type_name = (entries[di].type == 0) ? "img" : (entries[di].type == 1) ? "txt" : (entries[di].type == 3) ? "scr" : (entries[di].type == 4) ? "asp" : (entries[di].type == 5) ? "pix" : (entries[di].type == 6) ? "emit" : "msh";
                     LOGV(" [%s L%d idx%d]", type_name, entries[di].layer, entries[di].cue_idx);
                 }
                 LOGV("\n");
@@ -4003,6 +4261,196 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     render_asset_shaders(x, y, w, h, anim_rotation, elapsed_time,
                                          cue.shaders, cue.shader_count, frame_tex.texture_id);
                     glDeleteTextures(1, &frame_tex.texture_id);
+
+                } else if (entries[ei].type == 5) {
+                    int pixel_idx = entries[ei].cue_idx;
+                    PixelCue& cue = pixel_cues[pixel_idx];
+                    PixelAnimation* animation = pixel_animations[pixel_idx];
+                    if (!animation) continue;
+
+                    glBindVertexArray(vao);
+                    if (depth_on) {
+                        glDisable(GL_DEPTH_TEST);
+                        glDepthMask(GL_FALSE);
+                        depth_on = false;
+                    }
+                    if (!blend_on) {
+                        glEnable(GL_BLEND);
+                        blend_on = true;
+                    }
+                    ApplySpriteBlendMode(cue.blend_mode);
+                    rev::shader::Use(sprite_shader);
+
+                    float elapsed_time = time - cue.cue_start;
+                    if (elapsed_time < 0.0f) elapsed_time = 0.0f;
+                    float anim_x = cue.x;
+                    float anim_y = cue.y;
+                    float anim_scale = cue.scale;
+                    float anim_rotation = cue.rotation;
+                    float anim_opacity = cue.opacity;
+                    float anim_frame = (float)cue.start_frame;
+                    float palette_offset = (float)cue.palette_offset;
+                    if (cue.curve_x >= 0 && cue.curve_x < curve_count)
+                        anim_x = rev::curve::Evaluate(curves[cue.curve_x], elapsed_time / curves[cue.curve_x].duration);
+                    if (cue.curve_y >= 0 && cue.curve_y < curve_count)
+                        anim_y = rev::curve::Evaluate(curves[cue.curve_y], elapsed_time / curves[cue.curve_y].duration);
+                    if (cue.curve_scale >= 0 && cue.curve_scale < curve_count)
+                        anim_scale = rev::curve::Evaluate(curves[cue.curve_scale], elapsed_time / curves[cue.curve_scale].duration);
+                    if (cue.curve_rotation >= 0 && cue.curve_rotation < curve_count)
+                        anim_rotation = rev::curve::Evaluate(curves[cue.curve_rotation], elapsed_time / curves[cue.curve_rotation].duration);
+                    if (cue.curve_opacity >= 0 && cue.curve_opacity < curve_count)
+                        anim_opacity = rev::curve::Evaluate(curves[cue.curve_opacity], elapsed_time / curves[cue.curve_opacity].duration);
+                    if (cue.curve_frame >= 0 && cue.curve_frame < curve_count)
+                        anim_frame = rev::curve::Evaluate(curves[cue.curve_frame], elapsed_time / curves[cue.curve_frame].duration);
+                    if (cue.curve_palette_offset >= 0 && cue.curve_palette_offset < curve_count)
+                        palette_offset = rev::curve::Evaluate(curves[cue.curve_palette_offset], elapsed_time / curves[cue.curve_palette_offset].duration);
+
+                    int frame_idx = cue.start_frame;
+                    if (cue.fps > 0.0f && elapsed_time > 0.0f) {
+                        float frame_f = elapsed_time * cue.fps;
+                        if (cue.playback_mode == 1) {
+                            frame_idx = (int)frame_f;
+                            if (frame_idx >= animation->frame_count) frame_idx = animation->frame_count - 1;
+                        } else if (cue.playback_mode == 2 && animation->frame_count > 1) {
+                            int period = animation->frame_count * 2 - 2;
+                            int ping_idx = ((int)frame_f) % period;
+                            if (ping_idx < 0) ping_idx += period;
+                            frame_idx = (ping_idx >= animation->frame_count) ? (period - ping_idx) : ping_idx;
+                        } else {
+                            frame_idx = (int)frame_f % animation->frame_count;
+                            if (frame_idx < 0) frame_idx += animation->frame_count;
+                        }
+                    }
+                    if (cue.curve_frame >= 0 && cue.curve_frame < curve_count) frame_idx = (int)anim_frame;
+                    if (frame_idx < 0) frame_idx = 0;
+                    if (frame_idx >= animation->frame_count) frame_idx = animation->frame_count - 1;
+                    palette_offset += elapsed_time * (float)cue.palette_cycle_speed;
+
+                    if (cue.snap_to_pixels) {
+                        anim_x = floorf(anim_x * config.width + 0.5f) / config.width;
+                        anim_y = floorf(anim_y * config.height + 0.5f) / config.height;
+                    }
+                    unsigned int pixel_texture = 0;
+                    if (!UploadPixelFrame(animation, frame_idx, (int)palette_offset, &pixel_texture)) continue;
+                    float w = (animation->width * anim_scale) / (float)config.width * 2.0f;
+                    float h = (animation->height * anim_scale) / (float)config.height * 2.0f;
+                    float x = anim_x * 2.0f - 1.0f;
+                    float y = -((anim_y * 2.0f) - 1.0f);
+                    if (!IsSpriteVisible(x, y, w, h)) {
+                        glDeleteTextures(1, &pixel_texture);
+                        continue;
+                    }
+                    const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
+                    if (uniforms.position >= 0) rev::shader::SetVec2(sprite_shader, uniforms.position, x, y);
+                    if (uniforms.size >= 0) rev::shader::SetVec2(sprite_shader, uniforms.size, w, h);
+                    if (uniforms.rotation >= 0) rev::shader::SetFloat(sprite_shader, uniforms.rotation, anim_rotation);
+                    if (uniforms.texture >= 0) rev::shader::SetInt(sprite_shader, uniforms.texture, 0);
+                    if (uniforms.opacity >= 0) rev::shader::SetFloat(sprite_shader, uniforms.opacity, anim_opacity);
+                    if (uniforms.color >= 0) rev::shader::SetVec3(sprite_shader, uniforms.color, 1.0f, 1.0f, 1.0f);
+                    if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
+                    if (!render_layer_post(pixel_texture, x, y, w, h, anim_rotation, anim_opacity,
+                                           cue.post_effects, cue.post_effect_count, elapsed_time)) {
+                        glBindTexture(GL_TEXTURE_2D, pixel_texture);
+                        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                    }
+                    render_asset_shaders(x, y, w, h, anim_rotation, elapsed_time,
+                                         cue.shaders, cue.shader_count, pixel_texture);
+                    glDeleteTextures(1, &pixel_texture);
+
+                } else if (entries[ei].type == 6) {
+                    PixelEmitterCue& cue = pixel_emitter_cues[entries[ei].cue_idx];
+                    ImageTexture& emitter_image = pixel_emitter_images[entries[ei].cue_idx];
+                    if (cue.visual_source == 0 && emitter_image.texture_id == 0) continue;
+
+                    float elapsed_time = time - cue.cue_start;
+                    if (elapsed_time < 0.0f) continue;
+                    rev::particles::EmitterSettings settings = {};
+                    auto EvaluateEmitterCurve = [&](int curve_index, float fallback) {
+                        if (curve_index < 0 || curve_index >= curve_count) return fallback;
+                        const rev::curve::Curve& curve = curves[curve_index];
+                        float curve_time = curve.duration > 0.0f ? elapsed_time / curve.duration : 0.0f;
+                        return rev::curve::Evaluate(curve, curve_time);
+                    };
+                    float emitter_x = EvaluateEmitterCurve(cue.curve_x, cue.x);
+                    float emitter_y = EvaluateEmitterCurve(cue.curve_y, cue.y);
+                    float emitter_scale = EvaluateEmitterCurve(cue.curve_scale, cue.scale);
+                    float emitter_rotation = EvaluateEmitterCurve(cue.curve_rotation, cue.rotation);
+                    float emitter_opacity = EvaluateEmitterCurve(cue.curve_opacity, cue.opacity);
+                    float emission_rate = EvaluateEmitterCurve(cue.curve_emission_rate, cue.emission_rate);
+                    float speed_min = EvaluateEmitterCurve(cue.curve_speed_min, cue.speed_min);
+                    float speed_max = EvaluateEmitterCurve(cue.curve_speed_max, cue.speed_max);
+                    float lifetime_min = EvaluateEmitterCurve(cue.curve_lifetime_min, cue.lifetime_min);
+                    float lifetime_max = EvaluateEmitterCurve(cue.curve_lifetime_max, cue.lifetime_max);
+                    float scale_min = EvaluateEmitterCurve(cue.curve_scale_min, cue.scale_min);
+                    float scale_max = EvaluateEmitterCurve(cue.curve_scale_max, cue.scale_max);
+                    settings.seed = cue.seed;
+                    settings.visual_source = cue.visual_source == 0
+                        ? rev::particles::VisualSourceAsset : rev::particles::VisualSourcePrimitive;
+                    settings.primitive_shape = (rev::particles::PrimitiveShape)cue.primitive_shape;
+                    settings.max_particles = cue.max_particles > 0 ? cue.max_particles : 1;
+                    settings.emission_rate = emission_rate;
+                    settings.burst_count = cue.burst_count;
+                    settings.duration = cue.duration;
+                    settings.loop = cue.loop != 0;
+                    settings.start_delay = cue.start_delay;
+                    settings.simulation_space = (rev::particles::SimulationSpace)cue.simulation_space;
+                    settings.direction = {cue.direction_x, cue.direction_y, 0.0f};
+                    settings.cone_angle_degrees = cue.cone_angle_degrees;
+                    settings.speed = {speed_min, speed_max};
+                    settings.lifetime = {lifetime_min, lifetime_max};
+                    settings.scale = {scale_min, scale_max};
+                    settings.rotation = {cue.rotation_min, cue.rotation_max};
+                    settings.angular_velocity = {cue.angular_velocity_min, cue.angular_velocity_max};
+                    settings.acceleration = {cue.acceleration_x, cue.acceleration_y, 0.0f};
+                    settings.drag = cue.drag;
+                    int capacity = settings.max_particles > 256 ? 256 : settings.max_particles;
+                    rev::particles::Particle storage[256] = {};
+                    rev::particles::ParticleSystem system = {};
+                    if (!rev::particles::Initialize(&system, storage, capacity, settings)) continue;
+                    const float fixed_step = 1.0f / 120.0f;
+                    int step_count = (int)floorf(elapsed_time / fixed_step);
+                    for (int step_index = 0; step_index < step_count; ++step_index)
+                        rev::particles::Update(&system, fixed_step);
+                    float remainder = elapsed_time - (float)step_count * fixed_step;
+                    if (remainder > 0.0f) rev::particles::Update(&system, remainder);
+
+                    unsigned int emitter_texture = 0;
+                    int emitter_width = 1;
+                    int emitter_height = 1;
+                    if (cue.visual_source == 0) {
+                        emitter_texture = emitter_image.texture_id;
+                        emitter_width = emitter_image.width;
+                        emitter_height = emitter_image.height;
+                    } else {
+                        if (!UploadPrimitiveEmitterTexture(&cue, &emitter_texture)) continue;
+                        emitter_width = 16;
+                        emitter_height = 16;
+                    }
+                    if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, emitter_texture);
+                    const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
+                    if (uniforms.texture >= 0) rev::shader::SetInt(sprite_shader, uniforms.texture, 0);
+                    if (uniforms.color >= 0) rev::shader::SetVec3(sprite_shader, uniforms.color, 1.0f, 1.0f, 1.0f);
+                    const rev::particles::Particle* particles = rev::particles::GetParticles(&system);
+                    for (int particle_index = 0; particle_index < capacity; ++particle_index) {
+                        const rev::particles::Particle& particle = particles[particle_index];
+                        if (!particle.active) continue;
+                        float x = (emitter_x + particle.position.x) * 2.0f - 1.0f;
+                        float y = -((emitter_y + particle.position.y) * 2.0f - 1.0f);
+                        float size = emitter_scale * particle.scale;
+                        float opacity = emitter_opacity;
+                        if (particle.lifetime > 0.0f && particle.age / particle.lifetime > 0.8f)
+                            opacity *= (1.0f - particle.age / particle.lifetime) * 5.0f;
+                        if (uniforms.position >= 0) rev::shader::SetVec2(sprite_shader, uniforms.position, x, y);
+                        if (uniforms.size >= 0) rev::shader::SetVec2(sprite_shader, uniforms.size,
+                            size * emitter_width * 2.0f / (float)config.width,
+                            size * emitter_height * 2.0f / (float)config.height);
+                        if (uniforms.rotation >= 0) rev::shader::SetFloat(sprite_shader, uniforms.rotation,
+                            emitter_rotation + particle.rotation);
+                        if (uniforms.opacity >= 0) rev::shader::SetFloat(sprite_shader, uniforms.opacity, opacity);
+                        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                    }
+                    if (cue.visual_source == 1) glDeleteTextures(1, &emitter_texture);
 
                 } else if (entries[ei].type == 1) {
                     // Text sprite
@@ -4965,6 +5413,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         if (image_texes[ii].texture_id != 0) {
             glDeleteTextures(1, &image_texes[ii].texture_id);
             image_texes[ii].texture_id = 0;
+        }
+    }
+    for (int pi = 0; pi < pixel_cue_count; ++pi) {
+        DestroyAnimation(pixel_animations[pi]);
+        pixel_animations[pi] = nullptr;
+    }
+    for (int ei = 0; ei < pixel_emitter_cue_count; ++ei) {
+        if (pixel_emitter_images[ei].texture_id != 0) {
+            glDeleteTextures(1, &pixel_emitter_images[ei].texture_id);
+            pixel_emitter_images[ei].texture_id = 0;
         }
     }
     for (int ti = 0; ti < text_cue_count; ++ti) {

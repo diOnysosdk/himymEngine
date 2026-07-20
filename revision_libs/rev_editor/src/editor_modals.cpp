@@ -2,14 +2,121 @@
 #include "rev_shader.h"
 #include "rev_mesh.h"
 #include "rev_gltf.h"
+#include "rev_pixel.h"
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+#include <algorithm>
+#include <limits>
 #include <windows.h>
+#include <gdiplus.h>
 #include "imgui.h"
 
 namespace rev {
 namespace editor {
+
+namespace {
+
+static int PixelPaletteIndex(unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+    if (a < 32) return 0;
+
+    static const unsigned char palette[][4] = {
+        {0, 0, 0, 0}, {0, 0, 0, 255}, {255, 255, 255, 255},
+        {128, 128, 128, 255}, {128, 0, 0, 255}, {255, 64, 0, 255},
+        {255, 192, 0, 255}, {255, 255, 0, 255}, {0, 160, 0, 255},
+        {0, 192, 192, 255}, {0, 96, 255, 255}, {64, 0, 192, 255},
+        {192, 0, 192, 255}, {255, 96, 160, 255}, {96, 64, 32, 255},
+        {224, 224, 224, 255}
+    };
+
+    int best_index = 1;
+    unsigned int best_distance = (std::numeric_limits<unsigned int>::max)();
+    for (int i = 1; i < rev::pixel::kMaxPaletteColors; ++i) {
+        int dr = (int)r - palette[i][0];
+        int dg = (int)g - palette[i][1];
+        int db = (int)b - palette[i][2];
+        unsigned int distance = (unsigned int)(dr * dr + dg * dg + db * db);
+        if (distance < best_distance) {
+            best_distance = distance;
+            best_index = i;
+        }
+    }
+    return best_index;
+}
+
+static bool ConvertImageToPixelAnimation(const char* source_path, const char* output_path) {
+    if (!source_path || !output_path) return false;
+
+    wchar_t source_wide[512] = {};
+    MultiByteToWideChar(CP_UTF8, 0, source_path, -1, source_wide, (int)_countof(source_wide));
+    Gdiplus::Bitmap source_image(source_wide);
+    if (source_image.GetLastStatus() != Gdiplus::Ok) return false;
+
+    UINT frame_count = 1;
+    GUID frame_dimension = GUID{};
+    UINT dimension_count = source_image.GetFrameDimensionsCount();
+    if (dimension_count > 0) {
+        GUID* dimensions = new GUID[dimension_count];
+        if (source_image.GetFrameDimensionsList(dimensions, dimension_count) == Gdiplus::Ok) {
+            frame_dimension = dimensions[0];
+            UINT discovered_count = source_image.GetFrameCount(&frame_dimension);
+            if (discovered_count > 0) frame_count = discovered_count;
+        }
+        delete[] dimensions;
+    }
+
+    UINT width = source_image.GetWidth();
+    UINT height = source_image.GetHeight();
+    if (width == 0 || height == 0 || width > 65535 || height > 65535 || frame_count > 65535) return false;
+
+    rev::pixel::PixelAnimation* animation = rev::pixel::CreateAnimation(
+        (uint16_t)width, (uint16_t)height, (uint16_t)frame_count);
+    if (!animation) return false;
+
+    static const unsigned char palette[][4] = {
+        {0, 0, 0, 0}, {0, 0, 0, 255}, {255, 255, 255, 255},
+        {128, 128, 128, 255}, {128, 0, 0, 255}, {255, 64, 0, 255},
+        {255, 192, 0, 255}, {255, 255, 0, 255}, {0, 160, 0, 255},
+        {0, 192, 192, 255}, {0, 96, 255, 255}, {64, 0, 192, 255},
+        {192, 0, 192, 255}, {255, 96, 160, 255}, {96, 64, 32, 255},
+        {224, 224, 224, 255}
+    };
+    for (int i = 0; i < rev::pixel::kMaxPaletteColors; ++i) {
+        animation->palette[i] = {palette[i][0], palette[i][1], palette[i][2], palette[i][3]};
+    }
+
+    Gdiplus::Rect rect(0, 0, (INT)width, (INT)height);
+    for (UINT frame = 0; frame < frame_count; ++frame) {
+        if (frame_count > 1 && source_image.SelectActiveFrame(&frame_dimension, frame) != Gdiplus::Ok) {
+            rev::pixel::DestroyAnimation(animation);
+            return false;
+        }
+
+        Gdiplus::BitmapData bitmap_data = {};
+        if (source_image.LockBits(&rect, Gdiplus::ImageLockModeRead,
+                                  PixelFormat32bppARGB, &bitmap_data) != Gdiplus::Ok) {
+            rev::pixel::DestroyAnimation(animation);
+            return false;
+        }
+
+        const unsigned char* row = static_cast<const unsigned char*>(bitmap_data.Scan0);
+        for (UINT y = 0; y < height; ++y) {
+            const unsigned char* pixel = row + (size_t)y * bitmap_data.Stride;
+            for (UINT x = 0; x < width; ++x) {
+                const unsigned char* bgra = pixel + x * 4;
+                rev::pixel::SetPixel(animation, (int)frame, (int)x, (int)y,
+                                     (uint8_t)PixelPaletteIndex(bgra[2], bgra[1], bgra[0], bgra[3]));
+            }
+        }
+        source_image.UnlockBits(&bitmap_data);
+    }
+
+    bool saved = rev::pixel::SaveAnimation(animation, output_path);
+    rev::pixel::DestroyAnimation(animation);
+    return saved;
+}
+
+} // namespace
 
 struct CurveTargetBinding {
     const char* label;
@@ -483,6 +590,24 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                     add_target("Layer Effect Color B", &effect->curve_color_b, effect->color[2]);
                     add_target("Layer Effect Color A", &effect->curve_color_a, effect->color[3]);
                 }
+            }
+            break;
+        case CueTypePixelEmitter:
+            if (cue_index >= scene->pixel_emitter_cue_count) break;
+            {
+                PixelEmitterCue* cue = &scene->pixel_emitter_cues[cue_index];
+                add_target("Emitter X Position", &cue->curve_x, cue->x);
+                add_target("Emitter Y Position", &cue->curve_y, cue->y);
+                add_target("Emitter Scale", &cue->curve_scale, cue->scale);
+                add_target("Emitter Rotation", &cue->curve_rotation, cue->rotation);
+                add_target("Emitter Opacity", &cue->curve_opacity, cue->opacity);
+                add_target("Emission Rate", &cue->curve_emission_rate, cue->emission_rate);
+                add_target("Speed Min", &cue->curve_speed_min, cue->speed_min);
+                add_target("Speed Max", &cue->curve_speed_max, cue->speed_max);
+                add_target("Lifetime Min", &cue->curve_lifetime_min, cue->lifetime_min);
+                add_target("Lifetime Max", &cue->curve_lifetime_max, cue->lifetime_max);
+                add_target("Particle Scale Min", &cue->curve_scale_min, cue->scale_min);
+                add_target("Particle Scale Max", &cue->curve_scale_max, cue->scale_max);
             }
             break;
         case CueTypeText:
@@ -1177,7 +1302,6 @@ void RenderShaderModal(EditorContext* editor) {
                 }
             }
         };
-
         // Helper lambda for curve buttons
         auto OpenShaderCurve = [&](int& curve_field, const char* label, float current_value) {
             if (curve_field < 0 && editor->project->curve_count < rev::runtime::kMaxCurves) {
@@ -3946,6 +4070,295 @@ void RenderMeshModal(EditorContext* editor) {
     }
 }
 
+void RenderPixelModal(EditorContext* editor) {
+    if (!editor) return;
+
+    if (editor->pixel_modal_request_open) {
+        ImGui::OpenPopup("Pixel Cue Settings");
+        editor->pixel_modal_open = true;
+        editor->pixel_modal_request_open = false;
+    }
+
+    if (ImGui::BeginPopupModal("Pixel Cue Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        PixelCue* cue = &editor->editing_pixel;
+
+        auto AutoSave = [&]() {
+            if (editor->selected_scene_index < 0 || editor->selected_cue_index < 0 ||
+                editor->selected_cue_type != CueTypePixel) return;
+            SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+            if (scene && editor->selected_cue_index < scene->pixel_cue_count) {
+                scene->pixel_cues[editor->selected_cue_index] = *cue;
+                editor->project->modified = true;
+            }
+        };
+
+        ImGui::Text("Indexed Pixel Asset");
+        if (ImGui::InputText("Asset Key", cue->asset_key, sizeof(cue->asset_key))) AutoSave();
+        ImGui::SameLine();
+        if (ImGui::Button("Browse##pixel")) {
+            OPENFILENAMEA ofn = {};
+            char filepath[512] = {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = editor->window ? (HWND)editor->window->hwnd : nullptr;
+            ofn.lpstrFile = filepath;
+            ofn.nMaxFile = sizeof(filepath);
+            ofn.lpstrFilter = "Images and Pixel Animations\0*.pix;*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff\0Pixel Animations\0*.pix\0Images\0*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff\0All Files\0*.*\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrInitialDir = editor->project->assets_path[0]
+                ? editor->project->assets_path : "assets";
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+            if (GetOpenFileNameA(&ofn)) {
+                const char* filename = strrchr(filepath, '\\');
+                if (!filename) filename = strrchr(filepath, '/');
+                if (filename) ++filename; else filename = filepath;
+
+                const char* extension = strrchr(filename, '.');
+                bool source_is_pix = extension && _stricmp(extension, ".pix") == 0;
+                char output_name[256] = {};
+                if (source_is_pix) {
+                    strncpy_s(output_name, filename, _TRUNCATE);
+                } else {
+                    size_t stem_length = extension
+                        ? (size_t)(extension - filename) : strlen(filename);
+                    if (stem_length >= sizeof(output_name) - 5) stem_length = sizeof(output_name) - 6;
+                    memcpy(output_name, filename, stem_length);
+                    strcpy_s(output_name + stem_length, sizeof(output_name) - stem_length, ".pix");
+                }
+
+                char destination[512] = {};
+                if (editor->project->assets_path[0]) {
+                    snprintf(destination, sizeof(destination), "%s\\%s",
+                             editor->project->assets_path, output_name);
+                } else {
+                    const char* last_slash = strrchr(filepath, '\\');
+                    if (!last_slash) last_slash = strrchr(filepath, '/');
+                    size_t directory_length = last_slash
+                        ? (size_t)(last_slash - filepath + 1) : 0;
+                    if (directory_length >= sizeof(destination) - sizeof(output_name)) {
+                        printf("[PIXEL] Source path is too long.\n");
+                        destination[0] = '\0';
+                    } else {
+                        memcpy(destination, filepath, directory_length);
+                        strcpy_s(destination + directory_length,
+                                 sizeof(destination) - directory_length, output_name);
+                    }
+                }
+
+                bool converted = destination[0] != '\0' && (source_is_pix
+                    ? (CopyFileA(filepath, destination, FALSE) || GetLastError() == ERROR_FILE_EXISTS)
+                    : ConvertImageToPixelAnimation(filepath, destination));
+                if (!converted) {
+                    printf("[PIXEL] Could not create asset %s (err=%lu)\n",
+                           destination, GetLastError());
+                } else {
+                    strncpy_s(cue->asset_key, output_name, _TRUNCATE);
+                    cue->asset_path[0] = '\0';
+                    AutoSave();
+                }
+            }
+        }
+        if (ImGui::InputText("Asset Path", cue->asset_path, sizeof(cue->asset_path))) AutoSave();
+
+        ImGui::Separator();
+        if (ImGui::SliderFloat("X", &cue->x, 0.0f, 1.0f)) AutoSave();
+        if (ImGui::SliderFloat("Y", &cue->y, 0.0f, 1.0f)) AutoSave();
+        if (ImGui::SliderFloat("Scale", &cue->scale, 0.1f, 16.0f)) AutoSave();
+        if (ImGui::SliderFloat("Rotation", &cue->rotation, -360.0f, 360.0f)) AutoSave();
+        if (ImGui::SliderFloat("Opacity", &cue->opacity, 0.0f, 1.0f)) AutoSave();
+        bool snap_to_pixels = cue->snap_to_pixels != 0;
+        if (ImGui::Checkbox("Snap To Pixels", &snap_to_pixels)) {
+            cue->snap_to_pixels = snap_to_pixels ? 1 : 0;
+            AutoSave();
+        }
+
+        ImGui::Separator();
+        if (ImGui::InputFloat("FPS", &cue->fps, 0.5f, 1.0f)) {
+            if (cue->fps < 0.1f) cue->fps = 0.1f;
+            AutoSave();
+        }
+        const char* playback_modes[] = {"Loop", "Once", "PingPong"};
+        if (ImGui::Combo("Playback", &cue->playback_mode, playback_modes, 3)) AutoSave();
+        if (ImGui::InputInt("Start Frame", &cue->start_frame)) AutoSave();
+        if (ImGui::InputInt("Palette Offset", &cue->palette_offset)) AutoSave();
+        if (ImGui::InputInt("Palette Cycle Speed", &cue->palette_cycle_speed)) AutoSave();
+        const char* blend_modes[] = {"Alpha", "Add", "Multiply", "Screen"};
+        if (ImGui::Combo("Blend", &cue->blend_mode, blend_modes, 4)) AutoSave();
+        if (ImGui::SliderInt("Layer", &cue->layer_order, -10, 10)) AutoSave();
+
+        ImGui::Separator();
+        if (ImGui::InputFloat("Start", &cue->cue_start)) AutoSave();
+        if (ImGui::InputFloat("End", &cue->cue_end)) AutoSave();
+
+        if (ImGui::Button("Close", ImVec2(240, 0))) {
+            editor->pixel_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    } else if (editor->pixel_modal_open) {
+        editor->pixel_modal_open = false;
+    }
+}
+
+void RenderPixelEmitterModal(EditorContext* editor) {
+    if (!editor) return;
+
+    if (editor->pixel_emitter_modal_request_open) {
+        ImGui::OpenPopup("Pixel Emitter Settings");
+        editor->pixel_emitter_modal_open = true;
+        editor->pixel_emitter_modal_request_open = false;
+    }
+
+    if (ImGui::BeginPopupModal("Pixel Emitter Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        PixelEmitterCue* cue = &editor->editing_pixel_emitter;
+        auto AutoSave = [&]() {
+            if (editor->selected_scene_index < 0 || editor->selected_cue_index < 0 ||
+                editor->selected_cue_type != CueTypePixelEmitter) return;
+            SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+            if (scene && editor->selected_cue_index < scene->pixel_emitter_cue_count) {
+                scene->pixel_emitter_cues[editor->selected_cue_index] = *cue;
+                editor->project->modified = true;
+            }
+        };
+        auto CurveControl = [&](const char* target_label, int* curve_field, float base_value) {
+            if (!curve_field) return;
+            ImGui::SameLine();
+            ImGui::PushID(target_label);
+            bool assigned = *curve_field >= 0;
+            if (ImGui::SmallButton(assigned ? "Edit" : "+")) {
+                if (!assigned) {
+                    int curve_index = AcquireCurveSlot(editor, base_value, nullptr);
+                    if (curve_index >= 0) {
+                        *curve_field = curve_index;
+                        AutoSave();
+                    }
+                }
+                if (*curve_field >= 0) {
+                    editor->editing_curve_cue_type = CueTypePixelEmitter;
+                    editor->editing_curve_field = -1;
+                    editor->editing_curve_index = *curve_field;
+                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", target_label);
+                    editor->curve_editor_modal_request_open = true;
+                }
+            }
+            if (*curve_field >= 0) {
+                ImGui::SameLine(0.0f, 2.0f);
+                if (ImGui::SmallButton("X")) {
+                    *curve_field = -1;
+                    AutoSave();
+                }
+            }
+            ImGui::PopID();
+        };
+
+        ImGui::Text("Pixel Particle Emitter");
+        const char* source_modes[] = {"Image Asset", "Basic Shape"};
+        if (cue->visual_source < 0 || cue->visual_source > 1) cue->visual_source = 1;
+        if (ImGui::Combo("Visual Source", &cue->visual_source, source_modes, 2)) AutoSave();
+
+        if (cue->visual_source == 0) {
+            if (ImGui::InputText("Asset Key", cue->asset_key, sizeof(cue->asset_key))) AutoSave();
+            ImGui::SameLine();
+            if (ImGui::Button("Browse##pixel_emitter")) {
+                OPENFILENAMEA ofn = {};
+                char filepath[512] = {};
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = editor->window ? (HWND)editor->window->hwnd : nullptr;
+                ofn.lpstrFile = filepath;
+                ofn.nMaxFile = sizeof(filepath);
+                ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp;*.webp;*.gif;*.tif;*.tiff\0All Files\0*.*\0";
+                ofn.nFilterIndex = 1;
+                ofn.lpstrInitialDir = editor->project->assets_path[0]
+                    ? editor->project->assets_path : "assets";
+                ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+                if (GetOpenFileNameA(&ofn)) {
+                    const char* filename = strrchr(filepath, '\\');
+                    if (!filename) filename = strrchr(filepath, '/');
+                    if (filename) ++filename; else filename = filepath;
+                    strncpy_s(cue->asset_key, filename, _TRUNCATE);
+                    cue->asset_path[0] = '\0';
+                    if (editor->project->assets_path[0]) {
+                        char destination[512] = {};
+                        snprintf(destination, sizeof(destination), "%s\\%s",
+                                 editor->project->assets_path, filename);
+                        if (!CopyFileA(filepath, destination, FALSE) && GetLastError() != ERROR_FILE_EXISTS) {
+                            printf("[PIXEL EMITTER] Warning: could not copy asset to %s (err=%lu)\n",
+                                   destination, GetLastError());
+                        }
+                    }
+                    AutoSave();
+                }
+            }
+            if (ImGui::InputText("Asset Path", cue->asset_path, sizeof(cue->asset_path))) AutoSave();
+            ImGui::TextDisabled("Use PNG, JPEG, WebP, GIF, TIFF, BMP, or another supported image format.");
+        } else {
+            const char* shape_names[] = {"Square", "Circle", "Triangle", "Diamond"};
+            if (cue->primitive_shape < 0 || cue->primitive_shape > 3) cue->primitive_shape = 1;
+            if (ImGui::Combo("Shape", &cue->primitive_shape, shape_names, 4)) AutoSave();
+            if (ImGui::ColorEdit4("Shape Color", cue->primitive_color)) AutoSave();
+        }
+
+        ImGui::Separator();
+        if (ImGui::SliderFloat("X", &cue->x, 0.0f, 1.0f)) AutoSave();
+        CurveControl("Emitter X Position", &cue->curve_x, cue->x);
+        if (ImGui::SliderFloat("Y", &cue->y, 0.0f, 1.0f)) AutoSave();
+        CurveControl("Emitter Y Position", &cue->curve_y, cue->y);
+        if (ImGui::SliderFloat("Scale", &cue->scale, 0.05f, 16.0f)) AutoSave();
+        CurveControl("Emitter Scale", &cue->curve_scale, cue->scale);
+        if (ImGui::SliderFloat("Rotation", &cue->rotation, -360.0f, 360.0f)) AutoSave();
+        CurveControl("Emitter Rotation", &cue->curve_rotation, cue->rotation);
+        if (ImGui::SliderFloat("Opacity", &cue->opacity, 0.0f, 1.0f)) AutoSave();
+        CurveControl("Emitter Opacity", &cue->curve_opacity, cue->opacity);
+
+        ImGui::Separator();
+        if (ImGui::InputInt("Max Particles", &cue->max_particles)) {
+            if (cue->max_particles < 1) cue->max_particles = 1;
+            AutoSave();
+        }
+        if (ImGui::InputFloat("Emission Rate", &cue->emission_rate)) {
+            if (cue->emission_rate < 0.0f) cue->emission_rate = 0.0f;
+            AutoSave();
+        }
+        CurveControl("Emission Rate", &cue->curve_emission_rate, cue->emission_rate);
+        if (ImGui::InputInt("Burst Count", &cue->burst_count)) {
+            if (cue->burst_count < 0) cue->burst_count = 0;
+            AutoSave();
+        }
+        if (ImGui::InputFloat("Particle Duration", &cue->duration)) AutoSave();
+        bool loop = cue->loop != 0;
+        if (ImGui::Checkbox("Loop", &loop)) {
+            cue->loop = loop ? 1 : 0;
+            AutoSave();
+        }
+        if (ImGui::SliderFloat("Speed Min", &cue->speed_min, 0.0f, 2.0f)) AutoSave();
+        CurveControl("Speed Min", &cue->curve_speed_min, cue->speed_min);
+        if (ImGui::SliderFloat("Speed Max", &cue->speed_max, 0.0f, 2.0f)) AutoSave();
+        CurveControl("Speed Max", &cue->curve_speed_max, cue->speed_max);
+        if (ImGui::SliderFloat("Lifetime Min", &cue->lifetime_min, 0.01f, 10.0f)) AutoSave();
+        CurveControl("Lifetime Min", &cue->curve_lifetime_min, cue->lifetime_min);
+        if (ImGui::SliderFloat("Lifetime Max", &cue->lifetime_max, 0.01f, 10.0f)) AutoSave();
+        CurveControl("Lifetime Max", &cue->curve_lifetime_max, cue->lifetime_max);
+        if (ImGui::SliderFloat("Scale Min", &cue->scale_min, 0.01f, 4.0f)) AutoSave();
+        CurveControl("Particle Scale Min", &cue->curve_scale_min, cue->scale_min);
+        if (ImGui::SliderFloat("Scale Max", &cue->scale_max, 0.01f, 4.0f)) AutoSave();
+        CurveControl("Particle Scale Max", &cue->curve_scale_max, cue->scale_max);
+
+        const char* blend_modes[] = {"Alpha", "Add", "Multiply", "Screen"};
+        if (ImGui::Combo("Blend", &cue->blend_mode, blend_modes, 4)) AutoSave();
+        if (ImGui::SliderInt("Layer", &cue->layer_order, -10, 10)) AutoSave();
+        if (ImGui::InputFloat("Start", &cue->cue_start)) AutoSave();
+        if (ImGui::InputFloat("End", &cue->cue_end)) AutoSave();
+
+        ImGui::Separator();
+        if (ImGui::Button("Close", ImVec2(240, 0))) {
+            editor->pixel_emitter_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    } else if (editor->pixel_emitter_modal_open) {
+        editor->pixel_emitter_modal_open = false;
+    }
+}
 
 } // namespace editor
 } // namespace rev

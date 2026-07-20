@@ -380,19 +380,21 @@ PackResult PackAssets(const char* cues_path,
 
     AssetRef refs[kMaxAssets];
     int ref_count = 0;
-    bool in_image = false, in_music = false, in_mesh = false, in_text = false, in_scroll_text = false, in_animated_sprite = false;
+    bool in_image = false, in_music = false, in_mesh = false, in_text = false, in_scroll_text = false, in_animated_sprite = false, in_pixel = false, in_pixel_emitter = false;
     char line[1024];
 
     while (fgets(line, sizeof(line), cues)) {
         char* s = line;
         while (*s == ' ' || *s == '\t') s++;
-        if (strstr(s, "[image_cues]"))       { in_image = true;  in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; continue; }
-        if (strstr(s, "[animated_sprite_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = true; continue; }
-        if (strstr(s, "[music_cues]"))       { in_image = false; in_music = true;  in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; continue; }
-        if (strstr(s, "[mesh_cues]"))        { in_image = false; in_music = false; in_mesh = true;  in_text = false; in_scroll_text = false; in_animated_sprite = false; continue; }
-        if (strstr(s, "[text_cues]"))        { in_image = false; in_music = false; in_mesh = false; in_text = true;  in_scroll_text = false; in_animated_sprite = false; continue; }
-        if (strstr(s, "[scroll_text_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = true;  in_animated_sprite = false; continue; }
-        if (s[0] == '[') { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; continue; }
+        if (strstr(s, "[image_cues]"))       { in_image = true;  in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[animated_sprite_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = true; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[pixel_cues]"))       { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = true; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[pixel_emitter_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = true; continue; }
+        if (strstr(s, "[music_cues]"))       { in_image = false; in_music = true;  in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[mesh_cues]"))        { in_image = false; in_music = false; in_mesh = true;  in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[text_cues]"))        { in_image = false; in_music = false; in_mesh = false; in_text = true;  in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[scroll_text_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = true;  in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (s[0] == '[') { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (s[0] == '#' || s[0] == '\r' || s[0] == '\n' || s[0] == '\0') continue;
 
         if ((in_image || in_music) && ref_count < kMaxAssets) {
@@ -423,6 +425,22 @@ PackResult PackAssets(const char* cues_path,
             int parsed_count = ParseAnimatedSpriteAssetLine(s, parsed, 64);
             for (int i = 0; i < parsed_count && ref_count < kMaxAssets; ++i) {
                 refs[ref_count++] = parsed[i];
+            }
+        } else if (in_pixel && ref_count < kMaxAssets) {
+            if (ParseAssetLine(s, refs[ref_count].key, refs[ref_count].path))
+                ref_count++;
+        } else if (in_pixel_emitter && ref_count < kMaxAssets) {
+            char key[128] = {}, path[512] = {};
+            if (ParseAssetLine(s, key, path)) {
+                const char* first_pipe = strchr(s, '|');
+                const char* second_pipe = first_pipe ? strchr(first_pipe + 1, '|') : nullptr;
+                int visual_source = 1;
+                if (second_pipe) visual_source = atoi(second_pipe + 1);
+                if (visual_source == 0) {
+                    strncpy_s(refs[ref_count].key, key, _TRUNCATE);
+                    strncpy_s(refs[ref_count].path, path, _TRUNCATE);
+                    ref_count++;
+                }
             }
         }
     }

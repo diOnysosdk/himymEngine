@@ -32,6 +32,25 @@ The active HiMYM runtime/editor pipeline also includes a glTF path used by mesh 
 
 This contract exists to keep runtime and editor preview visually aligned for imported multi-object, multi-material assets.
 
+## Indexed Pixel Animation Contract
+
+Pixel animation is split into two layers:
+
+- `rev::pixel::PixelAnimation` is a CPU-owned indexed asset with a fixed 16-color RGBA palette and raw frame bytes.
+- `rev::runtime::PixelCue` is the timeline reference. It owns timing, transform, playback, palette offset/cycling, curves, blend mode, and shader/effect references, but never owns pixel data.
+
+The `.pix` file format uses the `HPIX` magic and version `1`, followed by dimensions, frame count, palette metadata, palette colors, and one palette index per pixel. Editor projects persist PixelCues in JSON and export them under `[pixel_cues]` in `cues.txt`.
+
+Runtime decoding is CPU-side. Each active frame is expanded to RGBA and uploaded with `GL_NEAREST` filtering so authored pixel edges remain hard. Packed builds use the same decoder through `LoadAnimationFromMemory`; the packer collects the first two pipe-delimited fields from `[pixel_cues]` as asset key and path.
+
+The editor PixelCue browser accepts existing `.pix` files and common GDI+ image formats (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.tif`, `.tiff`). Source images are quantized to the fixed palette and saved as a same-name `.pix` asset in the project assets folder; animated sources retain their exposed frame count.
+
+Particle effects build on this asset contract rather than copying image data into every instance. The `rev_particles` library owns a fixed particle pool and deterministic spawn/update simulation; an asset-backed `PixelEmitterCue` references one image texture and renders many particle instances through the existing sprite pass. The legacy `PixelCue` remains a single animated indexed sprite for backward compatibility.
+
+The first emitter core supports point/cone direction sampling, burst and rate emission, start delay, lifetime/speed/scale/rotation/angular-speed/animation-speed ranges, acceleration, drag, and local/world simulation-space metadata. Its visual source is explicitly either a referenced `.pix` asset or a built-in primitive (`square`, `circle`, `triangle`, or `diamond`), so simple effects do not require an authored image. Rendering, lifetime curves, attachment transforms, and editor controls should be added at the cue layer rather than to `rev_particles`.
+
+`PixelEmitterCue` authoring is persisted independently from legacy `PixelCue` data in the JSON `pixel_emitter_cues` array and the `[pixel_emitter_cues]` cues export section. This keeps older projects readable while preserving the source mode, primitive choice, emitter ranges, and deterministic seed for new projects.
+
 ---
 
 ## Directory Layout

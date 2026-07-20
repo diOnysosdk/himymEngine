@@ -58,6 +58,8 @@ target_link_libraries(rev_editor PUBLIC
     rev_mesh
     rev_gltf
     rev_xm
+    rev_pixel
+    rev_particles
     imgui
 )
 

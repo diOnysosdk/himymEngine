@@ -30,6 +30,8 @@ add_subdirectory(revision_libs/rev_pack)
 add_subdirectory(revision_libs/rev_editor)
 add_subdirectory(revision_libs/rev_mesh)
 add_subdirectory(revision_libs/rev_gltf)
+add_subdirectory(revision_libs/rev_pixel)
+add_subdirectory(revision_libs/rev_particles)
 
 # Add examples
 add_subdirectory(examples/minimal_intro)
