@@ -407,18 +407,31 @@ static bool FindEditorMusicCue(EditorContext* editor, float time, const MusicCue
             for (int i = 0; i < scene->music_cue_count; ++i) {
                 const MusicCue* cue = &scene->music_cues[i];
                 float cue_end = cue->cue_end < 0.0f ? scene->duration : cue->cue_end;
-                if (local_time >= cue->cue_start && local_time <= cue_end && cue->cue_start >= best_start) {
+                bool active = local_time >= cue->cue_start && local_time <= cue_end;
+                bool carried = editor->project->music_persist_across_scenes && local_time >= cue->cue_start;
+                float absolute_start = scene_start + cue->cue_start;
+                if ((active || carried) && absolute_start >= best_start) {
                     best = cue;
-                    best_start = cue->cue_start;
+                    best_start = absolute_start;
                 }
             }
             break;
+        }
+        if (editor->project->music_persist_across_scenes && local_time >= scene->duration) {
+            for (int i = 0; i < scene->music_cue_count; ++i) {
+                const MusicCue* cue = &scene->music_cues[i];
+                float absolute_start = scene_start + cue->cue_start;
+                if (absolute_start <= time && absolute_start >= best_start) {
+                    best = cue;
+                    best_start = absolute_start;
+                }
+            }
         }
         scene_start += scene->duration;
     }
     if (!best) return false;
     *out_cue = best;
-    *out_start = scene_start + best->cue_start;
+    *out_start = best_start;
     return true;
 }
 
@@ -470,8 +483,10 @@ static void SyncEditorAudio(EditorContext* editor, float delta_time) {
         (editor->playing && fabsf(time_delta - delta_time) > 0.03f);
     char resolved_path[512] = {};
     bool path_resolved = has_cue && ResolveEditorMusicPath(editor->project, cue, resolved_path, sizeof(resolved_path));
+    bool same_track = has_cue && path_resolved && strcmp(state->cue_key, resolved_path) == 0;
     bool cue_changed = has_cue && path_resolved &&
-        (strcmp(state->cue_key, resolved_path) != 0 || fabsf(state->cue_start - cue_start) > 0.0001f);
+        (!same_track || (!editor->project->music_persist_across_scenes &&
+                         fabsf(state->cue_start - cue_start) > 0.0001f));
 
     if (!has_cue) {
         std::lock_guard<std::mutex> lock(state->player_mutex);
@@ -693,17 +708,17 @@ static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
 
     switch (blend_mode) {
         case 1: // Additive
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE);
             break;
         case 2: // Multiply
-            glBlendFunc(GL_DST_COLOR, GL_ZERO);
+            glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
             break;
         case 3: // Screen
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_COLOR);
+            glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_SRC_COLOR);
             break;
         case 0:
         default: // Alpha
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
             break;
     }
 }
@@ -1226,6 +1241,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
     bool in_music_cues = false;
     bool in_mesh_cues = false;
     bool in_post_effects = false;
+    bool in_scene_layer_post_effects = false;
     bool in_curves = false;
     bool in_curve_points = false;
     
@@ -1339,6 +1355,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
     
     while (fgets(line, sizeof(line), f)) {
         // Trim whitespace
+        int indent = 0;
+        while (line[indent] == ' ' || line[indent] == '\t') indent++;
         char* start = line;
         while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') start++;
 
@@ -1368,12 +1386,15 @@ bool LoadProject(EditorContext* editor, const char* path) {
         }
         
         // Scene name and duration detection (inside scenes array)
-        if (in_scenes && strstr(start, "\"name\":")) {
+        if (in_scenes && indent == 6 && strstr(start, "\"name\":")) {
+            // Nested cue objects also contain duration fields. A new scene
+            // must never inherit one of those stale values.
+            has_duration = false;
             if (ParseJsonStringValue(start, scene_name, sizeof(scene_name))) {
                 has_name = true;
             }
         }
-        if (in_scenes && strstr(start, "\"duration\":")) {
+        if (in_scenes && indent == 6 && strstr(start, "\"duration\":")) {
             if (sscanf_s(start, "\"duration\": %f", &scene_duration) == 1) {
                 has_duration = true;
             }
@@ -1395,6 +1416,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_music_cues = false;
             in_mesh_cues = false;
             in_post_effects = false;
+            in_scene_layer_post_effects = false;
         }
         
         // Section detection
@@ -1412,6 +1434,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_image_cues = true;
             in_animated_sprite_cues = false;
             in_pixel_cues = false;
+            in_pixel_emitter_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
@@ -1420,6 +1443,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_image_cues = false;
             in_animated_sprite_cues = true;
             in_pixel_cues = false;
+            in_pixel_emitter_cues = false;
         } else if (strstr(start, "\"pixel_cues\":")) {
             in_shader_cues = false;
             in_image_cues = false;
@@ -1446,6 +1470,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_image_cues = false;
             in_animated_sprite_cues = false;
             in_pixel_cues = false;
+            in_pixel_emitter_cues = false;
             in_text_cues = true;
             in_scroll_text_cues = false;
             in_music_cues = false;
@@ -1454,6 +1479,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_image_cues = false;
             in_animated_sprite_cues = false;
             in_pixel_cues = false;
+            in_pixel_emitter_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = true;
             in_music_cues = false;
@@ -1462,6 +1488,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_image_cues = false;
             in_animated_sprite_cues = false;
             in_pixel_cues = false;
+            in_pixel_emitter_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = true;
@@ -1471,6 +1498,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_image_cues = false;
             in_animated_sprite_cues = false;
             in_pixel_cues = false;
+            in_pixel_emitter_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
@@ -1480,13 +1508,32 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_shader_cues = false;
             in_image_cues = false;
             in_animated_sprite_cues = false;
+            in_pixel_emitter_cues = false;
             in_text_cues = false;
             in_scroll_text_cues = false;
             in_music_cues = false;
             in_mesh_cues = false;
             in_post_effects = true;
+            in_scene_layer_post_effects = false;
+        } else if (strstr(start, "\"scene_layer_post_effects\":")) {
+            in_shader_cues = false;
+            in_image_cues = false;
+            in_animated_sprite_cues = false;
+            in_pixel_cues = false;
+            in_pixel_emitter_cues = false;
+            in_text_cues = false;
+            in_scroll_text_cues = false;
+            in_music_cues = false;
+            in_mesh_cues = false;
+            in_post_effects = false;
+            in_scene_layer_post_effects = true;
         } else if (strstr(start, "\"curves\":")) {
             in_curves = true;
+        }
+
+        if (in_scene_layer_post_effects && current_scene) {
+            ParseLayerPostEffectField(start, current_scene->scene_layer_post_effects,
+                                      &current_scene->scene_layer_post_effect_count);
         }
 
         if (in_post_effects && current_scene) {
@@ -1527,7 +1574,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_color_a\": %d", &current_post_effect.curve_color_a);
             } else if (strstr(start, "\"curve_amount\":")) {
                 sscanf_s(start, "\"curve_amount\": %d", &current_post_effect.curve_amount);
-            } else if (start[0] == '}' && current_post_effect.type >= 0) {
+            } else if (indent == 8 && start[0] == '}' && current_post_effect.type >= 0) {
                 AddPostEffect(current_scene, current_post_effect);
                 memset(&current_post_effect, 0, sizeof(current_post_effect));
                 current_post_effect.enabled = true;
@@ -1602,7 +1649,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_opacity\": %d", &current_animated_sprite_cue.curve_opacity);
             } else if (strstr(start, "\"curve_frame\":")) {
                 sscanf_s(start, "\"curve_frame\": %d", &current_animated_sprite_cue.curve_frame);
-            } else if (start[0] == '}' && current_animated_sprite_cue.frame_keys_csv[0] != '\0') {
+            } else if (indent == 8 && start[0] == '}' && current_animated_sprite_cue.frame_keys_csv[0] != '\0') {
                 NormalizeAssetShaderCount(current_animated_sprite_cue.shaders,
                                           &current_animated_sprite_cue.shader_count);
                 AddAnimatedSpriteCue(current_scene, current_animated_sprite_cue);
@@ -1673,7 +1720,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_frame\": %d", &current_pixel_cue.curve_frame);
             } else if (strstr(start, "\"curve_palette_offset\":")) {
                 sscanf_s(start, "\"curve_palette_offset\": %d", &current_pixel_cue.curve_palette_offset);
-            } else if (start[0] == '}' && current_pixel_cue.asset_key[0] != '\0') {
+            } else if (indent == 8 && start[0] == '}' && current_pixel_cue.asset_key[0] != '\0') {
                 NormalizeAssetShaderCount(current_pixel_cue.shaders,
                                           &current_pixel_cue.shader_count);
                 AddPixelCue(current_scene, current_pixel_cue);
@@ -1823,7 +1870,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_exposure_ramp\": %d", &current_shader_cue.curve_exposure_ramp);
             } else if (strstr(start, "\"curve_fade_ramp\":")) {
                 sscanf_s(start, "\"curve_fade_ramp\": %d", &current_shader_cue.curve_fade_ramp);
-            } else if (start[0] == '}' && current_shader_cue.shader_name[0] != '\0') {
+            } else if (indent == 8 && start[0] == '}' && current_shader_cue.shader_name[0] != '\0') {
                 // End of shader cue object - add it
                 printf("[LoadProject] Loaded shader cue: name='%s' id=%d start=%.2f end=%.2f\n",
                        current_shader_cue.shader_name, current_shader_cue.shader_scene_id,
@@ -1885,7 +1932,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_rotation\": %d", &current_image_cue.curve_rotation);
             } else if (strstr(start, "\"curve_opacity\":")) {
                 sscanf_s(start, "\"curve_opacity\": %d", &current_image_cue.curve_opacity);
-            } else if (start[0] == '}' && current_image_cue.asset_key[0] != '\0') {
+            } else if (indent == 8 && start[0] == '}' && current_image_cue.asset_key[0] != '\0') {
                 // End of image cue object - add it
                 // Initialize curve fields to -1 if not loaded (backwards compatibility)
                 if (current_image_cue.curve_x == 0 && current_image_cue.curve_y == 0 && 
@@ -1991,7 +2038,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_scale_max\": %d", &current_pixel_emitter_cue.curve_scale_max);
             } else if (strstr(start, "\"seed\":")) {
                 sscanf_s(start, "\"seed\": %u", &current_pixel_emitter_cue.seed);
-            } else if (start[0] == '}' &&
+            } else if (indent == 8 && start[0] == '}' &&
                        (current_pixel_emitter_cue.asset_key[0] != '\0' ||
                         current_pixel_emitter_cue.visual_source == 1)) {
                 AddPixelEmitterCue(current_scene, current_pixel_emitter_cue);
@@ -2116,7 +2163,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 ParseJsonStringValue(start, current_text_cue.glyph_meta_path, sizeof(current_text_cue.glyph_meta_path));
             } else if (strstr(start, "\"layer_order\":")) {
                 sscanf_s(start, "\"layer_order\": %d", &current_text_cue.layer_order);
-            } else if (start[0] == '}' && current_text_cue.text[0] != '\0') {
+            } else if (indent == 8 && start[0] == '}' && current_text_cue.text[0] != '\0') {
                 AddTextCue(current_scene, current_text_cue);
                 memset(&current_text_cue, 0, sizeof(current_text_cue));
                 current_text_cue.curve_x = -1;
@@ -2234,7 +2281,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_jitter_amp\": %d", &current_scroll_text_cue.curve_jitter_amp);
             } else if (strstr(start, "\"curve_jitter_freq\":")) {
                 sscanf_s(start, "\"curve_jitter_freq\": %d", &current_scroll_text_cue.curve_jitter_freq);
-            } else if (start[0] == '}' && current_scroll_text_cue.text[0] != '\0') {
+            } else if (indent == 8 && start[0] == '}' && current_scroll_text_cue.text[0] != '\0') {
                 AddScrollTextCue(current_scene, current_scroll_text_cue);
                 memset(&current_scroll_text_cue, 0, sizeof(current_scroll_text_cue));
                 strncpy_s(current_scroll_text_cue.font_name, sizeof(current_scroll_text_cue.font_name), "Arial", _TRUNCATE);
@@ -2275,7 +2322,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"cue_start\": %f", &current_music_cue.cue_start);
             } else if (strstr(start, "\"cue_end\":")) {
                 sscanf_s(start, "\"cue_end\": %f", &current_music_cue.cue_end);
-            } else if (start[0] == '}' && current_music_cue.asset_key[0] != '\0') {
+            } else if (indent == 8 && start[0] == '}' && current_music_cue.asset_key[0] != '\0') {
                 printf("[LoadProject] Loaded music cue: %s path=%s\n",
                        current_music_cue.asset_key, current_music_cue.asset_path);
                 AddMusicCue(current_scene, current_music_cue);
@@ -2376,7 +2423,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 if (sscanf_s(start, "\"use_imported_camera\": %d", &current_mesh_cue.use_imported_camera) != 1) {
                     current_mesh_cue.use_imported_camera = (strstr(start, "true") != nullptr) ? 1 : 0;
                 }
-            } else if (start[0] == '}' && current_mesh_cue.asset_key[0] != '\0') {
+            } else if (indent == 8 && start[0] == '}' && current_mesh_cue.asset_key[0] != '\0') {
                 AddMeshCue(current_scene, current_mesh_cue);
                 MeshCue blank = {};
                 blank.scale[0] = blank.scale[1] = blank.scale[2] = 1.0f;
@@ -2457,6 +2504,13 @@ bool LoadProject(EditorContext* editor, const char* path) {
     }
     
     fclose(f);
+
+    editor->project->total_duration = 0.0f;
+    for (int i = 0; i < editor->project->scene_count; ++i) {
+        if (editor->project->scenes[i].duration > 0.0f) {
+            editor->project->total_duration += editor->project->scenes[i].duration;
+        }
+    }
     
     strncpy_s(editor->project->project_path, path, sizeof(editor->project->project_path) - 1);
     
@@ -2663,6 +2717,13 @@ static void WriteAssetShaderFields(FILE* f, const AssetShader* shaders, int shad
 
 bool SaveProject(EditorContext* editor, const char* path) {
     if (!editor || !path) return false;
+
+    editor->project->total_duration = 0.0f;
+    for (int i = 0; i < editor->project->scene_count; ++i) {
+        if (editor->project->scenes[i].duration > 0.0f) {
+            editor->project->total_duration += editor->project->scenes[i].duration;
+        }
+    }
     
     FILE* f = nullptr;
     fopen_s(&f, path, "w");
@@ -2931,6 +2992,11 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "        }%s\n", (i < scene->pixel_emitter_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
+
+        fprintf(f, "      \"scene_layer_post_effects\": {\n");
+        WriteLayerPostEffectFields(f, scene->scene_layer_post_effects,
+                       scene->scene_layer_post_effect_count);
+        fprintf(f, "      },\n");
         
         // Text cues
         fprintf(f, "      \"text_cues\": [\n");
@@ -4208,6 +4274,13 @@ static void WriteAssetShadersPipe(FILE* f, const AssetShader* shaders, int shade
 bool ExportProject(EditorContext* editor, const char* output_path) {
     if (!editor || !output_path) return false;
 
+    editor->project->total_duration = 0.0f;
+    for (int i = 0; i < editor->project->scene_count; ++i) {
+        if (editor->project->scenes[i].duration > 0.0f) {
+            editor->project->total_duration += editor->project->scenes[i].duration;
+        }
+    }
+
     FILE* f = nullptr;
     fopen_s(&f, output_path, "w");
     if (!f) return false;
@@ -4297,6 +4370,20 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 effect->curve_color_r, effect->curve_color_g, effect->curve_color_b,
                 effect->curve_color_a, effect->curve_amount);
         }
+    }
+
+    fprintf(f, "\n");
+
+    fprintf(f, "[scene_layer_post_effects]\n");
+    fprintf(f, "# scene_start|scene_end|effect_count|type,enabled,order,intensity,threshold,radius,color_r,color_g,color_b,color_a,start_time,end_time,curve_intensity,curve_threshold,curve_radius,curve_color_r,curve_color_g,curve_color_b,curve_color_a,curve_amount,blend_mode...\n");
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        SceneBlock* scene = &editor->project->scenes[scene_idx];
+        float scene_start = 0.0f;
+        for (int i = 0; i < scene_idx; ++i) scene_start += editor->project->scenes[i].duration;
+        fprintf(f, "%.3f|%.3f", scene_start, scene_start + scene->duration);
+        WriteLayerPostEffectsPipe(f, scene->scene_layer_post_effects,
+                                  scene->scene_layer_post_effect_count);
+        fprintf(f, "\n");
     }
 
     fprintf(f, "\n");
@@ -5181,6 +5268,20 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
     scene->post_effects = nullptr;
     scene->post_effect_count = 0;
     scene->post_effect_capacity = 0;
+    scene->scene_layer_post_effect_count = 0;
+    for (int i = 0; i < rev::runtime::kMaxLayerPostEffects; ++i) {
+        scene->scene_layer_post_effects[i] = {};
+        scene->scene_layer_post_effects[i].type = -1;
+        scene->scene_layer_post_effects[i].end_time = -1.0f;
+        scene->scene_layer_post_effects[i].curve_intensity = -1;
+        scene->scene_layer_post_effects[i].curve_threshold = -1;
+        scene->scene_layer_post_effects[i].curve_radius = -1;
+        scene->scene_layer_post_effects[i].curve_color_r = -1;
+        scene->scene_layer_post_effects[i].curve_color_g = -1;
+        scene->scene_layer_post_effects[i].curve_color_b = -1;
+        scene->scene_layer_post_effects[i].curve_color_a = -1;
+        scene->scene_layer_post_effects[i].curve_amount = -1;
+    }
 
     // Update total duration
     editor->project->total_duration += duration;
@@ -5944,7 +6045,9 @@ static rev::shader::Program* GetOrCompileAssetShaderProgram(int shader_id) {
                         "\nuniform sampler2D u_asset_texture;\nuniform float u_asset_opacity;");
     const size_t adjusted_main_end = asset_source.rfind('}');
     asset_source.insert(adjusted_main_end,
-                        "\n    fragColor.a *= texture(u_asset_texture, uv).a * u_asset_opacity;");
+                        "\n    float asset_alpha = texture(u_asset_texture, uv).a * u_asset_opacity;\n"
+                        "    fragColor.rgb *= asset_alpha;\n"
+                        "    fragColor.a *= asset_alpha;");
     rev::shader::Program* program = rev::shader::CompileFromSource(sprite_vertex_shader, asset_source.c_str());
     if (!program) return nullptr;
     g_asset_shader_cache[shader_id] = program;
@@ -8261,7 +8364,7 @@ void RenderPreviewFrame(EditorContext* editor) {
         for (int scene_index = 0; scene_index < editor->project->scene_count; ++scene_index) {
             SceneBlock* scene = &editor->project->scenes[scene_index];
             float scene_end = scene_start + scene->duration;
-            if (editor->current_time >= scene_start && editor->current_time <= scene_end) {
+            if (editor->current_time >= scene_start && editor->current_time < scene_end) {
                 active_scene = scene;
                 break;
             }
@@ -8296,6 +8399,28 @@ void RenderPreviewFrame(EditorContext* editor) {
                 color[effect->type][1] = evaluate_effect_curve(effect->curve_color_g, effect->color[1]);
                 color[effect->type][2] = evaluate_effect_curve(effect->curve_color_b, effect->color[2]);
                 color[effect->type][3] = evaluate_effect_curve(effect->curve_color_a, effect->color[3]);
+                has_effect = true;
+            }
+            for (int i = 0; i < active_scene->scene_layer_post_effect_count; ++i) {
+                LayerPostEffect* effect = &active_scene->scene_layer_post_effects[i];
+                if (!effect->enabled || effect->type < 0 || effect->type >= PostEffectCount) continue;
+                if (local_time < effect->start_time ||
+                    (effect->end_time >= 0.0f && local_time >= effect->end_time)) continue;
+                float curve_time = local_time - effect->start_time;
+                auto evaluate_layer_curve = [&](int curve_index, float fallback) {
+                    if (curve_index < 0 || curve_index >= editor->project->curve_count) return fallback;
+                    rev::curve::Curve& curve = editor->project->curves[curve_index];
+                    float normalized_time = curve.duration > 0.0f ? curve_time / curve.duration : 0.0f;
+                    return rev::curve::Evaluate(curve, normalized_time);
+                };
+                enabled[effect->type] = 1;
+                intensity[effect->type] = evaluate_layer_curve(effect->curve_intensity, effect->intensity);
+                threshold[effect->type] = evaluate_layer_curve(effect->curve_threshold, effect->threshold);
+                radius[effect->type] = evaluate_layer_curve(effect->curve_radius, effect->radius);
+                color[effect->type][0] = evaluate_layer_curve(effect->curve_color_r, effect->color[0]);
+                color[effect->type][1] = evaluate_layer_curve(effect->curve_color_g, effect->color[1]);
+                color[effect->type][2] = evaluate_layer_curve(effect->curve_color_b, effect->color[2]);
+                color[effect->type][3] = evaluate_layer_curve(effect->curve_color_a, effect->color[3]);
                 has_effect = true;
             }
         }

@@ -184,8 +184,8 @@ static void ShaderCueToAssetShader(const ShaderCue& source, AssetShader* target)
     target->end_time = source.cue_end;
 }
 
-static void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int* effect_count,
-                                   bool* modified, const char* id_prefix, int cue_type, int cue_index) {
+void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int* effect_count,
+                            bool* modified, const char* id_prefix, int cue_type, int cue_index) {
     if (!effects || !effect_count) return;
     static const char* names[] = {
         "HDR Rendering", "ACES Tone Mapping", "Bloom", "Vignette",

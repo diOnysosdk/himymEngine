@@ -221,6 +221,9 @@ struct SceneBlock {
         PostEffect* post_effects;
         int post_effect_count;
         int post_effect_capacity;
+
+        LayerPostEffect scene_layer_post_effects[rev::runtime::kMaxLayerPostEffects];
+        int scene_layer_post_effect_count;
 };
 
 // Project data structure

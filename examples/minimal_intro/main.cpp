@@ -81,6 +81,13 @@ struct RuntimePostEffect {
     int curve_amount;
 };
 
+struct RuntimeSceneLayerPostEffects {
+    float scene_start;
+    float scene_end;
+    rev::runtime::LayerPostEffect effects[rev::runtime::kMaxLayerPostEffects];
+    int effect_count;
+};
+
 static const int kPostEffectCount = 23;
 
 // When built with -DHIMYM_PACKED_ASSETS, all asset data is embedded in the binary.
@@ -1039,6 +1046,38 @@ static void ParseLayerPostEffectsPipe(char* data, int base_field_count,
             break;
         }
     }
+}
+
+static int LoadSceneLayerPostEffects(const char* path,
+                                     RuntimeSceneLayerPostEffects* scenes,
+                                     int max_scenes) {
+    if (!path || !scenes || max_scenes <= 0) return 0;
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+
+    char line[4096];
+    bool in_section = false;
+    int count = 0;
+    while (fgets(line, sizeof(line), f) && count < max_scenes) {
+        char* start = line;
+        while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') ++start;
+        if (strstr(start, "[scene_layer_post_effects]")) {
+            in_section = true;
+            continue;
+        }
+        if (start[0] == '[' && in_section) break;
+        if (!in_section || start[0] == '#' || start[0] == '\0' || start[0] == '\n') continue;
+
+        RuntimeSceneLayerPostEffects& scene = scenes[count];
+        scene.effect_count = 0;
+        if (sscanf_s(start, "%f|%f", &scene.scene_start, &scene.scene_end) == 2) {
+            ParseLayerPostEffectsPipe(start, 2, scene.effects, &scene.effect_count);
+            ++count;
+        }
+    }
+    fclose(f);
+    return count;
 }
 
 static void ParseAssetShadersPipe(char* data, int base_field_count,
@@ -2089,6 +2128,10 @@ int main(int argc, char* argv[]) {
     RuntimePostEffect post_effects[kMaxPostEffects] = {};
     int post_effect_count = LoadAllPostEffects(cues_path, post_effects, kMaxPostEffects);
     LOGV("Loaded %d post effect(s)\n", post_effect_count);
+    RuntimeSceneLayerPostEffects scene_layer_post_effects[64] = {};
+    int scene_layer_post_effect_count = LoadSceneLayerPostEffects(
+        cues_path, scene_layer_post_effects, 64);
+    LOGV("Loaded %d scene layer post-effect stack(s)\n", scene_layer_post_effect_count);
     
     // Setup default fallback shader cue
     ShaderCue fallback_cue = {};
@@ -2514,7 +2557,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 asset_source.insert(output_decl + strlen("out vec4 fragColor;"),
                                     "\nuniform sampler2D u_asset_texture;\nuniform float u_asset_opacity;");
                 asset_source.insert(asset_source.rfind('}'),
-                                    "\n    fragColor.a *= texture(u_asset_texture, uv).a * u_asset_opacity;");
+                                    "\n    float asset_alpha = texture(u_asset_texture, uv).a * u_asset_opacity;\n"
+                                    "    fragColor.rgb *= asset_alpha;\n"
+                                    "    fragColor.a *= asset_alpha;");
                 state.prog = rev::shader::CompileFromSource(sprite_vertex_shader, asset_source.c_str());
             }
         }
@@ -3360,6 +3405,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     AudioState* audio_state = nullptr;
     HANDLE audio_thread = nullptr;
     int active_music_index = -1;
+    int finished_music_index = -1;
     rev::xm::Player* active_music_player = nullptr;
     bool music_finish_latched = false;
     if (loaded_music_player_count > 0) {
@@ -3426,6 +3472,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             float latest_start = -1.0f;
             for (int mi = 0; mi < loaded_music_player_count; ++mi) {
                 float cue_end = ResolveCueEnd(music_players[mi].cue.cue_end, total_duration);
+                if (!playback_settings.music_loop && mi == finished_music_index) {
+                    continue;
+                }
                 if (time >= music_players[mi].cue.cue_start && time <= cue_end) {
                     if (music_players[mi].cue.cue_start >= latest_start) {
                         latest_start = music_players[mi].cue.cue_start;
@@ -3439,6 +3488,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
 
             if (new_music_index != active_music_index) {
+                if (new_music_index != finished_music_index) {
+                    finished_music_index = -1;
+                }
                 bool keep_progress = false;
                 if (playback_settings.music_persist_across_scenes &&
                     active_music_index >= 0 && new_music_index >= 0) {
@@ -3465,12 +3517,17 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 }
             }
 
-            if (playback_settings.music_loop && active_music_index >= 0) {
+            if (active_music_index >= 0) {
                 rev::xm::Player* selected_player = audio_state->player.load(std::memory_order_acquire);
                 if (selected_player) {
                     bool finished = rev::xm::IsFinished(selected_player);
                     if (finished) {
-                        if (!music_finish_latched) {
+                        if (!playback_settings.music_loop) {
+                            finished_music_index = active_music_index;
+                            active_music_index = -1;
+                            audio_state->player.store(nullptr, std::memory_order_release);
+                            music_finish_latched = true;
+                        } else if (!music_finish_latched) {
                             rev::xm::SetPosition(selected_player, 0, 0);
                             music_finish_latched = true;
                         }
@@ -3533,7 +3590,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             const ShaderCue& cue = shader_cues[i];
             float cue_end = cue.cue_end;
             if (cue_end < 0.0f) cue_end = total_duration;
-            if (time >= cue.cue_start && time <= cue_end) {
+            // Cue ranges are half-open so a scene-ending shader cannot remain
+            // active on the same frame that the next scene starts.
+            if (time >= cue.cue_start && time < cue_end) {
                 active_layers[active_layer_count++] = { i, cue.layer_order, cue.layer_role, cue.cue_start, cue_end };
             }
         }
@@ -5258,6 +5317,36 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 color[effect.type][1] = evaluate_effect_curve(effect.curve_color_g, effect.color[1]);
                 color[effect.type][2] = evaluate_effect_curve(effect.curve_color_b, effect.color[2]);
                 color[effect.type][3] = evaluate_effect_curve(effect.curve_color_a, effect.color[3]);
+            }
+
+            for (int scene_index = 0; scene_index < scene_layer_post_effect_count; ++scene_index) {
+                const RuntimeSceneLayerPostEffects& scene_effects = scene_layer_post_effects[scene_index];
+                if (time < scene_effects.scene_start || time >= scene_effects.scene_end) continue;
+                float scene_time = time - scene_effects.scene_start;
+                for (int i = 0; i < scene_effects.effect_count; ++i) {
+                    const rev::runtime::LayerPostEffect& effect = scene_effects.effects[i];
+                    float effect_end = effect.end_time < 0.0f
+                        ? (scene_effects.scene_end - scene_effects.scene_start)
+                        : effect.end_time;
+                    if (!effect.enabled || effect.type < 0 || effect.type >= kPostEffectCount ||
+                        scene_time < effect.start_time || scene_time >= effect_end) continue;
+                    has_active_effect = true;
+                    float curve_time = scene_time - effect.start_time;
+                    auto evaluate_scene_layer_curve = [&](int curve_index, float fallback) {
+                        if (curve_index < 0 || curve_index >= curve_count) return fallback;
+                        float duration = curves[curve_index].duration;
+                        float normalized_time = duration > 0.0f ? curve_time / duration : 0.0f;
+                        return rev::curve::Evaluate(curves[curve_index], normalized_time);
+                    };
+                    enabled[effect.type] = 1;
+                    intensity[effect.type] = evaluate_scene_layer_curve(effect.curve_intensity, effect.intensity);
+                    threshold[effect.type] = evaluate_scene_layer_curve(effect.curve_threshold, effect.threshold);
+                    radius[effect.type] = evaluate_scene_layer_curve(effect.curve_radius, effect.radius);
+                    color[effect.type][0] = evaluate_scene_layer_curve(effect.curve_color_r, effect.color[0]);
+                    color[effect.type][1] = evaluate_scene_layer_curve(effect.curve_color_g, effect.color[1]);
+                    color[effect.type][2] = evaluate_scene_layer_curve(effect.curve_color_b, effect.color[2]);
+                    color[effect.type][3] = evaluate_scene_layer_curve(effect.curve_color_a, effect.color[3]);
+                }
             }
 
             if (has_active_effect) {

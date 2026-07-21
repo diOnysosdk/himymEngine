@@ -147,6 +147,17 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
             UpdateCurveRefAfterDelete(&effect->curve_color_a, deleted_curve);
             UpdateCurveRefAfterDelete(&effect->curve_amount, deleted_curve);
         }
+        for (int i = 0; i < scene->scene_layer_post_effect_count; ++i) {
+            LayerPostEffect* effect = &scene->scene_layer_post_effects[i];
+            UpdateCurveRefAfterDelete(&effect->curve_intensity, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_threshold, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_radius, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_color_r, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_color_g, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_color_b, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_color_a, deleted_curve);
+            UpdateCurveRefAfterDelete(&effect->curve_amount, deleted_curve);
+        }
     }
 }
 
@@ -305,6 +316,19 @@ void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, s
             RegisterCurveUsage(effect->curve_color_a, curve_index, "Post Color A", owner, &usage_count, first_usage, sizeof(first_usage));
             RegisterCurveUsage(effect->curve_amount, curve_index, "Post Amount", owner, &usage_count, first_usage, sizeof(first_usage));
         }
+        for (int i = 0; i < scene->scene_layer_post_effect_count; ++i) {
+            LayerPostEffect* effect = &scene->scene_layer_post_effects[i];
+            char owner[128] = {};
+            snprintf(owner, sizeof(owner), "%s/Scene Layer Effect %d", scene_name, i + 1);
+            RegisterCurveUsage(effect->curve_intensity, curve_index, "Scene Layer Intensity", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_threshold, curve_index, "Scene Layer Threshold", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_radius, curve_index, "Scene Layer Radius", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_color_r, curve_index, "Scene Layer Color R", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_color_g, curve_index, "Scene Layer Color G", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_color_b, curve_index, "Scene Layer Color B", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_color_a, curve_index, "Scene Layer Color A", owner, &usage_count, first_usage, sizeof(first_usage));
+            RegisterCurveUsage(effect->curve_amount, curve_index, "Scene Layer Amount", owner, &usage_count, first_usage, sizeof(first_usage));
+        }
     }
 
     int points = editor->project->curves[curve_index].point_count;
@@ -382,6 +406,12 @@ static int AllocateCurveSlotForPanel(EditorContext* editor, float start_v, float
             mark(cue->curve_scale_x); mark(cue->curve_scale_y); mark(cue->curve_scale_z);
             mark(cue->curve_color_r); mark(cue->curve_color_g); mark(cue->curve_color_b); mark(cue->curve_color_a);
             mark(cue->curve_mesh_size); mark(cue->curve_metallic); mark(cue->curve_roughness); mark(cue->curve_fov);
+        }
+        for (int i = 0; i < scene->scene_layer_post_effect_count; ++i) {
+            LayerPostEffect* effect = &scene->scene_layer_post_effects[i];
+            mark(effect->curve_intensity); mark(effect->curve_threshold); mark(effect->curve_radius);
+            mark(effect->curve_color_r); mark(effect->curve_color_g); mark(effect->curve_color_b);
+            mark(effect->curve_color_a); mark(effect->curve_amount);
         }
     }
 
@@ -742,6 +772,11 @@ void RenderProperties(EditorContext* editor) {
                 ImGui::PopID();
             }
             }
+
+            RenderLayerPostEffects(editor, scene->scene_layer_post_effects,
+                                   &scene->scene_layer_post_effect_count,
+                                   &editor->project->modified, "scene_layer", -1,
+                                   editor->selected_scene_index);
             
             ImGui::Separator();
             
