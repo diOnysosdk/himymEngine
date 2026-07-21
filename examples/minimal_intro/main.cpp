@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstring>
 #include <string>
+#include <vector>
 #include <atomic>
 
 // Keep runtime shader GLSL in lockstep with editor preview presets.
@@ -5290,24 +5291,118 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         }
 
         if (scene_fbo_ready && post_shader && glBindFramebuffer_rt) {
-            int enabled[kPostEffectCount] = {};
-            float intensity[kPostEffectCount] = {};
-            float threshold[kPostEffectCount] = {};
-            float radius[kPostEffectCount] = {};
-            float color[kPostEffectCount][4] = {};
-            bool has_active_effect = false;
+            struct ActivePostEffect {
+                int type;
+                float intensity;
+                float threshold;
+                float radius;
+                float color[4];
+                float time;
+            };
+            std::vector<ActivePostEffect> layer_effects;
+            std::vector<ActivePostEffect> overall_effects;
+            auto evaluate_curve = [&](int curve_index, float fallback, float curve_time) {
+                if (curve_index < 0 || curve_index >= curve_count) return fallback;
+                float duration = curves[curve_index].duration;
+                float normalized_time = duration > 0.0f ? curve_time / duration : 0.0f;
+                return rev::curve::Evaluate(curves[curve_index], normalized_time);
+            };
+            auto add_effect = [&](std::vector<ActivePostEffect>& target, int type,
+                                  float intensity, float threshold, float radius,
+                                  const float* color, float effect_time) {
+                target.push_back({type, intensity, threshold, radius,
+                                  {color[0], color[1], color[2], color[3]}, effect_time});
+            };
+
+            for (int scene_index = 0; scene_index < scene_layer_post_effect_count; ++scene_index) {
+                const RuntimeSceneLayerPostEffects& scene_effects = scene_layer_post_effects[scene_index];
+                if (time < scene_effects.scene_start || time >= scene_effects.scene_end) continue;
+                float scene_time = time - scene_effects.scene_start;
+                for (int i = 0; i < scene_effects.effect_count; ++i) {
+                    const rev::runtime::LayerPostEffect& effect = scene_effects.effects[i];
+                    float effect_end = effect.end_time < 0.0f
+                        ? (scene_effects.scene_end - scene_effects.scene_start) : effect.end_time;
+                    if (!effect.enabled || effect.type < 0 || effect.type >= kPostEffectCount ||
+                        scene_time < effect.start_time || scene_time >= effect_end) continue;
+                    float curve_time = scene_time - effect.start_time;
+                    float effect_color[4] = {
+                        evaluate_curve(effect.curve_color_r, effect.color[0], curve_time),
+                        evaluate_curve(effect.curve_color_g, effect.color[1], curve_time),
+                        evaluate_curve(effect.curve_color_b, effect.color[2], curve_time),
+                        evaluate_curve(effect.curve_color_a, effect.color[3], curve_time)};
+                    add_effect(layer_effects, effect.type,
+                               evaluate_curve(effect.curve_intensity, effect.intensity, curve_time),
+                               evaluate_curve(effect.curve_threshold, effect.threshold, curve_time),
+                               evaluate_curve(effect.curve_radius, effect.radius, curve_time),
+                               effect_color, scene_time);
+                }
+            }
             for (int i = 0; i < post_effect_count; ++i) {
                 const RuntimePostEffect& effect = post_effects[i];
                 float effect_end = effect.end_time < 0.0f ? total_duration : effect.end_time;
                 if (!effect.enabled || effect.type < 0 || effect.type >= kPostEffectCount ||
-                    time < effect.start_time || time > effect_end) continue;
-                has_active_effect = true;
+                    time < effect.start_time || time >= effect_end) continue;
                 float curve_time = time - effect.start_time;
-                auto evaluate_effect_curve = [&](int curve_index, float fallback) {
-                    if (curve_index < 0 || curve_index >= curve_count) return fallback;
-                    float duration = curves[curve_index].duration;
-                    float normalized_time = duration > 0.0f ? curve_time / duration : 0.0f;
-                    return rev::curve::Evaluate(curves[curve_index], normalized_time);
+                float effect_color[4] = {
+                    evaluate_curve(effect.curve_color_r, effect.color[0], curve_time),
+                    evaluate_curve(effect.curve_color_g, effect.color[1], curve_time),
+                    evaluate_curve(effect.curve_color_b, effect.color[2], curve_time),
+                    evaluate_curve(effect.curve_color_a, effect.color[3], curve_time)};
+                add_effect(overall_effects, effect.type,
+                           evaluate_curve(effect.curve_intensity, effect.intensity, curve_time),
+                           evaluate_curve(effect.curve_threshold, effect.threshold, curve_time),
+                           evaluate_curve(effect.curve_radius, effect.radius, curve_time),
+                           effect_color, time);
+            }
+
+            unsigned int source_fbo = scene_fbo;
+            unsigned int source_texture = scene_texture;
+            unsigned int destination_fbo = post_fbo;
+            auto apply_effect = [&](const ActivePostEffect& effect) {
+                glBindFramebuffer_rt(0x8D40, destination_fbo);
+                glViewport(0, 0, config.width, config.height);
+                glDisable(GL_DEPTH_TEST);
+                glDisable(GL_BLEND);
+                glBindVertexArray(vao);
+                rev::shader::Use(post_shader);
+                rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, "u_scene"), 0);
+                rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, "u_history"), 1);
+                rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, "u_unpremultiply_scene"), 0);
+                rev::shader::SetVec2(post_shader, rev::shader::GetUniformLocation(post_shader, "u_resolution"),
+                                     (float)config.width, (float)config.height);
+                rev::shader::SetFloat(post_shader, rev::shader::GetUniformLocation(post_shader, "u_time"), effect.time);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, source_texture);
+                glActiveTexture(0x84C1);
+                glBindTexture(GL_TEXTURE_2D, history_texture);
+                for (int i = 0; i < kPostEffectCount; ++i) {
+                    char uniform_name[64];
+                    snprintf(uniform_name, sizeof(uniform_name), "u_enabled[%d]", i);
+                    rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, uniform_name), i == effect.type ? 1 : 0);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_intensity[%d]", i);
+                    rev::shader::SetFloat(post_shader, rev::shader::GetUniformLocation(post_shader, uniform_name), i == effect.type ? effect.intensity : 0.0f);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_threshold[%d]", i);
+                    rev::shader::SetFloat(post_shader, rev::shader::GetUniformLocation(post_shader, uniform_name), i == effect.type ? effect.threshold : 0.0f);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_radius[%d]", i);
+                    rev::shader::SetFloat(post_shader, rev::shader::GetUniformLocation(post_shader, uniform_name), i == effect.type ? effect.radius : 0.0f);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_color[%d]", i);
+                    rev::shader::SetVec4(post_shader, rev::shader::GetUniformLocation(post_shader, uniform_name),
+                                         i == effect.type ? effect.color[0] : 0.0f,
+                                         i == effect.type ? effect.color[1] : 0.0f,
+                                         i == effect.type ? effect.color[2] : 0.0f,
+                                         i == effect.type ? effect.color[3] : 0.0f);
+                }
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                unsigned int previous_source_fbo = source_fbo;
+                source_fbo = destination_fbo;
+                source_texture = destination_fbo == post_fbo ? post_texture : scene_texture;
+                destination_fbo = previous_source_fbo;
+            };
+            for (const ActivePostEffect& effect : layer_effects) apply_effect(effect);
+            for (const ActivePostEffect& effect : overall_effects) apply_effect(effect);
+
+            if (!layer_effects.empty() || !overall_effects.empty()) {
+#if 0
                 };
                 enabled[effect.type] = 1;
                 intensity[effect.type] = evaluate_effect_curve(effect.curve_intensity, effect.intensity);
@@ -5330,6 +5425,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         : effect.end_time;
                     if (!effect.enabled || effect.type < 0 || effect.type >= kPostEffectCount ||
                         scene_time < effect.start_time || scene_time >= effect_end) continue;
+                    if (enabled[effect.type] != 0) continue;
                     has_active_effect = true;
                     float curve_time = scene_time - effect.start_time;
                     auto evaluate_scene_layer_curve = [&](int curve_index, float fallback) {
@@ -5423,6 +5519,34 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 glBindFramebuffer_rt(0x8CA9, 0); // GL_DRAW_FRAMEBUFFER
                 glBlitFramebuffer_rt(0, 0, config.width, config.height,
                                      scene_x, scene_y, scene_x + scene_w, scene_y + scene_h,
+                                     0x00004000, 0x2600);
+                if (history_fbo) {
+                    glBindFramebuffer_rt(0x8CA9, history_fbo);
+                    glBlitFramebuffer_rt(0, 0, config.width, config.height,
+                                         0, 0, config.width, config.height,
+                                         0x00004000, 0x2600);
+                }
+                glBindFramebuffer_rt(0x8D40, 0);
+            }
+#endif
+            }
+            if (glBlitFramebuffer_rt) {
+                int ww_output = window->win_width > 0 ? window->win_width : config.width;
+                int wh_output = window->win_height > 0 ? window->win_height : config.height;
+                float target_aspect = (float)config.width / (float)config.height;
+                float output_aspect = (float)ww_output / (float)wh_output;
+                int output_x = 0, output_y = 0, output_w = ww_output, output_h = wh_output;
+                if (output_aspect > target_aspect) {
+                    output_w = (int)((float)output_h * target_aspect + 0.5f);
+                    output_x = (ww_output - output_w) / 2;
+                } else {
+                    output_h = (int)((float)output_w / target_aspect + 0.5f);
+                    output_y = (wh_output - output_h) / 2;
+                }
+                glBindFramebuffer_rt(0x8CA8, source_fbo); // GL_READ_FRAMEBUFFER
+                glBindFramebuffer_rt(0x8CA9, 0); // GL_DRAW_FRAMEBUFFER
+                glBlitFramebuffer_rt(0, 0, config.width, config.height,
+                                     output_x, output_y, output_x + output_w, output_y + output_h,
                                      0x00004000, 0x2600);
                 if (history_fbo) {
                     glBindFramebuffer_rt(0x8CA9, history_fbo);

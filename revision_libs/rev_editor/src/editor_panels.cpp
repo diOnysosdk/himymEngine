@@ -431,7 +431,13 @@ static int AllocateCurveSlotForPanel(EditorContext* editor, float start_v, float
 } // namespace
 
 void RenderTimeline(EditorContext* editor) {
-    if (!editor) return;
+    if (!editor || !editor->project) return;
+
+    if (editor->selected_scene_index < -1 ||
+        editor->selected_scene_index >= editor->project->scene_count) {
+        editor->selected_scene_index = -1;
+        editor->selected_cue_index = -1;
+    }
     
     if (ImGui::Begin("Timeline", &editor->show_timeline)) {
         // Top controls
@@ -482,6 +488,32 @@ void RenderTimeline(EditorContext* editor) {
             if (ImGui::Selectable(scene->name, selected, 0, ImVec2(0, 0))) {
                 editor->selected_scene_index = i;
                 editor->selected_cue_index = -1;
+                editor->selected_cue_type = CueTypeShader;
+                editor->selected_curve_index = -1;
+                editor->editing_curve_index = -1;
+                editor->editing_curve_field = -1;
+                editor->editing_curve_cue_type = CueTypeShader;
+                editor->shader_modal_request_open = false;
+                editor->music_modal_request_open = false;
+                editor->image_modal_request_open = false;
+                editor->animated_sprite_modal_request_open = false;
+                editor->pixel_modal_request_open = false;
+                editor->pixel_emitter_modal_request_open = false;
+                editor->text_modal_request_open = false;
+                editor->scroll_text_modal_request_open = false;
+                editor->mesh_modal_request_open = false;
+                editor->curve_editor_modal_request_open = false;
+                editor->shader_modal_open = false;
+                editor->music_modal_open = false;
+                editor->image_modal_open = false;
+                editor->animated_sprite_modal_open = false;
+                editor->pixel_modal_open = false;
+                editor->pixel_emitter_modal_open = false;
+                editor->text_modal_open = false;
+                editor->scroll_text_modal_open = false;
+                editor->mesh_modal_open = false;
+                editor->curve_editor_modal_open = false;
+                editor->point_properties_modal_open = false;
                 
                 // Jump to the start of the selected scene
                 float scene_start_time = 0.0f;
@@ -587,7 +619,8 @@ void RenderTimeline(EditorContext* editor) {
         ImGui::Separator();
         
         // Bottom controls
-        if (editor->selected_scene_index >= 0) {
+        if (editor->selected_scene_index >= 0 &&
+            editor->selected_scene_index < editor->project->scene_count) {
             bool can_move_selected_up = (editor->selected_scene_index > 0);
             if (!can_move_selected_up) ImGui::BeginDisabled();
             if (ImGui::Button("Move Selected Up")) {
@@ -621,7 +654,7 @@ void RenderTimeline(EditorContext* editor) {
 }
 
 void RenderProperties(EditorContext* editor) {
-    if (!editor) return;
+    if (!editor || !editor->project) return;
     
     if (ImGui::Begin("Properties", &editor->show_properties)) {
         if (editor->selected_scene_index >= 0 && 
@@ -1488,7 +1521,7 @@ void RenderAssetBrowser(EditorContext* editor) {
 }
 
 void RenderCurveEditor(EditorContext* editor) {
-    if (!editor) return;
+    if (!editor || !editor->project) return;
     
     if (ImGui::Begin("Curve Editor", &editor->show_curve_editor)) {
         // Curve selection

@@ -1504,7 +1504,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_music_cues = false;
             in_mesh_cues = true;
             in_post_effects = false;
-        } else if (strstr(start, "\"post_effects\":")) {
+        } else if (strstr(start, "\"scene_layer_post_effects\":")) {
             in_shader_cues = false;
             in_image_cues = false;
             in_animated_sprite_cues = false;
@@ -1513,9 +1513,9 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_scroll_text_cues = false;
             in_music_cues = false;
             in_mesh_cues = false;
-            in_post_effects = true;
-            in_scene_layer_post_effects = false;
-        } else if (strstr(start, "\"scene_layer_post_effects\":")) {
+            in_post_effects = false;
+            in_scene_layer_post_effects = true;
+        } else if (strstr(start, "\"post_effects\":")) {
             in_shader_cues = false;
             in_image_cues = false;
             in_animated_sprite_cues = false;
@@ -1525,8 +1525,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_scroll_text_cues = false;
             in_music_cues = false;
             in_mesh_cues = false;
-            in_post_effects = false;
-            in_scene_layer_post_effects = true;
+            in_post_effects = true;
+            in_scene_layer_post_effects = false;
         } else if (strstr(start, "\"curves\":")) {
             in_curves = true;
         }
@@ -3309,10 +3309,13 @@ bool NewProject(EditorContext* editor) {
         delete[] scene->shader_cues;
         delete[] scene->image_cues;
         delete[] scene->animated_sprite_cues;
+        delete[] scene->pixel_cues;
+        delete[] scene->pixel_emitter_cues;
         delete[] scene->text_cues;
         delete[] scene->scroll_text_cues;
         delete[] scene->music_cues;
         delete[] scene->mesh_cues;
+        delete[] scene->post_effects;
     }
     delete[] editor->project->scenes;
     editor->project->scenes = nullptr;
@@ -3335,6 +3338,13 @@ bool NewProject(EditorContext* editor) {
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
     editor->project->modified = false;
+
+    editor->selected_scene_index = -1;
+    editor->selected_cue_index = -1;
+    editor->selected_curve_index = -1;
+    editor->editing_curve_index = -1;
+    editor->current_time = 0.0f;
+    editor->playing = false;
 
     // Note: GetScene(0) returns nullptr when scene_count==0
     // First scene will be created via AddScene when user adds content
@@ -6371,7 +6381,8 @@ void ResizePreview(EditorContext* editor, int width, int height) {
 }
 
 void RenderPreviewFrame(EditorContext* editor) {
-    if (!editor || !editor->preview_initialized) return;
+    if (!editor || !editor->preview_initialized || !editor->project ||
+        editor->project->scene_count <= 0) return;
 
     editor->post_frame_rendered = false;
 
@@ -7499,6 +7510,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                 bool has_layer_post = editor->layer_fbo && editor->layer_texture && editor->post_shader &&
                     layer_effects && layer_effect_count > 0;
                 if (has_layer_post) {
+#if 0
                     glBindFramebuffer(0x8D40, editor->layer_fbo);
                     glViewport(0, 0, editor->preview_width, editor->preview_height);
                     glDisable(GL_BLEND);
@@ -7592,6 +7604,102 @@ void RenderPreviewFrame(EditorContext* editor) {
                     rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_flip_v"), 0.0f);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                     rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_flip_v"), 1.0f);
+                }
+#endif
+                    std::vector<int> active_effects;
+                    float layer_time = editor->current_time - item.scene_start_time;
+                    for (int effect_index = 0; effect_index < layer_effect_count &&
+                         effect_index < rev::runtime::kMaxLayerPostEffects; ++effect_index) {
+                        LayerPostEffect& effect = layer_effects[effect_index];
+                        float effect_end = effect.end_time < 0.0f ? 1.0e30f : effect.end_time;
+                        if (effect.enabled && effect.type >= 0 && effect.type < PostEffectCount &&
+                            effect.type < 20 && layer_time >= effect.start_time && layer_time < effect_end) {
+                            active_effects.push_back(effect_index);
+                        }
+                    }
+                    if (active_effects.empty()) {
+                        if (glActiveTexture_fn) glActiveTexture_fn(0x84C0);
+                        glBindTexture(GL_TEXTURE_2D, tex);
+                        if (sp_tex >= 0) rev::shader::SetInt(sprite_prog, sp_tex, 0);
+                        if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, pos_x, pos_y);
+                        if (sp_sz >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
+                        if (sp_rot >= 0) rev::shader::SetFloat(sprite_prog, sp_rot, rotation);
+                        if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
+                        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                    } else {
+                        unsigned int source_texture = editor->layer_texture;
+                        unsigned int destination_fbo = editor->post_fbo;
+                        unsigned int destination_texture = editor->post_texture;
+                        int layer_blend_mode = 0;
+                        for (int active_index : active_effects) {
+                            LayerPostEffect& effect = layer_effects[active_index];
+                            layer_blend_mode = (effect.blend_mode >= 0 && effect.blend_mode <= 3)
+                                ? effect.blend_mode : 0;
+                            float curve_time = layer_time - effect.start_time;
+                            auto evaluate_layer_curve = [&](int curve_index, float fallback) {
+                                if (curve_index < 0 || curve_index >= editor->project->curve_count) return fallback;
+                                const rev::curve::Curve& curve = editor->project->curves[curve_index];
+                                float normalized_time = curve.duration > 0.0f ? curve_time / curve.duration : 0.0f;
+                                return rev::curve::Evaluate(curve, normalized_time);
+                            };
+                            glBindFramebuffer(0x8D40, destination_fbo);
+                            glViewport(0, 0, editor->preview_width, editor->preview_height);
+                            glDisable(GL_BLEND);
+                            rev::shader::Use((rev::shader::Program*)editor->post_shader);
+                            rev::shader::Program* layer_post = (rev::shader::Program*)editor->post_shader;
+                            rev::shader::SetInt(layer_post, rev::shader::GetUniformLocation(layer_post, "u_scene"), 0);
+                            rev::shader::SetInt(layer_post, rev::shader::GetUniformLocation(layer_post, "u_history"), 1);
+                            rev::shader::SetInt(layer_post, rev::shader::GetUniformLocation(layer_post, "u_unpremultiply_scene"), 1);
+                            rev::shader::SetVec2(layer_post, rev::shader::GetUniformLocation(layer_post, "u_resolution"),
+                                                 (float)editor->preview_width, (float)editor->preview_height);
+                            rev::shader::SetFloat(layer_post, rev::shader::GetUniformLocation(layer_post, "u_time"), layer_time);
+                            if (glActiveTexture_fn) glActiveTexture_fn(0x84C0);
+                            glBindTexture(GL_TEXTURE_2D, source_texture);
+                            if (glActiveTexture_fn) glActiveTexture_fn(0x84C1);
+                            glBindTexture(GL_TEXTURE_2D, editor->post_history_texture);
+                            for (int uniform_index = 0; uniform_index < PostEffectCount; ++uniform_index) {
+                                char uniform_name[64];
+                                bool selected = uniform_index == effect.type;
+                                snprintf(uniform_name, sizeof(uniform_name), "u_enabled[%d]", uniform_index);
+                                rev::shader::SetInt(layer_post, rev::shader::GetUniformLocation(layer_post, uniform_name), selected ? 1 : 0);
+                                snprintf(uniform_name, sizeof(uniform_name), "u_intensity[%d]", uniform_index);
+                                rev::shader::SetFloat(layer_post, rev::shader::GetUniformLocation(layer_post, uniform_name), selected ? evaluate_layer_curve(effect.curve_intensity, effect.intensity) : 0.0f);
+                                snprintf(uniform_name, sizeof(uniform_name), "u_threshold[%d]", uniform_index);
+                                rev::shader::SetFloat(layer_post, rev::shader::GetUniformLocation(layer_post, uniform_name), selected ? evaluate_layer_curve(effect.curve_threshold, effect.threshold) : 0.0f);
+                                snprintf(uniform_name, sizeof(uniform_name), "u_radius[%d]", uniform_index);
+                                rev::shader::SetFloat(layer_post, rev::shader::GetUniformLocation(layer_post, uniform_name), selected ? evaluate_layer_curve(effect.curve_radius, effect.radius) : 0.0f);
+                                snprintf(uniform_name, sizeof(uniform_name), "u_color[%d]", uniform_index);
+                                rev::shader::SetVec4(layer_post, rev::shader::GetUniformLocation(layer_post, uniform_name),
+                                    selected ? evaluate_layer_curve(effect.curve_color_r, effect.color[0]) : 0.0f,
+                                    selected ? evaluate_layer_curve(effect.curve_color_g, effect.color[1]) : 0.0f,
+                                    selected ? evaluate_layer_curve(effect.curve_color_b, effect.color[2]) : 0.0f,
+                                    selected ? evaluate_layer_curve(effect.curve_color_a, effect.color[3]) : 0.0f);
+                            }
+                            glDrawArrays(GL_TRIANGLES, 0, 3);
+                            source_texture = destination_texture;
+                            if (destination_fbo == editor->post_fbo) {
+                                destination_fbo = editor->layer_fbo;
+                                destination_texture = editor->layer_texture;
+                            } else {
+                                destination_fbo = editor->post_fbo;
+                                destination_texture = editor->post_texture;
+                            }
+                        }
+                        glBindFramebuffer(0x8D40, editor->preview_fbo);
+                        glEnable(GL_BLEND);
+                        ApplySpriteBlendMode(layer_blend_mode);
+                        rev::shader::Use(sprite_prog);
+                        if (glActiveTexture_fn) glActiveTexture_fn(0x84C0);
+                        glBindTexture(GL_TEXTURE_2D, source_texture);
+                        if (sp_tex >= 0) rev::shader::SetInt(sprite_prog, sp_tex, 0);
+                        if (sp_pos >= 0) rev::shader::SetVec2(sprite_prog, sp_pos, 0.0f, 0.0f);
+                        if (sp_sz >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, 1.0f, 1.0f);
+                        if (sp_rot >= 0) rev::shader::SetFloat(sprite_prog, sp_rot, 0.0f);
+                        if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, 1.0f);
+                        rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_flip_v"), 0.0f);
+                        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                        rev::shader::SetFloat(sprite_prog, rev::shader::GetUniformLocation(sprite_prog, "u_flip_v"), 1.0f);
+                    }
                 } else {
                     if (glActiveTexture_fn) glActiveTexture_fn(0x84C0); // GL_TEXTURE0
                     glBindTexture(GL_TEXTURE_2D, tex);
@@ -8383,7 +8491,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                 PostEffect* effect = &active_scene->post_effects[i];
                 if (!effect->enabled || effect->type < 0 || effect->type >= PostEffectCount) continue;
                 if (local_time < effect->start_time ||
-                    (effect->end_time >= 0.0f && local_time > effect->end_time)) continue;
+                    (effect->end_time >= 0.0f && local_time >= effect->end_time)) continue;
                 float curve_time = local_time - effect->start_time;
                 auto evaluate_effect_curve = [&](int curve_index, float fallback) {
                     if (curve_index < 0 || curve_index >= editor->project->curve_count) return fallback;
@@ -8406,6 +8514,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                 if (!effect->enabled || effect->type < 0 || effect->type >= PostEffectCount) continue;
                 if (local_time < effect->start_time ||
                     (effect->end_time >= 0.0f && local_time >= effect->end_time)) continue;
+                if (enabled[effect->type]) continue;
                 float curve_time = local_time - effect->start_time;
                 auto evaluate_layer_curve = [&](int curve_index, float fallback) {
                     if (curve_index < 0 || curve_index >= editor->project->curve_count) return fallback;
@@ -8425,6 +8534,7 @@ void RenderPreviewFrame(EditorContext* editor) {
             }
         }
 
+    #if 0
         if (has_effect && glFramebufferTexture2D) {
             glBindFramebuffer(0x8D40, editor->post_fbo);
             glViewport(0, 0, editor->preview_width, editor->preview_height);
@@ -8515,6 +8625,139 @@ void RenderPreviewFrame(EditorContext* editor) {
                 glBindFramebuffer(0x8D40, 0);
             }
             editor->post_frame_rendered = false;
+        }
+#endif
+        if (glFramebufferTexture2D && active_scene && editor->post_shader &&
+            editor->preview_fbo && editor->preview_texture &&
+            editor->post_fbo && editor->post_texture &&
+            editor->post_history_fbo && editor->post_history_texture) {
+            struct ActivePostEffect {
+                int type;
+                float intensity;
+                float threshold;
+                float radius;
+                float color[4];
+                float time;
+            };
+            std::vector<ActivePostEffect> active_effects;
+            float local_time = editor->current_time - scene_start;
+            auto evaluate_curve = [&](int curve_index, float fallback, float curve_time) {
+                if (curve_index < 0 || curve_index >= editor->project->curve_count) return fallback;
+                const rev::curve::Curve& curve = editor->project->curves[curve_index];
+                float normalized_time = curve.duration > 0.0f ? curve_time / curve.duration : 0.0f;
+                return rev::curve::Evaluate(curve, normalized_time);
+            };
+            auto add_effect = [&](int type, float intensity_value, float threshold_value,
+                                  float radius_value, const float* color_value, float effect_time) {
+                active_effects.push_back({type, intensity_value, threshold_value, radius_value,
+                                          {color_value[0], color_value[1], color_value[2], color_value[3]}, effect_time});
+            };
+            for (int i = 0; i < active_scene->scene_layer_post_effect_count; ++i) {
+                LayerPostEffect& effect = active_scene->scene_layer_post_effects[i];
+                float effect_end = effect.end_time < 0.0f ? active_scene->duration : effect.end_time;
+                if (!effect.enabled || effect.type < 0 || effect.type >= PostEffectCount ||
+                    local_time < effect.start_time || local_time >= effect_end) continue;
+                float curve_time = local_time - effect.start_time;
+                float effect_color[4] = {
+                    evaluate_curve(effect.curve_color_r, effect.color[0], curve_time),
+                    evaluate_curve(effect.curve_color_g, effect.color[1], curve_time),
+                    evaluate_curve(effect.curve_color_b, effect.color[2], curve_time),
+                    evaluate_curve(effect.curve_color_a, effect.color[3], curve_time)};
+                add_effect(effect.type,
+                           evaluate_curve(effect.curve_intensity, effect.intensity, curve_time),
+                           evaluate_curve(effect.curve_threshold, effect.threshold, curve_time),
+                           evaluate_curve(effect.curve_radius, effect.radius, curve_time),
+                           effect_color, local_time);
+            }
+            for (int i = 0; i < active_scene->post_effect_count; ++i) {
+                PostEffect& effect = active_scene->post_effects[i];
+                float effect_end = effect.end_time < 0.0f ? editor->project->total_duration : effect.end_time;
+                if (!effect.enabled || effect.type < 0 || effect.type >= PostEffectCount ||
+                    editor->current_time < effect.start_time || editor->current_time >= effect_end) continue;
+                float curve_time = editor->current_time - effect.start_time;
+                float effect_color[4] = {
+                    evaluate_curve(effect.curve_color_r, effect.color[0], curve_time),
+                    evaluate_curve(effect.curve_color_g, effect.color[1], curve_time),
+                    evaluate_curve(effect.curve_color_b, effect.color[2], curve_time),
+                    evaluate_curve(effect.curve_color_a, effect.color[3], curve_time)};
+                add_effect(effect.type,
+                           evaluate_curve(effect.curve_intensity, effect.intensity, curve_time),
+                           evaluate_curve(effect.curve_threshold, effect.threshold, curve_time),
+                           evaluate_curve(effect.curve_radius, effect.radius, curve_time),
+                           effect_color, editor->current_time);
+            }
+            unsigned int source_texture = editor->preview_texture;
+            unsigned int destination_fbo = editor->post_fbo;
+            unsigned int destination_texture = editor->post_texture;
+            rev::shader::Program* post_prog = (rev::shader::Program*)editor->post_shader;
+            typedef void (*PFNGLACTIVETEXTUREPROC)(unsigned int texture);
+            auto glActiveTexture_scene = (PFNGLACTIVETEXTUREPROC)wglGetProcAddress("glActiveTexture");
+            for (const ActivePostEffect& effect : active_effects) {
+                glBindFramebuffer(0x8D40, destination_fbo);
+                glViewport(0, 0, editor->preview_width, editor->preview_height);
+                glDisable(GL_DEPTH_TEST);
+                glDisable(GL_BLEND);
+                rev::shader::Use(post_prog);
+                rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, "u_scene"), 0);
+                rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, "u_history"), 1);
+                rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, "u_unpremultiply_scene"), 0);
+                rev::shader::SetVec2(post_prog, rev::shader::GetUniformLocation(post_prog, "u_resolution"),
+                                     (float)editor->preview_width, (float)editor->preview_height);
+                rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, "u_time"), effect.time);
+                if (glActiveTexture_scene) glActiveTexture_scene(0x84C0);
+                glBindTexture(GL_TEXTURE_2D, source_texture);
+                if (glActiveTexture_scene) glActiveTexture_scene(0x84C1);
+                glBindTexture(GL_TEXTURE_2D, editor->post_history_texture);
+                for (int i = 0; i < PostEffectCount; ++i) {
+                    char uniform_name[64];
+                    bool selected = i == effect.type;
+                    snprintf(uniform_name, sizeof(uniform_name), "u_enabled[%d]", i);
+                    rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), selected ? 1 : 0);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_intensity[%d]", i);
+                    rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), selected ? effect.intensity : 0.0f);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_threshold[%d]", i);
+                    rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), selected ? effect.threshold : 0.0f);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_radius[%d]", i);
+                    rev::shader::SetFloat(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name), selected ? effect.radius : 0.0f);
+                    snprintf(uniform_name, sizeof(uniform_name), "u_color[%d]", i);
+                    rev::shader::SetVec4(post_prog, rev::shader::GetUniformLocation(post_prog, uniform_name),
+                                         selected ? effect.color[0] : 0.0f, selected ? effect.color[1] : 0.0f,
+                                         selected ? effect.color[2] : 0.0f, selected ? effect.color[3] : 0.0f);
+                }
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                source_texture = destination_texture;
+                if (destination_fbo == editor->post_fbo) {
+                    destination_fbo = editor->preview_fbo;
+                    destination_texture = editor->preview_texture;
+                } else {
+                    destination_fbo = editor->post_fbo;
+                    destination_texture = editor->post_texture;
+                }
+            }
+            if (!active_effects.empty() && source_texture == editor->preview_texture) {
+                typedef void (*PFNGLBLITFRAMEBUFFERPROC)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
+                auto glBlitFramebuffer = (PFNGLBLITFRAMEBUFFERPROC)wglGetProcAddress("glBlitFramebuffer");
+                if (glBlitFramebuffer) {
+                    glBindFramebuffer(0x8CA8, editor->preview_fbo);
+                    glBindFramebuffer(0x8CA9, editor->post_fbo);
+                    glBlitFramebuffer(0, 0, editor->preview_width, editor->preview_height,
+                                      0, 0, editor->preview_width, editor->preview_height,
+                                      0x00004000, 0x2600);
+                }
+                source_texture = editor->post_texture;
+            }
+            if (!active_effects.empty()) {
+                editor->post_frame_rendered = true;
+                typedef void (*PFNGLBLITFRAMEBUFFERPROC)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
+                auto glBlitFramebuffer = (PFNGLBLITFRAMEBUFFERPROC)wglGetProcAddress("glBlitFramebuffer");
+                if (glBlitFramebuffer && editor->post_history_fbo) {
+                    glBindFramebuffer(0x8CA8, editor->post_fbo);
+                    glBindFramebuffer(0x8CA9, editor->post_history_fbo);
+                    glBlitFramebuffer(0, 0, editor->preview_width, editor->preview_height,
+                                      0, 0, editor->preview_width, editor->preview_height,
+                                      0x00004000, 0x2600);
+                }
+            }
         }
 
     }

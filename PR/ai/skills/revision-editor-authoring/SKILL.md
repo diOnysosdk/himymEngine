@@ -26,6 +26,8 @@ Use this skill for editor-side authoring work.
 - Keep the cues.txt mesh_cues format: `asset_key|mesh_type|pos_x|pos_y|pos_z|rot_x|rot_y|rot_z|scale_x|scale_y|scale_z|color_r|color_g|color_b|color_a|mesh_size|mesh_param|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order` (25 fields).
 - Keep `ProjectData.assets_path` memset-cleared in `CreateEditor`, `NewProject`, and `LoadProject`.
 - Keep editor preview frame rendering: shader cue composited first; then image/text/mesh cues rendered via a **unified sorted draw pass** (sorted by `layer_order` ascending — lower = further back). Do NOT restore the old three-block fixed order.
+- Keep scene-owned layer post effects separate from cue-owned layer post effects. `SceneBlock.scene_layer_post_effects` is evaluated over the completed scene layer, uses scene-local authoring time in preview, and is exported as one row per scene under `[scene_layer_post_effects]` with absolute scene bounds and scene-local effect times.
+- Keep scene layer post-effect timing half-open at scene boundaries: the active scene owns `[scene_start, scene_end)`, and the next scene owns the exact boundary onward. Preview and runtime must switch stacks identically.
 - **Layer rendering state management**: When switching from mesh to sprite rendering in the unified draw loop, must (1) rebind the dummy VAO (`editor->preview_vao`) because meshes bind their own VAOs and sprites use `gl_VertexID`, (2) clear the depth buffer with `glClear(GL_DEPTH_BUFFER_BIT)`, (3) disable depth testing, (4) enable blending. Without proper VAO rebinding, sprites will be invisible after meshes render.
 - Do NOT define `ImageCue`, `TextCue`, `MusicCue`, `MeshCue` in `rev_editor.h` — they are imported from `rev_runtime.h` via `using` declarations.
 - When adding fields to shared cue structs, update `rev_runtime.h` and `rev_runtime.cpp` first, then update `ExportProject` and parser in rev_runtime.
@@ -45,6 +47,7 @@ Use this skill for editor-side authoring work.
 - `EditorContext` has `mesh_shader` (Phong shader compiled at `InitializePreview`), `mesh_modal_open`, `mesh_modal_request_open`, `editing_mesh`.
 - `RenderMeshModal(EditorContext*)` is the ImGui modal for editing a MeshCue.
 - `RenderPreviewFrame` renders image/text/mesh cues in a single loop sorted by `layer_order`. Blend and depth state are toggled lazily between sprite and mesh items. Depth test (`glEnable(0x0B71)`) is enabled only when a mesh item is about to draw; blend (`glEnable(GL_BLEND)`) is enabled only for sprite items.
+- After the unified scene layer is composed, `RenderPreviewFrame` applies the selected scene's `scene_layer_post_effects` stack using scene-local time. These effects are scene-owned and must not be treated as cue-owned effects.
 - Phong shader vertex attribs: `a_pos` (loc 0), `a_normal` (loc 1), `a_uv` (loc 2); uniforms: `u_model`, `u_view`, `u_projection`, `u_light_pos`, `u_view_pos`, `u_color`.
 - `glUniformMatrix4fv` must be loaded via `wglGetProcAddress` (not in Windows `<gl/gl.h>`).
 - `ExportProject` writes `[mesh_cues]` section after `[music_cues]` with 25-field pipe format.

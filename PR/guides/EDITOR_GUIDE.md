@@ -62,6 +62,19 @@ The Scene Block Editor is a monolithic Python/tkinter application (8000+ lines) 
 
 **Result**: Scene block with shader timing from 0.0s to 10.0s.
 
+### Workflow 1b: Add Scene Layer Post Effects
+
+1. **Select a scene** in the timeline.
+2. In the Properties panel, open **Scene Layer Post Effects**.
+3. Add an effect and choose its type, amount, and optional curve assignments.
+4. Set the effect start/end using scene-local seconds. An end of `-1.0` uses the scene end. The row's `scene_start` and `scene_end` are absolute project times. Each packed effect's `start_time` and `end_time` remains scene-local, so the runtime subtracts `scene_start` before evaluating the stack belonging to the active scene interval.
+5. Save and preview the scene. The effect processes the completed scene layer, after its image, text, and mesh cues have been composited.
+
+Scene layer post effects belong to the scene, not to a cue. They therefore continue to apply
+for their authored scene window even if an individual cue ends. The next scene switches to its
+own stack at the scene boundary; effects do not carry across scenes unless they are authored in
+both scene stacks.
+
 ### Workflow 2: Add Shader to Scene
 
 1. **Select scene** in timeline
@@ -257,7 +270,8 @@ The Scene Block Editor is a monolithic Python/tkinter application (8000+ lines) 
 5. **Generate image_cues**: Export image overlays with timing
 6. **Generate text_cues**: Export text objects with effects
 7. **Generate music_cues**: Export XM references with timing
-8. **Write `assets/cues.txt`**: Single pipe-delimited text file
+8. **Generate scene_layer_post_effects**: Export scene-owned post-effect rows with absolute project timing
+9. **Write `assets/cues.txt`**: Single pipe-delimited text file
 
 ### cues.txt Format (excerpt)
 
@@ -280,7 +294,15 @@ order|shader_scene_id|start|end|fade_in|fade_out|implicit_end|layer_role|opacity
 [animated_sprite_cues]
 # sprite_name|frame_keys_csv|frame_paths_csv|x|y|scale|opacity|cue_start|cue_end|layer_order|effect_type|fade_in_start|fade_in_end|fade_out_start|fade_out_end|blend_mode|fps|playback_mode|start_frame|curve_x|curve_y|curve_scale|curve_opacity|curve_frame
 logo_burst|frame_00.png;frame_01.png;frame_02.png|Salute_assets/frame_00.png;Salute_assets/frame_01.png;Salute_assets/frame_02.png|0.50|0.50|1.00|1.00|2.00|6.00|1|0|0.00|0.00|0.00|0.00|0|12.00|0|0|-1|-1|-1|-1|-1
+
+[scene_layer_post_effects]
+# scene_start|scene_end|effect_count|type,enabled,order,intensity,threshold,radius,color_r,color_g,color_b,color_a,start_time,end_time,curve_intensity,curve_threshold,curve_radius,curve_color_r,curve_color_g,curve_color_b,curve_color_a,curve_amount,blend_mode...
+0.000|10.000|1|0,1,0,1.000,0.500,1.000,1.000,1.000,1.000,1.000,0.000,10.000,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0
 ```
+
+The row's `scene_start` and `scene_end` are absolute project times. Each packed effect's
+`start_time` and `end_time` remains scene-local, so the runtime subtracts `scene_start` before
+evaluating the stack belonging to the active scene interval.
 
 **Runtime** parses this at startup (no JSON parser needed).
 

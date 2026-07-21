@@ -194,6 +194,11 @@ No lib should link another lib unless it genuinely uses its types or functions.
     - derive eye/forward/up from the animated camera node world matrix (translation, `-Z`, `+Y`)
     - avoid fixed world-up assumptions for imported camera playback
     - evaluate one active animation track for node delta matrices (do not stack all tracks implicitly)
+- Preserve scene layer post-effect ownership in both runtime and preview:
+    - `SceneBlock.scene_layer_post_effects` is separate from cue-owned `LayerPostEffect` fields
+    - evaluate scene-owned effects against scene-local time in the editor and the matching scene interval at runtime
+    - export absolute scene bounds and scene-local effect times in `[scene_layer_post_effects]`
+    - use half-open scene intervals so the outgoing scene's effect stack is inactive at the exact incoming scene boundary
 
 ## Documentation Parity Rule
 

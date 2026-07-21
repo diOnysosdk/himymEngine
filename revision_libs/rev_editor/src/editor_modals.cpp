@@ -187,6 +187,7 @@ static void ShaderCueToAssetShader(const ShaderCue& source, AssetShader* target)
 void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int* effect_count,
                             bool* modified, const char* id_prefix, int cue_type, int cue_index) {
     if (!effects || !effect_count) return;
+    ImGui::PushID(id_prefix ? id_prefix : "layer_post_effects");
     static const char* names[] = {
         "HDR Rendering", "ACES Tone Mapping", "Bloom", "Vignette",
         "Color Grading", "Film Grain", "Blue Noise Dithering", "Exponential Fog",
@@ -196,8 +197,12 @@ void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int
     };
     static const char* blend_names[] = { "Alpha", "Additive", "Multiply", "Screen" };
     char label[96] = {};
-    snprintf(label, sizeof(label), "Layer Post Effects (%d)##%s", *effect_count, id_prefix);
-    if (!ImGui::CollapsingHeader(label)) return;
+    snprintf(label, sizeof(label), "Layer Post Effects (%d)##%s", *effect_count,
+             id_prefix ? id_prefix : "layer_post_effects");
+    if (!ImGui::CollapsingHeader(label)) {
+        ImGui::PopID();
+        return;
+    }
 
     static int new_type = PostEffectBloom;
     ImGui::SetNextItemWidth(220.0f);
@@ -272,6 +277,7 @@ void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int
         }
         ImGui::PopID();
     }
+    ImGui::PopID();
 }
 
 static void RenderAssetShaders(EditorContext* editor, AssetShader* shaders, int* shader_count,

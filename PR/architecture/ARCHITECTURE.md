@@ -316,6 +316,20 @@ Optional image overlay pass:
   centered transform from normalized x/y/scale
   alpha blend by cue opacity after active/effect/fade evaluation in scene-cycle time
 
+Scene-owned layer post effects:
+  each authored scene owns a fixed-size `scene_layer_post_effects` stack
+  the stack is evaluated after that scene's image/text/mesh layers have been composited
+  effect timing is scene-local, so `start_time` and `end_time` restart at each scene boundary
+  the editor preview and runtime apply the same active effect selection and curve evaluation
+  scene-owned effects are independent from cue-owned layer post effects, which remain attached
+  to individual image/text/mesh cues and end when their owning cue ends
+
+Persistence and export:
+  project JSON stores the stack in each scene's `scene_layer_post_effects` object
+  `ExportProject` writes one row per scene under `[scene_layer_post_effects]`
+  exported scene bounds are absolute project times; effect start/end values remain scene-local
+  runtime selects the active scene stack using half-open scene intervals `[start, end)`
+
 **Special case**: Image overlay rendering is skipped when shader scene ID 34 (`flag_wave`) is active, because that shader dynamically samples the image texture and applying the static overlay would cause double-rendering.
 ```
 

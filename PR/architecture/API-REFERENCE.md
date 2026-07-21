@@ -69,6 +69,28 @@ Indexed pixel cue contract (editor export + runtime):
 
 These additions keep runtime and preview behavior aligned for mixed textured + color-only glTF material slots.
 
+## Scene Layer Post-Effect Contract
+
+`SceneBlock` owns a fixed-size scene-level post-effect stack:
+
+- `scene_layer_post_effects[rev::runtime::kMaxLayerPostEffects]`
+- `scene_layer_post_effect_count`
+- The current maximum is `8` effects per scene.
+
+This stack is distinct from cue-owned `LayerPostEffect` data. Cue-owned effects follow an
+individual image, text, or mesh cue. Scene-owned effects process the completed scene layer
+and therefore remain active for the scene even when a particular cue ends.
+
+Authoring and runtime contract:
+
+- The editor exposes the stack as **Scene Layer Post Effects** in the selected scene's properties.
+- Effect timing is scene-local in the editor and restarts at local time `0` for every scene.
+- Curve references are stored with the scene effect and participate in normal curve usage/deletion tracking.
+- Project JSON stores the object as `scene_layer_post_effects` inside each scene.
+- `cues.txt` exports one row per scene in a dedicated `[scene_layer_post_effects]` section. The row's `scene_start|scene_end` bounds are absolute project times; each packed effect's `start_time|end_time` remains scene-local.
+- Runtime scene selection uses half-open intervals `[scene_start, scene_end)`, preventing the previous scene's stack from leaking into the next scene at an exact boundary.
+- Editor preview and `minimal_intro` must apply the same effect order, timing, curve values, and scene-boundary behavior.
+
 ---
 
 ## `app/profile_config.h`
