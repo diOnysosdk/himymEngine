@@ -12,6 +12,8 @@ target_include_directories(rev_xm PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/third_part
 
 target_include_directories(rev_xm PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/revision_libs/rev_runtime/include
+    ${CMAKE_SOURCE_DIR}/revision_libs/rev_curve/include
 )
 
 # Size optimization

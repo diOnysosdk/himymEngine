@@ -1550,6 +1550,7 @@ void RenderShaderModal(EditorContext* editor) {
         }
         
         ImGui::Separator();
+
         
         // Timing
         if (ImGui::CollapsingHeader("Timing", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1681,6 +1682,7 @@ void RenderMusicModal(EditorContext* editor) {
                 SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
                 if (scene && editor->selected_cue_index < scene->music_cue_count) {
                     scene->music_cues[editor->selected_cue_index] = *cue;
+                    UpdateEditorAudioEffects(editor);
                     editor->project->modified = true;
                 }
             }
@@ -1739,6 +1741,39 @@ void RenderMusicModal(EditorContext* editor) {
         if (ImGui::Button("Reload")) {
             ReloadEditorAssets(editor);
         }
+        
+        ImGui::Separator();
+
+        ImGui::Text("Overall Audio Effects");
+        bool gain_enabled = editor->project->audio_effects.gain_enabled != 0;
+        if (ImGui::Checkbox("Gain", &gain_enabled)) {
+            editor->project->audio_effects.gain_enabled = gain_enabled ? 1 : 0;
+            AutoSave();
+        }
+        if (ImGui::SliderFloat("Gain (dB)", &editor->project->audio_effects.gain_db, -24.0f, 24.0f)) AutoSave();
+        bool compressor_enabled = editor->project->audio_effects.compressor_enabled != 0;
+        if (ImGui::Checkbox("Compressor", &compressor_enabled)) {
+            editor->project->audio_effects.compressor_enabled = compressor_enabled ? 1 : 0;
+            AutoSave();
+        }
+        if (ImGui::SliderFloat("Threshold", &editor->project->audio_effects.compressor_threshold, 0.05f, 1.0f)) AutoSave();
+        if (ImGui::SliderFloat("Ratio", &editor->project->audio_effects.compressor_ratio, 1.0f, 20.0f)) AutoSave();
+        if (ImGui::SliderFloat("Attack (s)", &editor->project->audio_effects.compressor_attack, 0.001f, 1.0f)) AutoSave();
+        if (ImGui::SliderFloat("Release (s)", &editor->project->audio_effects.compressor_release, 0.005f, 2.0f)) AutoSave();
+        bool widener_enabled = editor->project->audio_effects.widener_enabled != 0;
+        if (ImGui::Checkbox("Widener", &widener_enabled)) {
+            editor->project->audio_effects.widener_enabled = widener_enabled ? 1 : 0;
+            AutoSave();
+        }
+        if (ImGui::SliderFloat("Width", &editor->project->audio_effects.widener_amount, 0.0f, 2.0f)) AutoSave();
+        bool eq_enabled = editor->project->audio_effects.eq_enabled != 0;
+        if (ImGui::Checkbox("EQ", &eq_enabled)) {
+            editor->project->audio_effects.eq_enabled = eq_enabled ? 1 : 0;
+            AutoSave();
+        }
+        if (ImGui::SliderFloat("EQ Low (dB)", &editor->project->audio_effects.eq_low_db, -18.0f, 18.0f)) AutoSave();
+        if (ImGui::SliderFloat("EQ Mid (dB)", &editor->project->audio_effects.eq_mid_db, -18.0f, 18.0f)) AutoSave();
+        if (ImGui::SliderFloat("EQ High (dB)", &editor->project->audio_effects.eq_high_db, -18.0f, 18.0f)) AutoSave();
         
         ImGui::Separator();
         

@@ -259,6 +259,13 @@ static void FillEditorAudioBuffer(EditorAudioState* state, float* output, int fr
     if (state->player) rev::xm::Update(state->player, output, frame_count);
 }
 
+void UpdateEditorAudioEffects(EditorContext* editor) {
+    EditorAudioState* state = editor ? (EditorAudioState*)editor->audio_state : nullptr;
+    if (!state || !editor->project) return;
+    std::lock_guard<std::mutex> lock(state->player_mutex);
+    if (state->player) rev::xm::SetAudioEffects(state->player, &editor->project->audio_effects);
+}
+
 static DWORD WINAPI EditorAudioThreadProc(LPVOID param) {
     EditorAudioState* state = (EditorAudioState*)param;
     WAVEFORMATEX format = {};
@@ -445,6 +452,7 @@ static bool ReplaceEditorMusic(EditorContext* editor, const MusicCue* cue, float
         !ReadEditorFile(path, &bytes)) return false;
     rev::xm::Player* replacement = rev::xm::CreatePlayer(bytes.data(), bytes.size());
     if (!replacement) return false;
+    rev::xm::SetAudioEffects(replacement, &editor->project->audio_effects);
 
     float offset = timeline_time - cue_start;
     if (offset < 0.0f) offset = 0.0f;
@@ -1150,6 +1158,12 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->project->loop_intro = false;
     editor->project->loop_music = false;
     editor->project->music_persist_across_scenes = false;
+    editor->project->audio_effects = {};
+    editor->project->audio_effects.compressor_threshold = 0.7f;
+    editor->project->audio_effects.compressor_ratio = 4.0f;
+    editor->project->audio_effects.compressor_attack = 0.01f;
+    editor->project->audio_effects.compressor_release = 0.12f;
+    editor->project->audio_effects.widener_amount = 1.0f;
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
@@ -1373,6 +1387,31 @@ bool LoadProject(EditorContext* editor, const char* path) {
             editor->project->music_persist_across_scenes = (bool_value != 0);
             continue;
         }
+        if (sscanf_s(start, "\"audio_gain_enabled\": %d", &bool_value) == 1) {
+            editor->project->audio_effects.gain_enabled = bool_value;
+            continue;
+        }
+        if (sscanf_s(start, "\"audio_gain_db\": %f", &editor->project->audio_effects.gain_db) == 1) continue;
+        if (sscanf_s(start, "\"audio_compressor_enabled\": %d", &bool_value) == 1) {
+            editor->project->audio_effects.compressor_enabled = bool_value;
+            continue;
+        }
+        if (sscanf_s(start, "\"audio_compressor_threshold\": %f", &editor->project->audio_effects.compressor_threshold) == 1) continue;
+        if (sscanf_s(start, "\"audio_compressor_ratio\": %f", &editor->project->audio_effects.compressor_ratio) == 1) continue;
+        if (sscanf_s(start, "\"audio_compressor_attack\": %f", &editor->project->audio_effects.compressor_attack) == 1) continue;
+        if (sscanf_s(start, "\"audio_compressor_release\": %f", &editor->project->audio_effects.compressor_release) == 1) continue;
+        if (sscanf_s(start, "\"audio_widener_enabled\": %d", &bool_value) == 1) {
+            editor->project->audio_effects.widener_enabled = bool_value;
+            continue;
+        }
+        if (sscanf_s(start, "\"audio_widener_amount\": %f", &editor->project->audio_effects.widener_amount) == 1) continue;
+        if (sscanf_s(start, "\"audio_eq_enabled\": %d", &bool_value) == 1) {
+            editor->project->audio_effects.eq_enabled = bool_value;
+            continue;
+        }
+        if (sscanf_s(start, "\"audio_eq_low_db\": %f", &editor->project->audio_effects.eq_low_db) == 1) continue;
+        if (sscanf_s(start, "\"audio_eq_mid_db\": %f", &editor->project->audio_effects.eq_mid_db) == 1) continue;
+        if (sscanf_s(start, "\"audio_eq_high_db\": %f", &editor->project->audio_effects.eq_high_db) == 1) continue;
         
         // Detect sections
         if (strstr(start, "\"scenes\":")) {
@@ -2739,6 +2778,19 @@ bool SaveProject(EditorContext* editor, const char* path) {
     fprintf(f, "  \"loop_intro\": %d,\n", editor->project->loop_intro ? 1 : 0);
     fprintf(f, "  \"loop_music\": %d,\n", editor->project->loop_music ? 1 : 0);
     fprintf(f, "  \"music_persist_across_scenes\": %d,\n", editor->project->music_persist_across_scenes ? 1 : 0);
+    fprintf(f, "  \"audio_gain_enabled\": %d,\n", editor->project->audio_effects.gain_enabled);
+    fprintf(f, "  \"audio_gain_db\": %.3f,\n", editor->project->audio_effects.gain_db);
+    fprintf(f, "  \"audio_compressor_enabled\": %d,\n", editor->project->audio_effects.compressor_enabled);
+    fprintf(f, "  \"audio_compressor_threshold\": %.3f,\n", editor->project->audio_effects.compressor_threshold);
+    fprintf(f, "  \"audio_compressor_ratio\": %.3f,\n", editor->project->audio_effects.compressor_ratio);
+    fprintf(f, "  \"audio_compressor_attack\": %.3f,\n", editor->project->audio_effects.compressor_attack);
+    fprintf(f, "  \"audio_compressor_release\": %.3f,\n", editor->project->audio_effects.compressor_release);
+    fprintf(f, "  \"audio_widener_enabled\": %d,\n", editor->project->audio_effects.widener_enabled);
+    fprintf(f, "  \"audio_widener_amount\": %.3f,\n", editor->project->audio_effects.widener_amount);
+    fprintf(f, "  \"audio_eq_enabled\": %d,\n", editor->project->audio_effects.eq_enabled);
+    fprintf(f, "  \"audio_eq_low_db\": %.3f,\n", editor->project->audio_effects.eq_low_db);
+    fprintf(f, "  \"audio_eq_mid_db\": %.3f,\n", editor->project->audio_effects.eq_mid_db);
+    fprintf(f, "  \"audio_eq_high_db\": %.3f,\n", editor->project->audio_effects.eq_high_db);
     fprintf(f, "  \"scenes\": [\n");
     
     // Save scenes
@@ -3302,6 +3354,11 @@ bool NewProject(EditorContext* editor) {
     if (!editor) return false;
 
     ResetEditorAudio(editor);
+    editor->project->audio_effects.compressor_threshold = 0.7f;
+    editor->project->audio_effects.compressor_ratio = 4.0f;
+    editor->project->audio_effects.compressor_attack = 0.01f;
+    editor->project->audio_effects.compressor_release = 0.12f;
+    editor->project->audio_effects.widener_amount = 1.0f;
     
     // Clean up existing scenes
     for (int i = 0; i < editor->project->scene_count; ++i) {
@@ -3724,6 +3781,12 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     int intro_loop_setting = 0;
     int music_loop_setting = 0;
     int music_persist_setting = 0;
+    AudioEffects audio_effects = {};
+    audio_effects.compressor_threshold = 0.7f;
+    audio_effects.compressor_ratio = 4.0f;
+    audio_effects.compressor_attack = 0.01f;
+    audio_effects.compressor_release = 0.12f;
+    audio_effects.widener_amount = 1.0f;
     
     while (fgets(line, sizeof(line), f)) {
         // Trim whitespace
@@ -3754,6 +3817,19 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
                 // parsed below
             } else if (sscanf_s(start, "music_persist=%d", &music_persist_setting) == 1) {
                 // parsed below
+            } else if (sscanf_s(start, "audio_gain_enabled=%d", &audio_effects.gain_enabled) == 1) {
+            } else if (sscanf_s(start, "audio_gain_db=%f", &audio_effects.gain_db) == 1) {
+            } else if (sscanf_s(start, "audio_compressor_enabled=%d", &audio_effects.compressor_enabled) == 1) {
+            } else if (sscanf_s(start, "audio_compressor_threshold=%f", &audio_effects.compressor_threshold) == 1) {
+            } else if (sscanf_s(start, "audio_compressor_ratio=%f", &audio_effects.compressor_ratio) == 1) {
+            } else if (sscanf_s(start, "audio_compressor_attack=%f", &audio_effects.compressor_attack) == 1) {
+            } else if (sscanf_s(start, "audio_compressor_release=%f", &audio_effects.compressor_release) == 1) {
+            } else if (sscanf_s(start, "audio_widener_enabled=%d", &audio_effects.widener_enabled) == 1) {
+            } else if (sscanf_s(start, "audio_widener_amount=%f", &audio_effects.widener_amount) == 1) {
+            } else if (sscanf_s(start, "audio_eq_enabled=%d", &audio_effects.eq_enabled) == 1) {
+            } else if (sscanf_s(start, "audio_eq_low_db=%f", &audio_effects.eq_low_db) == 1) {
+            } else if (sscanf_s(start, "audio_eq_mid_db=%f", &audio_effects.eq_mid_db) == 1) {
+            } else if (sscanf_s(start, "audio_eq_high_db=%f", &audio_effects.eq_high_db) == 1) {
             }
             continue;
         }
@@ -4245,6 +4321,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         editor->project->loop_intro = (intro_loop_setting != 0);
         editor->project->loop_music = (music_loop_setting != 0);
         editor->project->music_persist_across_scenes = (music_persist_setting != 0);
+        editor->project->audio_effects = audio_effects;
     }
     
     printf("[ImportFromCues] Import complete!\n");
@@ -4932,6 +5009,19 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     fprintf(f, "intro_loop=%d\n", editor->project->loop_intro ? 1 : 0);
     fprintf(f, "music_loop=%d\n", editor->project->loop_music ? 1 : 0);
     fprintf(f, "music_persist=%d\n", editor->project->music_persist_across_scenes ? 1 : 0);
+    fprintf(f, "audio_gain_enabled=%d\n", editor->project->audio_effects.gain_enabled);
+    fprintf(f, "audio_gain_db=%.3f\n", editor->project->audio_effects.gain_db);
+    fprintf(f, "audio_compressor_enabled=%d\n", editor->project->audio_effects.compressor_enabled);
+    fprintf(f, "audio_compressor_threshold=%.3f\n", editor->project->audio_effects.compressor_threshold);
+    fprintf(f, "audio_compressor_ratio=%.3f\n", editor->project->audio_effects.compressor_ratio);
+    fprintf(f, "audio_compressor_attack=%.3f\n", editor->project->audio_effects.compressor_attack);
+    fprintf(f, "audio_compressor_release=%.3f\n", editor->project->audio_effects.compressor_release);
+    fprintf(f, "audio_widener_enabled=%d\n", editor->project->audio_effects.widener_enabled);
+    fprintf(f, "audio_widener_amount=%.3f\n", editor->project->audio_effects.widener_amount);
+    fprintf(f, "audio_eq_enabled=%d\n", editor->project->audio_effects.eq_enabled);
+    fprintf(f, "audio_eq_low_db=%.3f\n", editor->project->audio_effects.eq_low_db);
+    fprintf(f, "audio_eq_mid_db=%.3f\n", editor->project->audio_effects.eq_mid_db);
+    fprintf(f, "audio_eq_high_db=%.3f\n", editor->project->audio_effects.eq_high_db);
     
     fclose(f);
     return true;

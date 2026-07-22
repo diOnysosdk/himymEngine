@@ -102,6 +102,24 @@ void   SleepMilliseconds(uint32_t milliseconds);       // Win32 Sleep wrapper fo
 
 ## `audio/module_music.h`
 
+### Global music effects
+The editor stores one project-wide effect chain. Every stage is optional and
+is bypassed by default for backward compatibility:
+
+```cpp
+struct AudioEffects {
+    int gain_enabled; float gain_db;
+    int compressor_enabled; float compressor_threshold; float compressor_ratio;
+    float compressor_attack; float compressor_release;
+    int widener_enabled; float widener_amount;
+    int eq_enabled; float eq_low_db; float eq_mid_db; float eq_high_db;
+};
+```
+
+Attack/release are stored in seconds on the compressor. The complete values
+are exported in the `[metadata]` section as `audio_*` keys. Music cue rows
+remain unchanged and do not carry effect timing.
+
 ### `struct MusicState`
 | Field | Type | Description |
 |---|---|---|

@@ -18,6 +18,7 @@ using rev::runtime::PixelEmitterCue;
 using rev::runtime::TextCue;
 using rev::runtime::ScrollTextCue;
 using rev::runtime::MusicCue;
+using rev::runtime::AudioEffects;
 using rev::runtime::MeshCue;
 using rev::runtime::LayerPostEffect;
 using rev::runtime::AssetShader;
@@ -248,6 +249,7 @@ struct ProjectData {
     bool  loop_intro;           // true = restart timeline when reaching end
     bool  loop_music;           // true = loop active XM cue playback
     bool  music_persist_across_scenes; // true = keep current track across scene cuts unless a different cue track becomes active
+    AudioEffects audio_effects;
 };
 
 // Editor context (opaque handle)

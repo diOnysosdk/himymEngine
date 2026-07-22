@@ -11,6 +11,7 @@ namespace editor {
 
 // Helper functions (editor_context.cpp)
 uint64_t GetFileModificationTime(const char* path);
+void UpdateEditorAudioEffects(EditorContext* editor);
 
 // UI Panel Functions (editor_panels.cpp)
 void RenderTimeline(EditorContext* editor);

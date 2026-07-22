@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <mutex>
+#include "rev_runtime.h"
 
 namespace rev {
 namespace xm {
@@ -12,6 +13,10 @@ struct Player {
     float* buffer;
     int sample_rate;
     int buffer_size;
+    rev::runtime::AudioEffects effects;
+    float compressor_gain;
+    float eq_low[2];
+    float eq_high[2];
     std::mutex mutex;
 };
 
@@ -21,6 +26,7 @@ void DestroyPlayer(Player* player);
 
 // Playback
 void Update(Player* player, float* output, int frame_count);
+void SetAudioEffects(Player* player, const rev::runtime::AudioEffects* effects);
 void SetPosition(Player* player, int pattern, int row);
 int GetPosition(Player* player);
 bool IsFinished(Player* player);

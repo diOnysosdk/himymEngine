@@ -1429,6 +1429,7 @@ struct RuntimePlaybackSettings {
     bool intro_loop;
     bool music_loop;
     bool music_persist_across_scenes;
+    rev::runtime::AudioEffects audio_effects;
 };
 
 bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* settings) {
@@ -1437,6 +1438,11 @@ bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* sett
     settings->intro_loop = false;
     settings->music_loop = false;
     settings->music_persist_across_scenes = false;
+    settings->audio_effects.compressor_threshold = 0.7f;
+    settings->audio_effects.compressor_ratio = 4.0f;
+    settings->audio_effects.compressor_attack = 0.01f;
+    settings->audio_effects.compressor_release = 0.12f;
+    settings->audio_effects.widener_amount = 1.0f;
 
     FILE* f = nullptr;
     fopen_s(&f, path, "r");
@@ -1472,6 +1478,32 @@ bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* sett
             found = true;
         } else if (sscanf_s(s, "music_persist=%d", &bool_value) == 1) {
             settings->music_persist_across_scenes = (bool_value != 0);
+            found = true;
+        } else if (sscanf_s(s, "audio_gain_enabled=%d", &settings->audio_effects.gain_enabled) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_gain_db=%f", &settings->audio_effects.gain_db) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_compressor_enabled=%d", &settings->audio_effects.compressor_enabled) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_compressor_threshold=%f", &settings->audio_effects.compressor_threshold) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_compressor_ratio=%f", &settings->audio_effects.compressor_ratio) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_compressor_attack=%f", &settings->audio_effects.compressor_attack) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_compressor_release=%f", &settings->audio_effects.compressor_release) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_widener_enabled=%d", &settings->audio_effects.widener_enabled) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_widener_amount=%f", &settings->audio_effects.widener_amount) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_eq_enabled=%d", &settings->audio_effects.eq_enabled) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_eq_low_db=%f", &settings->audio_effects.eq_low_db) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_eq_mid_db=%f", &settings->audio_effects.eq_mid_db) == 1) {
+            found = true;
+        } else if (sscanf_s(s, "audio_eq_high_db=%f", &settings->audio_effects.eq_high_db) == 1) {
             found = true;
         }
     }
@@ -2859,6 +2891,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 #endif
 
         if (player) {
+            rev::xm::SetAudioEffects(player, &playback_settings.audio_effects);
             music_players[loaded_music_player_count].cue = cue;
             music_players[loaded_music_player_count].player = player;
             ++loaded_music_player_count;

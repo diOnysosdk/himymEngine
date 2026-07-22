@@ -11,6 +11,22 @@
 namespace rev {
 namespace runtime {
 
+struct AudioEffects {
+    int gain_enabled;
+    float gain_db;
+    int compressor_enabled;
+    float compressor_threshold;
+    float compressor_ratio;
+    float compressor_attack;
+    float compressor_release;
+    int widener_enabled;
+    float widener_amount;
+    int eq_enabled;
+    float eq_low_db;
+    float eq_mid_db;
+    float eq_high_db;
+};
+
 constexpr int kMaxCurves = 128;
 constexpr int kMaxLayerPostEffects = 8;
 constexpr int kMaxAssetShaders = 4;
