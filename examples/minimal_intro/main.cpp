@@ -1429,6 +1429,8 @@ struct RuntimePlaybackSettings {
     bool intro_loop;
     bool music_loop;
     bool music_persist_across_scenes;
+    bool runtime_fullscreen;
+    char runtime_title[128];
     rev::runtime::AudioEffects audio_effects;
 };
 
@@ -1438,6 +1440,8 @@ bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* sett
     settings->intro_loop = false;
     settings->music_loop = false;
     settings->music_persist_across_scenes = false;
+    settings->runtime_fullscreen = true;
+    strncpy_s(settings->runtime_title, sizeof(settings->runtime_title), "HiMYM - Minimal Intro Test", _TRUNCATE);
     settings->audio_effects.compressor_threshold = 0.7f;
     settings->audio_effects.compressor_ratio = 4.0f;
     settings->audio_effects.compressor_attack = 0.01f;
@@ -1478,6 +1482,16 @@ bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* sett
             found = true;
         } else if (sscanf_s(s, "music_persist=%d", &bool_value) == 1) {
             settings->music_persist_across_scenes = (bool_value != 0);
+            found = true;
+        } else if (sscanf_s(s, "runtime_fullscreen=%d", &bool_value) == 1) {
+            settings->runtime_fullscreen = (bool_value != 0);
+            found = true;
+        } else if (strncmp(s, "runtime_title=", 14) == 0) {
+            char* title = s + 14;
+            size_t title_len = strcspn(title, "\r\n");
+            if (title_len >= sizeof(settings->runtime_title)) title_len = sizeof(settings->runtime_title) - 1;
+            memcpy(settings->runtime_title, title, title_len);
+            settings->runtime_title[title_len] = '\0';
             found = true;
         } else if (sscanf_s(s, "audio_gain_enabled=%d", &settings->audio_effects.gain_enabled) == 1) {
             found = true;
@@ -2030,6 +2044,12 @@ static void ExtractCsvItemByIndex(const char* csv, int index, char* out, size_t 
 
 
 int main(int argc, char* argv[]) {
+    bool screen_saver_mode = false;
+    for (int i = 1; i < argc; ++i) {
+        if (_stricmp(argv[i], "/s") == 0 || _stricmp(argv[i], "-s") == 0) {
+            screen_saver_mode = true;
+        }
+    }
     // Pick runtime CWD from the executable location so both layouts work:
     // - build/bin/Release/minimal_intro.exe  -> workspace root
     // - <project>/bin/Release/minimal_intro.exe -> project root
@@ -2382,8 +2402,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     rev::platform::WindowConfig config;
     config.width = 1920;
     config.height = 1080;
-    config.fullscreen = true;
-    config.title = "HiMYM - Minimal Intro Test";
+    config.fullscreen = playback_settings.runtime_fullscreen || screen_saver_mode;
+    config.title = playback_settings.runtime_title;
     
     rev::platform::Window* window = rev::platform::CreateIntroWindow(config);
     if (!window) {
@@ -3500,6 +3520,29 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         float time = static_cast<float>(current_time - start_time);
         float dt = static_cast<float>(current_time - prev_time);
         prev_time = current_time;
+
+        // Wrap before cue selection and rendering. Rendering once at a time past
+        // the final cue produces a blank frame at the loop boundary.
+        if (playback_settings.intro_loop && total_duration > 0.0f && time >= total_duration) {
+            float wrapped_time = fmodf(time, total_duration);
+            start_time = current_time - wrapped_time;
+            time = wrapped_time;
+            prev_time = current_time;
+
+            // Keep currently playing music continuous across timeline wraps when
+            // music looping is enabled; otherwise reset it to cue starts.
+            if (!playback_settings.music_loop) {
+                active_music_index = -1;
+                if (audio_state) {
+                    for (int mi = 0; mi < loaded_music_player_count; ++mi) {
+                        if (music_players[mi].player) {
+                            rev::xm::SetPosition(music_players[mi].player, 0, 0);
+                        }
+                    }
+                    audio_state->player.store(nullptr, std::memory_order_release);
+                }
+            }
+        }
 
         if (audio_state && loaded_music_player_count > 0) {
             int new_music_index = -1;
@@ -5599,34 +5642,6 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             break;
         }
         if (time > total_duration) {
-            if (playback_settings.intro_loop) {
-                start_time = current_time;
-                prev_time = current_time;
-                // Explicitly reset curve evaluation state for next loop pass
-                // This ensures shader curves and all animated parameters restart correctly
-                for (int c = 0; c < curve_count; ++c) {
-                    rev::curve::Curve& curve = curves[c];
-                    // Curves are stateless, so no explicit reset needed,
-                    // but re-evaluate at t=0 to ensure first frame renders correctly
-                }
-                // Clear depth buffer immediately to avoid visual artifacts on loop wrap
-                glDepthMask(GL_TRUE);
-                glClear(GL_DEPTH_BUFFER_BIT);
-                // Keep currently playing music continuous across timeline wraps when
-                // music looping is enabled; otherwise reset to cue starts.
-                if (!playback_settings.music_loop) {
-                    active_music_index = -1;
-                    if (audio_state) {
-                        for (int mi = 0; mi < loaded_music_player_count; ++mi) {
-                            if (music_players[mi].player) {
-                                rev::xm::SetPosition(music_players[mi].player, 0, 0);
-                            }
-                        }
-                        audio_state->player.store(nullptr, std::memory_order_release);
-                    }
-                }
-                continue;
-            }
             break;
         }
 

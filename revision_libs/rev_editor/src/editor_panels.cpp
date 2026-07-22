@@ -657,6 +657,21 @@ void RenderProperties(EditorContext* editor) {
     if (!editor || !editor->project) return;
     
     if (ImGui::Begin("Properties", &editor->show_properties)) {
+        ImGui::Text("Runtime");
+        ImGui::Separator();
+        bool runtime_fullscreen = editor->project->runtime_fullscreen;
+        if (ImGui::Checkbox("Fullscreen", &runtime_fullscreen)) {
+            editor->project->runtime_fullscreen = runtime_fullscreen;
+            editor->project->modified = true;
+        }
+        char runtime_title[128] = {};
+        strncpy_s(runtime_title, sizeof(runtime_title), editor->project->runtime_title, _TRUNCATE);
+        if (ImGui::InputText("Title", runtime_title, sizeof(runtime_title))) {
+            strncpy_s(editor->project->runtime_title, sizeof(editor->project->runtime_title), runtime_title, _TRUNCATE);
+            editor->project->modified = true;
+        }
+        ImGui::Separator();
+
         if (editor->selected_scene_index >= 0 && 
             editor->selected_scene_index < editor->project->scene_count) {
             SceneBlock* scene = &editor->project->scenes[editor->selected_scene_index];

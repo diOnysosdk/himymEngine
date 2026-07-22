@@ -1176,6 +1176,8 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->project->loop_intro = false;
     editor->project->loop_music = false;
     editor->project->music_persist_across_scenes = false;
+    editor->project->runtime_fullscreen = true;
+    strncpy_s(editor->project->runtime_title, sizeof(editor->project->runtime_title), "HiMYM - Minimal Intro Test", _TRUNCATE);
     editor->project->audio_effects = {};
     editor->project->audio_effects.compressor_threshold = 0.7f;
     editor->project->audio_effects.compressor_ratio = 4.0f;
@@ -1473,6 +1475,15 @@ bool LoadProject(EditorContext* editor, const char* path) {
         }
         if (sscanf_s(start, "\"music_persist_across_scenes\": %d", &bool_value) == 1) {
             editor->project->music_persist_across_scenes = (bool_value != 0);
+            continue;
+        }
+        if (sscanf_s(start, "\"runtime_fullscreen\": %d", &bool_value) == 1) {
+            editor->project->runtime_fullscreen = (bool_value != 0);
+            continue;
+        }
+        if (strstr(start, "\"runtime_title\":")) {
+            ParseJsonStringValue(start, editor->project->runtime_title,
+                                 sizeof(editor->project->runtime_title));
             continue;
         }
         if (sscanf_s(start, "\"audio_gain_enabled\": %d", &bool_value) == 1) {
@@ -2868,6 +2879,10 @@ bool SaveProject(EditorContext* editor, const char* path) {
     fprintf(f, "  \"loop_intro\": %d,\n", editor->project->loop_intro ? 1 : 0);
     fprintf(f, "  \"loop_music\": %d,\n", editor->project->loop_music ? 1 : 0);
     fprintf(f, "  \"music_persist_across_scenes\": %d,\n", editor->project->music_persist_across_scenes ? 1 : 0);
+    char escaped_runtime_title[256] = {};
+    JsonEscapeString(editor->project->runtime_title, escaped_runtime_title, sizeof(escaped_runtime_title));
+    fprintf(f, "  \"runtime_fullscreen\": %d,\n", editor->project->runtime_fullscreen ? 1 : 0);
+    fprintf(f, "  \"runtime_title\": \"%s\",\n", escaped_runtime_title);
     fprintf(f, "  \"audio_gain_enabled\": %d,\n", editor->project->audio_effects.gain_enabled);
     fprintf(f, "  \"audio_gain_db\": %.3f,\n", editor->project->audio_effects.gain_db);
     fprintf(f, "  \"audio_compressor_enabled\": %d,\n", editor->project->audio_effects.compressor_enabled);
@@ -3481,6 +3496,8 @@ bool NewProject(EditorContext* editor) {
     editor->project->loop_intro = false;
     editor->project->loop_music = false;
     editor->project->music_persist_across_scenes = false;
+    editor->project->runtime_fullscreen = true;
+    strncpy_s(editor->project->runtime_title, sizeof(editor->project->runtime_title), "HiMYM - Minimal Intro Test", _TRUNCATE);
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
@@ -3999,6 +4016,9 @@ void RenderMenuBar(EditorContext* editor) {
             if (ImGui::MenuItem("Pack, Build and Run")) {
                 PackBuildAndRun(editor);
             }
+            if (ImGui::MenuItem("Build Screen Saver (.scr)")) {
+                BuildScreenSaver(editor);
+            }
             ImGui::EndMenu();
         }
         
@@ -4028,6 +4048,8 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     int intro_loop_setting = 0;
     int music_loop_setting = 0;
     int music_persist_setting = 0;
+    int runtime_fullscreen_setting = 1;
+    char runtime_title_setting[128] = "HiMYM - Minimal Intro Test";
     AudioEffects audio_effects = {};
     audio_effects.compressor_threshold = 0.7f;
     audio_effects.compressor_ratio = 4.0f;
@@ -4064,6 +4086,12 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
                 // parsed below
             } else if (sscanf_s(start, "music_persist=%d", &music_persist_setting) == 1) {
                 // parsed below
+            } else if (sscanf_s(start, "runtime_fullscreen=%d", &runtime_fullscreen_setting) == 1) {
+                // parsed below
+            } else if (strncmp(start, "runtime_title=", 14) == 0) {
+                strncpy_s(runtime_title_setting, sizeof(runtime_title_setting), start + 14, _TRUNCATE);
+                size_t title_len = strcspn(runtime_title_setting, "\r\n");
+                runtime_title_setting[title_len] = '\0';
             } else if (sscanf_s(start, "audio_gain_enabled=%d", &audio_effects.gain_enabled) == 1) {
             } else if (sscanf_s(start, "audio_gain_db=%f", &audio_effects.gain_db) == 1) {
             } else if (sscanf_s(start, "audio_compressor_enabled=%d", &audio_effects.compressor_enabled) == 1) {
@@ -4568,6 +4596,8 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         editor->project->loop_intro = (intro_loop_setting != 0);
         editor->project->loop_music = (music_loop_setting != 0);
         editor->project->music_persist_across_scenes = (music_persist_setting != 0);
+        editor->project->runtime_fullscreen = (runtime_fullscreen_setting != 0);
+        strncpy_s(editor->project->runtime_title, sizeof(editor->project->runtime_title), runtime_title_setting, _TRUNCATE);
         editor->project->audio_effects = audio_effects;
     }
     
@@ -5256,6 +5286,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     fprintf(f, "intro_loop=%d\n", editor->project->loop_intro ? 1 : 0);
     fprintf(f, "music_loop=%d\n", editor->project->loop_music ? 1 : 0);
     fprintf(f, "music_persist=%d\n", editor->project->music_persist_across_scenes ? 1 : 0);
+    fprintf(f, "runtime_fullscreen=%d\n", editor->project->runtime_fullscreen ? 1 : 0);
+    fprintf(f, "runtime_title=%s\n", editor->project->runtime_title);
     fprintf(f, "audio_gain_enabled=%d\n", editor->project->audio_effects.gain_enabled);
     fprintf(f, "audio_gain_db=%.3f\n", editor->project->audio_effects.gain_db);
     fprintf(f, "audio_compressor_enabled=%d\n", editor->project->audio_effects.compressor_enabled);
@@ -5611,6 +5643,37 @@ bool PackBuildAndRun(EditorContext* editor) {
     }
 
     return (run_result == 0);
+}
+
+bool BuildScreenSaver(EditorContext* editor) {
+    if (!editor) return false;
+
+    if (!PackBuildAndRun(editor)) return false;
+
+    char release_dir[512] = {};
+    if (!EnsureProjectOutputReleaseDir(editor, release_dir, sizeof(release_dir))) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                  "Could not locate project output folder.", _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+        return false;
+    }
+
+    char packed_path[512] = {};
+    char screen_saver_path[512] = {};
+    snprintf(packed_path, sizeof(packed_path), "%s\\minimal_intro_packed.exe", release_dir);
+    snprintf(screen_saver_path, sizeof(screen_saver_path), "%s\\minimal_intro.scr", release_dir);
+    if (!CopyFileA(packed_path, screen_saver_path, FALSE)) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                  "Screen saver copy failed.", _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+        return false;
+    }
+
+    printf("Screen saver created: %s\n", screen_saver_path);
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+              "Screen saver created (.scr).", _TRUNCATE);
+    editor->build_status_timer = 8.0f;
+    return true;
 }
 
 // ===== Scene Management =====
