@@ -1125,6 +1125,24 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+    static char imgui_ini_path[MAX_PATH] = {};
+    char module_path[MAX_PATH] = {};
+    DWORD module_path_length = GetModuleFileNameA(NULL, module_path, sizeof(module_path));
+    if (module_path_length > 0 && module_path_length < sizeof(module_path)) {
+        char* separator = strrchr(module_path, '\\');
+        if (separator) {
+            *separator = '\0';
+            snprintf(imgui_ini_path, sizeof(imgui_ini_path), "%s\\imgui.ini", module_path);
+            if (!FileExists(imgui_ini_path)) {
+                char workspace_ini_path[MAX_PATH] = {};
+                snprintf(workspace_ini_path, sizeof(workspace_ini_path), "%s\\imgui.ini", editor->startup_dir);
+                if (FileExists(workspace_ini_path)) {
+                    CopyFileA(workspace_ini_path, imgui_ini_path, TRUE);
+                }
+            }
+            io.IniFilename = imgui_ini_path;
+        }
+    }
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     
@@ -1230,6 +1248,76 @@ void DestroyEditor(EditorContext* editor) {
     ImGui::DestroyContext();
     
     delete editor;
+}
+
+static void RebaseProjectAssetPath(char* path, size_t path_size, const char* assets_path) {
+    if (!path || path_size == 0 || !path[0] || !assets_path || !assets_path[0]) return;
+
+    const char* filename = strrchr(path, '\\');
+    const char* slash = strrchr(path, '/');
+    if (slash && (!filename || slash > filename)) filename = slash;
+    filename = filename ? filename + 1 : path;
+    if (!filename[0]) return;
+
+    char local_path[512] = {};
+    snprintf(local_path, sizeof(local_path), "%s\\%s", assets_path, filename);
+    if (FileExists(local_path) &&
+        (strchr(path, ':') || path[0] == '\\' || path[0] == '/')) {
+        strncpy_s(path, path_size, local_path, _TRUNCATE);
+    }
+}
+
+static void RebaseProjectAssetList(char* paths, size_t paths_size, const char* assets_path) {
+    if (!paths || !paths[0]) return;
+    char copy[8192] = {};
+    strncpy_s(copy, sizeof(copy), paths, _TRUNCATE);
+    paths[0] = '\0';
+
+    char* context = nullptr;
+    for (char* token = strtok_s(copy, ";", &context); token; token = strtok_s(nullptr, ";", &context)) {
+        char rebased[512] = {};
+        strncpy_s(rebased, sizeof(rebased), token, _TRUNCATE);
+        RebaseProjectAssetPath(rebased, sizeof(rebased), assets_path);
+        if (paths[0]) strncat_s(paths, paths_size, ";", _TRUNCATE);
+        strncat_s(paths, paths_size, rebased, _TRUNCATE);
+    }
+}
+
+static void RebaseLoadedProjectAssets(ProjectData* project) {
+    if (!project || !project->assets_path[0]) return;
+    for (int scene_index = 0; scene_index < project->scene_count; ++scene_index) {
+        SceneBlock* scene = &project->scenes[scene_index];
+        for (int i = 0; i < scene->shader_cue_count; ++i) {
+            for (int map = 0; map < 4; ++map)
+                RebaseProjectAssetPath(scene->shader_cues[i].noise_textures.paths[map],
+                                       sizeof(scene->shader_cues[i].noise_textures.paths[map]), project->assets_path);
+        }
+        for (int i = 0; i < scene->image_cue_count; ++i)
+            RebaseProjectAssetPath(scene->image_cues[i].asset_path, sizeof(scene->image_cues[i].asset_path), project->assets_path);
+        for (int i = 0; i < scene->animated_sprite_cue_count; ++i)
+            RebaseProjectAssetList(scene->animated_sprite_cues[i].frame_paths_csv,
+                                   sizeof(scene->animated_sprite_cues[i].frame_paths_csv), project->assets_path);
+        for (int i = 0; i < scene->pixel_cue_count; ++i)
+            RebaseProjectAssetPath(scene->pixel_cues[i].asset_path, sizeof(scene->pixel_cues[i].asset_path), project->assets_path);
+        for (int i = 0; i < scene->pixel_emitter_cue_count; ++i)
+            RebaseProjectAssetPath(scene->pixel_emitter_cues[i].asset_path, sizeof(scene->pixel_emitter_cues[i].asset_path), project->assets_path);
+        for (int i = 0; i < scene->text_cue_count; ++i) {
+            TextCue* cue = &scene->text_cues[i];
+            RebaseProjectAssetPath(cue->baked_asset_path, sizeof(cue->baked_asset_path), project->assets_path);
+            RebaseProjectAssetPath(cue->glyph_atlas_path, sizeof(cue->glyph_atlas_path), project->assets_path);
+            RebaseProjectAssetPath(cue->glyph_meta_path, sizeof(cue->glyph_meta_path), project->assets_path);
+        }
+        for (int i = 0; i < scene->scroll_text_cue_count; ++i) {
+            ScrollTextCue* cue = &scene->scroll_text_cues[i];
+            RebaseProjectAssetPath(cue->baked_asset_path, sizeof(cue->baked_asset_path), project->assets_path);
+            RebaseProjectAssetPath(cue->glyph_atlas_path, sizeof(cue->glyph_atlas_path), project->assets_path);
+            RebaseProjectAssetPath(cue->glyph_meta_path, sizeof(cue->glyph_meta_path), project->assets_path);
+        }
+        for (int i = 0; i < scene->music_cue_count; ++i)
+            RebaseProjectAssetPath(scene->music_cues[i].asset_path, sizeof(scene->music_cues[i].asset_path), project->assets_path);
+        for (int i = 0; i < scene->mesh_cue_count; ++i)
+            RebaseProjectAssetPath(scene->mesh_cues[i].asset_path, sizeof(scene->mesh_cues[i].asset_path), project->assets_path);
+    }
 }
 
 bool LoadProject(EditorContext* editor, const char* path) {
@@ -2582,6 +2670,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
     CreateDirectoryA(editor->project->assets_path, NULL);
     
     printf("[LoadProject] Assets path set to: %s\n", editor->project->assets_path);
+
+    RebaseLoadedProjectAssets(editor->project);
     
     editor->project->modified = false;
     
@@ -3621,6 +3711,148 @@ static bool GetProjectCuesPath(EditorContext* editor, char* out, size_t out_size
     return true;
 }
 
+static const char* AssetFileName(const char* path) {
+    if (!path) return "";
+    const char* slash = strrchr(path, '/');
+    const char* backslash = strrchr(path, '\\');
+    if (backslash && (!slash || backslash > slash)) slash = backslash;
+    return slash ? slash + 1 : path;
+}
+
+static bool AssetNameMatches(const char* file_name, const char* reference) {
+    return file_name && file_name[0] && reference && reference[0] &&
+           _stricmp(file_name, AssetFileName(reference)) == 0;
+}
+
+static bool ResolveProjectMeshPath(const ProjectData* project, const MeshCue* cue,
+                                   char* out_path, size_t out_size) {
+    if (!project || !cue || !out_path || out_size == 0) return false;
+    out_path[0] = '\0';
+    const char* candidates[3] = {cue->asset_path, nullptr, nullptr};
+    char workspace_path[512] = {};
+    char asset_path[512] = {};
+    if (project->workspace_path[0] && cue->asset_path[0]) {
+        snprintf(workspace_path, sizeof(workspace_path), "%s\\%s",
+                 project->workspace_path, cue->asset_path);
+        candidates[1] = workspace_path;
+    }
+    if (project->assets_path[0] && cue->asset_key[0]) {
+        snprintf(asset_path, sizeof(asset_path), "%s\\%s",
+                 project->assets_path, cue->asset_key);
+        candidates[2] = asset_path;
+    }
+    for (const char* candidate : candidates) {
+        if (candidate && candidate[0] && FileExists(candidate)) {
+            strncpy_s(out_path, out_size, candidate, _TRUNCATE);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool ProjectMeshUsesAssetFile(const ProjectData* project, const MeshCue* cue,
+                                     const char* file_name) {
+    if (!project || !cue || cue->mesh_type != 4 || !file_name || !file_name[0]) return false;
+
+    char mesh_path[512] = {};
+    if (!ResolveProjectMeshPath(project, cue, mesh_path, sizeof(mesh_path))) return false;
+
+    char extracted_paths[64][512] = {};
+    int extracted_count = rev::gltf::ExtractTextures(
+        mesh_path, project->assets_path, extracted_paths, (int)_countof(extracted_paths));
+    for (int i = 0; i < extracted_count; ++i) {
+        if (AssetNameMatches(file_name, extracted_paths[i])) return true;
+    }
+    return false;
+}
+
+static bool ProjectUsesAssetFile(const ProjectData* project, const char* file_name) {
+    if (!project || !file_name || !file_name[0]) return false;
+
+    for (int scene_index = 0; scene_index < project->scene_count; ++scene_index) {
+        const SceneBlock* scene = &project->scenes[scene_index];
+        for (int i = 0; i < scene->shader_cue_count; ++i) {
+            const ShaderCue* cue = &scene->shader_cues[i];
+            for (int map = 0; map < 4; ++map)
+                if (AssetNameMatches(file_name, cue->noise_textures.paths[map])) return true;
+        }
+        for (int i = 0; i < scene->image_cue_count; ++i) {
+            const ImageCue* cue = &scene->image_cues[i];
+            if (AssetNameMatches(file_name, cue->asset_key) || AssetNameMatches(file_name, cue->asset_path)) return true;
+        }
+        for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
+            const AnimatedSpriteCue* cue = &scene->animated_sprite_cues[i];
+            char keys[4096] = {};
+            char paths[8192] = {};
+            strncpy_s(keys, cue->frame_keys_csv, _TRUNCATE);
+            strncpy_s(paths, cue->frame_paths_csv, _TRUNCATE);
+            char* context = nullptr;
+            for (char* token = strtok_s(keys, ";", &context); token; token = strtok_s(nullptr, ";", &context))
+                if (AssetNameMatches(file_name, token)) return true;
+            context = nullptr;
+            for (char* token = strtok_s(paths, ";", &context); token; token = strtok_s(nullptr, ";", &context))
+                if (AssetNameMatches(file_name, token)) return true;
+        }
+        for (int i = 0; i < scene->pixel_cue_count; ++i) {
+            const PixelCue* cue = &scene->pixel_cues[i];
+            if (AssetNameMatches(file_name, cue->asset_key) || AssetNameMatches(file_name, cue->asset_path)) return true;
+        }
+        for (int i = 0; i < scene->pixel_emitter_cue_count; ++i) {
+            const PixelEmitterCue* cue = &scene->pixel_emitter_cues[i];
+            if (cue->visual_source != 0) continue;
+            if (AssetNameMatches(file_name, cue->asset_key) || AssetNameMatches(file_name, cue->asset_path)) return true;
+        }
+        for (int i = 0; i < scene->text_cue_count; ++i) {
+            const TextCue* cue = &scene->text_cues[i];
+            if (AssetNameMatches(file_name, cue->baked_asset_key) || AssetNameMatches(file_name, cue->baked_asset_path) ||
+                AssetNameMatches(file_name, cue->glyph_atlas_key) || AssetNameMatches(file_name, cue->glyph_atlas_path) ||
+                AssetNameMatches(file_name, cue->glyph_meta_key) || AssetNameMatches(file_name, cue->glyph_meta_path)) return true;
+        }
+        for (int i = 0; i < scene->scroll_text_cue_count; ++i) {
+            const ScrollTextCue* cue = &scene->scroll_text_cues[i];
+            if (AssetNameMatches(file_name, cue->baked_asset_key) || AssetNameMatches(file_name, cue->baked_asset_path) ||
+                AssetNameMatches(file_name, cue->glyph_atlas_key) || AssetNameMatches(file_name, cue->glyph_atlas_path) ||
+                AssetNameMatches(file_name, cue->glyph_meta_key) || AssetNameMatches(file_name, cue->glyph_meta_path)) return true;
+        }
+        for (int i = 0; i < scene->music_cue_count; ++i) {
+            const MusicCue* cue = &scene->music_cues[i];
+            if (AssetNameMatches(file_name, cue->asset_key) || AssetNameMatches(file_name, cue->asset_path)) return true;
+        }
+        for (int i = 0; i < scene->mesh_cue_count; ++i) {
+            const MeshCue* cue = &scene->mesh_cues[i];
+            if (cue->mesh_type == 4 &&
+                (AssetNameMatches(file_name, cue->asset_key) || AssetNameMatches(file_name, cue->asset_path) ||
+                 ProjectMeshUsesAssetFile(project, cue, file_name))) return true;
+        }
+    }
+    return false;
+}
+
+static int CleanUnusedProjectAssets(EditorContext* editor) {
+    if (!editor || !editor->project || !editor->project->assets_path[0]) return -1;
+
+    char search_path[512] = {};
+    snprintf(search_path, sizeof(search_path), "%s\\*.*", editor->project->assets_path);
+    WIN32_FIND_DATAA find_data = {};
+    HANDLE find_handle = FindFirstFileA(search_path, &find_data);
+    if (find_handle == INVALID_HANDLE_VALUE) return -1;
+
+    int removed = 0;
+    do {
+        if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (ProjectUsesAssetFile(editor->project, find_data.cFileName)) continue;
+
+        char file_path[512] = {};
+        snprintf(file_path, sizeof(file_path), "%s\\%s", editor->project->assets_path, find_data.cFileName);
+        if (DeleteFileA(file_path)) {
+            ++removed;
+            printf("[Assets] Removed unused asset: %s\n", file_path);
+        }
+    } while (FindNextFileA(find_handle, &find_data));
+    FindClose(find_handle);
+    return removed;
+}
+
 void RenderMenuBar(EditorContext* editor) {
     if (!editor) return;
     
@@ -3749,6 +3981,21 @@ void RenderMenuBar(EditorContext* editor) {
                 BuildAndRun(editor); 
             }
             ImGui::Separator();
+            if (ImGui::MenuItem("Pack Project (No Compile)")) {
+                PackProject(editor);
+            }
+            if (ImGui::MenuItem("Clean Unused Project Assets")) {
+                int removed = CleanUnusedProjectAssets(editor);
+                if (removed < 0) {
+                    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Save the project first!", _TRUNCATE);
+                } else {
+                    char message[128] = {};
+                    snprintf(message, sizeof(message), "Removed %d unused project asset(s).", removed);
+                    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), message, _TRUNCATE);
+                    editor->project->modified = true;
+                }
+                editor->build_status_timer = 5.0f;
+            }
             if (ImGui::MenuItem("Pack, Build and Run")) {
                 PackBuildAndRun(editor);
             }
@@ -5167,6 +5414,70 @@ bool BuildAndRun(EditorContext* editor) {
     }
     
     return (run_result == 0);
+}
+
+bool PackProject(EditorContext* editor) {
+    if (!editor) return false;
+
+    printf("\n=== Pack Project (No Compile) ===\n");
+
+    const char* project_root = editor->project->workspace_path[0]
+        ? editor->project->workspace_path
+        : nullptr;
+    if (!project_root) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Save the project first!", _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+        return false;
+    }
+
+    char cues_path[512] = {};
+    if (!GetProjectCuesPath(editor, cues_path, sizeof(cues_path))) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Save the project first!", _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+        return false;
+    }
+
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Exporting project...", _TRUNCATE);
+    editor->build_status_timer = 5.0f;
+    if (!ExportProject(editor, cues_path)) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Export failed!", _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+        return false;
+    }
+
+    char pack_cache_path[512] = {};
+    snprintf(pack_cache_path, sizeof(pack_cache_path), "%s/pack_cache.txt",
+             editor->project->workspace_path[0] ? editor->project->workspace_path
+                                                 : editor->startup_dir);
+    for (char* p = pack_cache_path; *p; ++p) if (*p == '\\') *p = '/';
+
+    char build_dir[512] = {};
+    char packed_header_path[512] = {};
+    snprintf(build_dir, sizeof(build_dir), "%s\\build", project_root);
+    CreateDirectoryA(build_dir, NULL);
+    snprintf(packed_header_path, sizeof(packed_header_path), "%s\\packed_assets.h", build_dir);
+
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Packing assets...", _TRUNCATE);
+    editor->build_status_timer = 5.0f;
+    rev::pack::PackResult pack_result = rev::pack::PackAssets(
+        cues_path,
+        packed_header_path,
+        pack_cache_path,
+        project_root);
+
+    if (!pack_result.ok) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Pack failed: %s", pack_result.error);
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), msg, _TRUNCATE);
+        editor->build_status_timer = 10.0f;
+        return false;
+    }
+
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Project packed. Send the project folder and packed_assets.h.", _TRUNCATE);
+    editor->build_status_timer = 10.0f;
+    printf("Pack complete: %d total, %d packed, %d skipped.\n",
+           pack_result.total, pack_result.packed, pack_result.skipped);
+    return true;
 }
 
 bool PackBuildAndRun(EditorContext* editor) {
