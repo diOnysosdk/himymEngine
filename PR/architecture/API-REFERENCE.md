@@ -8,6 +8,14 @@ All public APIs are in namespace `revision2026`. All source lives under `src/`.
 
 Current HiMYM runtime/editor behavior for imported meshes relies on these APIs and data contracts:
 
+Beat trigger API:
+
+- `rev::runtime::TriggerTiming` stores BPM and a seconds offset. Beat `0` is the first quarter-note beat after that offset.
+- `rev::runtime::TriggerTrack` stores a bounded named event list. `AddTriggerEvent()` keeps events ordered and rejects negative beats or overflow.
+- `QuantizeTriggerBeat(beat, interval_beats)` supports eighth notes with `0.5` and longer phrases such as eight beats with `8.0`.
+- `EvaluateTriggerPulse(track, time_seconds, pulse_beats)` returns `1.0` while the most recent event is within the requested beat window.
+- The editor's Trigger Recorder starts playback at timeline zero, records left or right Ctrl edge presses, stops on Esc, and persists tracks in the `trigger_tracks` project JSON array.
+
 - `rev::gltf::ImportResult`:
     - Primary mesh (`mesh`) plus full material table (`materials`, `material_count`)
     - Optional imported light (`has_light`, `light_pos`)

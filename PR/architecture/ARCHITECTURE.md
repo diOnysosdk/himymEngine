@@ -36,6 +36,8 @@ This contract exists to keep runtime and editor preview visually aligned for imp
 
 Text cues use a shared bounded POD animation model so project JSON, editor preview, exported `cues.txt`, and `minimal_intro` can round-trip the same authored state. `TextAnimationConfig` contains one reveal layer, one exit layer, and up to `kMaxTextAnimationModifiers` modifier layers.
 
+Music-synchronised triggers use the shared runtime `TriggerTrack` contract. One beat is one quarter note; therefore an eighth-note interval is `0.5` beats and an eight-beat phrase is `8.0` beats. The editor records either Ctrl key as an ordered, quantized `TriggerEvent`, stores named tracks in project JSON, and exposes `EvaluateTriggerPulse()` for effect consumers.
+
 Reveal and exit timing can be staggered by object, line, word, or character. `EvaluateTextGlyphAnimation()` derives each glyph state from cue-relative time, authored easing, stagger order, and deterministic seeds. The editor and runtime apply the same position, scale, rotation, opacity, and visibility outputs.
 
 The `[text_cues]` format preserves its legacy fields and appends an optional final `animation` payload. `InitializeTextAnimationConfig()` supplies defaults when the field is absent, and `ParseTextAnimationConfig()` accepts the serialized payload when present.
