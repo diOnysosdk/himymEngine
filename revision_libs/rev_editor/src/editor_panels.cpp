@@ -549,7 +549,8 @@ void RenderTimeline(EditorContext* editor) {
         editor->selected_cue_index = -1;
     }
     
-    if (ImGui::Begin("Timeline", &editor->show_timeline)) {
+    bool timeline_visible = ImGui::Begin("Timeline", &editor->show_timeline);
+    if (timeline_visible) {
         // Top controls
         ImGui::Text("Total Duration: %.2fs | Scenes: %d", 
                     editor->project->total_duration, 
@@ -784,14 +785,15 @@ void RenderTimeline(EditorContext* editor) {
             }
         }
         
-        ImGui::End();
     }
+    ImGui::End();
 }
 
 void RenderProperties(EditorContext* editor) {
     if (!editor || !editor->project) return;
     
-    if (ImGui::Begin("Properties", &editor->show_properties)) {
+    bool properties_visible = ImGui::Begin("Properties", &editor->show_properties);
+    if (properties_visible) {
         ImGui::Text("Runtime");
         ImGui::Separator();
         bool runtime_fullscreen = editor->project->runtime_fullscreen;
@@ -1553,14 +1555,15 @@ void RenderProperties(EditorContext* editor) {
             ImGui::Text("Select a scene from the timeline");
         }
         
-        ImGui::End();
     }
+    ImGui::End();
 }
 
 void RenderAssetBrowser(EditorContext* editor) {
     if (!editor) return;
     
-    if (ImGui::Begin("Asset Browser", &editor->show_asset_browser)) {
+    bool asset_browser_visible = ImGui::Begin("Asset Browser", &editor->show_asset_browser);
+    if (asset_browser_visible) {
         ImGui::Text("Assets Folder");
         ImGui::Separator();
         
@@ -1680,8 +1683,8 @@ void RenderAssetBrowser(EditorContext* editor) {
             }
         }
         
-        ImGui::End();
     }
+    ImGui::End();
 }
 
 void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, size_t out_size)
@@ -1692,7 +1695,8 @@ void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, s
 void RenderCurveEditor(EditorContext* editor) {
     if (!editor || !editor->project) return;
     
-    if (ImGui::Begin("Curve Editor", &editor->show_curve_editor)) {
+    bool curve_editor_visible = ImGui::Begin("Curve Editor", &editor->show_curve_editor);
+    if (curve_editor_visible) {
         // Curve selection
         ImGui::Text("Curves: %d", editor->project->curve_count);
         
@@ -2363,8 +2367,8 @@ void RenderCurveEditor(EditorContext* editor) {
             ImGui::Text("No curve selected. Create or select a curve to edit.");
         }
         
-        ImGui::End();
     }
+    ImGui::End();
 }
 
 void RenderTriggerRecorder(EditorContext* editor) {

@@ -3929,13 +3929,14 @@ void RenderUI(EditorContext* editor) {
         ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowBgAlpha(0.9f);
         
-        if (ImGui::Begin("BuildStatus", nullptr, 
+        bool build_status_visible = ImGui::Begin("BuildStatus", nullptr,
             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | 
-            ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGuiWindowFlags_AlwaysAutoResize);
+        if (build_status_visible) {
             ImGui::Text("%s", editor->build_status_message);
-            ImGui::End();
         }
+        ImGui::End();
         
         editor->build_status_timer -= io.DeltaTime;
     }
