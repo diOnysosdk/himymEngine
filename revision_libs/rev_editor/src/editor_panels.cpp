@@ -46,6 +46,66 @@ static int CreateCurveFromTriggerTrack(EditorContext* editor, int track_index)
     return curve_index;
 }
 
+static bool AppendTriggerTrackToCurve(EditorContext* editor, int track_index, int curve_index)
+{
+    if (!editor || !editor->project || track_index < 0 ||
+        track_index >= editor->project->trigger_track_count || curve_index < 0 ||
+        curve_index >= editor->project->curve_count) return false;
+
+    const TriggerTrack& track = editor->project->trigger_tracks[track_index];
+    rev::curve::Curve& curve = editor->project->curves[curve_index];
+    if (track.event_count <= 0 || track.timing.bpm <= 0.0f || curve.point_count <= 0) return false;
+
+    float append_duration = 1.0f;
+    for (int i = 0; i < track.event_count; ++i) {
+        float event_time = rev::runtime::GetTriggerTimeSeconds(&track.timing, track.events[i].beat);
+        append_duration = fmaxf(append_duration, event_time);
+    }
+
+    const float old_duration = curve.duration > 0.01f ? curve.duration : 1.0f;
+    const float new_duration = old_duration + append_duration;
+    for (int i = 0; i < curve.point_count; ++i) {
+        float absolute_time = curve.points[i].t * old_duration;
+        curve.points[i].t = absolute_time / new_duration;
+    }
+
+    float last_t = curve.point_count > 0 ? curve.points[curve.point_count - 1].t : 0.0f;
+    for (int i = 0; i < track.event_count; ++i) {
+        float event_time = fmaxf(0.0f,
+            rev::runtime::GetTriggerTimeSeconds(&track.timing, track.events[i].beat));
+        float event_t = (old_duration + event_time) / new_duration;
+        if (event_t <= last_t) continue;
+        rev::curve::AddPoint(curve, event_t, 0.0f, rev::curve::EaseMode::Linear);
+        last_t = event_t;
+    }
+    curve.duration = new_duration;
+    rev::curve::SortPoints(curve);
+    editor->project->modified = true;
+    return true;
+}
+
+static bool MergeTriggerTrackIntoCurve(EditorContext* editor, int track_index, int curve_index)
+{
+    if (!editor || !editor->project || track_index < 0 ||
+        track_index >= editor->project->trigger_track_count || curve_index < 0 ||
+        curve_index >= editor->project->curve_count) return false;
+
+    const TriggerTrack& track = editor->project->trigger_tracks[track_index];
+    rev::curve::Curve& curve = editor->project->curves[curve_index];
+    if (track.event_count <= 0 || track.timing.bpm <= 0.0f ||
+        curve.point_count <= 0 || curve.duration <= 0.01f) return false;
+
+    for (int i = 0; i < track.event_count; ++i) {
+        float event_time = fmaxf(0.0f,
+            rev::runtime::GetTriggerTimeSeconds(&track.timing, track.events[i].beat));
+        float event_t = fminf(1.0f, event_time / curve.duration);
+        rev::curve::AddPoint(curve, event_t, 0.0f, rev::curve::EaseMode::Linear);
+    }
+    rev::curve::SortPoints(curve);
+    editor->project->modified = true;
+    return true;
+}
+
 void UpdateCurveRefAfterDelete(int* ref, int deleted_curve)
 {
     if (!ref) return;
@@ -2319,6 +2379,39 @@ void RenderTriggerRecorder(EditorContext* editor) {
     if (editor->recording_quantize_beats <= 0.0f) editor->recording_quantize_beats = 0.5f;
     if (editor->recording_bpm <= 0.0f) editor->recording_bpm = 120.0f;
 
+    bool can_append_curve = editor->recording_curve_target &&
+        *editor->recording_curve_target >= 0 &&
+        *editor->recording_curve_target < editor->project->curve_count;
+    if (can_append_curve) {
+        ImGui::Checkbox("Append to existing curve", &editor->recording_append_curve);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Keep the existing curve and add this recording after its current duration.\n"
+                              "The curve duration is extended automatically.");
+        }
+    }
+
+    if (editor->project->curve_count > 0) {
+        static char append_curve_labels[rev::runtime::kMaxCurves][256] = {};
+        const char* append_curve_items[rev::runtime::kMaxCurves] = {};
+        for (int i = 0; i < editor->project->curve_count; ++i) {
+            BuildCurveDisplayLabelInternal(editor, i, append_curve_labels[i], sizeof(append_curve_labels[i]));
+            append_curve_items[i] = append_curve_labels[i];
+        }
+        if (editor->recording_append_curve_index < 0 ||
+            editor->recording_append_curve_index >= editor->project->curve_count) {
+            editor->recording_append_curve_index = can_append_curve
+                ? *editor->recording_curve_target : 0;
+        }
+        ImGui::SetNextItemWidth(360.0f);
+        ImGui::Combo("Target curve", &editor->recording_append_curve_index,
+                     append_curve_items, editor->project->curve_count, 8);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Choose the existing curve for append or merge recording.");
+        }
+    } else {
+        ImGui::TextDisabled("No existing curves available for append.");
+    }
+
     if (editor->project->trigger_track_count > 0) {
         ImGui::Text("Recorded tracks");
         for (int i = 0; i < editor->project->trigger_track_count; ++i) {
@@ -2355,7 +2448,17 @@ void RenderTriggerRecorder(EditorContext* editor) {
         editor->trigger_recording = false;
         editor->playing = false;
         if (editor->recording_curve_target && editor->recording_track_index >= 0) {
-            int curve_index = CreateTriggerTimingCurve(editor, editor->recording_track_index);
+            int curve_index = -1;
+            if (editor->recording_append_curve &&
+                editor->recording_append_curve_index >= 0 &&
+                editor->recording_append_curve_index < editor->project->curve_count) {
+                curve_index = editor->recording_append_curve_index;
+                if (!AppendTriggerTrackToCurve(editor, editor->recording_track_index, curve_index)) {
+                    curve_index = -1;
+                }
+            } else {
+                curve_index = CreateTriggerTimingCurve(editor, editor->recording_track_index);
+            }
             if (curve_index >= 0) {
                 *editor->recording_curve_target = curve_index;
                 editor->editing_curve_index = curve_index;
@@ -2366,6 +2469,7 @@ void RenderTriggerRecorder(EditorContext* editor) {
             }
             editor->recording_curve_target = nullptr;
             editor->recording_target_label[0] = '\0';
+            editor->recording_append_curve = false;
         }
     }
 
@@ -2375,6 +2479,50 @@ void RenderTriggerRecorder(EditorContext* editor) {
         ImGui::Text("Track: %s", track->name);
         ImGui::Text("Events: %d", track->event_count);
         ImGui::Text("Press either Ctrl to record; Esc stops.");
+        bool append_target_valid = editor->recording_append_curve_index >= 0 &&
+            editor->recording_append_curve_index < editor->project->curve_count;
+        ImGui::BeginDisabled(!append_target_valid || editor->trigger_recording);
+        if (ImGui::Button("Append recording")) {
+            if (AppendTriggerTrackToCurve(editor, editor->recording_track_index,
+                                          editor->recording_append_curve_index)) {
+                editor->selected_curve_index = editor->recording_append_curve_index;
+                editor->editing_curve_index = editor->recording_append_curve_index;
+                editor->show_curve_editor = true;
+                strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                          "Recording appended and curve duration extended.", _TRUNCATE);
+                editor->build_status_timer = 4.0f;
+            } else {
+                strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                          "Could not append recording to curve.", _TRUNCATE);
+                editor->build_status_timer = 3.0f;
+            }
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Append this track's events after the selected curve duration.");
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!append_target_valid || editor->trigger_recording);
+        if (ImGui::Button("Merge recording")) {
+            if (MergeTriggerTrackIntoCurve(editor, editor->recording_track_index,
+                                           editor->recording_append_curve_index)) {
+                editor->selected_curve_index = editor->recording_append_curve_index;
+                editor->editing_curve_index = editor->recording_append_curve_index;
+                editor->show_curve_editor = true;
+                strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                          "Recording merged into the selected curve.", _TRUNCATE);
+                editor->build_status_timer = 4.0f;
+            } else {
+                strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                          "Could not merge recording into curve.", _TRUNCATE);
+                editor->build_status_timer = 3.0f;
+            }
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Add this track's events on top of the selected curve without replacing points or changing duration.");
+        }
+        ImGui::SameLine();
         if (ImGui::Button("Create reusable curve")) {
             int curve_index = CreateTriggerTimingCurve(editor, editor->recording_track_index);
             if (curve_index >= 0) {

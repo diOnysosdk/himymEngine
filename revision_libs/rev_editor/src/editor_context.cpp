@@ -1112,6 +1112,8 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->recording_track_index = -1;
     editor->recording_curve_target = nullptr;
     editor->recording_target_label[0] = '\0';
+    editor->recording_append_curve = false;
+    editor->recording_append_curve_index = -1;
     editor->recording_bpm = 120.0f;
     editor->recording_beat_offset = 0.0f;
     editor->recording_quantize_beats = 0.5f;
@@ -3729,6 +3731,8 @@ bool NewProject(EditorContext* editor) {
     editor->playing = false;
     editor->trigger_recording = false;
     editor->recording_track_index = -1;
+    editor->recording_append_curve = false;
+    editor->recording_append_curve_index = -1;
 
     // Note: GetScene(0) returns nullptr when scene_count==0
     // First scene will be created via AddScene when user adds content

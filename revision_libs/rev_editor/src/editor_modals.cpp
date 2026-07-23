@@ -43,6 +43,8 @@ static void DrawCurveRecordButton(EditorContext* editor, int* curve_target,
     snprintf(button_label, sizeof(button_label), "Record##%s", id_suffix ? id_suffix : parameter_label);
     if (ImGui::SmallButton(button_label)) {
         editor->recording_curve_target = curve_target;
+        editor->recording_append_curve = *curve_target >= 0;
+        editor->recording_append_curve_index = *curve_target;
         strncpy_s(editor->recording_target_label, sizeof(editor->recording_target_label),
                   parameter_label, _TRUNCATE);
         editor->show_trigger_recorder = true;

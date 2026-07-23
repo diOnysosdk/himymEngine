@@ -307,6 +307,8 @@ struct EditorContext {
     char recording_track_name[64];
     int* recording_curve_target;
     char recording_target_label[128];
+    bool recording_append_curve;
+    int recording_append_curve_index;
     
     // Preview viewport
     bool show_preview;
