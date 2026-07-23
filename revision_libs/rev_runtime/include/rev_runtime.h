@@ -243,6 +243,146 @@ struct PixelEmitterCue {
     AssetShader shaders[kMaxAssetShaders];
 };
 
+enum TextAnimationUnit {
+    TextAnimationUnitObject = 0,
+    TextAnimationUnitLine = 1,
+    TextAnimationUnitWord = 2,
+    TextAnimationUnitCharacter = 3
+};
+
+enum TextStaggerOrder {
+    TextStaggerOrderForward = 0,
+    TextStaggerOrderReverse = 1,
+    TextStaggerOrderCenterOut = 2,
+    TextStaggerOrderOutsideIn = 3,
+    TextStaggerOrderRandom = 4
+};
+
+enum TextEasingType {
+    TextEasingLinear = 0,
+    TextEasingEaseInQuad = 1,
+    TextEasingEaseOutQuad = 2,
+    TextEasingEaseInOutQuad = 3,
+    TextEasingEaseInCubic = 4,
+    TextEasingEaseOutCubic = 5,
+    TextEasingEaseInOutCubic = 6,
+    TextEasingSmoothStep = 7,
+    TextEasingSmootherStep = 8
+};
+
+enum TextRevealType {
+    TextRevealNone = 0,
+    TextRevealFade = 1,
+    TextRevealTypewriter = 2,
+    TextRevealLineByLine = 3,
+    TextRevealWordByWord = 4,
+    TextRevealCharacterByCharacter = 5,
+    TextRevealScaleIn = 6,
+    TextRevealSlideIn = 7,
+    TextRevealRotateIn = 8
+};
+
+enum TextExitType {
+    TextExitNone = 0,
+    TextExitFadeOut = 1,
+    TextExitReverseTypewriter = 2,
+    TextExitSlideOut = 3,
+    TextExitScaleOut = 4,
+    TextExitRotateOut = 5
+};
+
+enum TextModifierType {
+    TextModifierGlow = 0,
+    TextModifierGlowPulse = 1,
+    TextModifierJitter = 2,
+    TextModifierWave = 3,
+    TextModifierFlicker = 4,
+    TextModifierRotationWave = 5,
+    TextModifierScalePulse = 6
+};
+
+static const int kMaxTextAnimationModifiers = 8;
+
+struct TextStaggerConfig {
+    int unit;
+    int order;
+    float delay;
+    float overlap;
+    unsigned int random_seed;
+    int ignore_whitespace;
+};
+
+struct TextRevealConfig {
+    int type;
+    float start_offset;
+    float duration;
+    int easing;
+    TextStaggerConfig stagger;
+    float distance;
+    float start_scale;
+    float start_rotation;
+    float direction_x;
+    float direction_y;
+    int fade;
+    unsigned int seed;
+};
+
+struct TextExitConfig {
+    int type;
+    float start_offset;
+    float duration;
+    int easing;
+    TextStaggerConfig stagger;
+    float distance;
+    float end_scale;
+    float end_rotation;
+    float direction_x;
+    float direction_y;
+    int fade;
+    unsigned int seed;
+};
+
+struct TextModifierConfig {
+    int type;
+    int enabled;
+    float start_time;
+    float end_time;
+    float amount;
+    float speed;
+    float frequency;
+    float phase;
+    unsigned int seed;
+};
+
+struct TextAnimationConfig {
+    int version;
+    TextRevealConfig reveal;
+    TextExitConfig exit;
+    int modifier_count;
+    TextModifierConfig modifiers[kMaxTextAnimationModifiers];
+};
+
+struct GlyphAnimationState {
+    float position_offset_x;
+    float position_offset_y;
+    float scale_x;
+    float scale_y;
+    float rotation;
+    float opacity;
+    float glow;
+    int visible;
+};
+
+struct TextGlyphTimingInfo {
+    unsigned int character_index;
+    unsigned int word_index;
+    unsigned int line_index;
+    unsigned int character_count;
+    unsigned int word_count;
+    unsigned int line_count;
+    int whitespace;
+};
+
 // Text cue
 struct TextCue {
     char     text[256];
@@ -283,6 +423,9 @@ struct TextCue {
     char     glyph_atlas_path[512];
     char     glyph_meta_key[64];
     char     glyph_meta_path[512];
+
+    // Versioned, composable animation configuration. Zero keeps legacy behavior.
+    TextAnimationConfig animation;
 };
 
 // Scroll text cue (dedicated style/preset-driven marquee pipeline)
@@ -462,6 +605,19 @@ float ComputeEffectOpacity(int   effect_type,
 // Build per-frame text content and transform modifiers for advanced text effects.
 // Returns false when no visible text should be drawn for this frame.
 bool BuildTextEffectFrame(const TextCue* cue, float time, TextEffectFrame* out);
+
+float ApplyTextEasing(float progress, int easing);
+float GetTextElementOrder(unsigned int element_index, unsigned int element_count,
+                          int order, unsigned int seed);
+float CalculateTextStaggeredProgress(float global_progress, float element_order,
+                                     float stagger_amount);
+void InitializeTextAnimationConfig(TextAnimationConfig* config);
+bool ParseTextAnimationConfig(const char* serialized, TextAnimationConfig* config);
+void InitializeGlyphAnimationState(GlyphAnimationState* state);
+void EvaluateTextGlyphAnimation(const TextAnimationConfig* config,
+                                float timeline_time,
+                                const TextGlyphTimingInfo* glyph,
+                                GlyphAnimationState* state);
 
 // ------------------------------------------------------------------
 // GDI+ texture loaders  (call GdiplusStartup before using these)

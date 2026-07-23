@@ -605,7 +605,7 @@ int LoadAllMeshCues(const char* path, MeshCue* cues, int max_cues) {
     fopen_s(&f, path, "r");
     if (!f) return 0;
 
-    char line[2048];
+    char line[8192];
     bool in_mesh_cues = false;
     int count = 0;
 
@@ -713,7 +713,7 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
     fopen_s(&f, path, "r");
     if (!f) return 0;
 
-    char line[2048];
+    char line[8192];
     bool in_section = false;
     int count = 0;
 
@@ -731,6 +731,7 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
         cue->bake_mode = 0;
         cue->curve_x = cue->curve_y = cue->curve_size = -1;
         cue->curve_color_r = cue->curve_color_g = cue->curve_color_b = -1;
+        InitializeTextAnimationConfig(&cue->animation);
 
         char* pipe1 = strchr(s, '|');
         if (!pipe1) continue;
@@ -838,6 +839,17 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
             } else {
                 if (parsed >= 21) strncpy_s(cue->baked_asset_key, baked_asset_key, _TRUNCATE);
                 if (parsed >= 22) strncpy_s(cue->baked_asset_path, baked_asset_path, _TRUNCATE);
+            }
+
+            char* animation_payload = pipe2 + 1;
+            for (int field = 0; field < 30 && animation_payload; ++field) {
+                animation_payload = strchr(animation_payload, '|');
+                if (animation_payload) ++animation_payload;
+            }
+            if (animation_payload && *animation_payload) {
+                char* line_end = strpbrk(animation_payload, "\r\n");
+                if (line_end) *line_end = '\0';
+                ParseTextAnimationConfig(animation_payload, &cue->animation);
             }
 
             count++;
@@ -1719,7 +1731,9 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
                          float viewport_width, float viewport_height,
                          float wave_amp, float wave_freq, float wave_length,
                          float jitter_amp, float jitter_freq, float time, float rotation,
-                         bool horizontal_scroll) {
+                         bool horizontal_scroll,
+                         const rev::runtime::TextAnimationConfig* animation = nullptr,
+                         float animation_time = 0.0f) {
     if (!program || !atlas || atlas->texture_id == 0 || !text) return false;
     const SpriteUniformCache uniforms = GetSpriteUniformCache(program);
     int u_pos = uniforms.position;
@@ -1747,13 +1761,41 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
     float cursor_y = y;
     bool drew_glyph = false;
     int glyph_index = 0;
+    unsigned int character_count = 0;
+    unsigned int word_count = 0;
+    unsigned int line_count = 1;
+    bool in_word = false;
+    for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
+        if (*p == '\n') {
+            ++line_count;
+            in_word = false;
+        } else {
+            ++character_count;
+            if (*p != ' ' && *p != '\t' && *p != '\r') {
+                if (!in_word) ++word_count;
+                in_word = true;
+            } else {
+                in_word = false;
+            }
+        }
+    }
+    unsigned int word_index = 0;
+    unsigned int line_index = 0;
+    unsigned int character_index = 0;
+    in_word = false;
     for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
         if (*p == '\n') {
             cursor_x = x - (line_width / viewport_width);
             cursor_y += (atlas->line_height * size_scale / viewport_height) * 2.0f;
+            ++line_index;
+            in_word = false;
             continue;
         }
         const TextGlyph* glyph = FindTextGlyph(atlas, *p);
+        bool whitespace = (*p == ' ' || *p == '\t' || *p == '\r');
+        unsigned int current_character_index = character_index++;
+        if (!whitespace && !in_word) ++word_index;
+        in_word = !whitespace;
         if (!glyph) continue;
         float w = glyph->width * size_scale / viewport_width * 2.0f;
         float h = glyph->height * size_scale / viewport_height * 2.0f;
@@ -1771,6 +1813,32 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
         } else {
             glyph_x += wave + jitter_x;
             glyph_y += jitter_y;
+        }
+        rev::runtime::GlyphAnimationState animation_state = {};
+        if (animation && animation->version > 0) {
+            rev::runtime::TextGlyphTimingInfo timing = {};
+            timing.character_index = current_character_index;
+            timing.word_index = word_index > 0 ? word_index - 1 : 0;
+            timing.line_index = line_index;
+            timing.character_count = character_count;
+            timing.word_count = word_count;
+            timing.line_count = line_count;
+            timing.whitespace = whitespace ? 1 : 0;
+            rev::runtime::EvaluateTextGlyphAnimation(animation, animation_time, &timing, &animation_state);
+            if (!animation_state.visible) {
+                cursor_x += glyph->advance * spacing * size_scale / viewport_width * 2.0f;
+                ++glyph_index;
+                continue;
+            }
+            glyph_x += animation_state.position_offset_x;
+            glyph_y += animation_state.position_offset_y;
+            w *= animation_state.scale_x;
+            h *= animation_state.scale_y;
+            if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity * animation_state.opacity);
+            if (u_rot >= 0) rev::shader::SetFloat(program, u_rot, rotation + animation_state.rotation);
+        } else {
+            if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity);
+            if (u_rot >= 0) rev::shader::SetFloat(program, u_rot, rotation);
         }
         const bool outside_x = (glyph_x + w * 0.5f < 0.0f) || (glyph_x - w * 0.5f > 1.0f);
         const bool outside_y = (glyph_y + h * 0.5f < 0.0f) || (glyph_y - h * 0.5f > 1.0f);
@@ -4659,19 +4727,24 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     }
 
                     bool has_color_curve = (text_cue.curve_color_r >= 0 || text_cue.curve_color_g >= 0 || text_cue.curve_color_b >= 0);
-                    bool requires_dynamic_text = ((!force_baked) && (text_cue.effect_type >= 3)) || has_color_curve;
+                    bool has_text_animation = text_cue.animation.version > 0;
+                    bool requires_dynamic_text = ((!force_baked) && (text_cue.effect_type >= 3)) ||
+                        has_color_curve || has_text_animation;
 
                     float opacity = ComputeEffectOpacity(text_cue.effect_type,
                         text_cue.fade_in_start, text_cue.fade_in_end,
                         text_cue.fade_out_start, text_cue.fade_out_end, time) * fx.opacity_mul;
 
                     if (text_atlases[text_idx].texture_id != 0) {
-                        DrawGlyphRun(sprite_shader, &text_atlases[text_idx], fx.text,
+                        const char* glyph_text = has_text_animation ? text_cue.text : fx.text;
+                        DrawGlyphRun(sprite_shader, &text_atlases[text_idx], glyph_text,
                                      anim_text_x + fx.offset_x, anim_text_y + fx.offset_y,
                                      anim_text_size / text_cue.size, 1.0f, opacity,
                                      anim_text_color_r, anim_text_color_g, anim_text_color_b,
                                      (float)config.width, (float)config.height,
-                                     0.0f, 0.0f, 9.0f, 0.0f, 0.0f, time, anim_text_rotation, true);
+                                     0.0f, 0.0f, 9.0f, 0.0f, 0.0f, time, anim_text_rotation, true,
+                                     has_text_animation ? &text_cue.animation : nullptr,
+                                     elapsed_time);
                         continue;
                     }
 

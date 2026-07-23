@@ -53,6 +53,15 @@ static float Hash01(unsigned int x) {
     return (float)(x & 0x00FFFFFFU) / 16777215.0f;
 }
 
+static unsigned int Hash32(unsigned int x) {
+    x ^= x >> 16;
+    x *= 0x7feb352dU;
+    x ^= x >> 15;
+    x *= 0x846ca68bU;
+    x ^= x >> 16;
+    return x;
+}
+
 bool BuildTextEffectFrame(const TextCue* cue, float time, TextEffectFrame* out)
 {
     if (!cue || !out) return false;
@@ -184,6 +193,264 @@ bool BuildTextEffectFrame(const TextCue* cue, float time, TextEffectFrame* out)
     }
 
     return has_drawable;
+}
+
+float ApplyTextEasing(float progress, int easing)
+{
+    progress = Clamp01(progress);
+    switch (easing) {
+    case TextEasingEaseInQuad: return progress * progress;
+    case TextEasingEaseOutQuad: return progress * (2.0f - progress);
+    case TextEasingEaseInOutQuad:
+        return progress < 0.5f ? 2.0f * progress * progress
+                               : 1.0f - powf(-2.0f * progress + 2.0f, 2.0f) * 0.5f;
+    case TextEasingEaseInCubic: return progress * progress * progress;
+    case TextEasingEaseOutCubic: {
+        float inverse = 1.0f - progress;
+        return 1.0f - inverse * inverse * inverse;
+    }
+    case TextEasingEaseInOutCubic:
+        return progress < 0.5f ? 4.0f * progress * progress * progress
+                               : 1.0f - powf(-2.0f * progress + 2.0f, 3.0f) * 0.5f;
+    case TextEasingSmoothStep: return progress * progress * (3.0f - 2.0f * progress);
+    case TextEasingSmootherStep:
+        return progress * progress * progress * (progress * (progress * 6.0f - 15.0f) + 10.0f);
+    default: return progress;
+    }
+}
+
+float GetTextElementOrder(unsigned int element_index, unsigned int element_count,
+                          int order, unsigned int seed)
+{
+    if (element_count <= 1) return 0.0f;
+    if (order == TextStaggerOrderReverse) {
+        return 1.0f - (float)element_index / (float)(element_count - 1);
+    }
+    if (order == TextStaggerOrderCenterOut || order == TextStaggerOrderOutsideIn) {
+        float center = ((float)element_count - 1.0f) * 0.5f;
+        float distance = fabsf((float)element_index - center);
+        float max_distance = center > 0.0f ? center : 1.0f;
+        float normalized = distance / max_distance;
+        return order == TextStaggerOrderCenterOut ? normalized : 1.0f - normalized;
+    }
+    if (order == TextStaggerOrderRandom) {
+        unsigned int rank = Hash32(seed ^ Hash32(element_index));
+        return (float)(rank % element_count) / (float)(element_count - 1);
+    }
+    return (float)element_index / (float)(element_count - 1);
+}
+
+float CalculateTextStaggeredProgress(float global_progress, float element_order,
+                                     float stagger_amount)
+{
+    global_progress = Clamp01(global_progress);
+    stagger_amount = Clamp01(stagger_amount);
+    float start = element_order * stagger_amount;
+    float duration = fmaxf(0.0001f, 1.0f - stagger_amount);
+    return Clamp01((global_progress - start) / duration);
+}
+
+void InitializeTextAnimationConfig(TextAnimationConfig* config)
+{
+    if (!config) return;
+    memset(config, 0, sizeof(*config));
+    config->version = 1;
+    config->reveal.type = TextRevealNone;
+    config->reveal.duration = 1.0f;
+    config->reveal.easing = TextEasingLinear;
+    config->reveal.stagger.unit = TextAnimationUnitCharacter;
+    config->reveal.stagger.order = TextStaggerOrderForward;
+    config->reveal.stagger.random_seed = 1;
+    config->reveal.direction_x = 1.0f;
+    config->exit.type = TextExitNone;
+    config->exit.duration = 1.0f;
+    config->exit.easing = TextEasingLinear;
+    config->exit.stagger.unit = TextAnimationUnitCharacter;
+    config->exit.stagger.order = TextStaggerOrderReverse;
+    config->exit.stagger.random_seed = 1;
+    config->exit.direction_x = 1.0f;
+}
+
+bool ParseTextAnimationConfig(const char* serialized, TextAnimationConfig* config)
+{
+    if (!serialized || !config) return false;
+    InitializeTextAnimationConfig(config);
+
+    char buffer[4096] = {};
+    strncpy_s(buffer, serialized, _TRUNCATE);
+    char* context = nullptr;
+    char* cursor = strtok_s(buffer, "|", &context);
+    auto next_int = [&]() { char* token = cursor; cursor = strtok_s(nullptr, "|", &context); return token ? atoi(token) : 0; };
+    auto next_uint = [&]() { char* token = cursor; cursor = strtok_s(nullptr, "|", &context); return token ? (unsigned int)strtoul(token, nullptr, 10) : 0U; };
+    auto next_float = [&]() { char* token = cursor; cursor = strtok_s(nullptr, "|", &context); return token ? (float)atof(token) : 0.0f; };
+    if (!cursor) return false;
+
+    config->version = next_int();
+    TextRevealConfig& reveal = config->reveal;
+    reveal.type = next_int(); reveal.start_offset = next_float(); reveal.duration = next_float(); reveal.easing = next_int();
+    reveal.stagger.unit = next_int(); reveal.stagger.order = next_int(); reveal.stagger.delay = next_float(); reveal.stagger.overlap = next_float();
+    reveal.stagger.random_seed = next_uint(); reveal.stagger.ignore_whitespace = next_int(); reveal.distance = next_float();
+    reveal.start_scale = next_float(); reveal.start_rotation = next_float(); reveal.direction_x = next_float(); reveal.direction_y = next_float();
+    reveal.fade = next_int(); reveal.seed = next_uint();
+    TextExitConfig& exit = config->exit;
+    exit.type = next_int(); exit.start_offset = next_float(); exit.duration = next_float(); exit.easing = next_int();
+    exit.stagger.unit = next_int(); exit.stagger.order = next_int(); exit.stagger.delay = next_float(); exit.stagger.overlap = next_float();
+    exit.stagger.random_seed = next_uint(); exit.stagger.ignore_whitespace = next_int(); exit.distance = next_float();
+    exit.end_scale = next_float(); exit.end_rotation = next_float(); exit.direction_x = next_float(); exit.direction_y = next_float();
+    exit.fade = next_int(); exit.seed = next_uint();
+    config->modifier_count = next_int();
+    if (config->modifier_count < 0) config->modifier_count = 0;
+    if (config->modifier_count > kMaxTextAnimationModifiers) config->modifier_count = kMaxTextAnimationModifiers;
+    for (int i = 0; i < config->modifier_count; ++i) {
+        TextModifierConfig& modifier = config->modifiers[i];
+        modifier.type = next_int(); modifier.enabled = next_int(); modifier.start_time = next_float();
+        modifier.end_time = next_float(); modifier.amount = next_float(); modifier.speed = next_float();
+        modifier.frequency = next_float(); modifier.phase = next_float(); modifier.seed = next_uint();
+    }
+    return true;
+}
+
+void InitializeGlyphAnimationState(GlyphAnimationState* state)
+{
+    if (!state) return;
+    state->position_offset_x = 0.0f;
+    state->position_offset_y = 0.0f;
+    state->scale_x = 1.0f;
+    state->scale_y = 1.0f;
+    state->rotation = 0.0f;
+    state->opacity = 1.0f;
+    state->glow = 0.0f;
+    state->visible = 1;
+}
+
+static float EvaluateTextProgress(float time, float start, float duration, int easing)
+{
+    if (duration <= 0.0f) return time >= start ? 1.0f : 0.0f;
+    return ApplyTextEasing(Clamp01((time - start) / duration), easing);
+}
+
+static unsigned int GetTextUnitIndex(const TextStaggerConfig& stagger,
+                                     const TextGlyphTimingInfo& glyph)
+{
+    switch (stagger.unit) {
+    case TextAnimationUnitLine: return glyph.line_index;
+    case TextAnimationUnitWord: return glyph.word_index;
+    case TextAnimationUnitCharacter: return glyph.character_index;
+    default: return 0;
+    }
+}
+
+static unsigned int GetTextUnitCount(const TextStaggerConfig& stagger,
+                                     const TextGlyphTimingInfo& glyph)
+{
+    switch (stagger.unit) {
+    case TextAnimationUnitLine: return glyph.line_count;
+    case TextAnimationUnitWord: return glyph.word_count;
+    case TextAnimationUnitCharacter: return glyph.character_count;
+    default: return 1;
+    }
+}
+
+static float GetLocalTextProgress(float global_progress, const TextStaggerConfig& stagger,
+                                  const TextGlyphTimingInfo& glyph)
+{
+    if (stagger.ignore_whitespace && glyph.whitespace) return 1.0f;
+    unsigned int count = GetTextUnitCount(stagger, glyph);
+    unsigned int index = GetTextUnitIndex(stagger, glyph);
+    float stagger_amount = stagger.delay * (count > 0 ? (float)(count - 1) : 0.0f);
+    stagger_amount *= 1.0f - Clamp01(stagger.overlap);
+    float order = GetTextElementOrder(index, count, stagger.order, stagger.random_seed);
+    return CalculateTextStaggeredProgress(global_progress, order, stagger_amount);
+}
+
+void EvaluateTextGlyphAnimation(const TextAnimationConfig* config,
+                                float timeline_time,
+                                const TextGlyphTimingInfo* glyph,
+                                GlyphAnimationState* state)
+{
+    if (!glyph || !state) return;
+    InitializeGlyphAnimationState(state);
+    if (!config || config->version <= 0) return;
+
+    const TextRevealConfig& reveal = config->reveal;
+    if (reveal.type != TextRevealNone) {
+        float global = EvaluateTextProgress(timeline_time, reveal.start_offset,
+                                            reveal.duration, reveal.easing);
+        float progress = GetLocalTextProgress(global, reveal.stagger, *glyph);
+        if (reveal.type == TextRevealFade || reveal.type == TextRevealTypewriter ||
+            reveal.type == TextRevealLineByLine || reveal.type == TextRevealWordByWord ||
+            reveal.type == TextRevealCharacterByCharacter) {
+            state->opacity *= progress;
+            if (reveal.type == TextRevealTypewriter && progress <= 0.0f) state->visible = 0;
+        } else if (reveal.type == TextRevealScaleIn) {
+            float scale = reveal.start_scale + (1.0f - reveal.start_scale) * progress;
+            state->scale_x *= scale;
+            state->scale_y *= scale;
+            if (reveal.fade) state->opacity *= progress;
+        } else if (reveal.type == TextRevealSlideIn) {
+            float distance = reveal.distance * (1.0f - progress);
+            state->position_offset_x += reveal.direction_x * distance;
+            state->position_offset_y += reveal.direction_y * distance;
+            if (reveal.fade) state->opacity *= progress;
+        } else if (reveal.type == TextRevealRotateIn) {
+            state->rotation += reveal.start_rotation * (1.0f - progress);
+            if (reveal.fade) state->opacity *= progress;
+        }
+    }
+
+    const TextExitConfig& exit = config->exit;
+    if (exit.type != TextExitNone) {
+        float global = EvaluateTextProgress(timeline_time, exit.start_offset,
+                                            exit.duration, exit.easing);
+        float progress = GetLocalTextProgress(global, exit.stagger, *glyph);
+        if (exit.type == TextExitFadeOut || exit.type == TextExitReverseTypewriter) {
+            state->opacity *= 1.0f - progress;
+            if (exit.type == TextExitReverseTypewriter && progress >= 1.0f) state->visible = 0;
+        } else if (exit.type == TextExitSlideOut) {
+            state->position_offset_x += exit.direction_x * exit.distance * progress;
+            state->position_offset_y += exit.direction_y * exit.distance * progress;
+            if (exit.fade) state->opacity *= 1.0f - progress;
+        } else if (exit.type == TextExitScaleOut) {
+            float scale = 1.0f + (exit.end_scale - 1.0f) * progress;
+            state->scale_x *= scale;
+            state->scale_y *= scale;
+            if (exit.fade) state->opacity *= 1.0f - progress;
+        } else if (exit.type == TextExitRotateOut) {
+            state->rotation += exit.end_rotation * progress;
+            if (exit.fade) state->opacity *= 1.0f - progress;
+        }
+    }
+
+    int modifier_count = config->modifier_count;
+    if (modifier_count < 0) modifier_count = 0;
+    if (modifier_count > kMaxTextAnimationModifiers) modifier_count = kMaxTextAnimationModifiers;
+    for (int i = 0; i < modifier_count; ++i) {
+        const TextModifierConfig& modifier = config->modifiers[i];
+        if (!modifier.enabled || timeline_time < modifier.start_time) continue;
+        if (modifier.end_time > modifier.start_time && timeline_time > modifier.end_time) continue;
+        float phase = timeline_time * modifier.speed + modifier.phase;
+        if (modifier.type == TextModifierGlow) {
+            state->glow += modifier.amount;
+        } else if (modifier.type == TextModifierGlowPulse) {
+            state->glow += modifier.amount * (0.5f + 0.5f * sinf(phase));
+        } else if (modifier.type == TextModifierJitter) {
+            float step = modifier.frequency > 0.0f ? floorf(timeline_time * modifier.frequency) : 0.0f;
+            unsigned int seed = modifier.seed ^ Hash32(glyph->character_index) ^ Hash32((unsigned int)step);
+            state->position_offset_x += (Hash01(seed) * 2.0f - 1.0f) * modifier.amount;
+            state->position_offset_y += (Hash01(seed + 1U) * 2.0f - 1.0f) * modifier.amount;
+        } else if (modifier.type == TextModifierWave) {
+            state->position_offset_y += sinf((float)glyph->character_index * modifier.frequency + phase) * modifier.amount;
+        } else if (modifier.type == TextModifierFlicker) {
+            state->opacity *= 0.75f + 0.25f * (0.5f + 0.5f * sinf(phase));
+        } else if (modifier.type == TextModifierRotationWave) {
+            state->rotation += sinf((float)glyph->character_index * modifier.frequency + phase) * modifier.amount;
+        } else if (modifier.type == TextModifierScalePulse) {
+            float scale = 1.0f + sinf(phase) * modifier.amount;
+            state->scale_x *= scale;
+            state->scale_y *= scale;
+        }
+    }
+    if (state->opacity <= 0.001f) state->visible = 0;
 }
 
 // ------------------------------------------------------------------

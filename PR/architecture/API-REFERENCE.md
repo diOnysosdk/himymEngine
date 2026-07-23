@@ -69,6 +69,17 @@ Indexed pixel cue contract (editor export + runtime):
 
 These additions keep runtime and preview behavior aligned for mixed textured + color-only glTF material slots.
 
+## Text Animation Contract
+
+`rev::runtime::TextCue::animation` stores a bounded, copyable animation configuration:
+
+- `TextAnimationConfig` contains one reveal layer, one exit layer, and up to `kMaxTextAnimationModifiers` modifier layers.
+- Reveal and exit layers support object, line, word, or character timing through `TextStaggerConfig`.
+- `EvaluateTextGlyphAnimation()` evaluates timeline-relative progress deterministically. Random stagger and modifier behavior use the authored seeds.
+- `InitializeTextAnimationConfig()` supplies backward-compatible defaults. `ParseTextAnimationConfig()` reads the pipe-delimited payload used by exported cue rows.
+- `[text_cues]` keeps the legacy fields in place and appends an optional final `animation` field. Loaders must accept rows without that field.
+- Editor preview and `minimal_intro` apply the same per-glyph position, scale, rotation, opacity, and visibility evaluation.
+
 ## Scene Layer Post-Effect Contract
 
 `SceneBlock` owns a fixed-size scene-level post-effect stack:

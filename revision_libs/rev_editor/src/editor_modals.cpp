@@ -2732,6 +2732,153 @@ void RenderTextModal(EditorContext* editor) {
             if (ImGui::InputFloat("Fade Out End",   &cue->fade_out_end,   0.1f, 1.0f)) AutoSave();
         }
 
+        ImGui::Separator();
+        ImGui::Text("Animation");
+        if (cue->animation.version <= 0) {
+            InitializeTextAnimationConfig(&cue->animation);
+            AutoSave();
+        }
+        TextAnimationConfig& animation = cue->animation;
+        const char* reveal_types[] = {
+            "None", "Fade", "Typewriter", "Line By Line", "Word By Word",
+            "Character By Character", "Scale In", "Slide In", "Rotate In"
+        };
+        const char* exit_types[] = {
+            "None", "Fade Out", "Reverse Typewriter", "Slide Out", "Scale Out", "Rotate Out"
+        };
+        const char* easing_types[] = {
+            "Linear", "Ease In Quad", "Ease Out Quad", "Ease In Out Quad",
+            "Ease In Cubic", "Ease Out Cubic", "Ease In Out Cubic", "Smooth Step", "Smoother Step"
+        };
+        const char* units[] = {"Object", "Line", "Word", "Character"};
+        const char* orders[] = {"Forward", "Reverse", "Center Out", "Outside In", "Random"};
+        const char* modifier_types[] = {
+            "Glow", "Glow Pulse", "Jitter", "Wave", "Flicker", "Rotation Wave", "Scale Pulse"
+        };
+
+        ImGui::Text("Reveal");
+        if (ImGui::Combo("Effect##text_reveal", &animation.reveal.type, reveal_types, 9)) AutoSave();
+        if (ImGui::InputFloat("Start Offset##text_reveal", &animation.reveal.start_offset, 0.1f, 1.0f)) AutoSave();
+        if (ImGui::InputFloat("Duration##text_reveal", &animation.reveal.duration, 0.1f, 1.0f)) AutoSave();
+        if (ImGui::Combo("Easing##text_reveal", &animation.reveal.easing, easing_types, 9)) AutoSave();
+        if (ImGui::Combo("Unit##text_reveal", &animation.reveal.stagger.unit, units, 4)) AutoSave();
+        if (ImGui::Combo("Order##text_reveal", &animation.reveal.stagger.order, orders, 5)) AutoSave();
+        if (ImGui::InputFloat("Stagger Delay##text_reveal", &animation.reveal.stagger.delay, 0.01f, 0.1f)) AutoSave();
+        if (ImGui::SliderFloat("Overlap##text_reveal", &animation.reveal.stagger.overlap, 0.0f, 1.0f)) AutoSave();
+        bool reveal_ignore_whitespace = animation.reveal.stagger.ignore_whitespace != 0;
+        if (ImGui::Checkbox("Ignore Whitespace##text_reveal", &reveal_ignore_whitespace)) {
+            animation.reveal.stagger.ignore_whitespace = reveal_ignore_whitespace ? 1 : 0;
+            AutoSave();
+        }
+        if (animation.reveal.type == 7) {
+            if (ImGui::InputFloat("Distance##text_reveal", &animation.reveal.distance, 0.01f, 0.1f)) AutoSave();
+            if (ImGui::InputFloat2("Direction##text_reveal", &animation.reveal.direction_x)) AutoSave();
+            bool reveal_fade = animation.reveal.fade != 0;
+            if (ImGui::Checkbox("Fade##text_reveal", &reveal_fade)) {
+                animation.reveal.fade = reveal_fade ? 1 : 0;
+                AutoSave();
+            }
+        } else if (animation.reveal.type == 6) {
+            if (ImGui::InputFloat("Start Scale##text_reveal", &animation.reveal.start_scale, 0.05f, 0.25f)) AutoSave();
+            bool reveal_fade = animation.reveal.fade != 0;
+            if (ImGui::Checkbox("Fade##text_reveal", &reveal_fade)) {
+                animation.reveal.fade = reveal_fade ? 1 : 0;
+                AutoSave();
+            }
+        } else if (animation.reveal.type == 8) {
+            if (ImGui::InputFloat("Start Rotation##text_reveal", &animation.reveal.start_rotation, 1.0f, 15.0f)) AutoSave();
+            bool reveal_fade = animation.reveal.fade != 0;
+            if (ImGui::Checkbox("Fade##text_reveal", &reveal_fade)) {
+                animation.reveal.fade = reveal_fade ? 1 : 0;
+                AutoSave();
+            }
+        }
+
+        ImGui::Text("Modifiers (%d/%d)", animation.modifier_count, kMaxTextAnimationModifiers);
+        if (animation.modifier_count < kMaxTextAnimationModifiers && ImGui::Button("Add Modifier")) {
+            TextModifierConfig& modifier = animation.modifiers[animation.modifier_count++];
+            memset(&modifier, 0, sizeof(modifier));
+            modifier.enabled = 1;
+            modifier.end_time = cue->cue_end - cue->cue_start;
+            modifier.speed = 1.0f;
+            modifier.frequency = 1.0f;
+            modifier.seed = 1;
+            AutoSave();
+        }
+        for (int i = 0; i < animation.modifier_count && i < kMaxTextAnimationModifiers; ++i) {
+            TextModifierConfig& modifier = animation.modifiers[i];
+            ImGui::PushID(i);
+            if (ImGui::Combo("Type##text_modifier", &modifier.type, modifier_types, 7)) AutoSave();
+            bool modifier_enabled = modifier.enabled != 0;
+            if (ImGui::Checkbox("Enabled##text_modifier", &modifier_enabled)) {
+                modifier.enabled = modifier_enabled ? 1 : 0;
+                AutoSave();
+            }
+            if (ImGui::InputFloat("Amount##text_modifier", &modifier.amount, 0.01f, 0.1f)) AutoSave();
+            if (ImGui::InputFloat("Speed##text_modifier", &modifier.speed, 0.1f, 1.0f)) AutoSave();
+            if (ImGui::InputFloat("Frequency##text_modifier", &modifier.frequency, 0.1f, 1.0f)) AutoSave();
+            if (ImGui::InputFloat("Phase##text_modifier", &modifier.phase, 0.1f, 1.0f)) AutoSave();
+            if (i > 0 && ImGui::Button("Move Up##text_modifier")) {
+                TextModifierConfig previous = animation.modifiers[i - 1];
+                animation.modifiers[i - 1] = modifier;
+                animation.modifiers[i] = previous;
+                AutoSave();
+            }
+            if (i + 1 < animation.modifier_count && ImGui::Button("Move Down##text_modifier")) {
+                TextModifierConfig next = animation.modifiers[i + 1];
+                animation.modifiers[i + 1] = modifier;
+                animation.modifiers[i] = next;
+                AutoSave();
+            }
+            if (ImGui::Button("Remove##text_modifier")) {
+                for (int j = i; j + 1 < animation.modifier_count; ++j)
+                    animation.modifiers[j] = animation.modifiers[j + 1];
+                --animation.modifier_count;
+                AutoSave();
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+
+        ImGui::Text("Exit");
+        if (ImGui::Combo("Effect##text_exit", &animation.exit.type, exit_types, 6)) AutoSave();
+        if (ImGui::InputFloat("Start Offset##text_exit", &animation.exit.start_offset, 0.1f, 1.0f)) AutoSave();
+        if (ImGui::InputFloat("Duration##text_exit", &animation.exit.duration, 0.1f, 1.0f)) AutoSave();
+        if (ImGui::Combo("Easing##text_exit", &animation.exit.easing, easing_types, 9)) AutoSave();
+        if (ImGui::Combo("Unit##text_exit", &animation.exit.stagger.unit, units, 4)) AutoSave();
+        if (ImGui::Combo("Order##text_exit", &animation.exit.stagger.order, orders, 5)) AutoSave();
+        if (ImGui::InputFloat("Stagger Delay##text_exit", &animation.exit.stagger.delay, 0.01f, 0.1f)) AutoSave();
+        if (ImGui::SliderFloat("Overlap##text_exit", &animation.exit.stagger.overlap, 0.0f, 1.0f)) AutoSave();
+        bool exit_ignore_whitespace = animation.exit.stagger.ignore_whitespace != 0;
+        if (ImGui::Checkbox("Ignore Whitespace##text_exit", &exit_ignore_whitespace)) {
+            animation.exit.stagger.ignore_whitespace = exit_ignore_whitespace ? 1 : 0;
+            AutoSave();
+        }
+        if (animation.exit.type == 3) {
+            if (ImGui::InputFloat("Distance##text_exit", &animation.exit.distance, 0.01f, 0.1f)) AutoSave();
+            if (ImGui::InputFloat2("Direction##text_exit", &animation.exit.direction_x)) AutoSave();
+            bool exit_fade = animation.exit.fade != 0;
+            if (ImGui::Checkbox("Fade##text_exit", &exit_fade)) {
+                animation.exit.fade = exit_fade ? 1 : 0;
+                AutoSave();
+            }
+        } else if (animation.exit.type == 4) {
+            if (ImGui::InputFloat("End Scale##text_exit", &animation.exit.end_scale, 0.05f, 0.25f)) AutoSave();
+            bool exit_fade = animation.exit.fade != 0;
+            if (ImGui::Checkbox("Fade##text_exit", &exit_fade)) {
+                animation.exit.fade = exit_fade ? 1 : 0;
+                AutoSave();
+            }
+        } else if (animation.exit.type == 5) {
+            if (ImGui::InputFloat("End Rotation##text_exit", &animation.exit.end_rotation, 1.0f, 15.0f)) AutoSave();
+            bool exit_fade = animation.exit.fade != 0;
+            if (ImGui::Checkbox("Fade##text_exit", &exit_fade)) {
+                animation.exit.fade = exit_fade ? 1 : 0;
+                AutoSave();
+            }
+        }
+
         const char* blend_modes[] = {"Alpha", "Add", "Multiply", "Screen"};
         if (ImGui::Combo("Blend", &cue->blend_mode, blend_modes, 4)) AutoSave();
 
@@ -3994,9 +4141,6 @@ void RenderMeshModal(EditorContext* editor) {
                 if (cached_mesh->current_animation >= 0 && 
                     cached_mesh->current_animation < cached_mesh->animation_count) {
                     float anim_duration = anims[cached_mesh->current_animation].duration;
-                    
-                    // Pause playback while scrubbing
-                    bool was_playing = editor->playing;
                     
                     // Time scrubber
                     float old_time = cached_mesh->animation_time;

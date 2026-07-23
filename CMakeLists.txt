@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
     # Size optimization flags for release
     set(CMAKE_CXX_FLAGS_RELEASE "/O1 /GS- /GL /MT")
-    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/LTCG /OPT:REF /OPT:ICF /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/LTCG /INCREMENTAL:NO /OPT:REF /OPT:ICF /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
 else()
     set(CMAKE_CXX_FLAGS_RELEASE "-Os -fno-exceptions -fno-rtti")
 endif()
@@ -42,6 +42,15 @@ add_subdirectory(examples/demo_intro)
 add_subdirectory(examples/mesh_demo)
 add_subdirectory(examples/simple_test)
 add_subdirectory(examples/indexed_test)
+
+# Focused deterministic tests for the shared text animation evaluator.
+add_executable(text_animation_tests tests/text_animation_tests.cpp)
+target_link_libraries(text_animation_tests PRIVATE rev_runtime)
+if(MSVC)
+    set_target_properties(text_animation_tests PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup"
+    )
+endif()
 
 # Utility CLI: generate build/packed_assets.h without launching editor UI.
 add_executable(pack_cli tools/pack_cli.cpp)

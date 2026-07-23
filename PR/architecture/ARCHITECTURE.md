@@ -32,6 +32,14 @@ The active HiMYM runtime/editor pipeline also includes a glTF path used by mesh 
 
 This contract exists to keep runtime and editor preview visually aligned for imported multi-object, multi-material assets.
 
+## Text Animation Contract
+
+Text cues use a shared bounded POD animation model so project JSON, editor preview, exported `cues.txt`, and `minimal_intro` can round-trip the same authored state. `TextAnimationConfig` contains one reveal layer, one exit layer, and up to `kMaxTextAnimationModifiers` modifier layers.
+
+Reveal and exit timing can be staggered by object, line, word, or character. `EvaluateTextGlyphAnimation()` derives each glyph state from cue-relative time, authored easing, stagger order, and deterministic seeds. The editor and runtime apply the same position, scale, rotation, opacity, and visibility outputs.
+
+The `[text_cues]` format preserves its legacy fields and appends an optional final `animation` payload. `InitializeTextAnimationConfig()` supplies defaults when the field is absent, and `ParseTextAnimationConfig()` accepts the serialized payload when present.
+
 ## Indexed Pixel Animation Contract
 
 Pixel animation is split into two layers:

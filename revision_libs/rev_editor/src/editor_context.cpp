@@ -118,7 +118,7 @@ static bool UploadEditorPixelFrame(const rev::pixel::PixelAnimation* animation,
                                    unsigned int* out_texture) {
     if (!animation || !animation->pixels || !out_texture || animation->width == 0 ||
         animation->height == 0 || animation->frame_count == 0 || animation->palette_count == 0) {
-                        return false;
+            return false;
     }
 
     size_t pixel_count = (size_t)animation->width * animation->height;
@@ -562,14 +562,18 @@ static void NormalizeSlashes(char* path) {
 // WindowsSdkDir pointing at a removed toolchain folder). That can make
 // CMake/MSBuild fail with SDK-not-found errors even when a valid SDK exists.
 static void SanitizeWindowsSdkEnvironmentForBuild() {
-    const char* sdk_dir = getenv("WindowsSdkDir");
-    if (sdk_dir && sdk_dir[0] && !DirectoryExists(sdk_dir)) {
+    char sdk_dir[512] = {};
+    size_t sdk_dir_size = 0;
+    getenv_s(&sdk_dir_size, sdk_dir, sizeof(sdk_dir), "WindowsSdkDir");
+    if (sdk_dir_size > 0 && !DirectoryExists(sdk_dir)) {
         printf("[Build] Warning: Ignoring invalid WindowsSdkDir='%s'\n", sdk_dir);
         _putenv_s("WindowsSdkDir", "");
     }
 
-    const char* sdk_ver = getenv("WindowsSDKVersion");
-    if (!sdk_ver || !sdk_ver[0]) return;
+    char sdk_ver[128] = {};
+    size_t sdk_ver_size = 0;
+    getenv_s(&sdk_ver_size, sdk_ver, sizeof(sdk_ver), "WindowsSDKVersion");
+    if (sdk_ver_size == 0) return;
 
     // Validate version against the default Windows Kits location used by VS.
     char sdk_path[512] = {};
@@ -767,6 +771,81 @@ static void JsonUnescapeString(const char* src, char* dst, size_t dst_size) {
         }
     }
     dst[di] = '\0';
+}
+
+static bool SerializeTextAnimation(const TextAnimationConfig* config,
+                                   char* out, size_t out_size)
+{
+    if (!config || !out || out_size == 0) return false;
+    size_t used = 0;
+    int modifier_count = config->modifier_count;
+    if (modifier_count < 0) modifier_count = 0;
+    if (modifier_count > kMaxTextAnimationModifiers) modifier_count = kMaxTextAnimationModifiers;
+    const TextRevealConfig& reveal = config->reveal;
+    const TextExitConfig& exit = config->exit;
+    int written = snprintf(out, out_size, "%d|%d|%.6f|%.6f|%d|%d|%d|%.6f|%.6f|%u|%d|%.6f|%.6f|%.6f|%.6f|%.6f|%d|%u|%d|%.6f|%.6f|%d|%d|%d|%.6f|%.6f|%u|%d|%.6f|%.6f|%.6f|%.6f|%.6f|%d|%u",
+        config->version, reveal.type, reveal.start_offset, reveal.duration, reveal.easing,
+        reveal.stagger.unit, reveal.stagger.order, reveal.stagger.delay, reveal.stagger.overlap,
+        reveal.stagger.random_seed, reveal.stagger.ignore_whitespace, reveal.distance,
+        reveal.start_scale, reveal.start_rotation, reveal.direction_x, reveal.direction_y,
+        reveal.fade, reveal.seed,
+        exit.type, exit.start_offset, exit.duration, exit.easing,
+        exit.stagger.unit, exit.stagger.order, exit.stagger.delay, exit.stagger.overlap,
+        exit.stagger.random_seed, exit.stagger.ignore_whitespace, exit.distance,
+        exit.end_scale, exit.end_rotation, exit.direction_x, exit.direction_y,
+        exit.fade, exit.seed);
+    if (written < 0 || (size_t)written >= out_size) return false;
+    used = (size_t)written;
+    int count_written = snprintf(out + used, out_size - used, "|%d", modifier_count);
+    if (count_written < 0 || (size_t)count_written >= out_size - used) return false;
+    used += (size_t)count_written;
+    for (int i = 0; i < modifier_count; ++i) {
+        const TextModifierConfig& modifier = config->modifiers[i];
+        int modifier_written = snprintf(out + used, out_size - used,
+            "|%d|%d|%.6f|%.6f|%.6f|%.6f|%.6f|%.6f|%u",
+            modifier.type, modifier.enabled, modifier.start_time, modifier.end_time,
+            modifier.amount, modifier.speed, modifier.frequency, modifier.phase, modifier.seed);
+        if (modifier_written < 0 || (size_t)modifier_written >= out_size - used) return false;
+        used += (size_t)modifier_written;
+    }
+    return true;
+}
+
+static bool DeserializeTextAnimation(const char* serialized, TextAnimationConfig* config)
+{
+    if (!serialized || !config) return false;
+    InitializeTextAnimationConfig(config);
+    char buffer[4096] = {};
+    strncpy_s(buffer, serialized, _TRUNCATE);
+    char* context = nullptr;
+    char* cursor = strtok_s(buffer, "|", &context);
+    auto next_int = [&]() { char* token = cursor; cursor = strtok_s(nullptr, "|", &context); return token ? atoi(token) : 0; };
+    auto next_uint = [&]() { char* token = cursor; cursor = strtok_s(nullptr, "|", &context); return token ? (unsigned int)strtoul(token, nullptr, 10) : 0U; };
+    auto next_float = [&]() { char* token = cursor; cursor = strtok_s(nullptr, "|", &context); return token ? (float)atof(token) : 0.0f; };
+    if (!cursor) return false;
+    config->version = next_int();
+    TextRevealConfig& reveal = config->reveal;
+    reveal.type = next_int(); reveal.start_offset = next_float(); reveal.duration = next_float(); reveal.easing = next_int();
+    reveal.stagger.unit = next_int(); reveal.stagger.order = next_int(); reveal.stagger.delay = next_float(); reveal.stagger.overlap = next_float();
+    reveal.stagger.random_seed = next_uint(); reveal.stagger.ignore_whitespace = next_int(); reveal.distance = next_float();
+    reveal.start_scale = next_float(); reveal.start_rotation = next_float(); reveal.direction_x = next_float(); reveal.direction_y = next_float();
+    reveal.fade = next_int(); reveal.seed = next_uint();
+    TextExitConfig& exit = config->exit;
+    exit.type = next_int(); exit.start_offset = next_float(); exit.duration = next_float(); exit.easing = next_int();
+    exit.stagger.unit = next_int(); exit.stagger.order = next_int(); exit.stagger.delay = next_float(); exit.stagger.overlap = next_float();
+    exit.stagger.random_seed = next_uint(); exit.stagger.ignore_whitespace = next_int(); exit.distance = next_float();
+    exit.end_scale = next_float(); exit.end_rotation = next_float(); exit.direction_x = next_float(); exit.direction_y = next_float();
+    exit.fade = next_int(); exit.seed = next_uint();
+    config->modifier_count = next_int();
+    if (config->modifier_count < 0) config->modifier_count = 0;
+    if (config->modifier_count > kMaxTextAnimationModifiers) config->modifier_count = kMaxTextAnimationModifiers;
+    for (int i = 0; i < config->modifier_count; ++i) {
+        TextModifierConfig& modifier = config->modifiers[i];
+        modifier.type = next_int(); modifier.enabled = next_int(); modifier.start_time = next_float();
+        modifier.end_time = next_float(); modifier.amount = next_float(); modifier.speed = next_float();
+        modifier.frequency = next_float(); modifier.phase = next_float(); modifier.seed = next_uint();
+    }
+    return true;
 }
 
 static bool ParseJsonStringValue(const char* line, char* out, size_t out_size) {
@@ -2249,6 +2328,10 @@ bool LoadProject(EditorContext* editor, const char* path) {
             } else if (strstr(start, "\"color\":")) {
                 sscanf_s(start, "\"color\": [%f, %f, %f]",
                     &current_text_cue.color.r, &current_text_cue.color.g, &current_text_cue.color.b);
+            } else if (strstr(start, "\"animation\":")) {
+                char serialized_animation[4096] = {};
+                ParseJsonStringValue(start, serialized_animation, sizeof(serialized_animation));
+                DeserializeTextAnimation(serialized_animation, &current_text_cue.animation);
             } else if (strstr(start, "\"effect_type\":")) {
                 sscanf_s(start, "\"effect_type\": %d", &current_text_cue.effect_type);
             } else if (strstr(start, "\"cue_start\":")) {
@@ -2313,6 +2396,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 current_text_cue.curve_color_b = -1;
                 current_text_cue.blend_mode = 0;
                 current_text_cue.bake_mode = 0;
+                InitializeTextAnimationConfig(&current_text_cue.animation);
             }
         }
 
@@ -3175,6 +3259,10 @@ bool SaveProject(EditorContext* editor, const char* path) {
             JsonEscapeString(cue->glyph_atlas_path, escaped_glyph_atlas_path, sizeof(escaped_glyph_atlas_path));
             JsonEscapeString(cue->glyph_meta_key, escaped_glyph_meta_key, sizeof(escaped_glyph_meta_key));
             JsonEscapeString(cue->glyph_meta_path, escaped_glyph_meta_path, sizeof(escaped_glyph_meta_path));
+            char serialized_animation[4096] = {};
+            char escaped_animation[4096] = {};
+            SerializeTextAnimation(&cue->animation, serialized_animation, sizeof(serialized_animation));
+            JsonEscapeString(serialized_animation, escaped_animation, sizeof(escaped_animation));
             fprintf(f, "        {\n");
             fprintf(f, "          \"text\": \"%s\",\n", escaped_text);
             fprintf(f, "          \"font_name\": \"%s\",\n", escaped_font);
@@ -3206,6 +3294,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"glyph_atlas_path\": \"%s\",\n", escaped_glyph_atlas_path);
             fprintf(f, "          \"glyph_meta_key\": \"%s\",\n", escaped_glyph_meta_key);
             fprintf(f, "          \"glyph_meta_path\": \"%s\",\n", escaped_glyph_meta_path);
+            fprintf(f, "          \"animation\": \"%s\",\n", escaped_animation);
             fprintf(f, "          \"layer_order\": %d\n", cue->layer_order);
             fprintf(f, "        }%s\n", (i < scene->text_cue_count - 1) ? "," : "");
         }
@@ -4923,7 +5012,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     
     // [text_cues] section
     fprintf(f, "[text_cues]\n");
-    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path|glyph_atlas_key|glyph_atlas_path|glyph_meta_key|glyph_meta_path\n");
+    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path|glyph_atlas_key|glyph_atlas_path|glyph_meta_key|glyph_meta_path|animation\n");
     
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
@@ -4965,6 +5054,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             char glyph_atlas_path[512] = {};
             char glyph_meta_key[64] = {};
             char glyph_meta_path[512] = {};
+            char serialized_animation[4096] = {};
+            SerializeTextAnimation(&cue->animation, serialized_animation, sizeof(serialized_animation));
             if (cue->text[0] != '\0') {
                 snprintf(baked_asset_key, sizeof(baked_asset_key), "text_s%02d_c%02d.png", scene_idx, cue_idx);
 
@@ -5012,7 +5103,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 }
             }
             
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%.3f|%d\n",
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%.3f|%d|%s\n",
                 encoded_text, cue->font_name, cue->x, cue->y, cue->size,
                 cue->color.r, cue->color.g, cue->color.b,
                 cue->effect_type, abs_start, abs_end,
@@ -5024,7 +5115,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->bake_mode,
                 baked_asset_key, baked_asset_path,
                 glyph_atlas_key, glyph_atlas_path, glyph_meta_key, glyph_meta_path,
-                cue->rotation, cue->curve_rotation
+                cue->rotation, cue->curve_rotation, serialized_animation
             );
         }
     }
@@ -6335,7 +6426,9 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
                                 float viewport_width, float viewport_height,
                                 float wave_amp, float wave_freq, float wave_length,
                                 float jitter_amp, float jitter_freq, float time, float rotation,
-                                bool horizontal_scroll) {
+                                bool horizontal_scroll,
+                                const rev::runtime::TextAnimationConfig* animation = nullptr,
+                                float animation_time = 0.0f) {
     if (!program || !atlas || atlas->texture_id == 0 || !text) return false;
     int u_pos = rev::shader::GetUniformLocation(program, "u_position");
     int u_sz = rev::shader::GetUniformLocation(program, "u_size");
@@ -6358,14 +6451,42 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
     float cursor_y = y;
     bool drew_glyph = false;
     int glyph_index = 0;
+    unsigned int character_count = 0;
+    unsigned int word_count = 0;
+    unsigned int line_count = 1;
+    bool in_word = false;
+    for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
+        if (*p == '\n') {
+            ++line_count;
+            in_word = false;
+        } else {
+            ++character_count;
+            if (*p != ' ' && *p != '\t' && *p != '\r') {
+                if (!in_word) ++word_count;
+                in_word = true;
+            } else {
+                in_word = false;
+            }
+        }
+    }
+    unsigned int word_index = 0;
+    unsigned int line_index = 0;
+    unsigned int character_index = 0;
+    in_word = false;
     glBindTexture(GL_TEXTURE_2D, atlas->texture_id);
     for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
         if (*p == '\n') {
             cursor_x = x - line_width / viewport_width;
             cursor_y += atlas->line_height * size_scale / viewport_height * 2.0f;
+            ++line_index;
+            in_word = false;
             continue;
         }
         const rev::runtime::TextGlyph* glyph = rev::runtime::FindTextGlyph(atlas, *p);
+        bool whitespace = (*p == ' ' || *p == '\t' || *p == '\r');
+        unsigned int current_character_index = character_index++;
+        if (!whitespace && !in_word) ++word_index;
+        in_word = !whitespace;
         if (!glyph) continue;
         float w = glyph->width * size_scale / viewport_width * 2.0f;
         float h = glyph->height * size_scale / viewport_height * 2.0f;
@@ -6383,6 +6504,32 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
         } else {
             glyph_x += wave + jitter_x;
             glyph_y += jitter_y;
+        }
+        rev::runtime::GlyphAnimationState animation_state = {};
+        if (animation && animation->version > 0) {
+            rev::runtime::TextGlyphTimingInfo timing = {};
+            timing.character_index = current_character_index;
+            timing.word_index = word_index > 0 ? word_index - 1 : 0;
+            timing.line_index = line_index;
+            timing.character_count = character_count;
+            timing.word_count = word_count;
+            timing.line_count = line_count;
+            timing.whitespace = whitespace ? 1 : 0;
+            rev::runtime::EvaluateTextGlyphAnimation(animation, animation_time, &timing, &animation_state);
+            if (!animation_state.visible) {
+                cursor_x += glyph->advance * spacing * size_scale / viewport_width * 2.0f;
+                ++glyph_index;
+                continue;
+            }
+            glyph_x += animation_state.position_offset_x;
+            glyph_y += animation_state.position_offset_y;
+            w *= animation_state.scale_x;
+            h *= animation_state.scale_y;
+            if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity * animation_state.opacity);
+            if (u_rot >= 0) rev::shader::SetFloat(program, u_rot, rotation + animation_state.rotation);
+        } else {
+            if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity);
+            if (u_rot >= 0) rev::shader::SetFloat(program, u_rot, rotation);
         }
         if (u_pos >= 0) rev::shader::SetVec2(program, u_pos, glyph_x * 2.0f - 1.0f, -((glyph_y * 2.0f) - 1.0f));
         if (u_sz >= 0) rev::shader::SetVec2(program, u_sz, w, h);
@@ -6575,37 +6722,6 @@ static void RenderAssetShaderOverlays(const AssetShader* shaders, int shader_cou
         glEnable(GL_BLEND);
         ApplyShaderLayerBlendMode(asset_shader.blend_mode, asset_shader.opacity);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    }
-}
-
-static void CompilePreviewShader(EditorContext* editor, int shader_id) {
-    if (!editor) return;
-    if (shader_id < 0 || shader_id >= g_shader_preset_count) shader_id = 0;
-    
-    printf("[CompilePreviewShader] Compiling shader ID: %d\n", shader_id);
-    
-    // Destroy old shader if exists
-    if (editor->preview_shader) {
-        rev::shader::DestroyProgram((rev::shader::Program*)editor->preview_shader);
-        editor->preview_shader = nullptr;
-        printf("[CompilePreviewShader] Destroyed old shader\n");
-    }
-    
-    // Get shader source from centralized registry
-    const char* shader_source = GetShaderSourceById(shader_id);
-    if (!shader_source) {
-        printf("[CompilePreviewShader] ERROR: No shader found for ID %d\n", shader_id);
-        return;
-    }
-    
-    // Compile new shader with correct source
-    editor->preview_shader = rev::shader::CompileFromSource(preview_vertex_shader, shader_source);
-    editor->preview_current_shader_id = shader_id;
-    
-    if (editor->preview_shader) {
-        printf("[CompilePreviewShader] SUCCESS: Shader %d compiled\n", shader_id);
-    } else {
-        printf("[CompilePreviewShader] FAILED: Shader %d compilation returned null\n", shader_id);
     }
 }
 
@@ -7124,7 +7240,7 @@ void RenderPreviewFrame(EditorContext* editor) {
         typedef void (*PFNGLUNIFORM4FVPROC)(int, int, const float*);
         auto glUniform4fv_fn = (PFNGLUNIFORM4FVPROC)wglGetProcAddress("glUniform4fv");
         typedef void (*PFNGLDEPTHMASKPROC)(unsigned char flag);
-        auto glDepthMask_fn = (PFNGLDEPTHMASKPROC)wglGetProcAddress("glDepthMask");
+        auto glDepthMask_mesh_fn = (PFNGLDEPTHMASKPROC)wglGetProcAddress("glDepthMask");
 
         // Pre-compute 3D camera (reused for every mesh item)
         float mesh_aspect = (editor->preview_height > 0)
@@ -7298,7 +7414,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                 
                 // Disable depth testing for 2D sprites
                 glDisable(0x0B71);  // GL_DEPTH_TEST
-                if (glDepthMask_fn) glDepthMask_fn(0);  // GL_FALSE
+                if (glDepthMask_mesh_fn) glDepthMask_mesh_fn(0);  // GL_FALSE
                 depth_on = false;
                 
                 // Enable blending for sprites
@@ -7735,10 +7851,13 @@ void RenderPreviewFrame(EditorContext* editor) {
                         float scene_time = editor->current_time - item.scene_start_time;
                         if (!rev::runtime::BuildTextEffectFrame(cue, scene_time, &fx)) continue;
 
+                        bool has_text_animation = cue->animation.version > 0;
+                        const char* preview_text = has_text_animation ? cue->text : fx.text;
+
                         rev::runtime::TextGlyphAtlas* atlas = EnsurePreviewAtlas(editor, false,
                             cue->font_name, cue->size);
                         if (atlas && glActiveTexture_fn) glActiveTexture_fn(0x84C0);
-                        if (atlas && DrawPreviewGlyphRun(sprite_prog, atlas, fx.text,
+                        if (atlas && DrawPreviewGlyphRun(sprite_prog, atlas, preview_text,
                             anim_x + fx.offset_x, anim_y + fx.offset_y,
                             cue->size > 0.0f ? anim_size / cue->size : 1.0f,
                             1.0f,
@@ -7747,7 +7866,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 cue->fade_out_start, cue->fade_out_end, scene_time) * fx.opacity_mul,
                             anim_color_r, anim_color_g, anim_color_b,
                             (float)editor->preview_width, (float)editor->preview_height,
-                            0.0f, 0.0f, 9.0f, 0.0f, 0.0f, scene_time, anim_rotation, true)) {
+                            0.0f, 0.0f, 9.0f, 0.0f, 0.0f, scene_time, anim_rotation, true,
+                            has_text_animation ? &cue->animation : nullptr, scene_time)) {
                             continue;
                         }
 
@@ -8537,10 +8657,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         blend_on = true;
                                     }
                                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                                    if (glDepthMask_fn) glDepthMask_fn(0); // GL_FALSE
+                                    if (glDepthMask_mesh_fn) glDepthMask_mesh_fn(0); // GL_FALSE
                                 } else {
                                     if (blend_on) { glDisable(GL_BLEND); blend_on = false; }
-                                    if (glDepthMask_fn) glDepthMask_fn(1); // GL_TRUE
+                                    if (glDepthMask_mesh_fn) glDepthMask_mesh_fn(1); // GL_TRUE
                                 }
 
                                 bool rendered_slot = false;
@@ -8793,11 +8913,11 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 if (anim_fov < 1.0f) anim_fov = 1.0f;
                                 if (anim_fov > 170.0f) anim_fov = 170.0f;
                                 rev::runtime::Mat4LookAt(view_mat, eye, center3, up3);
-                                float proj_mat[16];
-                                rev::runtime::Mat4Perspective(proj_mat, anim_fov * 3.14159265f / 180.0f, mesh_aspect, 0.1f, 100.0f);
+                                float animated_proj_mat[16];
+                                rev::runtime::Mat4Perspective(animated_proj_mat, anim_fov * 3.14159265f / 180.0f, mesh_aspect, 0.1f, 100.0f);
                                 if (glUniformMatrix4fv) {
                                     glUniformMatrix4fv(mp_view, 1, 0, view_mat);
-                                    glUniformMatrix4fv(mp_proj, 1, 0, proj_mat);
+                                    glUniformMatrix4fv(mp_proj, 1, 0, animated_proj_mat);
                                 }
                                 if (mp_light >= 0) rev::shader::SetVec3(mesh_prog, mp_light, draw_light[0], draw_light[1], draw_light[2]);
 
@@ -8816,10 +8936,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         blend_on = true;
                                     }
                                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                                    if (glDepthMask_fn) glDepthMask_fn(0); // GL_FALSE
+                                    if (glDepthMask_mesh_fn) glDepthMask_mesh_fn(0); // GL_FALSE
                                 } else {
                                     if (blend_on) { glDisable(GL_BLEND); blend_on = false; }
-                                    if (glDepthMask_fn) glDepthMask_fn(1); // GL_TRUE
+                                    if (glDepthMask_mesh_fn) glDepthMask_mesh_fn(1); // GL_TRUE
                                 }
 
                                 bool rendered_slot = false;
@@ -8913,7 +9033,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (mp_light >= 0) rev::shader::SetVec3(mesh_prog, mp_light, 3.0f, 5.0f, 4.0f);
                     int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
                     if (blend_on) { glDisable(GL_BLEND); blend_on = false; }
-                    if (glDepthMask_fn) glDepthMask_fn(1); // GL_TRUE
+                    if (glDepthMask_mesh_fn) glDepthMask_mesh_fn(1); // GL_TRUE
                     if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
                     rev::mesh::Render(mesh, -1);
                     rev::mesh::DestroyMesh(mesh);
@@ -8924,7 +9044,7 @@ void RenderPreviewFrame(EditorContext* editor) {
         if (blend_on) glDisable(GL_BLEND);
         glDisable(GL_CULL_FACE);
         if (depth_on) {
-            if (glDepthMask_fn) glDepthMask_fn(1); // GL_TRUE
+            if (glDepthMask_mesh_fn) glDepthMask_mesh_fn(1); // GL_TRUE
             glDisable(0x0B71); // GL_DEPTH_TEST
         }
     }

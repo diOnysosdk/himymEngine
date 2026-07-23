@@ -1022,6 +1022,7 @@ void RenderProperties(EditorContext* editor) {
                 cue.curve_color_r = -1;
                 cue.curve_color_g = -1;
                 cue.curve_color_b = -1;
+                InitializeTextAnimationConfig(&cue.animation);
                 int new_index = AddTextCue(scene, cue);
                 editor->editing_text = scene->text_cues[new_index];
                 editor->selected_cue_index = new_index;
@@ -1802,7 +1803,6 @@ void RenderCurveEditor(EditorContext* editor) {
             ImGui::SetCursorScreenPos(canvas_pos);
             ImGui::InvisibleButton("canvas", canvas_size);
             bool is_hovered = ImGui::IsItemHovered();
-            bool is_active = ImGui::IsItemActive();
             ImVec2 mouse_pos = ImGui::GetMousePos();
             
             // Add point on double-click
