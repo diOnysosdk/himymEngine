@@ -35,6 +35,27 @@ int main()
     passed &= Check(NearlyEqual(CalculateTextStaggeredProgress(0.5f, 0.5f, 0.5f), 0.5f),
                     "staggered progress");
 
+    TriggerTiming timing = {120.0f, 0.25f};
+    passed &= Check(NearlyEqual(GetBeatDurationSeconds(timing.bpm), 0.5f),
+                    "120 BPM beat duration");
+    passed &= Check(NearlyEqual(GetTriggerTimeSeconds(&timing, 2.0f), 1.25f),
+                    "beat time includes offset");
+    passed &= Check(NearlyEqual(QuantizeTriggerBeat(0.74f, 0.5f), 0.5f),
+                    "eighth-note quantization");
+    passed &= Check(NearlyEqual(QuantizeTriggerBeat(7.9f, 8.0f), 8.0f),
+                    "eight-beat quantization");
+
+    TriggerTrack track = {};
+    track.timing = timing;
+    passed &= Check(AddTriggerEvent(&track, 1.0f, 1) && track.event_count == 1,
+                    "trigger event insertion");
+    passed &= Check(!AddTriggerEvent(&track, -1.0f, 1),
+                    "negative trigger beat rejected");
+    passed &= Check(NearlyEqual(EvaluateTriggerPulse(&track, 0.75f, 0.5f), 1.0f),
+                    "trigger pulse is active after event");
+    passed &= Check(NearlyEqual(EvaluateTriggerPulse(&track, 1.01f, 0.5f), 0.0f),
+                    "trigger pulse expires");
+
     TextAnimationConfig config = {};
     InitializeTextAnimationConfig(&config);
     passed &= Check(config.version == 1 && config.modifier_count == 0,

@@ -30,6 +30,9 @@ using rev::runtime::AudioEffects;
 using rev::runtime::MeshCue;
 using rev::runtime::LayerPostEffect;
 using rev::runtime::AssetShader;
+using rev::runtime::TriggerEvent;
+using rev::runtime::TriggerTrack;
+using rev::runtime::kMaxTriggerTracks;
 
 enum CueType {
     CueTypeShader = 0,
@@ -245,6 +248,10 @@ struct ProjectData {
     // Animation curves
     rev::curve::Curve* curves;
     int curve_count;
+
+    // Project-level music-synchronised trigger tracks.
+    TriggerTrack trigger_tracks[kMaxTriggerTracks];
+    int trigger_track_count;
     
     // Project metadata
     char project_path[512];
@@ -286,6 +293,15 @@ struct EditorContext {
     float current_time;
     bool playing;
     void* audio_state;          // Editor-owned XM preview state
+
+    // Trigger recorder state.
+    bool show_trigger_recorder;
+    bool trigger_recording;
+    int recording_track_index;
+    float recording_bpm;
+    float recording_beat_offset;
+    float recording_quantize_beats;
+    char recording_track_name[64];
     
     // Preview viewport
     bool show_preview;
@@ -421,6 +437,7 @@ void EndFrame(EditorContext* editor);
 void RenderMenuBar(EditorContext* editor);
 void RenderTimeline(EditorContext* editor);
 void RenderCurveEditor(EditorContext* editor);
+void RenderTriggerRecorder(EditorContext* editor);
 void RenderCurveEditorModal(EditorContext* editor);
 void RenderShaderModal(EditorContext* editor);
 void RenderMusicModal(EditorContext* editor);

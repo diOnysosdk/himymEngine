@@ -1889,6 +1889,52 @@ void RenderCurveEditor(EditorContext* editor) {
     }
 }
 
+void RenderTriggerRecorder(EditorContext* editor) {
+    if (!editor || !editor->show_trigger_recorder) return;
+
+    ImGui::Begin("Trigger Recorder", &editor->show_trigger_recorder);
+    ImGui::InputText("Track name", editor->recording_track_name,
+                     sizeof(editor->recording_track_name));
+    ImGui::InputFloat("BPM", &editor->recording_bpm, 1.0f, 10.0f, "%.1f");
+    ImGui::InputFloat("Beat offset", &editor->recording_beat_offset, 0.01f, 0.1f, "%.3f");
+    ImGui::InputFloat("Quantize beats", &editor->recording_quantize_beats, 0.125f, 0.5f, "%.3f");
+    if (editor->recording_quantize_beats <= 0.0f) editor->recording_quantize_beats = 0.5f;
+    if (editor->recording_bpm <= 0.0f) editor->recording_bpm = 120.0f;
+
+    if (!editor->trigger_recording) {
+        if (ImGui::Button("Start recording") &&
+            editor->project->trigger_track_count < rev::runtime::kMaxTriggerTracks) {
+            int index = editor->project->trigger_track_count++;
+            TriggerTrack* track = &editor->project->trigger_tracks[index];
+            memset(track, 0, sizeof(*track));
+            strncpy_s(track->name, sizeof(track->name), editor->recording_track_name, _TRUNCATE);
+            track->timing.bpm = editor->recording_bpm;
+            track->timing.beat_offset = editor->recording_beat_offset;
+            editor->recording_track_index = index;
+            editor->current_time = 0.0f;
+            editor->playing = true;
+            editor->trigger_recording = true;
+            editor->project->modified = true;
+        }
+    } else if (ImGui::Button("Stop recording")) {
+        editor->trigger_recording = false;
+        editor->playing = false;
+    }
+
+    if (editor->recording_track_index >= 0 &&
+        editor->recording_track_index < editor->project->trigger_track_count) {
+        TriggerTrack* track = &editor->project->trigger_tracks[editor->recording_track_index];
+        ImGui::Text("Track: %s", track->name);
+        ImGui::Text("Events: %d", track->event_count);
+        ImGui::Text("Press either Ctrl to record; Esc stops.");
+        if (ImGui::Button("Clear events")) {
+            track->event_count = 0;
+            editor->project->modified = true;
+        }
+    }
+    ImGui::End();
+}
+
 } // namespace editor
 } // namespace rev
 

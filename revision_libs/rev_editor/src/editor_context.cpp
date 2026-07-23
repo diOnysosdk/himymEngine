@@ -1108,6 +1108,13 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->selected_cue_type = CueTypeShader;
     editor->current_time = 0.0f;
     editor->playing = false;
+    editor->show_trigger_recorder = false;
+    editor->trigger_recording = false;
+    editor->recording_track_index = -1;
+    editor->recording_bpm = 120.0f;
+    editor->recording_beat_offset = 0.0f;
+    editor->recording_quantize_beats = 0.5f;
+    strncpy_s(editor->recording_track_name, sizeof(editor->recording_track_name), "Ctrl Triggers", _TRUNCATE);
     editor->show_preview = true;
     editor->preview_fbo = 0;
     editor->preview_texture = 0;
@@ -1249,6 +1256,7 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
         editor->project->curves[i].capacity = 0;
     }
     editor->project->curve_count = 0;
+    editor->project->trigger_track_count = 0;
     
     editor->project->modified = false;
     editor->project->total_duration = 0.0f;
@@ -1427,6 +1435,9 @@ bool LoadProject(EditorContext* editor, const char* path) {
     bool in_scene_layer_post_effects = false;
     bool in_curves = false;
     bool in_curve_points = false;
+    bool in_trigger_tracks = false;
+    bool in_trigger_events = false;
+    TriggerTrack* current_trigger_track = nullptr;
     
     ShaderCue current_shader_cue = {};
     // Initialize shader curve fields to -1 (no curve)
@@ -1599,6 +1610,38 @@ bool LoadProject(EditorContext* editor, const char* path) {
         if (strstr(start, "\"curves\":")) {
             in_scenes = false;
             in_curves = true;
+            in_trigger_tracks = false;
+            in_trigger_events = false;
+            continue;
+        }
+        if (strstr(start, "\"trigger_tracks\":")) {
+            in_scenes = false;
+            in_curves = false;
+            in_trigger_tracks = true;
+            continue;
+        }
+
+        if (in_trigger_tracks) {
+            if (strstr(start, "\"name\":") && indent == 4 &&
+                editor->project->trigger_track_count < rev::runtime::kMaxTriggerTracks) {
+                current_trigger_track = &editor->project->trigger_tracks[editor->project->trigger_track_count++];
+                memset(current_trigger_track, 0, sizeof(*current_trigger_track));
+                ParseJsonStringValue(start, current_trigger_track->name, sizeof(current_trigger_track->name));
+            } else if (current_trigger_track && strstr(start, "\"bpm\":")) {
+                sscanf_s(start, "\"bpm\": %f", &current_trigger_track->timing.bpm);
+            } else if (current_trigger_track && strstr(start, "\"beat_offset\":")) {
+                sscanf_s(start, "\"beat_offset\": %f", &current_trigger_track->timing.beat_offset);
+            } else if (current_trigger_track && strstr(start, "\"events\":")) {
+                in_trigger_events = true;
+            } else if (in_trigger_events && current_trigger_track && strstr(start, "{\"beat\":")) {
+                float beat = 0.0f;
+                int value = 0;
+                if (sscanf_s(start, "{\"beat\": %f, \"value\": %d", &beat, &value) == 2) {
+                    rev::runtime::AddTriggerEvent(current_trigger_track, beat, value);
+                }
+            } else if (in_trigger_events && strstr(start, "]")) {
+                in_trigger_events = false;
+            }
             continue;
         }
         
@@ -3473,6 +3516,27 @@ bool SaveProject(EditorContext* editor, const char* path) {
     fprintf(f, "  ],\n");
     
     // Save curves
+    fprintf(f, "  \"trigger_tracks\": [\n");
+    for (int t = 0; t < editor->project->trigger_track_count; ++t) {
+        TriggerTrack* track = &editor->project->trigger_tracks[t];
+        char escaped_name[128] = {};
+        JsonEscapeString(track->name, escaped_name, sizeof(escaped_name));
+        fprintf(f, "    {\n");
+        fprintf(f, "      \"name\": \"%s\",\n", escaped_name);
+        fprintf(f, "      \"bpm\": %.3f,\n", track->timing.bpm);
+        fprintf(f, "      \"beat_offset\": %.3f,\n", track->timing.beat_offset);
+        fprintf(f, "      \"events\": [\n");
+        for (int e = 0; e < track->event_count; ++e) {
+            fprintf(f, "        {\"beat\": %.3f, \"value\": %d}%s\n",
+                    track->events[e].beat, track->events[e].value,
+                    (e < track->event_count - 1) ? "," : "");
+        }
+        fprintf(f, "      ]\n");
+        fprintf(f, "    }%s\n", (t < editor->project->trigger_track_count - 1) ? "," : "");
+    }
+    fprintf(f, "  ],\n");
+
+    // Save curves
     fprintf(f, "  \"curves\": [\n");
     for (int c = 0; c < editor->project->curve_count; ++c) {
         rev::curve::Curve* curve = &editor->project->curves[c];
@@ -3580,6 +3644,7 @@ bool NewProject(EditorContext* editor) {
         }
         editor->project->curve_count = 0;
     }
+    editor->project->trigger_track_count = 0;
     
     editor->project->total_duration = 0.0f;  // Will be updated as scenes are added
     editor->project->loop_intro = false;
@@ -3598,6 +3663,8 @@ bool NewProject(EditorContext* editor) {
     editor->editing_curve_index = -1;
     editor->current_time = 0.0f;
     editor->playing = false;
+    editor->trigger_recording = false;
+    editor->recording_track_index = -1;
 
     // Note: GetScene(0) returns nullptr when scene_count==0
     // First scene will be created via AddScene when user adds content
@@ -3625,6 +3692,27 @@ void BeginFrame(EditorContext* editor) {
     // Update playback
     ImGuiIO& io = ImGui::GetIO();
     UpdatePlayback(editor, io.DeltaTime);
+
+    if (editor->trigger_recording) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            editor->trigger_recording = false;
+            editor->playing = false;
+        } else if (ImGui::IsKeyPressed(ImGuiKey_LeftCtrl, false) ||
+                   ImGui::IsKeyPressed(ImGuiKey_RightCtrl, false)) {
+            if (editor->recording_track_index >= 0 &&
+                editor->recording_track_index < editor->project->trigger_track_count) {
+                TriggerTrack* track = &editor->project->trigger_tracks[editor->recording_track_index];
+                float beat_duration = rev::runtime::GetBeatDurationSeconds(track->timing.bpm);
+                if (beat_duration > 0.0f) {
+                    float beat = (editor->current_time - track->timing.beat_offset) / beat_duration;
+                    beat = rev::runtime::QuantizeTriggerBeat(beat, editor->recording_quantize_beats);
+                    if (rev::runtime::AddTriggerEvent(track, beat, 1)) {
+                        editor->project->modified = true;
+                    }
+                }
+            }
+        }
+    }
     
     // Render preview frame
     if (editor->show_preview && editor->preview_initialized) {
@@ -3660,6 +3748,8 @@ void RenderUI(EditorContext* editor) {
     ImGui::End();
     
     RenderMenuBar(editor);
+
+    RenderTriggerRecorder(editor);
     
     // Handle keyboard shortcuts
     if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
@@ -4065,6 +4155,7 @@ void RenderMenuBar(EditorContext* editor) {
             ImGui::MenuItem("Timeline", nullptr, &editor->show_timeline);
             ImGui::MenuItem("Properties", nullptr, &editor->show_properties);
             ImGui::MenuItem("Curve Editor", nullptr, &editor->show_curve_editor);
+            ImGui::MenuItem("Trigger Recorder", nullptr, &editor->show_trigger_recorder);
             ImGui::MenuItem("Asset Browser", nullptr, &editor->show_asset_browser);
             ImGui::MenuItem("Preview", nullptr, &editor->show_preview);
             ImGui::Separator();

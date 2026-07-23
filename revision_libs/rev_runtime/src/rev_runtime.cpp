@@ -250,6 +250,53 @@ float CalculateTextStaggeredProgress(float global_progress, float element_order,
     return Clamp01((global_progress - start) / duration);
 }
 
+float GetBeatDurationSeconds(float bpm)
+{
+    return bpm > 0.0f ? 60.0f / bpm : 0.0f;
+}
+
+float GetTriggerTimeSeconds(const TriggerTiming* timing, float beat)
+{
+    if (!timing) return 0.0f;
+    return timing->beat_offset + beat * GetBeatDurationSeconds(timing->bpm);
+}
+
+float QuantizeTriggerBeat(float beat, float interval_beats)
+{
+    if (beat < 0.0f || interval_beats <= 0.0f) return beat;
+    return floorf(beat / interval_beats + 0.5f) * interval_beats;
+}
+
+float EvaluateTriggerPulse(const TriggerTrack* track, float time_seconds, float pulse_beats)
+{
+    if (!track || track->event_count <= 0 || pulse_beats <= 0.0f) return 0.0f;
+    float beat_duration = GetBeatDurationSeconds(track->timing.bpm);
+    if (beat_duration <= 0.0f) return 0.0f;
+    float beat = (time_seconds - track->timing.beat_offset) / beat_duration;
+    for (int i = track->event_count - 1; i >= 0; --i) {
+        float elapsed_beats = beat - track->events[i].beat;
+        if (elapsed_beats < 0.0f) continue;
+        if (elapsed_beats <= pulse_beats) return 1.0f;
+        break;
+    }
+    return 0.0f;
+}
+
+bool AddTriggerEvent(TriggerTrack* track, float beat, int value)
+{
+    if (!track || beat < 0.0f || track->event_count >= kMaxTriggerEvents) return false;
+
+    int insert_index = track->event_count;
+    while (insert_index > 0 && track->events[insert_index - 1].beat > beat) {
+        track->events[insert_index] = track->events[insert_index - 1];
+        --insert_index;
+    }
+    track->events[insert_index].beat = beat;
+    track->events[insert_index].value = value;
+    ++track->event_count;
+    return true;
+}
+
 void InitializeTextAnimationConfig(TextAnimationConfig* config)
 {
     if (!config) return;

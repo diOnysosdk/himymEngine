@@ -30,6 +30,27 @@ struct AudioEffects {
 constexpr int kMaxCurves = 128;
 constexpr int kMaxLayerPostEffects = 8;
 constexpr int kMaxAssetShaders = 4;
+constexpr int kMaxTriggerEvents = 4096;
+constexpr int kMaxTriggerTracks = 32;
+
+// Beat timing uses a quarter note as one beat. Trigger intervals are expressed
+// in quarter-note beats, so an eighth note is 0.5 and an eight-beat phrase is 8.
+struct TriggerTiming {
+    float bpm;
+    float beat_offset;
+};
+
+struct TriggerEvent {
+    float beat;
+    int value;
+};
+
+struct TriggerTrack {
+    char name[64];
+    TriggerTiming timing;
+    TriggerEvent events[kMaxTriggerEvents];
+    int event_count;
+};
 
 // ------------------------------------------------------------------
 // Basic types
@@ -611,6 +632,11 @@ float GetTextElementOrder(unsigned int element_index, unsigned int element_count
                           int order, unsigned int seed);
 float CalculateTextStaggeredProgress(float global_progress, float element_order,
                                      float stagger_amount);
+float GetBeatDurationSeconds(float bpm);
+float GetTriggerTimeSeconds(const TriggerTiming* timing, float beat);
+float QuantizeTriggerBeat(float beat, float interval_beats);
+float EvaluateTriggerPulse(const TriggerTrack* track, float time_seconds, float pulse_beats);
+bool AddTriggerEvent(TriggerTrack* track, float beat, int value);
 void InitializeTextAnimationConfig(TextAnimationConfig* config);
 bool ParseTextAnimationConfig(const char* serialized, TextAnimationConfig* config);
 void InitializeGlyphAnimationState(GlyphAnimationState* state);

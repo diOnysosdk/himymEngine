@@ -18,6 +18,7 @@ void RenderTimeline(EditorContext* editor);
 void RenderProperties(EditorContext* editor);
 void RenderAssetBrowser(EditorContext* editor);
 void RenderCurveEditor(EditorContext* editor);
+void RenderTriggerRecorder(EditorContext* editor);
 
 // Modal Dialog Functions (editor_modals.cpp)
 void RenderCurveEditorModal(EditorContext* editor);
