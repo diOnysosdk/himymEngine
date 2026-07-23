@@ -3140,7 +3140,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         scroll_text_force_baked[si] = (scroll_cue.bake_mode == 1);
         bool atlas_loaded = false;
 #ifdef HIMYM_PACKED_ASSETS
-        if (scroll_cue.glyph_atlas_key[0] != '\0' && scroll_cue.glyph_meta_key[0] != '\0') {
+        if (!scroll_text_force_baked[si] &&
+            scroll_cue.glyph_atlas_key[0] != '\0' && scroll_cue.glyph_meta_key[0] != '\0') {
             const rev::pack::PackedAsset* atlas_asset = rev::pack::GetPackedAsset(
                 scroll_cue.glyph_atlas_key, kPackedAssets, kPackedAssetCount);
             const rev::pack::PackedAsset* meta_asset = rev::pack::GetPackedAsset(
@@ -3156,10 +3157,12 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 #endif
         if (!atlas_loaded) {
     #ifndef HIMYM_PACKED_ASSETS
+        if (!scroll_text_force_baked[si]) {
             CreateTextGlyphAtlas(scroll_cue.font_name, scroll_cue.size, &scroll_text_atlases[si]);
+        }
     #endif
         }
-        if (scroll_text_atlases[si].texture_id != 0) continue;
+        if (scroll_text_atlases[si].texture_id != 0 || !scroll_text_force_baked[si]) continue;
 
         bool baked_loaded = false;
         if (scroll_cue.baked_asset_key[0] != '\0') {
@@ -3273,25 +3276,6 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 }
 
-                // Warm the legacy dynamic raster path only for unpacked preview builds.
-#ifndef HIMYM_PACKED_ASSETS
-                for (int ti = 0; ti < text_cue_count; ++ti) {
-                    TextCue& text_cue = text_cues[ti];
-                    bool has_color_curve = (text_cue.curve_color_r >= 0 || text_cue.curve_color_g >= 0 || text_cue.curve_color_b >= 0);
-                    if (text_cue.text[0] == '\0' || ((text_cue.effect_type < 3) && !has_color_curve)) continue;
-                    TextEffectFrame fx = {};
-                    if (!BuildTextEffectFrame(&text_cue, text_cue.cue_start, &fx)) continue;
-                    TextTexture tmp = {};
-                    if (RenderTextToTexture(fx.text, text_cue.font_name, text_cue.size,
-                                            text_cue.color.r, text_cue.color.g, text_cue.color.b, &tmp)) {
-                        glBindTexture(GL_TEXTURE_2D, tmp.texture_id);
-                        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-                        if (tmp.texture_id != 0) {
-                            glDeleteTextures(1, &tmp.texture_id);
-                        }
-                    }
-                }
-#endif
                 glDisable(GL_BLEND);
             }
 
@@ -4774,6 +4758,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         continue;
                     }
 
+                    if (has_text_animation) {
+                        continue;
+                    }
+
                     TextTexture frame_text_tex = base_text_tex;
                     bool has_frame_text = (frame_text_tex.texture_id != 0);
                     bool frame_tex_transient = false;
@@ -4997,7 +4985,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float scroll_y = anim_y + dir_y * wrapped + jitter_y;
                     if (cue.direction <= 1) scroll_y += wave_offset;
                     else scroll_x += wave_offset;
-                    if (scroll_text_atlases[scroll_idx].texture_id != 0) {
+                    if (!force_baked && scroll_text_atlases[scroll_idx].texture_id != 0) {
                         DrawGlyphRun(sprite_shader, &scroll_text_atlases[scroll_idx], glyph_scroll_text,
                                      scroll_x - jitter_x, scroll_y - jitter_y - wave_offset,
                                      glyph_scale, cue.spacing, opacity,
@@ -5007,6 +4995,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                      anim_wave_length,
                                      anim_jitter_amp, anim_jitter_freq, elapsed_time, anim_rotation,
                                      cue.direction <= 1);
+                        continue;
+                    }
+                    if (!force_baked || frame_text_tex.texture_id == 0) {
                         continue;
                     }
                     float w = ((float)frame_text_tex.width  * spacing_mul * size_scale) / (float)config.width  * 2.0f;

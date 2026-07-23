@@ -424,11 +424,30 @@ void EvaluateTextGlyphAnimation(const TextAnimationConfig* config,
         float global = EvaluateTextProgress(timeline_time, reveal.start_offset,
                                             reveal.duration, reveal.easing);
         float progress = GetLocalTextProgress(global, reveal.stagger, *glyph);
-        if (reveal.type == TextRevealFade || reveal.type == TextRevealTypewriter ||
-            reveal.type == TextRevealLineByLine || reveal.type == TextRevealWordByWord ||
-            reveal.type == TextRevealCharacterByCharacter) {
+        if (reveal.type == TextRevealCharacterByCharacter &&
+            reveal.stagger.delay <= 0.0f && glyph->character_count > 1) {
+            float implicit_stagger = ((float)glyph->character_count - 1.0f) /
+                                     (float)glyph->character_count;
+            float order = GetTextElementOrder(glyph->character_index,
+                                               glyph->character_count,
+                                               reveal.stagger.order,
+                                               reveal.stagger.random_seed);
+            progress = CalculateTextStaggeredProgress(global, order, implicit_stagger);
+        }
+        if (reveal.type == TextRevealFade) {
             state->opacity *= progress;
-            if (reveal.type == TextRevealTypewriter && progress <= 0.0f) state->visible = 0;
+        } else if (reveal.type == TextRevealTypewriter ||
+                   reveal.type == TextRevealLineByLine ||
+                   reveal.type == TextRevealWordByWord ||
+                   reveal.type == TextRevealCharacterByCharacter) {
+            float order = GetTextElementOrder(GetTextUnitIndex(reveal.stagger, *glyph),
+                                               GetTextUnitCount(reveal.stagger, *glyph),
+                                               reveal.stagger.order,
+                                               reveal.stagger.random_seed);
+            if (progress <= 0.0f &&
+                (timeline_time < reveal.start_offset || order > 0.0f)) {
+                state->visible = 0;
+            }
         } else if (reveal.type == TextRevealScaleIn) {
             float scale = reveal.start_scale + (1.0f - reveal.start_scale) * progress;
             state->scale_x *= scale;
@@ -450,9 +469,10 @@ void EvaluateTextGlyphAnimation(const TextAnimationConfig* config,
         float global = EvaluateTextProgress(timeline_time, exit.start_offset,
                                             exit.duration, exit.easing);
         float progress = GetLocalTextProgress(global, exit.stagger, *glyph);
-        if (exit.type == TextExitFadeOut || exit.type == TextExitReverseTypewriter) {
+        if (exit.type == TextExitFadeOut) {
             state->opacity *= 1.0f - progress;
-            if (exit.type == TextExitReverseTypewriter && progress >= 1.0f) state->visible = 0;
+        } else if (exit.type == TextExitReverseTypewriter) {
+            if (progress >= 1.0f) state->visible = 0;
         } else if (exit.type == TextExitSlideOut) {
             state->position_offset_x += exit.direction_x * exit.distance * progress;
             state->position_offset_y += exit.direction_y * exit.distance * progress;

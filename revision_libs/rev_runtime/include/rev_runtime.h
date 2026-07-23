@@ -659,6 +659,7 @@ bool AddTriggerEvent(TriggerTrack* track, float beat, int value);
 void InitializeTextAnimationConfig(TextAnimationConfig* config);
 bool ParseTextAnimationConfig(const char* serialized, TextAnimationConfig* config);
 void InitializeGlyphAnimationState(GlyphAnimationState* state);
+// timeline_time is relative to the cue/asset start; reveal and exit offsets use this local time.
 void EvaluateTextGlyphAnimation(const TextAnimationConfig* config,
                                 float timeline_time,
                                 const TextGlyphTimingInfo* glyph,

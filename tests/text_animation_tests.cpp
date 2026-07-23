@@ -96,6 +96,34 @@ int main()
                     "reveal and exit opacity compose");
 
     config.exit.type = TextExitNone;
+    config.reveal.type = TextRevealCharacterByCharacter;
+    config.reveal.start_offset = 2.0f;
+    glyph.character_index = 1;
+    glyph.character_count = 3;
+    const float asset_start_time = 5.0f;
+    const float scene_time_before_reveal = 6.9f;
+    const float scene_time_at_reveal = 7.0f;
+    EvaluateTextGlyphAnimation(&config, scene_time_before_reveal - asset_start_time, &glyph, &state);
+    passed &= Check(state.visible == 0 && NearlyEqual(state.opacity, 1.0f),
+                    "character reveal offset is relative to asset start");
+    EvaluateTextGlyphAnimation(&config, scene_time_at_reveal - asset_start_time, &glyph, &state);
+    passed &= Check(state.visible == 0 && NearlyEqual(state.opacity, 1.0f),
+                    "character reveal keeps later characters hidden at offset");
+    EvaluateTextGlyphAnimation(&config, 2.5f, &glyph, &state);
+    passed &= Check(state.visible != 0 && NearlyEqual(state.opacity, 1.0f),
+                    "character reveal advances without fading");
+
+    config.reveal.type = TextRevealNone;
+    config.reveal.start_offset = 0.0f;
+    config.exit.type = TextExitReverseTypewriter;
+    EvaluateTextGlyphAnimation(&config, 0.5f, &glyph, &state);
+    passed &= Check(state.visible != 0 && NearlyEqual(state.opacity, 1.0f),
+                    "reverse typewriter stays opaque while visible");
+    EvaluateTextGlyphAnimation(&config, 1.0f, &glyph, &state);
+    passed &= Check(state.visible == 0 && NearlyEqual(state.opacity, 1.0f),
+                    "reverse typewriter hides discretely");
+
+    config.exit.type = TextExitNone;
     config.modifier_count = 1;
     config.modifiers[0].type = TextModifierJitter;
     config.modifiers[0].enabled = 1;

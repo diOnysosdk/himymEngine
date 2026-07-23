@@ -8054,9 +8054,11 @@ void RenderPreviewFrame(EditorContext* editor) {
                             anim_color_r, anim_color_g, anim_color_b,
                             (float)editor->preview_width, (float)editor->preview_height,
                             0.0f, 0.0f, 9.0f, 0.0f, 0.0f, scene_time, anim_rotation, true,
-                            has_text_animation ? &cue->animation : nullptr, scene_time)) {
+                            has_text_animation ? &cue->animation : nullptr, elapsed_time)) {
                             continue;
                         }
+
+                        if (has_text_animation) continue;
 
                         rev::runtime::TextTexture rt_txt{};
                         if (!rev::runtime::RenderTextToTexture(
