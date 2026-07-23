@@ -189,7 +189,6 @@ static bool UploadPrimitiveEmitterTexture(const PixelEmitterCue* cue, unsigned i
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
     return *out_texture != 0;
 }
-
 struct EditorNoiseTextureCacheEntry {
     char path[512];
     unsigned int texture_id;
@@ -1111,6 +1110,8 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->show_trigger_recorder = false;
     editor->trigger_recording = false;
     editor->recording_track_index = -1;
+    editor->recording_curve_target = nullptr;
+    editor->recording_target_label[0] = '\0';
     editor->recording_bpm = 120.0f;
     editor->recording_beat_offset = 0.0f;
     editor->recording_quantize_beats = 0.5f;
@@ -2753,6 +2754,11 @@ bool LoadProject(EditorContext* editor, const char* path) {
                     current_curve->duration = duration;
                 }
             }
+            if (current_curve && strstr(start, "\"name\":")) {
+                sscanf_s(start, "\"name\": \"%127[^\"]\"",
+                         editor->project->curve_names[editor->project->curve_count - 1],
+                         (unsigned)sizeof(editor->project->curve_names[0]));
+            }
             
             // Start parsing points
             if (strstr(start, "\"points\":")) {
@@ -3607,6 +3613,9 @@ bool SaveProject(EditorContext* editor, const char* path) {
         }
         fprintf(f, "      \"wrap_mode\": \"%s\",\n", wrap_mode_str);
         fprintf(f, "      \"duration\": %.3f,\n", curve->duration);
+        char escaped_curve_name[256] = {};
+        JsonEscapeString(editor->project->curve_names[c], escaped_curve_name, sizeof(escaped_curve_name));
+        fprintf(f, "      \"name\": \"%s\",\n", escaped_curve_name);
         
         fprintf(f, "      \"points\": [\n");
         
@@ -6830,13 +6839,20 @@ static void RenderAssetShaderOverlays(const AssetShader* shaders, int shader_cou
     if (!shaders || shader_count <= 0) return;
     for (int shader_index = 0; shader_index < shader_count && shader_index < rev::runtime::kMaxAssetShaders; ++shader_index) {
         const AssetShader& asset_shader = shaders[shader_index];
+        float end_time = asset_shader.end_time < 0.0f ? 1.0e30f : asset_shader.end_time;
+        if (!asset_shader.enabled || layer_time < asset_shader.start_time || layer_time > end_time) continue;
         auto evaluate_curve = [&](int curve_index, float fallback) {
             if (!project || curve_index < 0 || curve_index >= project->curve_count) return fallback;
-            return rev::curve::Evaluate(project->curves[curve_index], layer_time);
+            const rev::curve::Curve& curve = project->curves[curve_index];
+            const float curve_time = curve.duration > 0.0f
+                ? (layer_time - asset_shader.start_time) / curve.duration : 0.0f;
+            return rev::curve::Evaluate(curve, curve_time);
         };
         float shader_speed = evaluate_curve(asset_shader.curve_speed, asset_shader.speed);
         float shader_intensity = evaluate_curve(asset_shader.curve_intensity, asset_shader.intensity);
         float shader_warp = evaluate_curve(asset_shader.curve_warp, asset_shader.warp);
+        float shader_exposure = evaluate_curve(asset_shader.curve_exposure, asset_shader.exposure_base);
+        float shader_fade = evaluate_curve(asset_shader.curve_fade, asset_shader.fade_base);
         float shader_opacity = evaluate_curve(asset_shader.curve_opacity, asset_shader.opacity);
         float shader_low_r = evaluate_curve(asset_shader.curve_palette_low_r, asset_shader.palette_low[0]);
         float shader_low_g = evaluate_curve(asset_shader.curve_palette_low_g, asset_shader.palette_low[1]);
@@ -6847,8 +6863,6 @@ static void RenderAssetShaderOverlays(const AssetShader* shaders, int shader_cou
         float shader_high_r = evaluate_curve(asset_shader.curve_palette_high_r, asset_shader.palette_high[0]);
         float shader_high_g = evaluate_curve(asset_shader.curve_palette_high_g, asset_shader.palette_high[1]);
         float shader_high_b = evaluate_curve(asset_shader.curve_palette_high_b, asset_shader.palette_high[2]);
-        float end_time = asset_shader.end_time < 0.0f ? 1.0e30f : asset_shader.end_time;
-        if (!asset_shader.enabled || layer_time < asset_shader.start_time || layer_time > end_time) continue;
         rev::shader::Program* program = GetOrCompileAssetShaderProgram(asset_shader.shader_id);
         if (!program) continue;
         rev::shader::Use(program);
@@ -6865,6 +6879,8 @@ static void RenderAssetShaderOverlays(const AssetShader* shaders, int shader_cou
         int u_speed = rev::shader::GetUniformLocation(program, "u_speed");
         int u_intensity = rev::shader::GetUniformLocation(program, "u_intensity");
         int u_warp = rev::shader::GetUniformLocation(program, "u_warp");
+        int u_exposure_base = rev::shader::GetUniformLocation(program, "u_exposure_base");
+        int u_fade_base = rev::shader::GetUniformLocation(program, "u_fade_base");
         int u_asset_texture = rev::shader::GetUniformLocation(program, "u_asset_texture");
         int u_asset_opacity = rev::shader::GetUniformLocation(program, "u_asset_opacity");
         if (u_position >= 0) rev::shader::SetVec2(program, u_position, x, y);
@@ -6880,6 +6896,8 @@ static void RenderAssetShaderOverlays(const AssetShader* shaders, int shader_cou
         if (u_speed >= 0) rev::shader::SetFloat(program, u_speed, shader_speed);
         if (u_intensity >= 0) rev::shader::SetFloat(program, u_intensity, shader_intensity);
         if (u_warp >= 0) rev::shader::SetFloat(program, u_warp, shader_warp);
+        if (u_exposure_base >= 0) rev::shader::SetFloat(program, u_exposure_base, shader_exposure);
+        if (u_fade_base >= 0) rev::shader::SetFloat(program, u_fade_base, shader_fade);
         if (u_asset_texture >= 0) rev::shader::SetInt(program, u_asset_texture, 0);
         if (u_asset_opacity >= 0) rev::shader::SetFloat(program, u_asset_opacity, shader_opacity);
         glBindTexture(GL_TEXTURE_2D, asset_texture_id);

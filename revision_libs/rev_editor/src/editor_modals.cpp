@@ -15,6 +15,46 @@
 namespace rev {
 namespace editor {
 
+static void CloseCueSettingsForRecording(EditorContext* editor)
+{
+    if (!editor) return;
+
+    switch (editor->selected_cue_type) {
+        case CueTypeShader: editor->shader_modal_open = false; break;
+        case CueTypeImage: editor->image_modal_open = false; break;
+        case CueTypeAnimatedSprite: editor->animated_sprite_modal_open = false; break;
+        case CueTypePixel: editor->pixel_modal_open = false; break;
+        case CueTypePixelEmitter: editor->pixel_emitter_modal_open = false; break;
+        case CueTypeText: editor->text_modal_open = false; break;
+        case CueTypeScrollText: editor->scroll_text_modal_open = false; break;
+        case CueTypeMesh: editor->mesh_modal_open = false; break;
+        default: break;
+    }
+    ImGui::CloseCurrentPopup();
+}
+
+static void DrawCurveRecordButton(EditorContext* editor, int* curve_target,
+                                  const char* parameter_label, bool* modified,
+                                  const char* id_suffix)
+{
+    if (!editor || !curve_target || !parameter_label) return;
+    ImGui::SameLine();
+    char button_label[96] = {};
+    snprintf(button_label, sizeof(button_label), "Record##%s", id_suffix ? id_suffix : parameter_label);
+    if (ImGui::SmallButton(button_label)) {
+        editor->recording_curve_target = curve_target;
+        strncpy_s(editor->recording_target_label, sizeof(editor->recording_target_label),
+                  parameter_label, _TRUNCATE);
+        editor->show_trigger_recorder = true;
+        editor->recording_track_index = -1;
+        CloseCueSettingsForRecording(editor);
+        if (modified) *modified = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Arm Ctrl recording for %s", parameter_label);
+    }
+}
+
 namespace {
 
 static int PixelPaletteIndex(unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
@@ -123,6 +163,49 @@ struct CurveTargetBinding {
     int* curve_field;
     float base_value;
 };
+
+static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
+                                          CurveTargetBinding* out_targets,
+                                          int max_targets);
+static const char* CurveTargetComboGetter(void* data, int index);
+
+static void AddAssetShaderCurveTargets(AssetShader* shaders, int shader_count,
+                                       CurveTargetBinding* targets, int max_targets,
+                                       int* target_count)
+{
+    static char labels[rev::runtime::kMaxAssetShaders][17][96] = {};
+    const char* names[] = {
+        "Opacity", "Speed", "Intensity", "Warp", "Exposure", "Fade",
+        "Exposure Ramp", "Fade Ramp", "Palette Low R", "Palette Low G", "Palette Low B",
+        "Palette Mid R", "Palette Mid G", "Palette Mid B", "Palette High R",
+        "Palette High G", "Palette High B"
+    };
+    if (!shaders || !targets || !target_count) return;
+    if (shader_count > rev::runtime::kMaxAssetShaders) shader_count = rev::runtime::kMaxAssetShaders;
+    for (int shader_index = 0; shader_index < shader_count; ++shader_index) {
+        AssetShader* shader = &shaders[shader_index];
+        int* fields[] = {
+            &shader->curve_opacity, &shader->curve_speed, &shader->curve_intensity, &shader->curve_warp,
+            &shader->curve_exposure, &shader->curve_fade, &shader->curve_exposure_ramp, &shader->curve_fade_ramp,
+            &shader->curve_palette_low_r, &shader->curve_palette_low_g, &shader->curve_palette_low_b,
+            &shader->curve_palette_mid_r, &shader->curve_palette_mid_g, &shader->curve_palette_mid_b,
+            &shader->curve_palette_high_r, &shader->curve_palette_high_g, &shader->curve_palette_high_b
+        };
+        float values[] = {
+            shader->opacity, shader->speed, shader->intensity, shader->warp,
+            shader->exposure_base, shader->fade_base, shader->exposure_ramp, shader->fade_ramp,
+            shader->palette_low[0], shader->palette_low[1], shader->palette_low[2],
+            shader->palette_mid[0], shader->palette_mid[1], shader->palette_mid[2],
+            shader->palette_high[0], shader->palette_high[1], shader->palette_high[2]
+        };
+        for (int parameter = 0; parameter < 17 && *target_count < max_targets; ++parameter) {
+            snprintf(labels[shader_index][parameter], sizeof(labels[shader_index][parameter]),
+                     "Asset Shader %d %s", shader_index + 1, names[parameter]);
+            targets[*target_count] = {labels[shader_index][parameter], fields[parameter], values[parameter]};
+            ++*target_count;
+        }
+    }
+}
 
 static const char* GetAssetShaderPresetName(void*, int index) {
     const ShaderPreset* preset = GetPresetById(index);
@@ -277,10 +360,13 @@ void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int
             break;
         }
         if (ImGui::SliderFloat("Intensity", &effect.intensity, 0.0f, 2.0f) && modified) *modified = true;
+        DrawCurveRecordButton(editor, &effect.curve_intensity, "Layer Effect Intensity", modified, "layer_effect_intensity");
         if (effect.blend_mode < 0 || effect.blend_mode > 3) effect.blend_mode = 0;
         if (ImGui::Combo("Blend Mode", &effect.blend_mode, blend_names, 4) && modified) *modified = true;
         if (ImGui::SliderFloat("Threshold", &effect.threshold, 0.0f, 4.0f) && modified) *modified = true;
+        DrawCurveRecordButton(editor, &effect.curve_threshold, "Layer Effect Threshold", modified, "layer_effect_threshold");
         if (ImGui::SliderFloat("Radius", &effect.radius, 0.0f, 4.0f) && modified) *modified = true;
+        DrawCurveRecordButton(editor, &effect.curve_radius, "Layer Effect Radius", modified, "layer_effect_radius");
         if (ImGui::ColorEdit4("Color", effect.color) && modified) *modified = true;
         if (ImGui::InputFloat("Start", &effect.start_time, 0.1f, 1.0f) && modified) *modified = true;
         if (ImGui::InputFloat("End (-1 = layer end)", &effect.end_time, 0.1f, 1.0f) && modified) *modified = true;
@@ -423,14 +509,65 @@ static void RenderAssetShaders(EditorContext* editor, AssetShader* shaders, int*
         const char* blend_modes[] = {"Alpha", "Additive", "Multiply", "Screen"};
         if (ImGui::Combo("Blend Mode", &shader.blend_mode, blend_modes, 4) && modified) *modified = true;
         if (ImGui::SliderFloat("Opacity", &shader.opacity, 0.0f, 1.0f) && modified) *modified = true;
+        DrawCurveRecordButton(editor, &shader.curve_opacity, "Shader Opacity", modified, "asset_shader_opacity");
         if (ImGui::SliderFloat("Speed", &shader.speed, 0.0f, 4.0f) && modified) *modified = true;
+        DrawCurveRecordButton(editor, &shader.curve_speed, "Shader Speed", modified, "asset_shader_speed");
         if (ImGui::SliderFloat("Intensity", &shader.intensity, 0.0f, 4.0f) && modified) *modified = true;
+        DrawCurveRecordButton(editor, &shader.curve_intensity, "Shader Intensity", modified, "asset_shader_intensity");
         if (ImGui::SliderFloat("Warp", &shader.warp, 0.0f, 1.0f) && modified) *modified = true;
+        DrawCurveRecordButton(editor, &shader.curve_warp, "Shader Warp", modified, "asset_shader_warp");
         if (ImGui::InputFloat("Start", &shader.start_time, 0.1f, 1.0f) && modified) *modified = true;
         if (ImGui::InputFloat("End (-1 = asset end)", &shader.end_time, 0.1f, 1.0f) && modified) *modified = true;
         if (ImGui::InputInt("Order", &shader.order) && modified) *modified = true;
         ImGui::PopID();
     }
+}
+
+static void RenderCurveReuseSection(EditorContext* editor, const char* id,
+                                    int cue_type, int* target_index, int* curve_index)
+{
+    if (!editor || !editor->project || editor->project->curve_count <= 0) return;
+    CurveTargetBinding targets[128] = {};
+    int target_count = BuildCurveTargetsForCurrentCue(editor, targets, 128);
+    if (target_count <= 0) return;
+
+    ImGui::Separator();
+    ImGui::Text("Curve Reuse:");
+    if (*target_index < 0 || *target_index >= target_count) *target_index = 0;
+    if (*curve_index < 0) *curve_index = 0;
+    if (*curve_index >= editor->project->curve_count) *curve_index = editor->project->curve_count - 1;
+
+    ImGui::SetNextItemWidth(240.0f);
+    ImGui::PushID(id ? id : "curve_reuse");
+    ImGui::Combo("Target Parameter", target_index, CurveTargetComboGetter, targets, target_count);
+    ImGui::SetNextItemWidth(240.0f);
+    char curve_preview[64] = {};
+    BuildCurveDisplayLabel(editor, *curve_index, curve_preview, sizeof(curve_preview));
+    if (ImGui::BeginCombo("Curve", curve_preview)) {
+        for (int i = 0; i < editor->project->curve_count; ++i) {
+            char item[64] = {};
+            BuildCurveDisplayLabel(editor, i, item, sizeof(item));
+            bool selected = i == *curve_index;
+            if (ImGui::Selectable(item, selected)) *curve_index = i;
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::Button("Assign Existing Curve")) {
+        *targets[*target_index].curve_field = *curve_index;
+        editor->project->modified = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Edit Assigned")) {
+        int assigned = *targets[*target_index].curve_field;
+        if (assigned >= 0 && assigned < editor->project->curve_count) {
+            editor->editing_curve_index = assigned;
+            editor->editing_curve_cue_type = cue_type;
+            snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", targets[*target_index].label);
+            editor->curve_editor_modal_request_open = true;
+        }
+    }
+    ImGui::PopID();
 }
 
 static void MarkCurveUsed(bool* used, int curve_index) {
@@ -652,6 +789,36 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                     add_target("Layer Effect Color B", &effect->curve_color_b, effect->color[2]);
                     add_target("Layer Effect Color A", &effect->curve_color_a, effect->color[3]);
                 }
+                static char shader_target_labels[rev::runtime::kMaxAssetShaders][17][96] = {};
+                for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index) {
+                    AssetShader* shader = &cue->shaders[shader_index];
+                    const char* names[] = {
+                        "Opacity", "Speed", "Intensity", "Warp", "Exposure", "Fade",
+                        "Exposure Ramp", "Fade Ramp", "Palette Low R", "Palette Low G", "Palette Low B",
+                        "Palette Mid R", "Palette Mid G", "Palette Mid B", "Palette High R",
+                        "Palette High G", "Palette High B"
+                    };
+                    int* fields[] = {
+                        &shader->curve_opacity, &shader->curve_speed, &shader->curve_intensity, &shader->curve_warp,
+                        &shader->curve_exposure, &shader->curve_fade, &shader->curve_exposure_ramp, &shader->curve_fade_ramp,
+                        &shader->curve_palette_low_r, &shader->curve_palette_low_g, &shader->curve_palette_low_b,
+                        &shader->curve_palette_mid_r, &shader->curve_palette_mid_g, &shader->curve_palette_mid_b,
+                        &shader->curve_palette_high_r, &shader->curve_palette_high_g, &shader->curve_palette_high_b
+                    };
+                    float values[] = {
+                        shader->opacity, shader->speed, shader->intensity, shader->warp,
+                        shader->exposure_base, shader->fade_base, shader->exposure_ramp, shader->fade_ramp,
+                        shader->palette_low[0], shader->palette_low[1], shader->palette_low[2],
+                        shader->palette_mid[0], shader->palette_mid[1], shader->palette_mid[2],
+                        shader->palette_high[0], shader->palette_high[1], shader->palette_high[2]
+                    };
+                    for (int parameter = 0; parameter < 17; ++parameter) {
+                        snprintf(shader_target_labels[shader_index][parameter],
+                                 sizeof(shader_target_labels[shader_index][parameter]),
+                                 "Asset Shader %d %s", shader_index + 1, names[parameter]);
+                        add_target(shader_target_labels[shader_index][parameter], fields[parameter], values[parameter]);
+                    }
+                }
             }
             break;
         case CueTypeAnimatedSprite:
@@ -674,6 +841,7 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                     add_target("Layer Effect Color B", &effect->curve_color_b, effect->color[2]);
                     add_target("Layer Effect Color A", &effect->curve_color_a, effect->color[3]);
                 }
+                AddAssetShaderCurveTargets(cue->shaders, cue->shader_count, out_targets, max_targets, &count);
             }
             break;
         case CueTypePixel:
@@ -687,6 +855,17 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 add_target("Pixel Opacity", &cue->curve_opacity, cue->opacity);
                 add_target("Pixel Frame", &cue->curve_frame, (float)cue->start_frame);
                 add_target("Pixel Palette Offset", &cue->curve_palette_offset, (float)cue->palette_offset);
+                for (int i = 0; i < cue->post_effect_count; ++i) {
+                    LayerPostEffect* effect = &cue->post_effects[i];
+                    add_target("Layer Effect Intensity", &effect->curve_intensity, effect->intensity);
+                    add_target("Layer Effect Threshold", &effect->curve_threshold, effect->threshold);
+                    add_target("Layer Effect Radius", &effect->curve_radius, effect->radius);
+                    add_target("Layer Effect Color R", &effect->curve_color_r, effect->color[0]);
+                    add_target("Layer Effect Color G", &effect->curve_color_g, effect->color[1]);
+                    add_target("Layer Effect Color B", &effect->curve_color_b, effect->color[2]);
+                    add_target("Layer Effect Color A", &effect->curve_color_a, effect->color[3]);
+                }
+                AddAssetShaderCurveTargets(cue->shaders, cue->shader_count, out_targets, max_targets, &count);
             }
             break;
         case CueTypePixelEmitter:
@@ -854,10 +1033,10 @@ static void RenderTriggerTimingAssignment(EditorContext* editor,
                                           bool* modified)
 {
     if (!editor || !editor->project || editor->project->trigger_track_count <= 0) return;
-    CurveTargetBinding targets[64] = {};
+    CurveTargetBinding targets[128] = {};
     int target_count = editor->shader_modal_asset_mode
-        ? BuildCurveTargetsForAssetShader(editor, targets, 64, nullptr)
-        : BuildCurveTargetsForCurrentCue(editor, targets, 64);
+        ? BuildCurveTargetsForAssetShader(editor, targets, 128, nullptr)
+        : BuildCurveTargetsForCurrentCue(editor, targets, 128);
     if (target_count <= 0) return;
 
     ImGui::PushID(id ? id : "recorded_timing");
@@ -1725,18 +1904,21 @@ void RenderShaderModal(EditorContext* editor) {
         // Palette Low
         ImGui::Text("Low:");
         if (ImGui::SliderFloat("R##low", &cue->palette_low.r, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_palette_low_r, "Shader Palette Low R", nullptr, "shader_palette_low_r");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_palette_low_r >= 0 ? "[C]##low_r" : "+##low_r")) {
             OpenShaderCurve(cue->curve_palette_low_r, "Shader Palette Low R", cue->palette_low.r);
         }
         
         if (ImGui::SliderFloat("G##low", &cue->palette_low.g, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_palette_low_g, "Shader Palette Low G", nullptr, "shader_palette_low_g");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_palette_low_g >= 0 ? "[C]##low_g" : "+##low_g")) {
             OpenShaderCurve(cue->curve_palette_low_g, "Shader Palette Low G", cue->palette_low.g);
         }
         
         if (ImGui::SliderFloat("B##low", &cue->palette_low.b, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_palette_low_b, "Shader Palette Low B", nullptr, "shader_palette_low_b");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_palette_low_b >= 0 ? "[C]##low_b" : "+##low_b")) {
             OpenShaderCurve(cue->curve_palette_low_b, "Shader Palette Low B", cue->palette_low.b);
@@ -1745,18 +1927,21 @@ void RenderShaderModal(EditorContext* editor) {
         // Palette Mid
         ImGui::Text("Mid:");
         if (ImGui::SliderFloat("R##mid", &cue->palette_mid.r, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_palette_mid_r, "Shader Palette Mid R", nullptr, "shader_palette_mid_r");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_palette_mid_r >= 0 ? "[C]##mid_r" : "+##mid_r")) {
             OpenShaderCurve(cue->curve_palette_mid_r, "Shader Palette Mid R", cue->palette_mid.r);
         }
         
         if (ImGui::SliderFloat("G##mid", &cue->palette_mid.g, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_palette_mid_g, "Shader Palette Mid G", nullptr, "shader_palette_mid_g");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_palette_mid_g >= 0 ? "[C]##mid_g" : "+##mid_g")) {
             OpenShaderCurve(cue->curve_palette_mid_g, "Shader Palette Mid G", cue->palette_mid.g);
         }
         
         if (ImGui::SliderFloat("B##mid", &cue->palette_mid.b, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_palette_mid_b, "Shader Palette Mid B", nullptr, "shader_palette_mid_b");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_palette_mid_b >= 0 ? "[C]##mid_b" : "+##mid_b")) {
             OpenShaderCurve(cue->curve_palette_mid_b, "Shader Palette Mid B", cue->palette_mid.b);
@@ -1765,18 +1950,21 @@ void RenderShaderModal(EditorContext* editor) {
         // Palette High
         ImGui::Text("High:");
         if (ImGui::SliderFloat("R##high", &cue->palette_high.r, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_palette_high_r, "Shader Palette High R", nullptr, "shader_palette_high_r");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_palette_high_r >= 0 ? "[C]##high_r" : "+##high_r")) {
             OpenShaderCurve(cue->curve_palette_high_r, "Shader Palette High R", cue->palette_high.r);
         }
         
         if (ImGui::SliderFloat("G##high", &cue->palette_high.g, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_palette_high_g, "Shader Palette High G", nullptr, "shader_palette_high_g");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_palette_high_g >= 0 ? "[C]##high_g" : "+##high_g")) {
             OpenShaderCurve(cue->curve_palette_high_g, "Shader Palette High G", cue->palette_high.g);
         }
         
         if (ImGui::SliderFloat("B##high", &cue->palette_high.b, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_palette_high_b, "Shader Palette High B", nullptr, "shader_palette_high_b");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_palette_high_b >= 0 ? "[C]##high_b" : "+##high_b")) {
             OpenShaderCurve(cue->curve_palette_high_b, "Shader Palette High B", cue->palette_high.b);
@@ -1801,18 +1989,21 @@ void RenderShaderModal(EditorContext* editor) {
         if (ImGui::CollapsingHeader("Animation", ImGuiTreeNodeFlags_DefaultOpen)) {
         
         if (ImGui::SliderFloat("Speed", &cue->speed, 0.1f, 5.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_speed, "Shader Speed", nullptr, "shader_speed");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_speed >= 0 ? "[C]##speed" : "+##speed")) {
             OpenShaderCurve(cue->curve_speed, "Shader Speed", cue->speed);
         }
         
         if (ImGui::SliderFloat("Intensity", &cue->intensity, 0.0f, 2.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_intensity, "Shader Intensity", nullptr, "shader_intensity");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_intensity >= 0 ? "[C]##intensity" : "+##intensity")) {
             OpenShaderCurve(cue->curve_intensity, "Shader Intensity", cue->intensity);
         }
         
         if (ImGui::SliderFloat("Warp", &cue->warp, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_warp, "Shader Warp", nullptr, "shader_warp");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_warp >= 0 ? "[C]##warp" : "+##warp")) {
             OpenShaderCurve(cue->curve_warp, "Shader Warp", cue->warp);
@@ -1882,12 +2073,14 @@ void RenderShaderModal(EditorContext* editor) {
         if (ImGui::CollapsingHeader("Exposure and Fade", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("Exposure:");
         if (ImGui::SliderFloat("Base##exp", &cue->exposure_base, 0.0f, 2.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_exposure, "Shader Exposure Base", nullptr, "shader_exposure");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_exposure >= 0 ? "[C]##exp_base" : "+##exp_base")) {
             OpenShaderCurve(cue->curve_exposure, "Shader Exposure Base", cue->exposure_base);
         }
         
         if (ImGui::SliderFloat("Ramp##exp", &cue->exposure_ramp, -0.5f, 0.5f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_exposure_ramp, "Shader Exposure Ramp", nullptr, "shader_exposure_ramp");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_exposure_ramp >= 0 ? "[C]##exp_ramp" : "+##exp_ramp")) {
             OpenShaderCurve(cue->curve_exposure_ramp, "Shader Exposure Ramp", cue->exposure_ramp);
@@ -1895,12 +2088,14 @@ void RenderShaderModal(EditorContext* editor) {
         
         ImGui::Text("Fade:");
         if (ImGui::SliderFloat("Base##fade", &cue->fade_base, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_fade, "Shader Fade Base", nullptr, "shader_fade");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_fade >= 0 ? "[C]##fade_base" : "+##fade_base")) {
             OpenShaderCurve(cue->curve_fade, "Shader Fade Base", cue->fade_base);
         }
         
         if (ImGui::SliderFloat("Ramp##fade", &cue->fade_ramp, -0.5f, 0.5f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_fade_ramp, "Shader Fade Ramp", nullptr, "shader_fade_ramp");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_fade_ramp >= 0 ? "[C]##fade_ramp" : "+##fade_ramp")) {
             OpenShaderCurve(cue->curve_fade_ramp, "Shader Fade Ramp", cue->fade_ramp);
@@ -1928,6 +2123,7 @@ void RenderShaderModal(EditorContext* editor) {
         if (ImGui::Combo("Role", &cue->layer_role, layer_roles, 4)) AutoSave();
         
         if (ImGui::SliderFloat("Opacity", &cue->opacity, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_opacity, "Shader Opacity", nullptr, "shader_opacity");
         ImGui::SameLine();
         if (ImGui::SmallButton(cue->curve_opacity >= 0 ? "[C]##opacity" : "+##opacity")) {
             OpenShaderCurve(cue->curve_opacity, "Shader Opacity", cue->opacity);
@@ -1944,21 +2140,8 @@ void RenderShaderModal(EditorContext* editor) {
         if (editor->project->curve_count <= 0) {
             ImGui::TextDisabled("No curves available. Create one first.");
         } else {
-            const char* target_names[] = {
-                "Speed", "Intensity", "Warp", "Exposure Base", "Exposure Ramp",
-                "Fade Base", "Fade Ramp", "Opacity",
-                "Palette Low R", "Palette Low G", "Palette Low B",
-                "Palette Mid R", "Palette Mid G", "Palette Mid B",
-                "Palette High R", "Palette High G", "Palette High B"
-            };
-            int* target_fields[] = {
-                &cue->curve_speed, &cue->curve_intensity, &cue->curve_warp, &cue->curve_exposure, &cue->curve_exposure_ramp,
-                &cue->curve_fade, &cue->curve_fade_ramp, &cue->curve_opacity,
-                &cue->curve_palette_low_r, &cue->curve_palette_low_g, &cue->curve_palette_low_b,
-                &cue->curve_palette_mid_r, &cue->curve_palette_mid_g, &cue->curve_palette_mid_b,
-                &cue->curve_palette_high_r, &cue->curve_palette_high_g, &cue->curve_palette_high_b
-            };
-            const int target_count = (int)(sizeof(target_names) / sizeof(target_names[0]));
+            CurveTargetBinding targets[128] = {};
+            const int target_count = BuildCurveTargetsForCurrentCue(editor, targets, 128);
             static int shader_target_idx = 0;
             static int shader_curve_idx = 0;
             if (shader_target_idx < 0 || shader_target_idx >= target_count) shader_target_idx = 0;
@@ -1966,15 +2149,15 @@ void RenderShaderModal(EditorContext* editor) {
             if (shader_curve_idx >= editor->project->curve_count) shader_curve_idx = editor->project->curve_count - 1;
 
             ImGui::SetNextItemWidth(220.0f);
-            ImGui::Combo("Target Parameter##shader_curve_reuse", &shader_target_idx, target_names, target_count);
+            ImGui::Combo("Target Parameter##shader_curve_reuse", &shader_target_idx,
+                         CurveTargetComboGetter, targets, target_count);
 
             char curve_preview[64] = {};
-            snprintf(curve_preview, sizeof(curve_preview), "Curve %d (%d pts)", shader_curve_idx,
-                     editor->project->curves[shader_curve_idx].point_count);
+            BuildCurveDisplayLabel(editor, shader_curve_idx, curve_preview, sizeof(curve_preview));
             if (ImGui::BeginCombo("Curve##shader_curve_reuse", curve_preview)) {
                 for (int i = 0; i < editor->project->curve_count; ++i) {
                     char item[64] = {};
-                    snprintf(item, sizeof(item), "Curve %d (%d pts)", i, editor->project->curves[i].point_count);
+                    BuildCurveDisplayLabel(editor, i, item, sizeof(item));
                     bool selected = (i == shader_curve_idx);
                     if (ImGui::Selectable(item, selected)) shader_curve_idx = i;
                     if (selected) ImGui::SetItemDefaultFocus();
@@ -1983,16 +2166,16 @@ void RenderShaderModal(EditorContext* editor) {
             }
 
             if (ImGui::Button("Assign Existing Curve##shader_curve_reuse")) {
-                *target_fields[shader_target_idx] = shader_curve_idx;
+                *targets[shader_target_idx].curve_field = shader_curve_idx;
                 AutoSave();
             }
             ImGui::SameLine();
             if (ImGui::Button("Edit Assigned##shader_curve_reuse")) {
-                int idx = *target_fields[shader_target_idx];
+                int idx = *targets[shader_target_idx].curve_field;
                 if (idx >= 0 && idx < editor->project->curve_count) {
                     editor->editing_curve_index = idx;
                     editor->editing_curve_cue_type = CueTypeShader;
-                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "Shader %s", target_names[shader_target_idx]);
+                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", targets[shader_target_idx].label);
                     editor->curve_editor_modal_request_open = true;
                 }
             }
@@ -2242,6 +2425,7 @@ void RenderImageModal(EditorContext* editor) {
         // Position
         ImGui::Text("Position (0.0-1.0):");
         if (ImGui::SliderFloat("X", &cue->x, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_x, "Image X", nullptr, "image_x");
         ImGui::SameLine();
         if (cue->curve_x >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_x);
@@ -2282,6 +2466,7 @@ void RenderImageModal(EditorContext* editor) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
         
         if (ImGui::SliderFloat("Y", &cue->y, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_y, "Image Y", nullptr, "image_y");
         ImGui::SameLine();
         if (cue->curve_y >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_y);
@@ -2322,6 +2507,7 @@ void RenderImageModal(EditorContext* editor) {
         // Transform
         ImGui::Text("Transform:");
         if (ImGui::SliderFloat("Scale", &cue->scale, 0.1f, 5.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_scale, "Image Scale", nullptr, "image_scale");
         ImGui::SameLine();
         if (cue->curve_scale >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_scale);
@@ -2358,6 +2544,7 @@ void RenderImageModal(EditorContext* editor) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
         
         if (ImGui::SliderFloat("Rotation", &cue->rotation, -360.0f, 360.0f, "%.1f deg")) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_rotation, "Image Rotation", nullptr, "image_rotation");
         ImGui::SameLine();
         if (cue->curve_rotation >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_rotation);
@@ -2390,6 +2577,7 @@ void RenderImageModal(EditorContext* editor) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
 
         if (ImGui::SliderFloat("Opacity", &cue->opacity, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_opacity, "Image Opacity", nullptr, "image_opacity");
         ImGui::SameLine();
         if (cue->curve_opacity >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_opacity);
@@ -2469,9 +2657,8 @@ void RenderImageModal(EditorContext* editor) {
         if (editor->project->curve_count <= 0) {
             ImGui::TextDisabled("No curves available. Create one first.");
         } else {
-            const char* target_names[] = {"X Position", "Y Position", "Scale", "Rotation", "Opacity"};
-            int* target_fields[] = {&cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_rotation, &cue->curve_opacity};
-            const int target_count = 5;
+            CurveTargetBinding targets[128] = {};
+            const int target_count = BuildCurveTargetsForCurrentCue(editor, targets, 128);
             static int image_target_idx = 0;
             static int image_curve_idx = 0;
             if (image_target_idx < 0 || image_target_idx >= target_count) image_target_idx = 0;
@@ -2479,15 +2666,15 @@ void RenderImageModal(EditorContext* editor) {
             if (image_curve_idx >= editor->project->curve_count) image_curve_idx = editor->project->curve_count - 1;
 
             ImGui::SetNextItemWidth(220.0f);
-            ImGui::Combo("Target Parameter##image_curve_reuse", &image_target_idx, target_names, target_count);
+            ImGui::Combo("Target Parameter##image_curve_reuse", &image_target_idx,
+                         CurveTargetComboGetter, targets, target_count);
 
             char curve_preview[64] = {};
-            snprintf(curve_preview, sizeof(curve_preview), "Curve %d (%d pts)", image_curve_idx,
-                     editor->project->curves[image_curve_idx].point_count);
+            BuildCurveDisplayLabel(editor, image_curve_idx, curve_preview, sizeof(curve_preview));
             if (ImGui::BeginCombo("Curve##image_curve_reuse", curve_preview)) {
                 for (int i = 0; i < editor->project->curve_count; ++i) {
                     char item[64] = {};
-                    snprintf(item, sizeof(item), "Curve %d (%d pts)", i, editor->project->curves[i].point_count);
+                    BuildCurveDisplayLabel(editor, i, item, sizeof(item));
                     bool selected = (i == image_curve_idx);
                     if (ImGui::Selectable(item, selected)) image_curve_idx = i;
                     if (selected) ImGui::SetItemDefaultFocus();
@@ -2496,16 +2683,16 @@ void RenderImageModal(EditorContext* editor) {
             }
 
             if (ImGui::Button("Assign Existing Curve##image_curve_reuse")) {
-                *target_fields[image_target_idx] = image_curve_idx;
+                *targets[image_target_idx].curve_field = image_curve_idx;
                 AutoSave();
             }
             ImGui::SameLine();
             if (ImGui::Button("Edit Assigned##image_curve_reuse")) {
-                int idx = *target_fields[image_target_idx];
+                int idx = *targets[image_target_idx].curve_field;
                 if (idx >= 0 && idx < editor->project->curve_count) {
                     editor->editing_curve_index = idx;
                     editor->editing_curve_cue_type = CueTypeImage;
-                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "Image %s", target_names[image_target_idx]);
+                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", targets[image_target_idx].label);
                     editor->curve_editor_modal_request_open = true;
                 }
             }
@@ -2647,11 +2834,13 @@ void RenderAnimatedSpriteModal(EditorContext* editor) {
         if (ImGui::SliderFloat("X", &cue->x, 0.0f, 1.0f)) AutoSave();
         ImGui::SameLine();
         if (cue->curve_x >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_x); ImGui::SameLine(); }
+        DrawCurveRecordButton(editor, &cue->curve_x, "Animated Sprite X", nullptr, "animated_sprite_x");
         if (ImGui::SmallButton("+##curve_anim_x")) OpenCurveEditor(&cue->curve_x, cue->x, "AnimSprite X Position");
 
         if (ImGui::SliderFloat("Y", &cue->y, 0.0f, 1.0f)) AutoSave();
         ImGui::SameLine();
         if (cue->curve_y >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_y); ImGui::SameLine(); }
+        DrawCurveRecordButton(editor, &cue->curve_y, "Animated Sprite Y", nullptr, "animated_sprite_y");
         if (ImGui::SmallButton("+##curve_anim_y")) OpenCurveEditor(&cue->curve_y, cue->y, "AnimSprite Y Position");
 
         ImGui::Separator();
@@ -2659,16 +2848,19 @@ void RenderAnimatedSpriteModal(EditorContext* editor) {
         if (ImGui::SliderFloat("Scale", &cue->scale, 0.1f, 5.0f)) AutoSave();
         ImGui::SameLine();
         if (cue->curve_scale >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_scale); ImGui::SameLine(); }
+        DrawCurveRecordButton(editor, &cue->curve_scale, "Animated Sprite Scale", nullptr, "animated_sprite_scale");
         if (ImGui::SmallButton("+##curve_anim_scale")) OpenCurveEditor(&cue->curve_scale, cue->scale, "AnimSprite Scale");
 
         if (ImGui::SliderFloat("Rotation", &cue->rotation, -360.0f, 360.0f, "%.1f deg")) AutoSave();
         ImGui::SameLine();
         if (cue->curve_rotation >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_rotation); ImGui::SameLine(); }
+        DrawCurveRecordButton(editor, &cue->curve_rotation, "Animated Sprite Rotation", nullptr, "animated_sprite_rotation");
         if (ImGui::SmallButton("+##curve_anim_rotation")) OpenCurveEditor(&cue->curve_rotation, cue->rotation, "AnimSprite Rotation");
 
         if (ImGui::SliderFloat("Opacity", &cue->opacity, 0.0f, 1.0f)) AutoSave();
         ImGui::SameLine();
         if (cue->curve_opacity >= 0) { ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_opacity); ImGui::SameLine(); }
+        DrawCurveRecordButton(editor, &cue->curve_opacity, "Animated Sprite Opacity", nullptr, "animated_sprite_opacity");
         if (ImGui::SmallButton("+##curve_anim_opacity")) OpenCurveEditor(&cue->curve_opacity, cue->opacity, "AnimSprite Opacity");
 
         const char* blend_modes[] = {"Alpha", "Add", "Multiply", "Screen"};
@@ -2712,6 +2904,11 @@ void RenderAnimatedSpriteModal(EditorContext* editor) {
                &asset_shaders_modified, "animated_sprite_shaders",
                CueTypeAnimatedSprite, editor->selected_cue_index);
         if (asset_shaders_modified) AutoSave();
+
+         static int animated_target_index = 0;
+         static int animated_curve_index = 0;
+         RenderCurveReuseSection(editor, "animated_curve_reuse", CueTypeAnimatedSprite,
+                        &animated_target_index, &animated_curve_index);
 
         ImGui::Separator();
         ImGui::Text("Timing (seconds):");
@@ -2818,6 +3015,7 @@ void RenderTextModal(EditorContext* editor) {
         }
         
         if (ImGui::SliderFloat("Size", &cue->size, 8.0f, 128.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_size, "Text Size", nullptr, "text_size");
         ImGui::SameLine();
         if (cue->curve_size >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_size);
@@ -3010,6 +3208,7 @@ void RenderTextModal(EditorContext* editor) {
         // Position
         ImGui::Text("Position (0.0-1.0):");
         if (ImGui::SliderFloat("X", &cue->x, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_x, "Text X", nullptr, "text_x");
         ImGui::SameLine();
         if (cue->curve_x >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_x);
@@ -3046,6 +3245,7 @@ void RenderTextModal(EditorContext* editor) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
         
         if (ImGui::SliderFloat("Y", &cue->y, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_y, "Text Y", nullptr, "text_y");
         ImGui::SameLine();
         if (cue->curve_y >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_y);
@@ -3285,9 +3485,8 @@ void RenderTextModal(EditorContext* editor) {
         if (editor->project->curve_count <= 0) {
             ImGui::TextDisabled("No curves available. Create one first.");
         } else {
-            const char* target_names[] = {"X Position", "Y Position", "Size", "Rotation", "Color R", "Color G", "Color B"};
-            int* target_fields[] = {&cue->curve_x, &cue->curve_y, &cue->curve_size, &cue->curve_rotation, &cue->curve_color_r, &cue->curve_color_g, &cue->curve_color_b};
-            const int target_count = 7;
+            CurveTargetBinding targets[128] = {};
+            const int target_count = BuildCurveTargetsForCurrentCue(editor, targets, 128);
             static int text_target_idx = 0;
             static int text_curve_idx = 0;
             if (text_target_idx < 0 || text_target_idx >= target_count) text_target_idx = 0;
@@ -3295,15 +3494,15 @@ void RenderTextModal(EditorContext* editor) {
             if (text_curve_idx >= editor->project->curve_count) text_curve_idx = editor->project->curve_count - 1;
 
             ImGui::SetNextItemWidth(220.0f);
-            ImGui::Combo("Target Parameter##text_curve_reuse", &text_target_idx, target_names, target_count);
+            ImGui::Combo("Target Parameter##text_curve_reuse", &text_target_idx,
+                         CurveTargetComboGetter, targets, target_count);
 
             char curve_preview[64] = {};
-            snprintf(curve_preview, sizeof(curve_preview), "Curve %d (%d pts)", text_curve_idx,
-                     editor->project->curves[text_curve_idx].point_count);
+            BuildCurveDisplayLabel(editor, text_curve_idx, curve_preview, sizeof(curve_preview));
             if (ImGui::BeginCombo("Curve##text_curve_reuse", curve_preview)) {
                 for (int i = 0; i < editor->project->curve_count; ++i) {
                     char item[64] = {};
-                    snprintf(item, sizeof(item), "Curve %d (%d pts)", i, editor->project->curves[i].point_count);
+                    BuildCurveDisplayLabel(editor, i, item, sizeof(item));
                     bool selected = (i == text_curve_idx);
                     if (ImGui::Selectable(item, selected)) text_curve_idx = i;
                     if (selected) ImGui::SetItemDefaultFocus();
@@ -3312,16 +3511,16 @@ void RenderTextModal(EditorContext* editor) {
             }
 
             if (ImGui::Button("Assign Existing Curve##text_curve_reuse")) {
-                *target_fields[text_target_idx] = text_curve_idx;
+                *targets[text_target_idx].curve_field = text_curve_idx;
                 AutoSave();
             }
             ImGui::SameLine();
             if (ImGui::Button("Edit Assigned##text_curve_reuse")) {
-                int idx = *target_fields[text_target_idx];
+                int idx = *targets[text_target_idx].curve_field;
                 if (idx >= 0 && idx < editor->project->curve_count) {
                     editor->editing_curve_index = idx;
                     editor->editing_curve_cue_type = CueTypeText;
-                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "Text %s", target_names[text_target_idx]);
+                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", targets[text_target_idx].label);
                     editor->curve_editor_modal_request_open = true;
                 }
             }
@@ -3608,17 +3807,8 @@ void RenderScrollTextModal(EditorContext* editor) {
         if (editor->project->curve_count <= 0) {
             ImGui::TextDisabled("No curves available. Create one first.");
         } else {
-            const char* target_names[] = {
-                "X Position", "Y Position", "Speed", "Size", "Rotation", "Opacity", "Color R", "Color G", "Color B",
-                "Wave Amp", "Wave Freq", "Wave Length", "Jitter Amp", "Jitter Freq"
-            };
-            int* target_fields[] = {
-                &cue->curve_x, &cue->curve_y, &cue->curve_speed, &cue->curve_size,
-                &cue->curve_rotation, &cue->curve_opacity, &cue->curve_color_r, &cue->curve_color_g, &cue->curve_color_b,
-                &cue->curve_wave_amp, &cue->curve_wave_freq, &cue->curve_wave_length,
-                &cue->curve_jitter_amp, &cue->curve_jitter_freq
-            };
-            const int target_count = 14;
+            CurveTargetBinding targets[128] = {};
+            const int target_count = BuildCurveTargetsForCurrentCue(editor, targets, 128);
             static int target_idx = 0;
             static int curve_idx = 0;
             if (target_idx < 0 || target_idx >= target_count) target_idx = 0;
@@ -3626,15 +3816,15 @@ void RenderScrollTextModal(EditorContext* editor) {
             if (curve_idx >= editor->project->curve_count) curve_idx = editor->project->curve_count - 1;
 
             ImGui::SetNextItemWidth(240.0f);
-            ImGui::Combo("Target##scroll_curve_reuse", &target_idx, target_names, target_count);
+            ImGui::Combo("Target##scroll_curve_reuse", &target_idx,
+                         CurveTargetComboGetter, targets, target_count);
 
             char curve_preview[64] = {};
-            snprintf(curve_preview, sizeof(curve_preview), "Curve %d (%d pts)", curve_idx,
-                     editor->project->curves[curve_idx].point_count);
+            BuildCurveDisplayLabel(editor, curve_idx, curve_preview, sizeof(curve_preview));
             if (ImGui::BeginCombo("Curve##scroll_curve_reuse", curve_preview)) {
                 for (int i = 0; i < editor->project->curve_count; ++i) {
                     char item[64] = {};
-                    snprintf(item, sizeof(item), "Curve %d (%d pts)", i, editor->project->curves[i].point_count);
+                    BuildCurveDisplayLabel(editor, i, item, sizeof(item));
                     bool selected = (i == curve_idx);
                     if (ImGui::Selectable(item, selected)) curve_idx = i;
                     if (selected) ImGui::SetItemDefaultFocus();
@@ -3643,16 +3833,16 @@ void RenderScrollTextModal(EditorContext* editor) {
             }
 
             if (ImGui::Button("Assign Existing Curve##scroll_curve_reuse")) {
-                *target_fields[target_idx] = curve_idx;
+                *targets[target_idx].curve_field = curve_idx;
                 AutoSave();
             }
             ImGui::SameLine();
             if (ImGui::Button("Edit Assigned##scroll_curve_reuse")) {
-                int idx = *target_fields[target_idx];
+                int idx = *targets[target_idx].curve_field;
                 if (idx >= 0 && idx < editor->project->curve_count) {
                     editor->editing_curve_index = idx;
                     editor->editing_curve_cue_type = CueTypeScrollText;
-                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "Scroll %s", target_names[target_idx]);
+                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", targets[target_idx].label);
                     editor->curve_editor_modal_request_open = true;
                 }
             }
@@ -4371,6 +4561,7 @@ void RenderMeshModal(EditorContext* editor) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit A curve");
         
         if (ImGui::SliderFloat("Metallic",  &cue->metallic,  0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_metallic, "Mesh Metallic", nullptr, "mesh_metallic");
         ImGui::SameLine();
         if (cue->curve_metallic >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_metallic);
@@ -4402,6 +4593,7 @@ void RenderMeshModal(EditorContext* editor) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
         
         if (ImGui::SliderFloat("Roughness", &cue->roughness, 0.0f, 1.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_roughness, "Mesh Roughness", nullptr, "mesh_roughness");
         ImGui::SameLine();
         if (cue->curve_roughness >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_roughness);
@@ -4436,6 +4628,7 @@ void RenderMeshModal(EditorContext* editor) {
         if (ImGui::SliderFloat("Emissive Strength", &cue->emissive_strength, 0.0f, 10.0f)) AutoSave();
 
         if (ImGui::SliderFloat("Camera FOV", &cue->fov_deg, 10.0f, 120.0f)) AutoSave();
+        DrawCurveRecordButton(editor, &cue->curve_fov, "Mesh Camera FOV", nullptr, "mesh_fov");
         ImGui::SameLine();
         if (cue->curve_fov >= 0) {
             ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", cue->curve_fov);
@@ -4570,21 +4763,8 @@ void RenderMeshModal(EditorContext* editor) {
         if (editor->project->curve_count <= 0) {
             ImGui::TextDisabled("No curves available. Create one first.");
         } else {
-            const char* target_names[] = {
-                "Mesh Size", "Pos X", "Pos Y", "Pos Z",
-                "Rot X", "Rot Y", "Rot Z",
-                "Scale X", "Scale Y", "Scale Z",
-                "Color R", "Color G", "Color B", "Color A",
-                "Metallic", "Roughness", "Camera FOV"
-            };
-            int* target_fields[] = {
-                &cue->curve_mesh_size, &cue->curve_pos_x, &cue->curve_pos_y, &cue->curve_pos_z,
-                &cue->curve_rot_x, &cue->curve_rot_y, &cue->curve_rot_z,
-                &cue->curve_scale_x, &cue->curve_scale_y, &cue->curve_scale_z,
-                &cue->curve_color_r, &cue->curve_color_g, &cue->curve_color_b, &cue->curve_color_a,
-                &cue->curve_metallic, &cue->curve_roughness, &cue->curve_fov
-            };
-            const int target_count = (int)(sizeof(target_names) / sizeof(target_names[0]));
+            CurveTargetBinding targets[128] = {};
+            const int target_count = BuildCurveTargetsForCurrentCue(editor, targets, 128);
             static int mesh_target_idx = 0;
             static int mesh_curve_idx = 0;
             if (mesh_target_idx < 0 || mesh_target_idx >= target_count) mesh_target_idx = 0;
@@ -4592,15 +4772,15 @@ void RenderMeshModal(EditorContext* editor) {
             if (mesh_curve_idx >= editor->project->curve_count) mesh_curve_idx = editor->project->curve_count - 1;
 
             ImGui::SetNextItemWidth(220.0f);
-            ImGui::Combo("Target Parameter##mesh_curve_reuse", &mesh_target_idx, target_names, target_count);
+            ImGui::Combo("Target Parameter##mesh_curve_reuse", &mesh_target_idx,
+                         CurveTargetComboGetter, targets, target_count);
 
             char curve_preview[64] = {};
-            snprintf(curve_preview, sizeof(curve_preview), "Curve %d (%d pts)", mesh_curve_idx,
-                     editor->project->curves[mesh_curve_idx].point_count);
+            BuildCurveDisplayLabel(editor, mesh_curve_idx, curve_preview, sizeof(curve_preview));
             if (ImGui::BeginCombo("Curve##mesh_curve_reuse", curve_preview)) {
                 for (int i = 0; i < editor->project->curve_count; ++i) {
                     char item[64] = {};
-                    snprintf(item, sizeof(item), "Curve %d (%d pts)", i, editor->project->curves[i].point_count);
+                    BuildCurveDisplayLabel(editor, i, item, sizeof(item));
                     bool selected = (i == mesh_curve_idx);
                     if (ImGui::Selectable(item, selected)) mesh_curve_idx = i;
                     if (selected) ImGui::SetItemDefaultFocus();
@@ -4609,16 +4789,16 @@ void RenderMeshModal(EditorContext* editor) {
             }
 
             if (ImGui::Button("Assign Existing Curve##mesh_curve_reuse")) {
-                *target_fields[mesh_target_idx] = mesh_curve_idx;
+                *targets[mesh_target_idx].curve_field = mesh_curve_idx;
                 AutoSave();
             }
             ImGui::SameLine();
             if (ImGui::Button("Edit Assigned##mesh_curve_reuse")) {
-                int idx = *target_fields[mesh_target_idx];
+                int idx = *targets[mesh_target_idx].curve_field;
                 if (idx >= 0 && idx < editor->project->curve_count) {
                     editor->editing_curve_index = idx;
                     editor->editing_curve_cue_type = CueTypeMesh;
-                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "Mesh %s", target_names[mesh_target_idx]);
+                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", targets[mesh_target_idx].label);
                     editor->curve_editor_modal_request_open = true;
                 }
             }
@@ -4733,6 +4913,23 @@ void RenderPixelModal(EditorContext* editor) {
         }
         if (ImGui::InputText("Asset Path", cue->asset_path, sizeof(cue->asset_path))) AutoSave();
 
+        bool asset_shaders_modified = false;
+        RenderAssetShaders(editor, cue->shaders, &cue->shader_count,
+                   &asset_shaders_modified, "pixel_shaders", CueTypePixel,
+                   editor->selected_cue_index);
+        if (asset_shaders_modified) AutoSave();
+
+        bool layer_effects_modified = false;
+        RenderLayerPostEffects(editor, cue->post_effects, &cue->post_effect_count,
+                       &layer_effects_modified, "pixel", CueTypePixel,
+                       editor->selected_cue_index);
+        if (layer_effects_modified) AutoSave();
+
+        static int pixel_target_index = 0;
+        static int pixel_curve_index = 0;
+        RenderCurveReuseSection(editor, "pixel_curve_reuse", CueTypePixel,
+                    &pixel_target_index, &pixel_curve_index);
+
         ImGui::Separator();
         if (ImGui::SliderFloat("X", &cue->x, 0.0f, 1.0f)) AutoSave();
         if (ImGui::SliderFloat("Y", &cue->y, 0.0f, 1.0f)) AutoSave();
@@ -4825,6 +5022,7 @@ void RenderPixelEmitterModal(EditorContext* editor) {
                     AutoSave();
                 }
             }
+            DrawCurveRecordButton(editor, curve_field, target_label, nullptr, target_label);
             ImGui::PopID();
         };
 

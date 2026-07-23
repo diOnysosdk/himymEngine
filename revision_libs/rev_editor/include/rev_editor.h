@@ -250,6 +250,7 @@ struct ProjectData {
     // Animation curves
     rev::curve::Curve* curves;
     int curve_count;
+    char curve_names[rev::runtime::kMaxCurves][128];
 
     // Project-level music-synchronised trigger tracks.
     TriggerTrack trigger_tracks[kMaxTriggerTracks];
@@ -304,6 +305,8 @@ struct EditorContext {
     float recording_beat_offset;
     float recording_quantize_beats;
     char recording_track_name[64];
+    int* recording_curve_target;
+    char recording_target_label[128];
     
     // Preview viewport
     bool show_preview;
@@ -439,6 +442,7 @@ void EndFrame(EditorContext* editor);
 void RenderMenuBar(EditorContext* editor);
 void RenderTimeline(EditorContext* editor);
 void RenderCurveEditor(EditorContext* editor);
+void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, size_t out_size);
 void RenderTriggerRecorder(EditorContext* editor);
 void RenderCurveEditorModal(EditorContext* editor);
 void RenderShaderModal(EditorContext* editor);

@@ -216,7 +216,7 @@ void RegisterCurveUsage(int field,
     }
 }
 
-void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, size_t out_size)
+void BuildCurveDisplayLabelInternal(EditorContext* editor, int curve_index, char* out, size_t out_size)
 {
     if (!out || out_size == 0) return;
     out[0] = '\0';
@@ -369,12 +369,20 @@ void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, s
     }
 
     int points = editor->project->curves[curve_index].point_count;
+    if (editor->project->curve_names[curve_index][0] != '\0') {
+        if (usage_count > 1) {
+            snprintf(out, out_size, "%s (+%d uses, %d pts)", editor->project->curve_names[curve_index], usage_count - 1, points);
+        } else {
+            snprintf(out, out_size, "%s (%d pts)", editor->project->curve_names[curve_index], points);
+        }
+        return;
+    }
     if (usage_count <= 0) {
-        snprintf(out, out_size, "Curve %d - Unused (%d pts)", curve_index, points);
+        snprintf(out, out_size, "Unassigned timing curve %d (%d pts)", curve_index, points);
     } else if (usage_count == 1) {
-        snprintf(out, out_size, "Curve %d - %s (%d pts)", curve_index, first_usage, points);
+        snprintf(out, out_size, "%s (%d pts)", first_usage, points);
     } else {
-        snprintf(out, out_size, "Curve %d - %s (+%d) (%d pts)", curve_index, first_usage, usage_count - 1, points);
+        snprintf(out, out_size, "%s (+%d uses, %d pts)", first_usage, usage_count - 1, points);
     }
 }
 
@@ -1616,6 +1624,11 @@ void RenderAssetBrowser(EditorContext* editor) {
     }
 }
 
+void BuildCurveDisplayLabel(EditorContext* editor, int curve_index, char* out, size_t out_size)
+{
+    BuildCurveDisplayLabelInternal(editor, curve_index, out, out_size);
+}
+
 void RenderCurveEditor(EditorContext* editor) {
     if (!editor || !editor->project) return;
     
@@ -1642,6 +1655,8 @@ void RenderCurveEditor(EditorContext* editor) {
                 // Shift remaining curves
                 for (int i = editor->selected_curve_index; i < editor->project->curve_count - 1; ++i) {
                     editor->project->curves[i] = editor->project->curves[i + 1];
+                    memcpy(editor->project->curve_names[i], editor->project->curve_names[i + 1],
+                           sizeof(editor->project->curve_names[i]));
                 }
                 editor->project->curve_count--;
                 ReindexCurveReferencesAfterDelete(editor->project, deleted_curve);
@@ -1665,6 +1680,8 @@ void RenderCurveEditor(EditorContext* editor) {
                     // Shift remaining curves
                     for (int j = i; j < editor->project->curve_count - 1; ++j) {
                         editor->project->curves[j] = editor->project->curves[j + 1];
+                        memcpy(editor->project->curve_names[j], editor->project->curve_names[j + 1],
+                               sizeof(editor->project->curve_names[j]));
                     }
                     // Update all curve references that were affected
                     ReindexCurveReferencesAfterDelete(editor->project, i);
@@ -1693,6 +1710,16 @@ void RenderCurveEditor(EditorContext* editor) {
                 }
                 ImGui::PopID();
             }
+            if (editor->selected_curve_index >= 0 && editor->selected_curve_index < editor->project->curve_count) {
+                ImGui::SetNextItemWidth(360.0f);
+                if (ImGui::InputText("Curve name", editor->project->curve_names[editor->selected_curve_index],
+                                     sizeof(editor->project->curve_names[editor->selected_curve_index]))) {
+                    editor->project->modified = true;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Optional name. Leave empty to show the connected asset and parameter automatically.");
+                }
+            }
         }
 
         ImGui::Separator();
@@ -1702,15 +1729,41 @@ void RenderCurveEditor(EditorContext* editor) {
             editor->selected_scene_index >= 0 && editor->selected_scene_index < editor->project->scene_count &&
             editor->selected_cue_index >= 0) {
             SceneBlock* scene = &editor->project->scenes[editor->selected_scene_index];
-            int* target_fields[64] = {};
-            const char* target_names[64] = {};
+            int* target_fields[128] = {};
+            const char* target_names[128] = {};
             int target_count = 0;
 
             auto add_target = [&](const char* name, int* field) {
-                if (!name || !field || target_count >= 64) return;
+                if (!name || !field || target_count >= 128) return;
                 target_names[target_count] = name;
                 target_fields[target_count] = field;
                 ++target_count;
+            };
+            static char asset_shader_target_names[rev::runtime::kMaxAssetShaders][17][96] = {};
+            auto add_asset_shader_targets = [&](AssetShader* shaders, int shader_count) {
+                const char* names[] = {
+                    "Opacity", "Speed", "Intensity", "Warp", "Exposure", "Fade",
+                    "Exposure Ramp", "Fade Ramp", "Palette Low R", "Palette Low G", "Palette Low B",
+                    "Palette Mid R", "Palette Mid G", "Palette Mid B", "Palette High R",
+                    "Palette High G", "Palette High B"
+                };
+                if (shader_count > rev::runtime::kMaxAssetShaders) shader_count = rev::runtime::kMaxAssetShaders;
+                for (int shader_index = 0; shader_index < shader_count; ++shader_index) {
+                    AssetShader* shader = &shaders[shader_index];
+                    int* fields[] = {
+                        &shader->curve_opacity, &shader->curve_speed, &shader->curve_intensity, &shader->curve_warp,
+                        &shader->curve_exposure, &shader->curve_fade, &shader->curve_exposure_ramp, &shader->curve_fade_ramp,
+                        &shader->curve_palette_low_r, &shader->curve_palette_low_g, &shader->curve_palette_low_b,
+                        &shader->curve_palette_mid_r, &shader->curve_palette_mid_g, &shader->curve_palette_mid_b,
+                        &shader->curve_palette_high_r, &shader->curve_palette_high_g, &shader->curve_palette_high_b
+                    };
+                    for (int parameter = 0; parameter < 17; ++parameter) {
+                        snprintf(asset_shader_target_names[shader_index][parameter],
+                                 sizeof(asset_shader_target_names[shader_index][parameter]),
+                                 "Asset Shader %d %s", shader_index + 1, names[parameter]);
+                        add_target(asset_shader_target_names[shader_index][parameter], fields[parameter]);
+                    }
+                }
             };
 
             if (editor->selected_cue_type == CueTypeShader && editor->selected_cue_index < scene->shader_cue_count) {
@@ -1749,6 +1802,7 @@ void RenderCurveEditor(EditorContext* editor) {
                     add_target("Layer Effect Color B", &effect->curve_color_b);
                     add_target("Layer Effect Color A", &effect->curve_color_a);
                 }
+                add_asset_shader_targets(cue->shaders, cue->shader_count);
             } else if (editor->selected_cue_type == CueTypeAnimatedSprite && editor->selected_cue_index < scene->animated_sprite_cue_count) {
                 AnimatedSpriteCue* cue = &scene->animated_sprite_cues[editor->selected_cue_index];
                 add_target("AnimSprite X", &cue->curve_x);
@@ -1767,6 +1821,7 @@ void RenderCurveEditor(EditorContext* editor) {
                     add_target("Layer Effect Color B", &effect->curve_color_b);
                     add_target("Layer Effect Color A", &effect->curve_color_a);
                 }
+                add_asset_shader_targets(cue->shaders, cue->shader_count);
             } else if (editor->selected_cue_type == CueTypeText && editor->selected_cue_index < scene->text_cue_count) {
                 TextCue* cue = &scene->text_cues[editor->selected_cue_index];
                 add_target("Text X", &cue->curve_x);
@@ -1820,6 +1875,17 @@ void RenderCurveEditor(EditorContext* editor) {
                 add_target("Pixel Opacity", &cue->curve_opacity);
                 add_target("Pixel Frame", &cue->curve_frame);
                 add_target("Pixel Palette Offset", &cue->curve_palette_offset);
+                for (int i = 0; i < cue->post_effect_count; ++i) {
+                    LayerPostEffect* effect = &cue->post_effects[i];
+                    add_target("Layer Effect Intensity", &effect->curve_intensity);
+                    add_target("Layer Effect Threshold", &effect->curve_threshold);
+                    add_target("Layer Effect Radius", &effect->curve_radius);
+                    add_target("Layer Effect Color R", &effect->curve_color_r);
+                    add_target("Layer Effect Color G", &effect->curve_color_g);
+                    add_target("Layer Effect Color B", &effect->curve_color_b);
+                    add_target("Layer Effect Color A", &effect->curve_color_a);
+                }
+                add_asset_shader_targets(cue->shaders, cue->shader_count);
             } else if (editor->selected_cue_type == CueTypePixelEmitter && editor->selected_cue_index < scene->pixel_emitter_cue_count) {
                 PixelEmitterCue* cue = &scene->pixel_emitter_cues[editor->selected_cue_index];
                 add_target("Emitter X Position", &cue->curve_x);
@@ -2288,6 +2354,19 @@ void RenderTriggerRecorder(EditorContext* editor) {
     } else if (ImGui::Button("Stop recording")) {
         editor->trigger_recording = false;
         editor->playing = false;
+        if (editor->recording_curve_target && editor->recording_track_index >= 0) {
+            int curve_index = CreateTriggerTimingCurve(editor, editor->recording_track_index);
+            if (curve_index >= 0) {
+                *editor->recording_curve_target = curve_index;
+                editor->editing_curve_index = curve_index;
+                editor->editing_curve_field = -1;
+                snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label),
+                         "%s timing", editor->recording_target_label[0] ? editor->recording_target_label : "Parameter");
+                editor->curve_editor_modal_request_open = true;
+            }
+            editor->recording_curve_target = nullptr;
+            editor->recording_target_label[0] = '\0';
+        }
     }
 
     if (editor->recording_track_index >= 0 &&

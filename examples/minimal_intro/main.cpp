@@ -4153,6 +4153,28 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     const rev::runtime::AssetShader& asset_shader = shaders[shader_index];
                     float end_time = asset_shader.end_time < 0.0f ? 1.0e30f : asset_shader.end_time;
                     if (!asset_shader.enabled || layer_time < asset_shader.start_time || layer_time > end_time) continue;
+                    auto evaluate_curve = [&](int curve_index, float fallback) {
+                        if (curve_index < 0 || curve_index >= curve_count) return fallback;
+                        const rev::curve::Curve& curve = curves[curve_index];
+                        const float curve_time = curve.duration > 0.0f
+                            ? (layer_time - asset_shader.start_time) / curve.duration : 0.0f;
+                        return rev::curve::Evaluate(curve, curve_time);
+                    };
+                    const float shader_speed = evaluate_curve(asset_shader.curve_speed, asset_shader.speed);
+                    const float shader_intensity = evaluate_curve(asset_shader.curve_intensity, asset_shader.intensity);
+                    const float shader_warp = evaluate_curve(asset_shader.curve_warp, asset_shader.warp);
+                    const float shader_exposure = evaluate_curve(asset_shader.curve_exposure, asset_shader.exposure_base);
+                    const float shader_fade = evaluate_curve(asset_shader.curve_fade, asset_shader.fade_base);
+                    const float shader_opacity = evaluate_curve(asset_shader.curve_opacity, asset_shader.opacity);
+                    const float shader_low_r = evaluate_curve(asset_shader.curve_palette_low_r, asset_shader.palette_low[0]);
+                    const float shader_low_g = evaluate_curve(asset_shader.curve_palette_low_g, asset_shader.palette_low[1]);
+                    const float shader_low_b = evaluate_curve(asset_shader.curve_palette_low_b, asset_shader.palette_low[2]);
+                    const float shader_mid_r = evaluate_curve(asset_shader.curve_palette_mid_r, asset_shader.palette_mid[0]);
+                    const float shader_mid_g = evaluate_curve(asset_shader.curve_palette_mid_g, asset_shader.palette_mid[1]);
+                    const float shader_mid_b = evaluate_curve(asset_shader.curve_palette_mid_b, asset_shader.palette_mid[2]);
+                    const float shader_high_r = evaluate_curve(asset_shader.curve_palette_high_r, asset_shader.palette_high[0]);
+                    const float shader_high_g = evaluate_curve(asset_shader.curve_palette_high_g, asset_shader.palette_high[1]);
+                    const float shader_high_b = evaluate_curve(asset_shader.curve_palette_high_b, asset_shader.palette_high[2]);
                     ShaderProgramState* shader_state = get_asset_shader_program(asset_shader.shader_id);
                     if (!shader_state) continue;
 
@@ -4170,6 +4192,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     int u_speed = rev::shader::GetUniformLocation(shader_state->prog, "u_speed");
                     int u_intensity = rev::shader::GetUniformLocation(shader_state->prog, "u_intensity");
                     int u_warp = rev::shader::GetUniformLocation(shader_state->prog, "u_warp");
+                    int u_exposure_base = rev::shader::GetUniformLocation(shader_state->prog, "u_exposure_base");
+                    int u_fade_base = rev::shader::GetUniformLocation(shader_state->prog, "u_fade_base");
                     int u_asset_texture = rev::shader::GetUniformLocation(shader_state->prog, "u_asset_texture");
                     int u_asset_opacity = rev::shader::GetUniformLocation(shader_state->prog, "u_asset_opacity");
                     if (u_position >= 0) rev::shader::SetVec2(shader_state->prog, u_position, x, y);
@@ -4179,14 +4203,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (u_uv_rect >= 0) rev::shader::SetVec4(shader_state->prog, u_uv_rect, 0.0f, 0.0f, 1.0f, 1.0f);
                     if (u_time >= 0) rev::shader::SetFloat(shader_state->prog, u_time, layer_time);
                     if (u_resolution >= 0) rev::shader::SetVec2(shader_state->prog, u_resolution, (float)config.width, (float)config.height);
-                    if (u_palette_low >= 0) rev::shader::SetVec3(shader_state->prog, u_palette_low, asset_shader.palette_low[0], asset_shader.palette_low[1], asset_shader.palette_low[2]);
-                    if (u_palette_mid >= 0) rev::shader::SetVec3(shader_state->prog, u_palette_mid, asset_shader.palette_mid[0], asset_shader.palette_mid[1], asset_shader.palette_mid[2]);
-                    if (u_palette_high >= 0) rev::shader::SetVec3(shader_state->prog, u_palette_high, asset_shader.palette_high[0], asset_shader.palette_high[1], asset_shader.palette_high[2]);
-                    if (u_speed >= 0) rev::shader::SetFloat(shader_state->prog, u_speed, asset_shader.speed);
-                    if (u_intensity >= 0) rev::shader::SetFloat(shader_state->prog, u_intensity, asset_shader.intensity);
-                    if (u_warp >= 0) rev::shader::SetFloat(shader_state->prog, u_warp, asset_shader.warp);
+                    if (u_palette_low >= 0) rev::shader::SetVec3(shader_state->prog, u_palette_low, shader_low_r, shader_low_g, shader_low_b);
+                    if (u_palette_mid >= 0) rev::shader::SetVec3(shader_state->prog, u_palette_mid, shader_mid_r, shader_mid_g, shader_mid_b);
+                    if (u_palette_high >= 0) rev::shader::SetVec3(shader_state->prog, u_palette_high, shader_high_r, shader_high_g, shader_high_b);
+                    if (u_speed >= 0) rev::shader::SetFloat(shader_state->prog, u_speed, shader_speed);
+                    if (u_intensity >= 0) rev::shader::SetFloat(shader_state->prog, u_intensity, shader_intensity);
+                    if (u_warp >= 0) rev::shader::SetFloat(shader_state->prog, u_warp, shader_warp);
+                    if (u_exposure_base >= 0) rev::shader::SetFloat(shader_state->prog, u_exposure_base, shader_exposure);
+                    if (u_fade_base >= 0) rev::shader::SetFloat(shader_state->prog, u_fade_base, shader_fade);
                     if (u_asset_texture >= 0) rev::shader::SetInt(shader_state->prog, u_asset_texture, 0);
-                    if (u_asset_opacity >= 0) rev::shader::SetFloat(shader_state->prog, u_asset_opacity, asset_shader.opacity);
+                    if (u_asset_opacity >= 0) rev::shader::SetFloat(shader_state->prog, u_asset_opacity, shader_opacity);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, asset_texture_id);
                     glEnable(GL_BLEND);
