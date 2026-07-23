@@ -1,5 +1,0 @@
-[submodule "revision_libs/rev_xm/third_party/libxm"]
-	path = revision_libs/rev_xm/third_party/libxm
-	url = https://github.com/MikeEviscerate/libxm-windows.git
-	ignore = all
-	update = none
