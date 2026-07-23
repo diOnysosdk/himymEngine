@@ -108,7 +108,7 @@ void SortPoints(Curve& curve) {
 }
 
 float Evaluate(const Curve& curve, float t) {
-    if (curve.point_count == 0) {
+    if (!curve.points || curve.point_count <= 0) {
         return 0.0f;
     }
     
@@ -161,6 +161,9 @@ float Evaluate(const Curve& curve, float t) {
         const Point& p1 = curve.points[i + 1];
         
         if (t >= p0.t && t <= p1.t) {
+            if (p1.t <= p0.t) {
+                return p1.v;
+            }
             // Normalize t within segment
             float segment_t = (t - p0.t) / (p1.t - p0.t);
             

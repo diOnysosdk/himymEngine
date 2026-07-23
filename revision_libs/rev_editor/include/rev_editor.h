@@ -94,6 +94,8 @@ struct PostEffect {
     int curve_color_b;
     int curve_color_a;
     int curve_amount;
+    int trigger_track;
+    float trigger_pulse_beats;
 };
 
 // Forward declarations

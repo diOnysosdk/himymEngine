@@ -15,6 +15,8 @@ Beat trigger API:
 - `QuantizeTriggerBeat(beat, interval_beats)` supports eighth notes with `0.5` and longer phrases such as eight beats with `8.0`.
 - `EvaluateTriggerPulse(track, time_seconds, pulse_beats)` returns `1.0` while the most recent event is within the requested beat window.
 - The editor's Trigger Recorder starts playback at timeline zero, records left or right Ctrl edge presses, stops on Esc, and persists tracks in the `trigger_tracks` project JSON array.
+- `PostEffect` and `LayerPostEffect` use `trigger_track` (`-1` disables binding) and `trigger_pulse_beats`; while active, the selected trigger pulse multiplies effect intensity.
+- The Trigger Recorder can convert any selected recorded track, including tracks loaded from project JSON, into a regular `rev::curve::Curve` containing timing nodes with neutral values. Cue asset settings can assign that curve to any curve-backed parameter; the values remain user-authored in the Curve Editor.
 
 - `rev::gltf::ImportResult`:
     - Primary mesh (`mesh`) plus full material table (`materials`, `material_count`)

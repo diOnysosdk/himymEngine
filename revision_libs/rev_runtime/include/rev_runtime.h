@@ -78,6 +78,8 @@ struct LayerPostEffect {
     int curve_color_b;
     int curve_color_a;
     int curve_amount;
+    int trigger_track;
+    float trigger_pulse_beats;
 };
 
 struct AssetShader {
@@ -98,6 +100,23 @@ struct AssetShader {
     float palette_high[3];
     float start_time;
     float end_time;
+    int curve_speed;
+    int curve_intensity;
+    int curve_warp;
+    int curve_exposure;
+    int curve_fade;
+    int curve_opacity;
+    int curve_exposure_ramp;
+    int curve_fade_ramp;
+    int curve_palette_low_r;
+    int curve_palette_low_g;
+    int curve_palette_low_b;
+    int curve_palette_mid_r;
+    int curve_palette_mid_g;
+    int curve_palette_mid_b;
+    int curve_palette_high_r;
+    int curve_palette_high_g;
+    int curve_palette_high_b;
 };
 
 // ------------------------------------------------------------------

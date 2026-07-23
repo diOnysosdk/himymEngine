@@ -1468,6 +1468,22 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_pixel_cue.curve_y = -1;
     current_pixel_cue.curve_scale = -1;
     current_pixel_cue.curve_rotation = -1;
+
+    auto InitializeAssetShaderCurves = [](AssetShader* shaders) {
+        if (!shaders) return;
+        for (int i = 0; i < rev::runtime::kMaxAssetShaders; ++i) {
+            AssetShader& shader = shaders[i];
+            shader.curve_speed = shader.curve_intensity = shader.curve_warp = -1;
+            shader.curve_exposure = shader.curve_fade = shader.curve_opacity = -1;
+            shader.curve_exposure_ramp = shader.curve_fade_ramp = -1;
+            shader.curve_palette_low_r = shader.curve_palette_low_g = shader.curve_palette_low_b = -1;
+            shader.curve_palette_mid_r = shader.curve_palette_mid_g = shader.curve_palette_mid_b = -1;
+            shader.curve_palette_high_r = shader.curve_palette_high_g = shader.curve_palette_high_b = -1;
+        }
+    };
+    InitializeAssetShaderCurves(current_image_cue.shaders);
+    InitializeAssetShaderCurves(current_animated_sprite_cue.shaders);
+    InitializeAssetShaderCurves(current_pixel_cue.shaders);
     current_pixel_cue.curve_opacity = -1;
     current_pixel_cue.curve_frame = -1;
     current_pixel_cue.curve_palette_offset = -1;
@@ -2844,6 +2860,8 @@ static bool ParseLayerPostEffectField(const char* line, LayerPostEffect* effects
     else if (sscanf_s(line, "\"post_effect_%d_curve_color_b\": %d", &index, &int_value) == 2) effects[index].curve_color_b = int_value;
     else if (sscanf_s(line, "\"post_effect_%d_curve_color_a\": %d", &index, &int_value) == 2) effects[index].curve_color_a = int_value;
     else if (sscanf_s(line, "\"post_effect_%d_curve_amount\": %d", &index, &int_value) == 2) effects[index].curve_amount = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_trigger_track\": %d", &index, &int_value) == 2) effects[index].trigger_track = int_value;
+    else if (sscanf_s(line, "\"post_effect_%d_trigger_pulse_beats\": %f", &index, &float_value) == 2) effects[index].trigger_pulse_beats = float_value;
     else return false;
     return true;
 }
@@ -2870,6 +2888,23 @@ static bool ParseAssetShaderField(const char* line, AssetShader* shaders, int* s
     else if (sscanf_s(line, "\"asset_shader_%d_fade_ramp\": %f", &index, &float_value) == 2) shaders[index].fade_ramp = float_value;
     else if (sscanf_s(line, "\"asset_shader_%d_start\": %f", &index, &float_value) == 2) shaders[index].start_time = float_value;
     else if (sscanf_s(line, "\"asset_shader_%d_end\": %f", &index, &float_value) == 2) shaders[index].end_time = float_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_speed\": %d", &index, &int_value) == 2) shaders[index].curve_speed = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_intensity\": %d", &index, &int_value) == 2) shaders[index].curve_intensity = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_warp\": %d", &index, &int_value) == 2) shaders[index].curve_warp = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_exposure\": %d", &index, &int_value) == 2) shaders[index].curve_exposure = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_fade\": %d", &index, &int_value) == 2) shaders[index].curve_fade = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_opacity\": %d", &index, &int_value) == 2) shaders[index].curve_opacity = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_exposure_ramp\": %d", &index, &int_value) == 2) shaders[index].curve_exposure_ramp = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_fade_ramp\": %d", &index, &int_value) == 2) shaders[index].curve_fade_ramp = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_palette_low_r\": %d", &index, &int_value) == 2) shaders[index].curve_palette_low_r = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_palette_low_g\": %d", &index, &int_value) == 2) shaders[index].curve_palette_low_g = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_palette_low_b\": %d", &index, &int_value) == 2) shaders[index].curve_palette_low_b = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_palette_mid_r\": %d", &index, &int_value) == 2) shaders[index].curve_palette_mid_r = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_palette_mid_g\": %d", &index, &int_value) == 2) shaders[index].curve_palette_mid_g = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_palette_mid_b\": %d", &index, &int_value) == 2) shaders[index].curve_palette_mid_b = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_palette_high_r\": %d", &index, &int_value) == 2) shaders[index].curve_palette_high_r = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_palette_high_g\": %d", &index, &int_value) == 2) shaders[index].curve_palette_high_g = int_value;
+    else if (sscanf_s(line, "\"asset_shader_%d_curve_palette_high_b\": %d", &index, &int_value) == 2) shaders[index].curve_palette_high_b = int_value;
     else if (sscanf_s(line, "\"asset_shader_%d_palette_low\": [%f, %f, %f]", &index,
                       &shaders[index].palette_low[0], &shaders[index].palette_low[1], &shaders[index].palette_low[2]) == 4) {}
     else if (sscanf_s(line, "\"asset_shader_%d_palette_mid\": [%f, %f, %f]", &index,
@@ -2953,8 +2988,11 @@ static void WriteLayerPostEffectFields(FILE* f, const LayerPostEffect* effects, 
         fprintf(f, "          \"post_effect_%d_curve_color_g\": %d,\n", i, effect.curve_color_g);
         fprintf(f, "          \"post_effect_%d_curve_color_b\": %d,\n", i, effect.curve_color_b);
         fprintf(f, "          \"post_effect_%d_curve_color_a\": %d,\n", i, effect.curve_color_a);
-        fprintf(f, "          \"post_effect_%d_curve_amount\": %d%s\n", i, effect.curve_amount,
-                (i == rev::runtime::kMaxLayerPostEffects - 1) ? "" : ",");
+        fprintf(f, "          \"post_effect_%d_curve_amount\": %d,\n", i, effect.curve_amount);
+        fprintf(f, "          \"post_effect_%d_trigger_track\": %d,\n", i, effect.trigger_track);
+        fprintf(f, "          \"post_effect_%d_trigger_pulse_beats\": %.3f%s\n", i,
+            effect.trigger_pulse_beats,
+            (i == rev::runtime::kMaxLayerPostEffects - 1) ? "" : ",");
     }
 }
 
@@ -2979,6 +3017,23 @@ static void WriteAssetShaderFields(FILE* f, const AssetShader* shaders, int shad
         fprintf(f, "          \"asset_shader_%d_palette_high\": [%.3f, %.3f, %.3f],\n", i, shader.palette_high[0], shader.palette_high[1], shader.palette_high[2]);
         fprintf(f, "          \"asset_shader_%d_start\": %.3f,\n", i, shader.start_time);
         fprintf(f, "          \"asset_shader_%d_end\": %.3f,\n", i, shader.end_time);
+        fprintf(f, "          \"asset_shader_%d_curve_speed\": %d,\n", i, shader.curve_speed);
+        fprintf(f, "          \"asset_shader_%d_curve_intensity\": %d,\n", i, shader.curve_intensity);
+        fprintf(f, "          \"asset_shader_%d_curve_warp\": %d,\n", i, shader.curve_warp);
+        fprintf(f, "          \"asset_shader_%d_curve_exposure\": %d,\n", i, shader.curve_exposure);
+        fprintf(f, "          \"asset_shader_%d_curve_fade\": %d,\n", i, shader.curve_fade);
+        fprintf(f, "          \"asset_shader_%d_curve_opacity\": %d,\n", i, shader.curve_opacity);
+        fprintf(f, "          \"asset_shader_%d_curve_exposure_ramp\": %d,\n", i, shader.curve_exposure_ramp);
+        fprintf(f, "          \"asset_shader_%d_curve_fade_ramp\": %d,\n", i, shader.curve_fade_ramp);
+        fprintf(f, "          \"asset_shader_%d_curve_palette_low_r\": %d,\n", i, shader.curve_palette_low_r);
+        fprintf(f, "          \"asset_shader_%d_curve_palette_low_g\": %d,\n", i, shader.curve_palette_low_g);
+        fprintf(f, "          \"asset_shader_%d_curve_palette_low_b\": %d,\n", i, shader.curve_palette_low_b);
+        fprintf(f, "          \"asset_shader_%d_curve_palette_mid_r\": %d,\n", i, shader.curve_palette_mid_r);
+        fprintf(f, "          \"asset_shader_%d_curve_palette_mid_g\": %d,\n", i, shader.curve_palette_mid_g);
+        fprintf(f, "          \"asset_shader_%d_curve_palette_mid_b\": %d,\n", i, shader.curve_palette_mid_b);
+        fprintf(f, "          \"asset_shader_%d_curve_palette_high_r\": %d,\n", i, shader.curve_palette_high_r);
+        fprintf(f, "          \"asset_shader_%d_curve_palette_high_g\": %d,\n", i, shader.curve_palette_high_g);
+        fprintf(f, "          \"asset_shader_%d_curve_palette_high_b\": %d,\n", i, shader.curve_palette_high_b);
     }
 }
 
@@ -6767,6 +6822,7 @@ static rev::shader::Program* GetOrCompileAssetShaderProgram(int shader_id) {
 }
 
 static void RenderAssetShaderOverlays(const AssetShader* shaders, int shader_count,
+                                      const ProjectData* project,
                                       float x, float y, float width, float height,
                                       float rotation, float layer_time,
                                       int preview_width, int preview_height,
@@ -6774,6 +6830,23 @@ static void RenderAssetShaderOverlays(const AssetShader* shaders, int shader_cou
     if (!shaders || shader_count <= 0) return;
     for (int shader_index = 0; shader_index < shader_count && shader_index < rev::runtime::kMaxAssetShaders; ++shader_index) {
         const AssetShader& asset_shader = shaders[shader_index];
+        auto evaluate_curve = [&](int curve_index, float fallback) {
+            if (!project || curve_index < 0 || curve_index >= project->curve_count) return fallback;
+            return rev::curve::Evaluate(project->curves[curve_index], layer_time);
+        };
+        float shader_speed = evaluate_curve(asset_shader.curve_speed, asset_shader.speed);
+        float shader_intensity = evaluate_curve(asset_shader.curve_intensity, asset_shader.intensity);
+        float shader_warp = evaluate_curve(asset_shader.curve_warp, asset_shader.warp);
+        float shader_opacity = evaluate_curve(asset_shader.curve_opacity, asset_shader.opacity);
+        float shader_low_r = evaluate_curve(asset_shader.curve_palette_low_r, asset_shader.palette_low[0]);
+        float shader_low_g = evaluate_curve(asset_shader.curve_palette_low_g, asset_shader.palette_low[1]);
+        float shader_low_b = evaluate_curve(asset_shader.curve_palette_low_b, asset_shader.palette_low[2]);
+        float shader_mid_r = evaluate_curve(asset_shader.curve_palette_mid_r, asset_shader.palette_mid[0]);
+        float shader_mid_g = evaluate_curve(asset_shader.curve_palette_mid_g, asset_shader.palette_mid[1]);
+        float shader_mid_b = evaluate_curve(asset_shader.curve_palette_mid_b, asset_shader.palette_mid[2]);
+        float shader_high_r = evaluate_curve(asset_shader.curve_palette_high_r, asset_shader.palette_high[0]);
+        float shader_high_g = evaluate_curve(asset_shader.curve_palette_high_g, asset_shader.palette_high[1]);
+        float shader_high_b = evaluate_curve(asset_shader.curve_palette_high_b, asset_shader.palette_high[2]);
         float end_time = asset_shader.end_time < 0.0f ? 1.0e30f : asset_shader.end_time;
         if (!asset_shader.enabled || layer_time < asset_shader.start_time || layer_time > end_time) continue;
         rev::shader::Program* program = GetOrCompileAssetShaderProgram(asset_shader.shader_id);
@@ -6801,17 +6874,17 @@ static void RenderAssetShaderOverlays(const AssetShader* shaders, int shader_cou
         if (u_uv_rect >= 0) rev::shader::SetVec4(program, u_uv_rect, 0.0f, 0.0f, 1.0f, 1.0f);
         if (u_time >= 0) rev::shader::SetFloat(program, u_time, layer_time);
         if (u_resolution >= 0) rev::shader::SetVec2(program, u_resolution, (float)preview_width, (float)preview_height);
-        if (u_palette_low >= 0) rev::shader::SetVec3(program, u_palette_low, asset_shader.palette_low[0], asset_shader.palette_low[1], asset_shader.palette_low[2]);
-        if (u_palette_mid >= 0) rev::shader::SetVec3(program, u_palette_mid, asset_shader.palette_mid[0], asset_shader.palette_mid[1], asset_shader.palette_mid[2]);
-        if (u_palette_high >= 0) rev::shader::SetVec3(program, u_palette_high, asset_shader.palette_high[0], asset_shader.palette_high[1], asset_shader.palette_high[2]);
-        if (u_speed >= 0) rev::shader::SetFloat(program, u_speed, asset_shader.speed);
-        if (u_intensity >= 0) rev::shader::SetFloat(program, u_intensity, asset_shader.intensity);
-        if (u_warp >= 0) rev::shader::SetFloat(program, u_warp, asset_shader.warp);
+        if (u_palette_low >= 0) rev::shader::SetVec3(program, u_palette_low, shader_low_r, shader_low_g, shader_low_b);
+        if (u_palette_mid >= 0) rev::shader::SetVec3(program, u_palette_mid, shader_mid_r, shader_mid_g, shader_mid_b);
+        if (u_palette_high >= 0) rev::shader::SetVec3(program, u_palette_high, shader_high_r, shader_high_g, shader_high_b);
+        if (u_speed >= 0) rev::shader::SetFloat(program, u_speed, shader_speed);
+        if (u_intensity >= 0) rev::shader::SetFloat(program, u_intensity, shader_intensity);
+        if (u_warp >= 0) rev::shader::SetFloat(program, u_warp, shader_warp);
         if (u_asset_texture >= 0) rev::shader::SetInt(program, u_asset_texture, 0);
-        if (u_asset_opacity >= 0) rev::shader::SetFloat(program, u_asset_opacity, asset_shader.opacity);
+        if (u_asset_opacity >= 0) rev::shader::SetFloat(program, u_asset_opacity, shader_opacity);
         glBindTexture(GL_TEXTURE_2D, asset_texture_id);
         glEnable(GL_BLEND);
-        ApplyShaderLayerBlendMode(asset_shader.blend_mode, asset_shader.opacity);
+        ApplyShaderLayerBlendMode(asset_shader.blend_mode, shader_opacity);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
 }
@@ -8388,19 +8461,19 @@ void RenderPreviewFrame(EditorContext* editor) {
                 }
                 if (item.type == 0) {
                     ImageCue* image = (ImageCue*)item.cue;
-                    RenderAssetShaderOverlays(image->shaders, image->shader_count,
+                    RenderAssetShaderOverlays(image->shaders, image->shader_count, editor->project,
                                               pos_x, pos_y, norm_w, norm_h, rotation,
                                               editor->current_time - item.scene_start_time,
                                               editor->preview_width, editor->preview_height, tex);
                 } else if (item.type == 4) {
                     AnimatedSpriteCue* animated_sprite = (AnimatedSpriteCue*)item.cue;
-                    RenderAssetShaderOverlays(animated_sprite->shaders, animated_sprite->shader_count,
+                    RenderAssetShaderOverlays(animated_sprite->shaders, animated_sprite->shader_count, editor->project,
                                               pos_x, pos_y, norm_w, norm_h, rotation,
                                               editor->current_time - item.scene_start_time,
                                               editor->preview_width, editor->preview_height, tex);
                 } else if (item.type == 5) {
                     PixelCue* pixel = (PixelCue*)item.cue;
-                    RenderAssetShaderOverlays(pixel->shaders, pixel->shader_count,
+                    RenderAssetShaderOverlays(pixel->shaders, pixel->shader_count, editor->project,
                                               pos_x, pos_y, norm_w, norm_h, rotation,
                                               editor->current_time - item.scene_start_time,
                                               editor->preview_width, editor->preview_height, tex);
@@ -9322,6 +9395,13 @@ void RenderPreviewFrame(EditorContext* editor) {
                 float normalized_time = curve.duration > 0.0f ? curve_time / curve.duration : 0.0f;
                 return rev::curve::Evaluate(curve, normalized_time);
             };
+            auto evaluate_trigger = [&](int track_index, float pulse_beats) {
+                if (track_index < 0 || track_index >= editor->project->trigger_track_count || pulse_beats <= 0.0f) {
+                    return 1.0f;
+                }
+                return rev::runtime::EvaluateTriggerPulse(
+                    &editor->project->trigger_tracks[track_index], editor->current_time, pulse_beats);
+            };
             auto add_effect = [&](int type, float intensity_value, float threshold_value,
                                   float radius_value, const float* color_value, float effect_time) {
                 active_effects.push_back({type, intensity_value, threshold_value, radius_value,
@@ -9339,7 +9419,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                     evaluate_curve(effect.curve_color_b, effect.color[2], curve_time),
                     evaluate_curve(effect.curve_color_a, effect.color[3], curve_time)};
                 add_effect(effect.type,
-                           evaluate_curve(effect.curve_intensity, effect.intensity, curve_time),
+                           evaluate_curve(effect.curve_intensity, effect.intensity, curve_time) *
+                               evaluate_trigger(effect.trigger_track, effect.trigger_pulse_beats),
                            evaluate_curve(effect.curve_threshold, effect.threshold, curve_time),
                            evaluate_curve(effect.curve_radius, effect.radius, curve_time),
                            effect_color, local_time);
@@ -9356,7 +9437,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                     evaluate_curve(effect.curve_color_b, effect.color[2], curve_time),
                     evaluate_curve(effect.curve_color_a, effect.color[3], curve_time)};
                 add_effect(effect.type,
-                           evaluate_curve(effect.curve_intensity, effect.intensity, curve_time),
+                           evaluate_curve(effect.curve_intensity, effect.intensity, curve_time) *
+                               evaluate_trigger(effect.trigger_track, effect.trigger_pulse_beats),
                            evaluate_curve(effect.curve_threshold, effect.threshold, curve_time),
                            evaluate_curve(effect.curve_radius, effect.radius, curve_time),
                            effect_color, editor->current_time);

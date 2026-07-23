@@ -150,12 +150,23 @@ static void AssetShaderToShaderCue(const AssetShader& source, ShaderCue* target)
     target->layer_order = source.order;
     target->cue_start = source.start_time;
     target->cue_end = source.end_time;
-    target->curve_speed = target->curve_intensity = target->curve_warp = -1;
-    target->curve_exposure = target->curve_fade = -1;
-    target->curve_palette_low_r = target->curve_palette_low_g = target->curve_palette_low_b = -1;
-    target->curve_palette_mid_r = target->curve_palette_mid_g = target->curve_palette_mid_b = -1;
-    target->curve_palette_high_r = target->curve_palette_high_g = target->curve_palette_high_b = -1;
-    target->curve_opacity = target->curve_exposure_ramp = target->curve_fade_ramp = -1;
+        target->curve_speed = source.curve_speed;
+        target->curve_intensity = source.curve_intensity;
+        target->curve_warp = source.curve_warp;
+        target->curve_exposure = source.curve_exposure;
+        target->curve_fade = source.curve_fade;
+        target->curve_opacity = source.curve_opacity;
+        target->curve_exposure_ramp = source.curve_exposure_ramp;
+        target->curve_fade_ramp = source.curve_fade_ramp;
+        target->curve_palette_low_r = source.curve_palette_low_r;
+        target->curve_palette_low_g = source.curve_palette_low_g;
+        target->curve_palette_low_b = source.curve_palette_low_b;
+        target->curve_palette_mid_r = source.curve_palette_mid_r;
+        target->curve_palette_mid_g = source.curve_palette_mid_g;
+        target->curve_palette_mid_b = source.curve_palette_mid_b;
+        target->curve_palette_high_r = source.curve_palette_high_r;
+        target->curve_palette_high_g = source.curve_palette_high_g;
+        target->curve_palette_high_b = source.curve_palette_high_b;
 }
 
 static void ShaderCueToAssetShader(const ShaderCue& source, AssetShader* target) {
@@ -182,6 +193,23 @@ static void ShaderCueToAssetShader(const ShaderCue& source, AssetShader* target)
     target->palette_high[2] = source.palette_high.b;
     target->start_time = source.cue_start;
     target->end_time = source.cue_end;
+        target->curve_speed = source.curve_speed;
+        target->curve_intensity = source.curve_intensity;
+        target->curve_warp = source.curve_warp;
+        target->curve_exposure = source.curve_exposure;
+        target->curve_fade = source.curve_fade;
+        target->curve_opacity = source.curve_opacity;
+        target->curve_exposure_ramp = source.curve_exposure_ramp;
+        target->curve_fade_ramp = source.curve_fade_ramp;
+        target->curve_palette_low_r = source.curve_palette_low_r;
+        target->curve_palette_low_g = source.curve_palette_low_g;
+        target->curve_palette_low_b = source.curve_palette_low_b;
+        target->curve_palette_mid_r = source.curve_palette_mid_r;
+        target->curve_palette_mid_g = source.curve_palette_mid_g;
+        target->curve_palette_mid_b = source.curve_palette_mid_b;
+        target->curve_palette_high_r = source.curve_palette_high_r;
+        target->curve_palette_high_g = source.curve_palette_high_g;
+        target->curve_palette_high_b = source.curve_palette_high_b;
 }
 
 void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int* effect_count,
@@ -224,6 +252,8 @@ void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int
         effect.curve_intensity = effect.curve_threshold = effect.curve_radius = -1;
         effect.curve_color_r = effect.curve_color_g = effect.curve_color_b = effect.curve_color_a = -1;
         effect.curve_amount = -1;
+        effect.trigger_track = -1;
+        effect.trigger_pulse_beats = 0.5f;
         ++*effect_count;
         if (modified) *modified = true;
     }
@@ -254,6 +284,16 @@ void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int
         if (ImGui::ColorEdit4("Color", effect.color) && modified) *modified = true;
         if (ImGui::InputFloat("Start", &effect.start_time, 0.1f, 1.0f) && modified) *modified = true;
         if (ImGui::InputFloat("End (-1 = layer end)", &effect.end_time, 0.1f, 1.0f) && modified) *modified = true;
+        if (editor && editor->project) {
+            ImGui::SeparatorText("Beat trigger");
+            if (ImGui::InputInt("Track index (-1 = off)", &effect.trigger_track) && modified) *modified = true;
+            if (effect.trigger_track < -1) effect.trigger_track = -1;
+            if (effect.trigger_track >= editor->project->trigger_track_count) {
+                effect.trigger_track = editor->project->trigger_track_count - 1;
+            }
+            if (ImGui::InputFloat("Pulse beats", &effect.trigger_pulse_beats, 0.125f, 0.5f, "%.3f") && modified) *modified = true;
+            if (effect.trigger_pulse_beats < 0.0f) effect.trigger_pulse_beats = 0.0f;
+        }
         if (ImGui::Button("Edit Layer Effect Curves")) {
             if (editor) {
                 editor->selected_cue_index = cue_index;
@@ -274,6 +314,37 @@ void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int
                 }
                 if (editor->editing_curve_index >= 0) editor->curve_editor_modal_request_open = true;
             }
+        }
+        if (editor && editor->project && editor->project->trigger_track_count > 0) {
+            static int timing_target = 0;
+            static int timing_track = 0;
+            const char* timing_names[] = {"Intensity", "Threshold", "Radius", "Color R", "Color G", "Color B", "Color A"};
+            int* timing_fields[] = {
+                &effect.curve_intensity, &effect.curve_threshold, &effect.curve_radius,
+                &effect.curve_color_r, &effect.curve_color_g, &effect.curve_color_b, &effect.curve_color_a
+            };
+            ImGui::SetNextItemWidth(180.0f);
+            ImGui::Combo("Timing parameter", &timing_target, timing_names, 7);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(70.0f);
+            ImGui::InputInt("Track##layer_timing_track", &timing_track);
+            if (timing_track < 0) timing_track = 0;
+            if (timing_track >= editor->project->trigger_track_count) timing_track = editor->project->trigger_track_count - 1;
+            if (ImGui::Button("Load recorded timings##layer_timing")) {
+                int curve_index = CreateTriggerTimingCurve(editor, timing_track);
+                if (curve_index >= 0) {
+                    *timing_fields[timing_target] = curve_index;
+                    editor->editing_curve_index = curve_index;
+                    editor->editing_curve_cue_type = cue_type;
+                    editor->editing_curve_field = -1;
+                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label),
+                             "Layer Effect %s timing", timing_names[timing_target]);
+                    editor->curve_editor_modal_request_open = true;
+                    if (modified) *modified = true;
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Nodes only");
         }
         ImGui::PopID();
     }
@@ -310,6 +381,12 @@ static void RenderAssetShaders(EditorContext* editor, AssetShader* shaders, int*
         shader.palette_mid[0] = shader.palette_mid[1] = shader.palette_mid[2] = 0.5f;
         shader.palette_high[0] = shader.palette_high[1] = shader.palette_high[2] = 1.0f;
         shader.end_time = -1.0f;
+        shader.curve_speed = shader.curve_intensity = shader.curve_warp = -1;
+        shader.curve_exposure = shader.curve_fade = shader.curve_opacity = -1;
+        shader.curve_exposure_ramp = shader.curve_fade_ramp = -1;
+        shader.curve_palette_low_r = shader.curve_palette_low_g = shader.curve_palette_low_b = -1;
+        shader.curve_palette_mid_r = shader.curve_palette_mid_g = shader.curve_palette_mid_b = -1;
+        shader.curve_palette_high_r = shader.curve_palette_high_g = shader.curve_palette_high_b = -1;
         ++*shader_count;
         if (modified) *modified = true;
     }
@@ -517,6 +594,7 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
 {
     if (!editor || !editor->project || !out_targets || max_targets <= 0) return 0;
     if (editor->selected_scene_index < 0 || editor->selected_cue_index < 0) return 0;
+    if (!editor->project->scenes || editor->selected_scene_index >= editor->project->scene_count) return 0;
 
     SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
     if (!scene) return 0;
@@ -598,6 +676,19 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 }
             }
             break;
+        case CueTypePixel:
+            if (cue_index >= scene->pixel_cue_count) break;
+            {
+                PixelCue* cue = &scene->pixel_cues[cue_index];
+                add_target("Pixel X Position", &cue->curve_x, cue->x);
+                add_target("Pixel Y Position", &cue->curve_y, cue->y);
+                add_target("Pixel Scale", &cue->curve_scale, cue->scale);
+                add_target("Pixel Rotation", &cue->curve_rotation, cue->rotation);
+                add_target("Pixel Opacity", &cue->curve_opacity, cue->opacity);
+                add_target("Pixel Frame", &cue->curve_frame, (float)cue->start_frame);
+                add_target("Pixel Palette Offset", &cue->curve_palette_offset, (float)cue->palette_offset);
+            }
+            break;
         case CueTypePixelEmitter:
             if (cue_index >= scene->pixel_emitter_cue_count) break;
             {
@@ -650,7 +741,7 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
             }
             break;
         case CueTypeMesh:
-            if (cue_index >= scene->mesh_cue_count) break;
+            if (!scene->mesh_cues || cue_index >= scene->mesh_cue_count) break;
             {
                 MeshCue* cue = &scene->mesh_cues[cue_index];
                 add_target("Mesh Size", &cue->curve_mesh_size, cue->mesh_size);
@@ -692,6 +783,115 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
     return count;
 }
 
+static int BuildCurveTargetsForAssetShader(EditorContext* editor,
+                                           CurveTargetBinding* out_targets,
+                                           int max_targets,
+                                           AssetShader** out_shader)
+{
+    if (out_shader) *out_shader = nullptr;
+    if (!editor || !editor->project || !out_targets || max_targets <= 0) return 0;
+    SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+    if (!scene || editor->shader_modal_asset_index < 0) return 0;
+
+    AssetShader* shader = nullptr;
+    if (editor->shader_modal_asset_cue_type == CueTypeImage &&
+        editor->selected_cue_index < scene->image_cue_count) {
+        ImageCue* cue = &scene->image_cues[editor->selected_cue_index];
+        if (editor->shader_modal_asset_index < cue->shader_count) shader = &cue->shaders[editor->shader_modal_asset_index];
+    } else if (editor->shader_modal_asset_cue_type == CueTypeAnimatedSprite &&
+               editor->selected_cue_index < scene->animated_sprite_cue_count) {
+        AnimatedSpriteCue* cue = &scene->animated_sprite_cues[editor->selected_cue_index];
+        if (editor->shader_modal_asset_index < cue->shader_count) shader = &cue->shaders[editor->shader_modal_asset_index];
+    } else if (editor->shader_modal_asset_cue_type == CueTypePixel &&
+               editor->selected_cue_index < scene->pixel_cue_count) {
+        PixelCue* cue = &scene->pixel_cues[editor->selected_cue_index];
+        if (editor->shader_modal_asset_index < cue->shader_count) shader = &cue->shaders[editor->shader_modal_asset_index];
+    }
+    if (!shader) return 0;
+    if (out_shader) *out_shader = shader;
+
+    int count = 0;
+    auto add_target = [&](const char* label, int* field, float base_value) {
+        if (label && field && count < max_targets) {
+            out_targets[count] = {label, field, base_value};
+            ++count;
+        }
+    };
+    add_target("Asset Shader Speed", &shader->curve_speed, shader->speed);
+    add_target("Asset Shader Intensity", &shader->curve_intensity, shader->intensity);
+    add_target("Asset Shader Warp", &shader->curve_warp, shader->warp);
+    add_target("Asset Shader Exposure", &shader->curve_exposure, shader->exposure_base);
+    add_target("Asset Shader Fade", &shader->curve_fade, shader->fade_base);
+    add_target("Asset Shader Opacity", &shader->curve_opacity, shader->opacity);
+    add_target("Asset Shader Exposure Ramp", &shader->curve_exposure_ramp, shader->exposure_ramp);
+    add_target("Asset Shader Fade Ramp", &shader->curve_fade_ramp, shader->fade_ramp);
+    add_target("Asset Shader Palette Low R", &shader->curve_palette_low_r, shader->palette_low[0]);
+    add_target("Asset Shader Palette Low G", &shader->curve_palette_low_g, shader->palette_low[1]);
+    add_target("Asset Shader Palette Low B", &shader->curve_palette_low_b, shader->palette_low[2]);
+    add_target("Asset Shader Palette Mid R", &shader->curve_palette_mid_r, shader->palette_mid[0]);
+    add_target("Asset Shader Palette Mid G", &shader->curve_palette_mid_g, shader->palette_mid[1]);
+    add_target("Asset Shader Palette Mid B", &shader->curve_palette_mid_b, shader->palette_mid[2]);
+    add_target("Asset Shader Palette High R", &shader->curve_palette_high_r, shader->palette_high[0]);
+    add_target("Asset Shader Palette High G", &shader->curve_palette_high_g, shader->palette_high[1]);
+    add_target("Asset Shader Palette High B", &shader->curve_palette_high_b, shader->palette_high[2]);
+    return count;
+}
+
+static const char* CurveTargetComboGetter(void* data, int index)
+{
+    CurveTargetBinding* items = static_cast<CurveTargetBinding*>(data);
+    return items[index].label;
+}
+
+static const char* TriggerTrackComboGetter(void* data, int index)
+{
+    TriggerTrack* tracks = static_cast<TriggerTrack*>(data);
+    return tracks[index].name;
+}
+
+static void RenderTriggerTimingAssignment(EditorContext* editor,
+                                          const char* id,
+                                          bool* modified)
+{
+    if (!editor || !editor->project || editor->project->trigger_track_count <= 0) return;
+    CurveTargetBinding targets[64] = {};
+    int target_count = editor->shader_modal_asset_mode
+        ? BuildCurveTargetsForAssetShader(editor, targets, 64, nullptr)
+        : BuildCurveTargetsForCurrentCue(editor, targets, 64);
+    if (target_count <= 0) return;
+
+    ImGui::PushID(id ? id : "recorded_timing");
+    ImGui::Separator();
+    ImGui::Text("Recorded timing");
+    static int selected_target = 0;
+    static int selected_track = 0;
+    if (selected_target >= target_count) selected_target = 0;
+    if (selected_track >= editor->project->trigger_track_count) selected_track = 0;
+
+    ImGui::SetNextItemWidth(240.0f);
+    ImGui::Combo("Parameter", &selected_target, CurveTargetComboGetter, targets, target_count);
+    ImGui::SetNextItemWidth(240.0f);
+    ImGui::Combo("Track", &selected_track, TriggerTrackComboGetter,
+                 editor->project->trigger_tracks, editor->project->trigger_track_count);
+
+    if (ImGui::Button("Load recorded timings")) {
+        int curve_index = CreateTriggerTimingCurve(editor, selected_track);
+        if (curve_index >= 0) {
+            *targets[selected_target].curve_field = curve_index;
+            editor->editing_curve_index = curve_index;
+            editor->editing_curve_cue_type = editor->selected_cue_type;
+            snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label),
+                     "%s timing", targets[selected_target].label);
+            editor->curve_editor_modal_request_open = true;
+            editor->project->modified = true;
+            if (modified) *modified = true;
+        }
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Nodes only; edit values in Curve Editor");
+    ImGui::PopID();
+}
+
 void RenderCurveEditorModal(EditorContext* editor) {
     if (!editor) return;
 
@@ -719,6 +919,22 @@ void RenderCurveEditorModal(EditorContext* editor) {
         }
 
         rev::curve::Curve* curve = &editor->project->curves[editor->editing_curve_index];
+
+        static int selection_curve_index = -1;
+        static bool selected_points[4096] = {};
+        static int selected_point_count = 0;
+        static bool selecting_rectangle = false;
+        static ImVec2 rectangle_start = {};
+        static ImVec2 rectangle_end = {};
+        static bool dragging_selection = false;
+        static ImVec2 drag_start = {};
+        static float drag_start_t[4096] = {};
+        static float drag_start_v[4096] = {};
+        if (selection_curve_index != editor->editing_curve_index) {
+            memset(selected_points, 0, sizeof(selected_points));
+            selected_point_count = 0;
+            selection_curve_index = editor->editing_curve_index;
+        }
 
         CurveTargetBinding targets[24] = {};
         const int target_count = BuildCurveTargetsForCurrentCue(editor, targets, 24);
@@ -842,13 +1058,74 @@ void RenderCurveEditorModal(EditorContext* editor) {
             ImGui::SetTooltip("How long the curve takes to complete (in seconds).\n"
                             "With wrap modes, the curve will loop/pingpong over this duration.");
         }
+
+        static float curve_view_zoom = 1.0f;
+        static float curve_view_center_t = 0.5f;
+        static float curve_view_center_v = 0.5f;
+        static int curve_view_index = -1;
+        if (curve_view_index != editor->editing_curve_index) {
+            curve_view_zoom = 1.0f;
+            curve_view_center_t = 0.5f;
+            curve_view_center_v = 0.5f;
+            curve_view_index = editor->editing_curve_index;
+        }
+        ImGui::Text("View");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("-##modal_curve_zoom_out")) curve_view_zoom = fmaxf(1.0f, curve_view_zoom / 1.5f);
+        ImGui::SameLine();
+        ImGui::Text("%.1fx", curve_view_zoom);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+##modal_curve_zoom_in")) curve_view_zoom = fminf(32.0f, curve_view_zoom * 1.5f);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##modal_curve_zoom_reset")) {
+            curve_view_zoom = 1.0f;
+            curve_view_center_t = 0.5f;
+            curve_view_center_v = 0.5f;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shift+mouse wheel zooms. Middle mouse pans the zoomed view.");
         
         ImGui::Separator();
         
         // Curve canvas
         ImVec2 canvas_size = ImVec2(ImGui::GetContentRegionAvail().x, 350.0f);
         ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+        canvas_pos.x += 52.0f;
+        canvas_size.x = fmaxf(160.0f, canvas_size.x - 52.0f);
+        canvas_size.y = fmaxf(220.0f, canvas_size.y - 38.0f);
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+        float graph_min = 0.0f;
+        float graph_max = 1.0f;
+        for (int i = 0; i < curve->point_count; ++i) {
+            graph_min = fminf(graph_min, curve->points[i].v);
+            graph_max = fmaxf(graph_max, curve->points[i].v);
+        }
+        float graph_range = graph_max - graph_min;
+        float graph_padding = fmaxf(0.25f, graph_range * 0.12f);
+        graph_min -= graph_padding;
+        graph_max += graph_padding;
+        graph_range = graph_max - graph_min;
+        if (curve_view_zoom <= 1.0f) curve_view_center_v = (graph_min + graph_max) * 0.5f;
+        float view_t_range = 1.0f / curve_view_zoom;
+        float view_v_range = graph_range / curve_view_zoom;
+        float view_t_half_range = view_t_range * 0.5f;
+        curve_view_center_t = fmaxf(view_t_half_range,
+                        fminf(1.0f - view_t_half_range, curve_view_center_t));
+        float view_t_min = curve_view_center_t - view_t_range * 0.5f;
+        float view_v_min = curve_view_center_v - view_v_range * 0.5f;
+        float view_v_max = curve_view_center_v + view_v_range * 0.5f;
+        auto ValueToScreenY = [&](float value) {
+            return canvas_pos.y + canvas_size.y - (value - view_v_min) / view_v_range * canvas_size.y;
+        };
+        auto ScreenToValue = [&](float screen_y) {
+            return view_v_min + (canvas_size.y - (screen_y - canvas_pos.y)) / canvas_size.y * view_v_range;
+        };
+        auto TimeToScreenX = [&](float time) {
+            return canvas_pos.x + (time - view_t_min) / view_t_range * canvas_size.x;
+        };
+        auto ScreenToTime = [&](float screen_x) {
+            return view_t_min + (screen_x - canvas_pos.x) / canvas_size.x * view_t_range;
+        };
         
         // Background
         draw_list->AddRectFilled(canvas_pos, 
@@ -869,6 +1146,20 @@ void RenderCurveEditorModal(EditorContext* editor) {
                                   IM_COL32(60, 60, 60, 255));
             }
         }
+
+        for (int i = 0; i <= 5; ++i) {
+            float value = view_v_max - (view_v_range * (float)i / 5.0f);
+            char value_label[32] = {};
+            snprintf(value_label, sizeof(value_label), "%.2f", value);
+            draw_list->AddText(ImVec2(canvas_pos.x - 48.0f, ValueToScreenY(value) - 7.0f),
+                               IM_COL32(180, 180, 180, 230), value_label);
+        }
+        if (graph_min < 0.0f && graph_max > 0.0f) {
+            float zero_y = ValueToScreenY(0.0f);
+            draw_list->AddLine(ImVec2(canvas_pos.x, zero_y),
+                               ImVec2(canvas_pos.x + canvas_size.x, zero_y),
+                               IM_COL32(130, 130, 130, 220), 1.5f);
+        }
         
         // Border
         draw_list->AddRect(canvas_pos, 
@@ -878,17 +1169,16 @@ void RenderCurveEditorModal(EditorContext* editor) {
         // Bottom timecode labels (seconds.hundredths) mapped to current duration.
         {
             const int label_steps = 10;
-            char tc[32];
+                char tc[48];
             for (int i = 0; i <= label_steps; ++i) {
-                float t_norm = (float)i / (float)label_steps;
+                float t_norm = view_t_min + view_t_range * (float)i / (float)label_steps;
                 float t_sec = t_norm * curve->duration;
                 int tc_centis = (int)floorf(t_sec * 100.0f + 0.5f);
                 int tc_seconds = tc_centis / 100;
-                int tc_hundredths = tc_centis % 100;
-
-                snprintf(tc, sizeof(tc), "%d.%02d", tc_seconds, tc_hundredths);
+                int milliseconds = (int)floorf(t_sec * 1000.0f + 0.5f) % 1000;
+                snprintf(tc, sizeof(tc), "f %.2f  %d:%03d", t_norm, tc_seconds, milliseconds);
                 ImVec2 text_size = ImGui::CalcTextSize(tc);
-                float label_x = canvas_pos.x + t_norm * canvas_size.x - text_size.x * 0.5f;
+                float label_x = TimeToScreenX(t_norm) - text_size.x * 0.5f;
                 float min_x = canvas_pos.x + 2.0f;
                 float max_x = canvas_pos.x + canvas_size.x - text_size.x - 2.0f;
                 if (label_x < min_x) label_x = min_x;
@@ -899,6 +1189,8 @@ void RenderCurveEditorModal(EditorContext* editor) {
         }
         
         // Draw curve line
+        draw_list->PushClipRect(canvas_pos,
+                    ImVec2(canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y), true);
         if (curve->point_count > 1) {
             const int segments = 100;
             for (int i = 0; i < segments; ++i) {
@@ -907,14 +1199,8 @@ void RenderCurveEditorModal(EditorContext* editor) {
                 float v0 = rev::curve::Evaluate(*curve, t0);
                 float v1 = rev::curve::Evaluate(*curve, t1);
                 
-                // Clamp values for display
-                v0 = (v0 < 0.0f) ? 0.0f : ((v0 > 1.0f) ? 1.0f : v0);
-                v1 = (v1 < 0.0f) ? 0.0f : ((v1 > 1.0f) ? 1.0f : v1);
-                
-                ImVec2 p0 = ImVec2(canvas_pos.x + t0 * canvas_size.x,
-                                  canvas_pos.y + canvas_size.y - v0 * canvas_size.y);
-                ImVec2 p1 = ImVec2(canvas_pos.x + t1 * canvas_size.x,
-                                  canvas_pos.y + canvas_size.y - v1 * canvas_size.y);
+                ImVec2 p0 = ImVec2(TimeToScreenX(t0), ValueToScreenY(v0));
+                ImVec2 p1 = ImVec2(TimeToScreenX(t1), ValueToScreenY(v1));
                 
                 draw_list->AddLine(p0, p1, IM_COL32(100, 200, 255, 255), 2.0f);
             }
@@ -925,6 +1211,20 @@ void RenderCurveEditorModal(EditorContext* editor) {
         ImGui::InvisibleButton("canvas", canvas_size);
         bool is_hovered = ImGui::IsItemHovered();
         ImVec2 mouse_pos = ImGui::GetMousePos();
+
+        if (is_hovered && ImGui::GetIO().KeyShift && ImGui::GetIO().MouseWheel != 0.0f) {
+            float mouse_t = ScreenToTime(mouse_pos.x);
+            float mouse_v = ScreenToValue(mouse_pos.y);
+            curve_view_zoom = fminf(32.0f, fmaxf(1.0f, curve_view_zoom * powf(1.15f, ImGui::GetIO().MouseWheel)));
+            view_t_range = 1.0f / curve_view_zoom;
+            view_v_range = graph_range / curve_view_zoom;
+            curve_view_center_t = mouse_t + (0.5f - (mouse_pos.x - canvas_pos.x) / canvas_size.x) * view_t_range;
+            curve_view_center_v = mouse_v - (0.5f - (mouse_pos.y - canvas_pos.y) / canvas_size.y) * view_v_range;
+        }
+        if (is_hovered && curve_view_zoom > 1.0f && ImGui::IsMouseDragging(2)) {
+            curve_view_center_t -= ImGui::GetIO().MouseDelta.x / canvas_size.x * view_t_range;
+            curve_view_center_v += ImGui::GetIO().MouseDelta.y / canvas_size.y * view_v_range;
+        }
         
         // First, check if we're clicking on a point (prioritize point interaction)
         bool clicked_on_point = false;
@@ -933,49 +1233,29 @@ void RenderCurveEditorModal(EditorContext* editor) {
         for (int i = 0; i < curve->point_count; ++i) {
             rev::curve::Point* pt = &curve->points[i];
             
-            float display_v = (pt->v < 0.0f) ? 0.0f : ((pt->v > 1.0f) ? 1.0f : pt->v);
-            ImVec2 point_pos = ImVec2(canvas_pos.x + pt->t * canvas_size.x,
-                                     canvas_pos.y + canvas_size.y - display_v * canvas_size.y);
+            ImVec2 point_pos = ImVec2(TimeToScreenX(pt->t), ValueToScreenY(pt->v));
             
             float point_radius = 6.0f;
             bool point_hovered = (mouse_pos.x - point_pos.x) * (mouse_pos.x - point_pos.x) +
                                 (mouse_pos.y - point_pos.y) * (mouse_pos.y - point_pos.y) < point_radius * point_radius;
             
             if (point_hovered && ImGui::IsMouseClicked(0)) {
-                editor->dragging_point_index = i;
-                editor->selected_point_index = i;
                 clicked_on_point = true;
-            }
-            
-            // Double-click to open point properties modal
-            if (point_hovered && ImGui::IsMouseDoubleClicked(0)) {
-                editor->selected_point_index = i;
-                editor->point_properties_modal_open = true;
-                ImGui::OpenPopup("Point Properties");
-            }
-            
-            if (editor->dragging_point_index == i && ImGui::IsMouseDragging(0)) {
-                bool is_first = (i == 0);
-                bool is_last = (i == curve->point_count - 1);
-                
-                if (is_first || is_last) {
-                    // Endpoints: only allow vertical (value) movement
-                    pt->v = 1.0f - (mouse_pos.y - canvas_pos.y) / canvas_size.y;
-                    // Keep time locked
-                    pt->t = is_first ? 0.0f : 1.0f;
+                if (ImGui::GetIO().KeyShift) {
+                    selected_points[i] = !selected_points[i];
+                    selected_point_count += selected_points[i] ? 1 : -1;
                 } else {
-                    // Middle points: allow both time and value movement
-                    pt->t = (mouse_pos.x - canvas_pos.x) / canvas_size.x;
-                    pt->v = 1.0f - (mouse_pos.y - canvas_pos.y) / canvas_size.y;
-                    pt->t = (pt->t < 0.0f) ? 0.0f : ((pt->t > 1.0f) ? 1.0f : pt->t);
+                    memset(selected_points, 0, sizeof(selected_points));
+                    selected_points[i] = true;
+                    selected_point_count = 1;
                 }
-                // Don't clamp v - allow any value for rotations, etc.
-                editor->project->modified = true;
-            }
-            
-            if (editor->dragging_point_index == i && ImGui::IsMouseReleased(0)) {
-                editor->dragging_point_index = -1;
-                rev::curve::SortPoints(*curve);
+                editor->selected_point_index = i;
+                dragging_selection = true;
+                drag_start = mouse_pos;
+                for (int j = 0; j < curve->point_count && j < 4096; ++j) {
+                    drag_start_t[j] = curve->points[j].t;
+                    drag_start_v[j] = curve->points[j].v;
+                }
             }
             
             if (point_hovered && ImGui::IsMouseClicked(1) && curve->point_count > 2) {
@@ -996,7 +1276,7 @@ void RenderCurveEditorModal(EditorContext* editor) {
             
             // Visual feedback for selection
             ImU32 point_color;
-            if (editor->selected_point_index == i) {
+            if (selected_points[i]) {
                 point_color = IM_COL32(100, 255, 100, 255);  // Green for selected
             } else if (editor->dragging_point_index == i) {
                 point_color = IM_COL32(255, 255, 100, 255);  // Yellow for dragging
@@ -1008,6 +1288,54 @@ void RenderCurveEditorModal(EditorContext* editor) {
             draw_list->AddCircleFilled(point_pos, point_radius, point_color);
             draw_list->AddCircle(point_pos, point_radius, IM_COL32(0, 0, 0, 255), 0, 1.5f);
         }
+
+        if (is_hovered && ImGui::IsMouseClicked(0) && !clicked_on_point) {
+            if (ImGui::GetIO().KeyShift) {
+                selecting_rectangle = true;
+                rectangle_start = mouse_pos;
+                rectangle_end = mouse_pos;
+            } else {
+                memset(selected_points, 0, sizeof(selected_points));
+                selected_point_count = 0;
+                editor->selected_point_index = -1;
+            }
+        }
+        if (selecting_rectangle && ImGui::IsMouseDown(0)) {
+            rectangle_end = mouse_pos;
+            draw_list->AddRect(ImVec2(fminf(rectangle_start.x, rectangle_end.x), fminf(rectangle_start.y, rectangle_end.y)),
+                               ImVec2(fmaxf(rectangle_start.x, rectangle_end.x), fmaxf(rectangle_start.y, rectangle_end.y)),
+                               IM_COL32(100, 220, 255, 255), 0.0f, 0, 1.5f);
+        }
+        if (selecting_rectangle && ImGui::IsMouseReleased(0)) {
+            ImVec2 min_corner(fminf(rectangle_start.x, rectangle_end.x), fminf(rectangle_start.y, rectangle_end.y));
+            ImVec2 max_corner(fmaxf(rectangle_start.x, rectangle_end.x), fmaxf(rectangle_start.y, rectangle_end.y));
+            for (int i = 0; i < curve->point_count && i < 4096; ++i) {
+                ImVec2 point_pos(TimeToScreenX(curve->points[i].t), ValueToScreenY(curve->points[i].v));
+                if (point_pos.x >= min_corner.x && point_pos.x <= max_corner.x &&
+                    point_pos.y >= min_corner.y && point_pos.y <= max_corner.y && !selected_points[i]) {
+                    selected_points[i] = true;
+                    ++selected_point_count;
+                    if (editor->selected_point_index < 0) editor->selected_point_index = i;
+                }
+            }
+            selecting_rectangle = false;
+        }
+        if (dragging_selection && ImGui::IsMouseDown(0) && selected_point_count > 0) {
+            float delta_t = (mouse_pos.x - drag_start.x) / canvas_size.x * view_t_range;
+            float delta_v = -(mouse_pos.y - drag_start.y) / canvas_size.y * view_v_range;
+            for (int i = 0; i < curve->point_count && i < 4096; ++i) {
+                if (!selected_points[i]) continue;
+                if (i != 0 && i != curve->point_count - 1)
+                    curve->points[i].t = fmaxf(0.0f, fminf(1.0f, drag_start_t[i] + delta_t));
+                curve->points[i].v = drag_start_v[i] + delta_v;
+            }
+            editor->project->modified = true;
+        }
+        if (dragging_selection && ImGui::IsMouseReleased(0)) {
+            dragging_selection = false;
+            rev::curve::SortPoints(*curve);
+        }
+        draw_list->PopClipRect();
         
         // Click on canvas background deselects point (only if we didn't click on a point)
         if (is_hovered && ImGui::IsMouseClicked(0) && !clicked_on_point) {
@@ -1016,36 +1344,55 @@ void RenderCurveEditorModal(EditorContext* editor) {
         
         // Add point on double-click (only if not clicking on existing point)
         if (is_hovered && ImGui::IsMouseDoubleClicked(0) && !clicked_on_point) {
-            float t = (mouse_pos.x - canvas_pos.x) / canvas_size.x;
-            float v = 1.0f - (mouse_pos.y - canvas_pos.y) / canvas_size.y;
+            float t = ScreenToTime(mouse_pos.x);
+            float v = ScreenToValue(mouse_pos.y);
             t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
             rev::curve::AddPoint(*curve, t, v, rev::curve::EaseMode::Linear);
             rev::curve::SortPoints(*curve);
             editor->project->modified = true;
+            memset(selected_points, 0, sizeof(selected_points));
+            selected_points[curve->point_count - 1] = true;
+            selected_point_count = 1;
             editor->selected_point_index = curve->point_count - 1;
         }
         
         ImGui::Separator();
         
-        // Point properties
-        if (editor->selected_point_index >= 0 && editor->selected_point_index < curve->point_count) {
+        // Direct point properties
+        if (selected_point_count > 0 && editor->selected_point_index >= 0 &&
+            editor->selected_point_index < curve->point_count) {
             rev::curve::Point* pt = &curve->points[editor->selected_point_index];
-            float point_time_sec = pt->t * curve->duration;
-            int point_centis = (int)floorf(point_time_sec * 100.0f + 0.5f);
-            int point_seconds = point_centis / 100;
-            int point_hundredths = point_centis % 100;
-            ImGui::Text("Selected Point %d:", editor->selected_point_index);
-            ImGui::Text("Time: %.3f (t)  |  %d.%02d s  |  Value: %.3f", pt->t, point_seconds, point_hundredths, pt->v);
+            ImGui::Text("%d selected node%s", selected_point_count, selected_point_count == 1 ? "" : "s");
+            if (selected_point_count == 1) {
+                float time_value = pt->t;
+                if (ImGui::DragFloat("Frame", &time_value, 0.001f, 0.0f, 1.0f, "%.3f")) {
+                    if (editor->selected_point_index != 0 && editor->selected_point_index != curve->point_count - 1)
+                        pt->t = fmaxf(0.0f, fminf(1.0f, time_value));
+                    editor->project->modified = true;
+                }
+                ImGui::SameLine();
+                float real_time = pt->t * curve->duration;
+                int real_seconds = (int)real_time;
+                int real_milliseconds = (int)((real_time - real_seconds) * 1000.0f + 0.5f);
+                ImGui::Text("Real time %d:%03d", real_seconds, real_milliseconds);
+            }
+            float value = pt->v;
+            if (ImGui::DragFloat("Value", &value, 0.1f, -FLT_MAX, FLT_MAX, "%.3f")) {
+                for (int i = 0; i < curve->point_count && i < 4096; ++i)
+                    if (selected_points[i]) curve->points[i].v = value;
+                editor->project->modified = true;
+            }
             
             const char* ease_modes[] = {"Linear", "EaseIn", "EaseOut", "EaseInOut", "Smoothstep", "Hold"};
             int current_mode = (int)pt->mode;
             ImGui::SetNextItemWidth(200);
             if (ImGui::Combo("Ease Mode", &current_mode, ease_modes, 6)) {
-                pt->mode = (rev::curve::EaseMode)current_mode;
+                for (int i = 0; i < curve->point_count && i < 4096; ++i)
+                    if (selected_points[i]) curve->points[i].mode = (rev::curve::EaseMode)current_mode;
                 editor->project->modified = true;
             }
         } else {
-            ImGui::TextDisabled("Click a point to edit its properties");
+            ImGui::TextDisabled("Select nodes to edit their values directly");
         }
         
         ImGui::Separator();
@@ -1055,10 +1402,11 @@ void RenderCurveEditorModal(EditorContext* editor) {
         ImGui::SameLine();
         ImGui::TextDisabled("  |  ");
         ImGui::SameLine();
-        ImGui::TextDisabled("Click: Select | Double-click point: Edit | Double-click canvas: Add | Drag: Move | Right-click: Delete");
+        ImGui::TextDisabled("Shift-click: multi-select | Shift-drag: box select | Double-click: add | Drag: move | Right-click: delete");
         
         // Point Properties Modal
-        if (ImGui::BeginPopupModal("Point Properties", &editor->point_properties_modal_open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (editor->point_properties_modal_open && editor->selected_point_index < -1 &&
+            ImGui::BeginPopupModal("Point Properties", &editor->point_properties_modal_open, ImGuiWindowFlags_AlwaysAutoResize)) {
             if (editor->selected_point_index >= 0 && editor->selected_point_index < curve->point_count) {
                 rev::curve::Point* pt = &curve->points[editor->selected_point_index];
                 
@@ -1296,6 +1644,12 @@ void RenderShaderModal(EditorContext* editor) {
                         ShaderCueToAssetShader(*cue, &scene->animated_sprite_cues[editor->selected_cue_index].shaders[editor->shader_modal_asset_index]);
                         editor->editing_asset_shader = scene->animated_sprite_cues[editor->selected_cue_index].shaders[editor->shader_modal_asset_index];
                         editor->project->modified = true;
+                    } else if (scene && editor->shader_modal_asset_cue_type == CueTypePixel &&
+                               editor->selected_cue_index < scene->pixel_cue_count &&
+                               editor->shader_modal_asset_index < scene->pixel_cues[editor->selected_cue_index].shader_count) {
+                        ShaderCueToAssetShader(*cue, &scene->pixel_cues[editor->selected_cue_index].shaders[editor->shader_modal_asset_index]);
+                        editor->editing_asset_shader = scene->pixel_cues[editor->selected_cue_index].shaders[editor->shader_modal_asset_index];
+                        editor->project->modified = true;
                     }
                 }
             } else if (editor->selected_scene_index >= 0 && 
@@ -1331,6 +1685,10 @@ void RenderShaderModal(EditorContext* editor) {
                 editor->curve_editor_modal_request_open = true;
             }
         };
+
+        bool trigger_timing_modified = false;
+        editor->editing_curve_cue_type = CueTypeShader;
+        RenderTriggerTimingAssignment(editor, "shader_trigger_timing", &trigger_timing_modified);
         
         // Preset selection
         ImGui::Text("Shader Preset:");
@@ -1829,6 +2187,10 @@ void RenderImageModal(EditorContext* editor) {
                 }
             }
         };
+
+        bool trigger_timing_modified = false;
+        editor->editing_curve_cue_type = CueTypeImage;
+        RenderTriggerTimingAssignment(editor, "image_trigger_timing", &trigger_timing_modified);
         
         ImGui::Text("Image File:");
         ImGui::InputText("##imagefile", cue->asset_key, sizeof(cue->asset_key));
@@ -2193,6 +2555,10 @@ void RenderAnimatedSpriteModal(EditorContext* editor) {
             }
         };
 
+        bool trigger_timing_modified = false;
+        editor->editing_curve_cue_type = CueTypeAnimatedSprite;
+        RenderTriggerTimingAssignment(editor, "sprite_trigger_timing", &trigger_timing_modified);
+
         auto OpenCurveEditor = [&](int* curve_field, float base_value, const char* label) {
             if (!curve_field || !label) return;
             if (editor->selected_scene_index < 0 || editor->selected_cue_index < 0 ||
@@ -2397,6 +2763,10 @@ void RenderTextModal(EditorContext* editor) {
                 }
             }
         };
+
+        bool trigger_timing_modified = false;
+        editor->editing_curve_cue_type = CueTypeText;
+        RenderTriggerTimingAssignment(editor, "text_trigger_timing", &trigger_timing_modified);
         
         ImGui::Text("Text Content:");
         if (ImGui::InputTextMultiline("##text", cue->text, sizeof(cue->text), ImVec2(400, 100))) AutoSave();
@@ -3001,6 +3371,10 @@ void RenderScrollTextModal(EditorContext* editor) {
             }
         };
 
+        bool trigger_timing_modified = false;
+        editor->editing_curve_cue_type = CueTypeScrollText;
+        RenderTriggerTimingAssignment(editor, "scroll_trigger_timing", &trigger_timing_modified);
+
         auto ShowCurveQuickButton = [&](const char* button_id, int* curve_field, float initial_value, const char* curve_label) {
             ImGui::SameLine();
             if (*curve_field >= 0) {
@@ -3411,6 +3785,16 @@ void RenderMeshModal(EditorContext* editor) {
                 }
             }
         };
+
+        bool trigger_timing_modified = false;
+        if (editor->selected_cue_type == CueTypeMesh &&
+            editor->selected_scene_index >= 0 &&
+            editor->selected_scene_index < editor->project->scene_count &&
+            editor->selected_cue_index >= 0 &&
+            editor->selected_cue_index < editor->project->scenes[editor->selected_scene_index].mesh_cue_count) {
+            editor->editing_curve_cue_type = CueTypeMesh;
+            RenderTriggerTimingAssignment(editor, "mesh_trigger_timing", &trigger_timing_modified);
+        }
 
         if (ImGui::InputText("Asset Key", cue->asset_key, sizeof(cue->asset_key))) AutoSave();
         if (ImGui::Combo("Shape", &cue->mesh_type, mesh_type_names, 5)) AutoSave();
@@ -4277,6 +4661,10 @@ void RenderPixelModal(EditorContext* editor) {
             }
         };
 
+        bool trigger_timing_modified = false;
+        editor->editing_curve_cue_type = CueTypePixel;
+        RenderTriggerTimingAssignment(editor, "pixel_trigger_timing", &trigger_timing_modified);
+
         ImGui::Text("Indexed Pixel Asset");
         if (ImGui::InputText("Asset Key", cue->asset_key, sizeof(cue->asset_key))) AutoSave();
         ImGui::SameLine();
@@ -4405,6 +4793,10 @@ void RenderPixelEmitterModal(EditorContext* editor) {
                 editor->project->modified = true;
             }
         };
+        bool trigger_timing_modified = false;
+        editor->editing_curve_cue_type = CueTypePixelEmitter;
+        RenderTriggerTimingAssignment(editor, "pixel_emitter_trigger_timing", &trigger_timing_modified);
+        if (trigger_timing_modified) AutoSave();
         auto CurveControl = [&](const char* target_label, int* curve_field, float base_value) {
             if (!curve_field) return;
             ImGui::SameLine();

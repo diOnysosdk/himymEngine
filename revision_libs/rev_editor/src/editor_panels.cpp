@@ -1,6 +1,7 @@
 #include "editor_internal.h"
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 #include <windows.h>
 #include "imgui.h"
 
@@ -8,6 +9,42 @@ namespace rev {
 namespace editor {
 
 namespace {
+
+static int CreateCurveFromTriggerTrack(EditorContext* editor, int track_index)
+{
+    if (!editor || !editor->project || track_index < 0 ||
+        track_index >= editor->project->trigger_track_count ||
+        editor->project->curve_count >= rev::runtime::kMaxCurves) return -1;
+
+    const TriggerTrack& track = editor->project->trigger_tracks[track_index];
+    if (track.event_count <= 0 || track.timing.bpm <= 0.0f) return -1;
+
+    float duration = 1.0f;
+    for (int i = 0; i < track.event_count; ++i) {
+        float event_time = rev::runtime::GetTriggerTimeSeconds(&track.timing, track.events[i].beat);
+        duration = fmaxf(duration, event_time);
+    }
+
+    int curve_index = editor->project->curve_count++;
+    rev::curve::Curve& curve = editor->project->curves[curve_index];
+    curve = rev::curve::CreateCurve(track.event_count + 2);
+    curve.duration = duration;
+    curve.wrap_mode = rev::curve::WrapMode::Clamp;
+    rev::curve::AddPoint(curve, 0.0f, 0.0f);
+
+    float last_t = 0.0f;
+    for (int i = 0; i < track.event_count; ++i) {
+        float event_time = fmaxf(0.0f,
+            rev::runtime::GetTriggerTimeSeconds(&track.timing, track.events[i].beat));
+        float event_t = event_time / duration;
+        if (event_t <= last_t) continue;
+        rev::curve::AddPoint(curve, event_t, 0.0f, rev::curve::EaseMode::Linear);
+        last_t = event_t;
+    }
+    rev::curve::SortPoints(curve);
+    editor->project->modified = true;
+    return curve_index;
+}
 
 void UpdateCurveRefAfterDelete(int* ref, int deleted_curve)
 {
@@ -430,6 +467,11 @@ static int AllocateCurveSlotForPanel(EditorContext* editor, float start_v, float
 
 } // namespace
 
+int CreateTriggerTimingCurve(EditorContext* editor, int track_index)
+{
+    return CreateCurveFromTriggerTrack(editor, track_index);
+}
+
 void RenderTimeline(EditorContext* editor) {
     if (!editor || !editor->project) return;
 
@@ -473,6 +515,31 @@ void RenderTimeline(EditorContext* editor) {
             AddScene(editor, "New Scene", 10.0f);
         }
         
+        static float curve_view_zoom = 1.0f;
+        static float curve_view_center_t = 0.5f;
+        static float curve_view_center_v = 0.5f;
+        static int curve_view_index = -1;
+        if (curve_view_index != editor->selected_curve_index) {
+            curve_view_zoom = 1.0f;
+            curve_view_center_t = 0.5f;
+            curve_view_center_v = 0.5f;
+            curve_view_index = editor->selected_curve_index;
+        }
+        ImGui::Text("View");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("-##curve_zoom_out")) curve_view_zoom = fmaxf(1.0f, curve_view_zoom / 1.5f);
+        ImGui::SameLine();
+        ImGui::Text("%.1fx", curve_view_zoom);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+##curve_zoom_in")) curve_view_zoom = fminf(32.0f, curve_view_zoom * 1.5f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shift+mouse wheel zooms. Middle mouse pans the zoomed view.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##curve_zoom_reset")) {
+            curve_view_zoom = 1.0f;
+            curve_view_center_t = 0.5f;
+            curve_view_center_v = 0.5f;
+        }
+
         ImGui::Separator();
 
         int pending_move_from = -1;
@@ -727,6 +794,8 @@ void RenderProperties(EditorContext* editor) {
                 effect.curve_intensity = effect.curve_threshold = effect.curve_radius = -1;
                 effect.curve_color_r = effect.curve_color_g = effect.curve_color_b = effect.curve_color_a = -1;
                 effect.curve_amount = -1;
+                effect.trigger_track = -1;
+                effect.trigger_pulse_beats = 0.5f;
                 AddPostEffect(scene, effect);
                 editor->project->modified = true;
             }
@@ -790,6 +859,17 @@ void RenderProperties(EditorContext* editor) {
                 if (ImGui::InputFloat("End (-1 = scene end)", &effect->end_time, 0.1f, 1.0f)) {
                     editor->project->modified = true;
                 }
+                if (ImGui::InputInt("Trigger track (-1 = off)", &effect->trigger_track)) {
+                    editor->project->modified = true;
+                }
+                if (effect->trigger_track < -1) effect->trigger_track = -1;
+                if (effect->trigger_track >= editor->project->trigger_track_count) {
+                    effect->trigger_track = editor->project->trigger_track_count - 1;
+                }
+                if (ImGui::InputFloat("Trigger pulse beats", &effect->trigger_pulse_beats, 0.125f, 0.5f, "%.3f")) {
+                    editor->project->modified = true;
+                }
+                if (effect->trigger_pulse_beats < 0.0f) effect->trigger_pulse_beats = 0.0f;
                 if (ImGui::Button("Edit Effect Curves")) {
                     editor->selected_cue_index = i;
                     editor->editing_curve_cue_type = CueTypePostEffect;
@@ -1622,12 +1702,12 @@ void RenderCurveEditor(EditorContext* editor) {
             editor->selected_scene_index >= 0 && editor->selected_scene_index < editor->project->scene_count &&
             editor->selected_cue_index >= 0) {
             SceneBlock* scene = &editor->project->scenes[editor->selected_scene_index];
-            int* target_fields[24] = {};
-            const char* target_names[24] = {};
+            int* target_fields[64] = {};
+            const char* target_names[64] = {};
             int target_count = 0;
 
             auto add_target = [&](const char* name, int* field) {
-                if (!name || !field || target_count >= 24) return;
+                if (!name || !field || target_count >= 64) return;
                 target_names[target_count] = name;
                 target_fields[target_count] = field;
                 ++target_count;
@@ -1657,19 +1737,42 @@ void RenderCurveEditor(EditorContext* editor) {
                 add_target("Image X", &cue->curve_x);
                 add_target("Image Y", &cue->curve_y);
                 add_target("Image Scale", &cue->curve_scale);
+                add_target("Image Rotation", &cue->curve_rotation);
                 add_target("Image Opacity", &cue->curve_opacity);
+                for (int i = 0; i < cue->post_effect_count; ++i) {
+                    LayerPostEffect* effect = &cue->post_effects[i];
+                    add_target("Layer Effect Intensity", &effect->curve_intensity);
+                    add_target("Layer Effect Threshold", &effect->curve_threshold);
+                    add_target("Layer Effect Radius", &effect->curve_radius);
+                    add_target("Layer Effect Color R", &effect->curve_color_r);
+                    add_target("Layer Effect Color G", &effect->curve_color_g);
+                    add_target("Layer Effect Color B", &effect->curve_color_b);
+                    add_target("Layer Effect Color A", &effect->curve_color_a);
+                }
             } else if (editor->selected_cue_type == CueTypeAnimatedSprite && editor->selected_cue_index < scene->animated_sprite_cue_count) {
                 AnimatedSpriteCue* cue = &scene->animated_sprite_cues[editor->selected_cue_index];
                 add_target("AnimSprite X", &cue->curve_x);
                 add_target("AnimSprite Y", &cue->curve_y);
                 add_target("AnimSprite Scale", &cue->curve_scale);
+                add_target("AnimSprite Rotation", &cue->curve_rotation);
                 add_target("AnimSprite Opacity", &cue->curve_opacity);
                 add_target("AnimSprite Frame", &cue->curve_frame);
+                for (int i = 0; i < cue->post_effect_count; ++i) {
+                    LayerPostEffect* effect = &cue->post_effects[i];
+                    add_target("Layer Effect Intensity", &effect->curve_intensity);
+                    add_target("Layer Effect Threshold", &effect->curve_threshold);
+                    add_target("Layer Effect Radius", &effect->curve_radius);
+                    add_target("Layer Effect Color R", &effect->curve_color_r);
+                    add_target("Layer Effect Color G", &effect->curve_color_g);
+                    add_target("Layer Effect Color B", &effect->curve_color_b);
+                    add_target("Layer Effect Color A", &effect->curve_color_a);
+                }
             } else if (editor->selected_cue_type == CueTypeText && editor->selected_cue_index < scene->text_cue_count) {
                 TextCue* cue = &scene->text_cues[editor->selected_cue_index];
                 add_target("Text X", &cue->curve_x);
                 add_target("Text Y", &cue->curve_y);
                 add_target("Text Size", &cue->curve_size);
+                add_target("Text Rotation", &cue->curve_rotation);
                 add_target("Text Color R", &cue->curve_color_r);
                 add_target("Text Color G", &cue->curve_color_g);
                 add_target("Text Color B", &cue->curve_color_b);
@@ -1679,6 +1782,7 @@ void RenderCurveEditor(EditorContext* editor) {
                 add_target("Scroll Y", &cue->curve_y);
                 add_target("Scroll Speed", &cue->curve_speed);
                 add_target("Scroll Size", &cue->curve_size);
+                add_target("Scroll Rotation", &cue->curve_rotation);
                 add_target("Scroll Opacity", &cue->curve_opacity);
                 add_target("Scroll Color R", &cue->curve_color_r);
                 add_target("Scroll Color G", &cue->curve_color_g);
@@ -1707,6 +1811,38 @@ void RenderCurveEditor(EditorContext* editor) {
                 add_target("Mesh Metallic", &cue->curve_metallic);
                 add_target("Mesh Roughness", &cue->curve_roughness);
                 add_target("Mesh Camera FOV", &cue->curve_fov);
+            } else if (editor->selected_cue_type == CueTypePixel && editor->selected_cue_index < scene->pixel_cue_count) {
+                PixelCue* cue = &scene->pixel_cues[editor->selected_cue_index];
+                add_target("Pixel X Position", &cue->curve_x);
+                add_target("Pixel Y Position", &cue->curve_y);
+                add_target("Pixel Scale", &cue->curve_scale);
+                add_target("Pixel Rotation", &cue->curve_rotation);
+                add_target("Pixel Opacity", &cue->curve_opacity);
+                add_target("Pixel Frame", &cue->curve_frame);
+                add_target("Pixel Palette Offset", &cue->curve_palette_offset);
+            } else if (editor->selected_cue_type == CueTypePixelEmitter && editor->selected_cue_index < scene->pixel_emitter_cue_count) {
+                PixelEmitterCue* cue = &scene->pixel_emitter_cues[editor->selected_cue_index];
+                add_target("Emitter X Position", &cue->curve_x);
+                add_target("Emitter Y Position", &cue->curve_y);
+                add_target("Emitter Scale", &cue->curve_scale);
+                add_target("Emitter Rotation", &cue->curve_rotation);
+                add_target("Emitter Opacity", &cue->curve_opacity);
+                add_target("Emission Rate", &cue->curve_emission_rate);
+                add_target("Speed Min", &cue->curve_speed_min);
+                add_target("Speed Max", &cue->curve_speed_max);
+                add_target("Lifetime Min", &cue->curve_lifetime_min);
+                add_target("Lifetime Max", &cue->curve_lifetime_max);
+                add_target("Particle Scale Min", &cue->curve_scale_min);
+                add_target("Particle Scale Max", &cue->curve_scale_max);
+            } else if (editor->selected_cue_type == CueTypePostEffect && editor->selected_cue_index < scene->post_effect_count) {
+                PostEffect* effect = &scene->post_effects[editor->selected_cue_index];
+                add_target("Post Effect Intensity", &effect->curve_intensity);
+                add_target("Post Effect Threshold", &effect->curve_threshold);
+                add_target("Post Effect Radius", &effect->curve_radius);
+                add_target("Post Effect Color R", &effect->curve_color_r);
+                add_target("Post Effect Color G", &effect->curve_color_g);
+                add_target("Post Effect Color B", &effect->curve_color_b);
+                add_target("Post Effect Color A", &effect->curve_color_a);
             }
 
             if (target_count > 0) {
@@ -1733,6 +1869,10 @@ void RenderCurveEditor(EditorContext* editor) {
                         editor->editing_scroll_text = scene->scroll_text_cues[editor->selected_cue_index];
                     } else if (editor->selected_cue_type == CueTypeMesh && editor->selected_cue_index < scene->mesh_cue_count) {
                         editor->editing_mesh = scene->mesh_cues[editor->selected_cue_index];
+                    } else if (editor->selected_cue_type == CueTypePixel && editor->selected_cue_index < scene->pixel_cue_count) {
+                        editor->editing_pixel = scene->pixel_cues[editor->selected_cue_index];
+                    } else if (editor->selected_cue_type == CueTypePixelEmitter && editor->selected_cue_index < scene->pixel_emitter_cue_count) {
+                        editor->editing_pixel_emitter = scene->pixel_emitter_cues[editor->selected_cue_index];
                     }
 
                     editor->project->modified = true;
@@ -1747,6 +1887,31 @@ void RenderCurveEditor(EditorContext* editor) {
             }
         }
         
+        static float curve_view_zoom = 1.0f;
+        static float curve_view_center_t = 0.5f;
+        static float curve_view_center_v = 0.5f;
+        static int curve_view_index = -1;
+        if (curve_view_index != editor->selected_curve_index) {
+            curve_view_zoom = 1.0f;
+            curve_view_center_t = 0.5f;
+            curve_view_center_v = 0.5f;
+            curve_view_index = editor->selected_curve_index;
+        }
+        ImGui::Text("View");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("-##curve_zoom_out")) curve_view_zoom = fmaxf(1.0f, curve_view_zoom / 1.5f);
+        ImGui::SameLine();
+        ImGui::Text("%.1fx", curve_view_zoom);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+##curve_zoom_in")) curve_view_zoom = fminf(32.0f, curve_view_zoom * 1.5f);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##curve_zoom_reset")) {
+            curve_view_zoom = 1.0f;
+            curve_view_center_t = 0.5f;
+            curve_view_center_v = 0.5f;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shift+mouse wheel zooms. Middle mouse pans the zoomed view.");
+
         ImGui::Separator();
         
         // Curve canvas
@@ -1757,6 +1922,61 @@ void RenderCurveEditor(EditorContext* editor) {
             ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
             ImVec2 canvas_size = ImGui::GetContentRegionAvail();
             canvas_size.y = (canvas_size.y > 300.0f) ? canvas_size.y : 300.0f;
+            canvas_pos.x += 52.0f;
+            canvas_size.x = fmaxf(160.0f, canvas_size.x - 52.0f);
+            canvas_size.y = fmaxf(220.0f, canvas_size.y - 38.0f);
+
+            static int selection_curve_index = -1;
+            static bool selected_points[4096] = {};
+            static int selected_point_count = 0;
+            static bool selecting_rectangle = false;
+            static ImVec2 rectangle_start = {};
+            static ImVec2 rectangle_end = {};
+            static bool dragging_selection = false;
+            static ImVec2 drag_start = {};
+            static float drag_start_t[4096] = {};
+            static float drag_start_v[4096] = {};
+
+            if (selection_curve_index != editor->selected_curve_index) {
+                memset(selected_points, 0, sizeof(selected_points));
+                selected_point_count = 0;
+                selection_curve_index = editor->selected_curve_index;
+            }
+
+            float graph_min = 0.0f;
+            float graph_max = 1.0f;
+            for (int i = 0; i < curve->point_count; ++i) {
+                graph_min = fminf(graph_min, curve->points[i].v);
+                graph_max = fmaxf(graph_max, curve->points[i].v);
+            }
+            float graph_range = graph_max - graph_min;
+            float graph_padding = fmaxf(0.25f, graph_range * 0.12f);
+            graph_min -= graph_padding;
+            graph_max += graph_padding;
+            graph_range = graph_max - graph_min;
+
+            if (curve_view_zoom <= 1.0f) curve_view_center_v = (graph_min + graph_max) * 0.5f;
+            float view_t_range = 1.0f / curve_view_zoom;
+            float view_v_range = graph_range / curve_view_zoom;
+            float view_t_half_range = view_t_range * 0.5f;
+            curve_view_center_t = fmaxf(view_t_half_range,
+                                        fminf(1.0f - view_t_half_range, curve_view_center_t));
+            float view_t_min = curve_view_center_t - view_t_range * 0.5f;
+            float view_v_min = curve_view_center_v - view_v_range * 0.5f;
+            float view_v_max = curve_view_center_v + view_v_range * 0.5f;
+
+            auto ValueToScreenY = [&](float value) {
+                return canvas_pos.y + canvas_size.y - (value - view_v_min) / view_v_range * canvas_size.y;
+            };
+            auto ScreenToValue = [&](float screen_y) {
+                return view_v_min + (canvas_size.y - (screen_y - canvas_pos.y)) / canvas_size.y * view_v_range;
+            };
+            auto TimeToScreenX = [&](float time) {
+                return canvas_pos.x + (time - view_t_min) / view_t_range * canvas_size.x;
+            };
+            auto ScreenToTime = [&](float screen_x) {
+                return view_t_min + (screen_x - canvas_pos.x) / canvas_size.x * view_t_range;
+            };
             
             ImDrawList* draw_list = ImGui::GetWindowDrawList();
             
@@ -1776,12 +1996,46 @@ void RenderCurveEditor(EditorContext* editor) {
                                       IM_COL32(60, 60, 60, 255));
                 }
             }
+
+            for (int i = 0; i <= 5; ++i) {
+                float value = view_v_max - (view_v_range * (float)i / 5.0f);
+                char value_label[32] = {};
+                snprintf(value_label, sizeof(value_label), "%.2f", value);
+                draw_list->AddText(ImVec2(canvas_pos.x - 48.0f, ValueToScreenY(value) - 7.0f),
+                                   IM_COL32(180, 180, 180, 230), value_label);
+            }
+            if (graph_min < 0.0f && graph_max > 0.0f) {
+                float zero_y = ValueToScreenY(0.0f);
+                draw_list->AddLine(ImVec2(canvas_pos.x, zero_y),
+                                   ImVec2(canvas_pos.x + canvas_size.x, zero_y),
+                                   IM_COL32(130, 130, 130, 220), 1.5f);
+            }
             
             // Border
             draw_list->AddRect(canvas_pos, ImVec2(canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y),
                               IM_COL32(100, 100, 100, 255));
             
+            // Bottom labels show normalized frame position and real elapsed time.
+            for (int i = 0; i <= 5; ++i) {
+                float t = view_t_min + view_t_range * (float)i / 5.0f;
+                float seconds = t * curve->duration;
+                int whole_seconds = (int)seconds;
+                int milliseconds = (int)((seconds - whole_seconds) * 1000.0f + 0.5f);
+                if (milliseconds >= 1000) {
+                    ++whole_seconds;
+                    milliseconds = 0;
+                }
+                char time_label[48] = {};
+                snprintf(time_label, sizeof(time_label), "f %.2f  %d:%03d", t, whole_seconds, milliseconds);
+                ImVec2 text_size = ImGui::CalcTextSize(time_label);
+                draw_list->AddText(ImVec2(TimeToScreenX(t) - text_size.x * 0.5f,
+                                          canvas_pos.y + canvas_size.y + 5.0f),
+                                   IM_COL32(180, 180, 180, 230), time_label);
+            }
+
             // Draw curve line
+            draw_list->PushClipRect(canvas_pos,
+                                    ImVec2(canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y), true);
             if (curve->point_count > 1) {
                 const int segments = 100;
                 for (int i = 0; i < segments; ++i) {
@@ -1790,10 +2044,8 @@ void RenderCurveEditor(EditorContext* editor) {
                     float v0 = rev::curve::Evaluate(*curve, t0);
                     float v1 = rev::curve::Evaluate(*curve, t1);
                     
-                    ImVec2 p0 = ImVec2(canvas_pos.x + t0 * canvas_size.x,
-                                      canvas_pos.y + canvas_size.y - v0 * canvas_size.y);
-                    ImVec2 p1 = ImVec2(canvas_pos.x + t1 * canvas_size.x,
-                                      canvas_pos.y + canvas_size.y - v1 * canvas_size.y);
+                    ImVec2 p0 = ImVec2(TimeToScreenX(t0), ValueToScreenY(v0));
+                    ImVec2 p1 = ImVec2(TimeToScreenX(t1), ValueToScreenY(v1));
                     
                     draw_list->AddLine(p0, p1, IM_COL32(100, 200, 255, 255), 2.0f);
                 }
@@ -1804,13 +2056,39 @@ void RenderCurveEditor(EditorContext* editor) {
             ImGui::InvisibleButton("canvas", canvas_size);
             bool is_hovered = ImGui::IsItemHovered();
             ImVec2 mouse_pos = ImGui::GetMousePos();
+
+            if (is_hovered && ImGui::GetIO().KeyShift && ImGui::GetIO().MouseWheel != 0.0f) {
+                float mouse_t = ScreenToTime(mouse_pos.x);
+                float mouse_v = ScreenToValue(mouse_pos.y);
+                curve_view_zoom = fminf(32.0f, fmaxf(1.0f, curve_view_zoom * powf(1.15f, ImGui::GetIO().MouseWheel)));
+                view_t_range = 1.0f / curve_view_zoom;
+                view_v_range = graph_range / curve_view_zoom;
+                curve_view_center_t = mouse_t + (0.5f - (mouse_pos.x - canvas_pos.x) / canvas_size.x) * view_t_range;
+                curve_view_center_v = mouse_v - (0.5f - (mouse_pos.y - canvas_pos.y) / canvas_size.y) * view_v_range;
+            }
+            if (is_hovered && curve_view_zoom > 1.0f && ImGui::IsMouseDragging(2)) {
+                curve_view_center_t -= ImGui::GetIO().MouseDelta.x / canvas_size.x * view_t_range;
+                curve_view_center_v += ImGui::GetIO().MouseDelta.y / canvas_size.y * view_v_range;
+            }
             
-            // Add point on double-click
-            if (is_hovered && ImGui::IsMouseDoubleClicked(0)) {
-                float t = (mouse_pos.x - canvas_pos.x) / canvas_size.x;
-                float v = 1.0f - (mouse_pos.y - canvas_pos.y) / canvas_size.y;
+            // Double-click adds a point; double-clicking an existing point does not open another editor.
+            bool clicked_on_point = false;
+            int hovered_point = -1;
+            for (int i = 0; i < curve->point_count; ++i) {
+                ImVec2 point_pos = ImVec2(TimeToScreenX(curve->points[i].t),
+                                          ValueToScreenY(curve->points[i].v));
+                float dx = mouse_pos.x - point_pos.x;
+                float dy = mouse_pos.y - point_pos.y;
+                if (dx * dx + dy * dy <= 64.0f) {
+                    hovered_point = i;
+                    break;
+                }
+            }
+
+            if (is_hovered && ImGui::IsMouseDoubleClicked(0) && hovered_point < 0) {
+                float t = ScreenToTime(mouse_pos.x);
+                float v = ScreenToValue(mouse_pos.y);
                 t = (t < 0.0f) ? 0.0f : ((t > 1.0f) ? 1.0f : t);
-                v = (v < 0.0f) ? 0.0f : ((v > 1.0f) ? 1.0f : v);
                 rev::curve::AddPoint(*curve, t, v, rev::curve::EaseMode::Linear);
                 rev::curve::SortPoints(*curve);
                 editor->project->modified = true;
@@ -1819,31 +2097,31 @@ void RenderCurveEditor(EditorContext* editor) {
             // Draw control points
             for (int i = 0; i < curve->point_count; ++i) {
                 rev::curve::Point* pt = &curve->points[i];
-                ImVec2 point_pos = ImVec2(canvas_pos.x + pt->t * canvas_size.x,
-                                         canvas_pos.y + canvas_size.y - pt->v * canvas_size.y);
+                ImVec2 point_pos = ImVec2(TimeToScreenX(pt->t),
+                                         ValueToScreenY(pt->v));
                 
                 float point_radius = 6.0f;
                 bool point_hovered = (mouse_pos.x - point_pos.x) * (mouse_pos.x - point_pos.x) +
                                     (mouse_pos.y - point_pos.y) * (mouse_pos.y - point_pos.y) < point_radius * point_radius;
                 
-                // Start dragging
+                // Shift-click toggles a point; a normal click selects only that point.
                 if (point_hovered && ImGui::IsMouseClicked(0)) {
-                    editor->dragging_point_index = i;
-                }
-                
-                // Drag point
-                if (editor->dragging_point_index == i && ImGui::IsMouseDragging(0)) {
-                    pt->t = (mouse_pos.x - canvas_pos.x) / canvas_size.x;
-                    pt->v = 1.0f - (mouse_pos.y - canvas_pos.y) / canvas_size.y;
-                    pt->t = (pt->t < 0.0f) ? 0.0f : ((pt->t > 1.0f) ? 1.0f : pt->t);
-                    pt->v = (pt->v < 0.0f) ? 0.0f : ((pt->v > 1.0f) ? 1.0f : pt->v);
-                    editor->project->modified = true;
-                }
-                
-                // End dragging
-                if (editor->dragging_point_index == i && ImGui::IsMouseReleased(0)) {
-                    editor->dragging_point_index = -1;
-                    rev::curve::SortPoints(*curve);
+                    clicked_on_point = true;
+                    if (ImGui::GetIO().KeyShift) {
+                        selected_points[i] = !selected_points[i];
+                        selected_point_count += selected_points[i] ? 1 : -1;
+                    } else {
+                        memset(selected_points, 0, sizeof(selected_points));
+                        selected_points[i] = true;
+                        selected_point_count = 1;
+                    }
+                    editor->selected_point_index = i;
+                    dragging_selection = true;
+                    drag_start = mouse_pos;
+                    for (int j = 0; j < curve->point_count && j < 4096; ++j) {
+                        drag_start_t[j] = curve->points[j].t;
+                        drag_start_v[j] = curve->points[j].v;
+                    }
                 }
                 
                 // Delete point on right-click
@@ -1858,29 +2136,103 @@ void RenderCurveEditor(EditorContext* editor) {
                 }
                 
                 // Draw point
-                ImU32 point_color = (editor->dragging_point_index == i) ? IM_COL32(255, 255, 100, 255) :
+                ImU32 point_color = selected_points[i] ? IM_COL32(100, 255, 100, 255) :
                                    (point_hovered ? IM_COL32(255, 200, 100, 255) : IM_COL32(255, 255, 255, 255));
                 draw_list->AddCircleFilled(point_pos, point_radius, point_color);
                 draw_list->AddCircle(point_pos, point_radius, IM_COL32(0, 0, 0, 255), 0, 1.5f);
             }
+
+            if (is_hovered && ImGui::IsMouseClicked(0) && !clicked_on_point) {
+                if (ImGui::GetIO().KeyShift) {
+                    selecting_rectangle = true;
+                    rectangle_start = mouse_pos;
+                    rectangle_end = mouse_pos;
+                } else {
+                    memset(selected_points, 0, sizeof(selected_points));
+                    selected_point_count = 0;
+                }
+            }
+            if (selecting_rectangle && ImGui::IsMouseDown(0)) {
+                rectangle_end = mouse_pos;
+                ImVec2 min_corner(fminf(rectangle_start.x, rectangle_end.x),
+                                  fminf(rectangle_start.y, rectangle_end.y));
+                ImVec2 max_corner(fmaxf(rectangle_start.x, rectangle_end.x),
+                                  fmaxf(rectangle_start.y, rectangle_end.y));
+                draw_list->AddRect(min_corner, max_corner, IM_COL32(100, 220, 255, 255), 0.0f, 0, 1.5f);
+            }
+            if (selecting_rectangle && ImGui::IsMouseReleased(0)) {
+                ImVec2 min_corner(fminf(rectangle_start.x, rectangle_end.x),
+                                  fminf(rectangle_start.y, rectangle_end.y));
+                ImVec2 max_corner(fmaxf(rectangle_start.x, rectangle_end.x),
+                                  fmaxf(rectangle_start.y, rectangle_end.y));
+                for (int i = 0; i < curve->point_count && i < 4096; ++i) {
+                    ImVec2 point_pos(TimeToScreenX(curve->points[i].t),
+                                     ValueToScreenY(curve->points[i].v));
+                    if (point_pos.x >= min_corner.x && point_pos.x <= max_corner.x &&
+                        point_pos.y >= min_corner.y && point_pos.y <= max_corner.y && !selected_points[i]) {
+                        selected_points[i] = true;
+                        ++selected_point_count;
+                        if (editor->selected_point_index < 0) editor->selected_point_index = i;
+                    }
+                }
+                selecting_rectangle = false;
+            }
+            if (dragging_selection && ImGui::IsMouseDown(0) && selected_point_count > 0) {
+                float delta_t = (mouse_pos.x - drag_start.x) / canvas_size.x * view_t_range;
+                float delta_v = -(mouse_pos.y - drag_start.y) / canvas_size.y * view_v_range;
+                for (int i = 0; i < curve->point_count && i < 4096; ++i) {
+                    if (!selected_points[i]) continue;
+                    if (i != 0 && i != curve->point_count - 1) {
+                        curve->points[i].t = fmaxf(0.0f, fminf(1.0f, drag_start_t[i] + delta_t));
+                    }
+                    curve->points[i].v = drag_start_v[i] + delta_v;
+                }
+                editor->project->modified = true;
+            }
+            if (dragging_selection && ImGui::IsMouseReleased(0)) {
+                dragging_selection = false;
+                rev::curve::SortPoints(*curve);
+            }
+            draw_list->PopClipRect();
             
-            // Point properties
-            if (editor->dragging_point_index >= 0 && editor->dragging_point_index < curve->point_count) {
+            // Direct point editing. Multi-selection applies a value/ease edit to every selected node.
+            if (selected_point_count > 0) {
                 ImGui::Separator();
-                rev::curve::Point* pt = &curve->points[editor->dragging_point_index];
-                ImGui::Text("Point %d: t=%.3f, v=%.3f", editor->dragging_point_index, pt->t, pt->v);
+                ImGui::Text("%d selected node%s", selected_point_count, selected_point_count == 1 ? "" : "s");
+                if (selected_point_count == 1 && editor->selected_point_index >= 0 &&
+                    editor->selected_point_index < curve->point_count) {
+                    rev::curve::Point* pt = &curve->points[editor->selected_point_index];
+                    float time_value = pt->t;
+                    if (ImGui::DragFloat("Frame", &time_value, 0.001f, 0.0f, 1.0f, "%.3f")) {
+                        if (editor->selected_point_index != 0 && editor->selected_point_index != curve->point_count - 1)
+                            pt->t = fmaxf(0.0f, fminf(1.0f, time_value));
+                        editor->project->modified = true;
+                    }
+                    ImGui::SameLine();
+                    float real_time = pt->t * curve->duration;
+                    int real_seconds = (int)real_time;
+                    int real_milliseconds = (int)((real_time - real_seconds) * 1000.0f + 0.5f);
+                    ImGui::Text("Real time %d:%03d", real_seconds, real_milliseconds);
+                }
+                float value = curve->points[editor->selected_point_index].v;
+                if (ImGui::DragFloat("Value", &value, 0.1f, -FLT_MAX, FLT_MAX, "%.3f")) {
+                    for (int i = 0; i < curve->point_count && i < 4096; ++i)
+                        if (selected_points[i]) curve->points[i].v = value;
+                    editor->project->modified = true;
+                }
                 
                 const char* ease_modes[] = {"Linear", "EaseIn", "EaseOut", "EaseInOut", "Smoothstep", "Hold"};
-                int current_mode = (int)pt->mode;
+                int current_mode = (int)curve->points[editor->selected_point_index].mode;
                 if (ImGui::Combo("Ease Mode", &current_mode, ease_modes, 6)) {
-                    pt->mode = (rev::curve::EaseMode)current_mode;
+                    for (int i = 0; i < curve->point_count && i < 4096; ++i)
+                        if (selected_points[i]) curve->points[i].mode = (rev::curve::EaseMode)current_mode;
                     editor->project->modified = true;
                 }
             }
             
             // Instructions
             ImGui::Separator();
-            ImGui::TextDisabled("Double-click: Add point | Drag: Move point | Right-click: Delete point");
+            ImGui::TextDisabled("Shift-click: multi-select | Shift-drag: box select | Double-click: add | Drag: move | Right-click: delete");
         } else {
             ImGui::Text("No curve selected. Create or select a curve to edit.");
         }
@@ -1900,6 +2252,23 @@ void RenderTriggerRecorder(EditorContext* editor) {
     ImGui::InputFloat("Quantize beats", &editor->recording_quantize_beats, 0.125f, 0.5f, "%.3f");
     if (editor->recording_quantize_beats <= 0.0f) editor->recording_quantize_beats = 0.5f;
     if (editor->recording_bpm <= 0.0f) editor->recording_bpm = 120.0f;
+
+    if (editor->project->trigger_track_count > 0) {
+        ImGui::Text("Recorded tracks");
+        for (int i = 0; i < editor->project->trigger_track_count; ++i) {
+            TriggerTrack* track = &editor->project->trigger_tracks[i];
+            char track_label[128] = {};
+            snprintf(track_label, sizeof(track_label), "%d. %s (%d events)",
+                     i + 1, track->name, track->event_count);
+            if (ImGui::Selectable(track_label, editor->recording_track_index == i)) {
+                editor->recording_track_index = i;
+                strncpy_s(editor->recording_track_name, sizeof(editor->recording_track_name),
+                          track->name, _TRUNCATE);
+                editor->recording_bpm = track->timing.bpm;
+                editor->recording_beat_offset = track->timing.beat_offset;
+            }
+        }
+    }
 
     if (!editor->trigger_recording) {
         if (ImGui::Button("Start recording") &&
@@ -1927,6 +2296,20 @@ void RenderTriggerRecorder(EditorContext* editor) {
         ImGui::Text("Track: %s", track->name);
         ImGui::Text("Events: %d", track->event_count);
         ImGui::Text("Press either Ctrl to record; Esc stops.");
+        if (ImGui::Button("Create reusable curve")) {
+            int curve_index = CreateTriggerTimingCurve(editor, editor->recording_track_index);
+            if (curve_index >= 0) {
+                editor->selected_curve_index = curve_index;
+                editor->show_curve_editor = true;
+                strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                          "Trigger curve created. Select a parameter in Curve Editor to assign it.", _TRUNCATE);
+                editor->build_status_timer = 4.0f;
+            } else {
+                strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                          "Could not create trigger curve.", _TRUNCATE);
+                editor->build_status_timer = 3.0f;
+            }
+        }
         if (ImGui::Button("Clear events")) {
             track->event_count = 0;
             editor->project->modified = true;
