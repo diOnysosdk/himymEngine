@@ -10,7 +10,7 @@ HiMYM is a Windows-only C++17 demoscene framework for authoring and playing comp
 4. Rendering capability.
 5. Maintainability without engine-style bloat.
 
-Treat current code and CMake files as authoritative. Use `PR/` for design intent and historical context; some older documents and copied customization files have drifted.
+Treat current code and CMake files as authoritative. Before relying on material under `PR/`, read `PR/DOCUMENTATION_STATUS.md`; it classifies current, mixed, historical, and legacy documents.
 
 ## Repository map
 
@@ -53,10 +53,11 @@ Treat current code and CMake files as authoritative. Use `PR/` for design intent
 Before changing cross-layer behavior:
 
 1. Read the applicable skill under `.agents/skills/`.
-2. Inspect the current struct, writer/exporter, parser, preview consumer, and runtime consumer.
-3. Make the smallest coherent change across affected layers.
-4. Update current documentation when a durable contract changes.
-5. Run proportional validation.
+2. Read `PR/DOCUMENTATION_STATUS.md` before using older project documentation.
+3. Inspect the current struct, writer/exporter, parser, preview consumer, and runtime consumer.
+4. Make the smallest coherent change across affected layers.
+5. Update current documentation and its status entry when a durable contract changes.
+6. Run proportional validation.
 
 Preserve unrelated user changes in a dirty worktree.
 

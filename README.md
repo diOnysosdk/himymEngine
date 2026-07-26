@@ -187,6 +187,7 @@ Shared runtime core providing unified app lifecycle, sequence management, conten
 
 Comprehensive guides are in the `PR/` folder:
 
+- **[DOCUMENTATION_STATUS.md](PR/DOCUMENTATION_STATUS.md)** - Authority and relevance map; read this before older documentation
 - **[QUICK_START.md](PR/QUICK_START.md)** - Setup in 5 minutes
 - **[FROM_SCRATCH_V2.md](PR/FROM_SCRATCH_V2.md)** - Architecture & design philosophy
 - **[LIBRARY_DESIGN.md](PR/LIBRARY_DESIGN.md)** - Complete API reference

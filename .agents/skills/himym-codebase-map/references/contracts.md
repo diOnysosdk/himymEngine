@@ -4,9 +4,10 @@
 
 1. Current headers and implementations.
 2. Current CMake target definitions.
-3. Root `AGENTS.md` and `.github/copilot-instructions.md`.
-4. `PR/architecture/` and current guides.
-5. Older summaries and copied agent material.
+3. Root `AGENTS.md` and `PR/DOCUMENTATION_STATUS.md`.
+4. Documents marked Current in the status map.
+5. Documents marked Mixed, after verifying each claim.
+6. Historical/legacy documents only for intent or archaeology.
 
 ## End-to-end authored data
 

@@ -2,6 +2,8 @@
 
 **Revision 2026 Intro/Demo Runtime & Scene Editor**
 
+> **Documentation status:** This index describes multiple generations of the project and is not a current implementation contract. Read [DOCUMENTATION_STATUS.md](DOCUMENTATION_STATUS.md) first. Current code, CMake files, and the root `AGENTS.md` take precedence.
+
 This folder contains all documentation, guides, and AI customizations for HowIMetYourMod, plus a **refactored C++ architecture** for building modern intro/demo frameworks.
 
 ## 📌 Two Architectures Documented

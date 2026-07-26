@@ -6,7 +6,7 @@ description: Orient within the HiMYM C++ demoscene repository before editing or 
 # HiMYM codebase map
 
 1. Read the root `AGENTS.md`.
-2. Inspect current code before trusting field counts or APIs in older documentation.
+2. Read `PR/DOCUMENTATION_STATUS.md`, then inspect current code before trusting field counts or APIs.
 3. Start from the shared contract:
    - cue structs: `revision_libs/rev_runtime/include/rev_runtime.h`
    - parsers: `revision_libs/rev_runtime/src/rev_runtime.cpp`
@@ -15,7 +15,8 @@ description: Orient within the HiMYM C++ demoscene repository before editing or 
    - playback: `examples/minimal_intro/main.cpp`
    - packing: `revision_libs/rev_pack/` and `tools/pack_cli.cpp`
 4. Trace behavior end-to-end rather than inferring it from one layer.
-5. Use `PR/` and `.github/copilot/` as supporting context and note disagreements with code.
+5. Load only documents classified for the task. Treat historical/legacy material as design history, never as an implementation contract.
+6. Treat `.github/copilot/` as Copilot-specific context; Codex-native instructions live in `AGENTS.md`, `.agents/skills/`, and `.codex/agents/`.
 
 Read [references/contracts.md](references/contracts.md) for the detailed checklist.
 
