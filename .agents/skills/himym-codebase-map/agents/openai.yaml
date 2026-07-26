@@ -1,0 +1,4 @@
+interface:
+  display_name: "HiMYM Codebase Map"
+  short_description: "Orient within the HiMYM framework and its contracts"
+  default_prompt: "Map the relevant HiMYM subsystems and invariants before making changes."

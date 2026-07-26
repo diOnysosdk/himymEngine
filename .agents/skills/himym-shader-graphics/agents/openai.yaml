@@ -1,0 +1,4 @@
+interface:
+  display_name: "HiMYM Shader and Graphics"
+  short_description: "Work on GLSL, meshes, pixels, and particles"
+  default_prompt: "Implement this HiMYM graphics change with matching editor and runtime behavior."

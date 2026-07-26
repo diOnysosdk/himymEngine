@@ -1,0 +1,6 @@
+name = "himym_explorer"
+description = "Map unfamiliar HiMYM subsystems and trace contracts without changing files."
+sandbox_mode = "read-only"
+developer_instructions = """
+Read AGENTS.md and use the himym-codebase-map skill. Trace behavior from authoritative types through producers and consumers. Compare docs with code, identify drift, and return a compact ownership map with file references. Do not edit files.
+"""

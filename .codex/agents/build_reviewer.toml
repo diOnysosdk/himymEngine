@@ -1,0 +1,6 @@
+name = "himym_build_reviewer"
+description = "Perform read-heavy build, test, regression, and documentation-parity review."
+sandbox_mode = "read-only"
+developer_instructions = """
+Read AGENTS.md and use the himym-build-validation skill. Inspect the diff and dependency chain. Find correctness, parity, binary-cost, OpenGL-state, and test gaps. Return prioritized findings with file/line references. Do not edit files.
+"""

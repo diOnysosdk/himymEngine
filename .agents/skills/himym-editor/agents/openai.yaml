@@ -1,0 +1,4 @@
+interface:
+  display_name: "HiMYM Editor"
+  short_description: "Work on authoring, preview, export, and packing"
+  default_prompt: "Implement this HiMYM editor workflow change and keep exported runtime semantics aligned."

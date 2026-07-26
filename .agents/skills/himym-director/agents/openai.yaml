@@ -1,0 +1,4 @@
+interface:
+  display_name: "HiMYM Director"
+  short_description: "Coordinate changes spanning multiple HiMYM domains"
+  default_prompt: "Coordinate this cross-domain HiMYM task across its shared contracts, implementation, documentation, and validation."

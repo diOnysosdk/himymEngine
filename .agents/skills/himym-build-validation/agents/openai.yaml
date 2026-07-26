@@ -1,0 +1,4 @@
+interface:
+  display_name: "HiMYM Build Validation"
+  short_description: "Build and verify affected HiMYM targets"
+  default_prompt: "Validate the affected HiMYM targets and report failures with actionable evidence."

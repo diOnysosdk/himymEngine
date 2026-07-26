@@ -1,0 +1,4 @@
+interface:
+  display_name: "HiMYM Runtime"
+  short_description: "Implement size-conscious runtime and cue changes"
+  default_prompt: "Implement this HiMYM runtime change while preserving editor/export parity and deterministic frame flow."
