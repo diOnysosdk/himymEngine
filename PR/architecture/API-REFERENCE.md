@@ -90,6 +90,16 @@ These additions keep runtime and preview behavior aligned for mixed textured + c
 - `[text_cues]` keeps the legacy fields in place and appends an optional final `animation` field. Loaders must accept rows without that field.
 - Editor preview and `minimal_intro` apply the same per-glyph position, scale, rotation, opacity, and visibility evaluation.
 
+### Text alignment
+
+`rev::runtime::TextCue::alignment` controls how the cue's normalized `x` coordinate anchors text:
+
+- `TextAlignmentLeft` (`0`) — each line begins at `x`.
+- `TextAlignmentCenter` (`1`) — each line is centered on `x`; this is the backward-compatible default.
+- `TextAlignmentRight` (`2`) — each line ends at `x`.
+
+Alignment is stored in project JSON and exported as the tagged trailing `align=N` field in `[text_cues]`. The tag keeps older pipe-delimited animation payloads backward compatible. Preview, glyph-atlas runtime rendering, and baked-text fallback use the same anchor semantics.
+
 ## Scene Layer Post-Effect Contract
 
 `SceneBlock` owns a fixed-size scene-level post-effect stack:

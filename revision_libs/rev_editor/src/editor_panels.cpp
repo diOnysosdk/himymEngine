@@ -1162,6 +1162,7 @@ void RenderProperties(EditorContext* editor) {
                 cue.x = 0.5f;
                 cue.y = 0.5f;
                 cue.size = 48.0f;
+                cue.alignment = rev::runtime::TextAlignmentCenter;
                 cue.color = {1.0f, 1.0f, 1.0f};
                 cue.cue_start = 0.0f;
                 cue.cue_end = scene->duration;

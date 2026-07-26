@@ -71,7 +71,7 @@ cmake --build build --config Release
 Prefer focused targets during iteration:
 
 ```powershell
-cmake --build build --config Release --target himym_editor
+cmake --build build --config Release --target editor_app
 cmake --build build --config Release --target minimal_intro
 cmake --build build --config Release --target minimal_intro_packed
 cmake --build build --config Release --target text_animation_tests

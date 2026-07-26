@@ -341,6 +341,12 @@ enum TextModifierType {
     TextModifierScalePulse = 6
 };
 
+enum TextAlignment {
+    TextAlignmentLeft = 0,
+    TextAlignmentCenter = 1,
+    TextAlignmentRight = 2
+};
+
 static const int kMaxTextAnimationModifiers = 8;
 
 struct TextStaggerConfig {
@@ -427,9 +433,10 @@ struct TextGlyphTimingInfo {
 struct TextCue {
     char     text[256];
     char     font_name[64];
-    float    x, y;          // Centre position [0..1] where y=0 is top
+    float    x, y;          // Alignment anchor [0..1] where y=0 is top
     float    size;          // Font size in pixels
     float    rotation;      // Rotation in degrees around each glyph centre
+    int      alignment;     // TextAlignment; legacy/default behavior is center
     ColorRGB color;
     int      effect_type;   // 0=none 1=fade_in_out 2=scroll 3=line_by_line 4=typewriter 5=sandstorm
     float    cue_start;

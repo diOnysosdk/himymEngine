@@ -1498,6 +1498,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_pixel_emitter_cue.curve_lifetime_min = current_pixel_emitter_cue.curve_lifetime_max = -1;
     current_pixel_emitter_cue.curve_scale_min = current_pixel_emitter_cue.curve_scale_max = -1;
     TextCue current_text_cue = {};
+    current_text_cue.alignment = rev::runtime::TextAlignmentCenter;
     current_text_cue.curve_x = -1;
     current_text_cue.curve_y = -1;
     current_text_cue.curve_size = -1;
@@ -2387,6 +2388,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"y\": %f", &current_text_cue.y);
             } else if (strstr(start, "\"size\":")) {
                 sscanf_s(start, "\"size\": %f", &current_text_cue.size);
+            } else if (strstr(start, "\"alignment\":")) {
+                sscanf_s(start, "\"alignment\": %d", &current_text_cue.alignment);
             } else if (strstr(start, "\"color\":")) {
                 sscanf_s(start, "\"color\": [%f, %f, %f]",
                     &current_text_cue.color.r, &current_text_cue.color.g, &current_text_cue.color.b);
@@ -2458,6 +2461,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 current_text_cue.curve_color_b = -1;
                 current_text_cue.blend_mode = 0;
                 current_text_cue.bake_mode = 0;
+                current_text_cue.alignment = rev::runtime::TextAlignmentCenter;
                 InitializeTextAnimationConfig(&current_text_cue.animation);
             }
         }
@@ -3376,6 +3380,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"y\": %.3f,\n", cue->y);
             fprintf(f, "          \"size\": %.3f,\n", cue->size);
             fprintf(f, "          \"rotation\": %.3f,\n", cue->rotation);
+            fprintf(f, "          \"alignment\": %d,\n", cue->alignment);
             fprintf(f, "          \"color\": [%.3f, %.3f, %.3f],\n",
                 cue->color.r, cue->color.g, cue->color.b);
             fprintf(f, "          \"effect_type\": %d,\n", cue->effect_type);
@@ -4584,6 +4589,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             char* p1 = strchr(start, '|');
             if (!p1) continue;
             TextCue cue = {};
+            cue.alignment = rev::runtime::TextAlignmentCenter;
             size_t text_len = (size_t)(p1 - start);
             if (text_len >= sizeof(cue.text)) text_len = sizeof(cue.text) - 1;
             char encoded_text[256] = {};
@@ -4638,6 +4644,19 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
                 bake_mode = 0;
             }
             if (parsed >= 9) {
+                int pipe_count = 0;
+                for (const char* p = p2 + 1; *p; ++p) {
+                    if (*p == '|') ++pipe_count;
+                }
+                if (pipe_count >= 31) {
+                    const char* last_pipe = strrchr(p2 + 1, '|');
+                    int alignment = rev::runtime::TextAlignmentCenter;
+                    if (last_pipe && sscanf_s(last_pipe + 1, "align=%d", &alignment) == 1 &&
+                        alignment >= rev::runtime::TextAlignmentLeft &&
+                        alignment <= rev::runtime::TextAlignmentRight) {
+                        cue.alignment = alignment;
+                    }
+                }
                 cue.size = size_f;
                 cue.blend_mode = (parsed_with_blend_mode && parsed >= 15) ? blend_mode : 0;
                 cue.bake_mode = (parsed_with_bake_mode && parsed >= (parsed_with_blend_mode ? 16 : 15)) ? bake_mode : 0;
@@ -5179,7 +5198,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     
     // [text_cues] section
     fprintf(f, "[text_cues]\n");
-    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path|glyph_atlas_key|glyph_atlas_path|glyph_meta_key|glyph_meta_path|animation\n");
+    fprintf(f, "# text|font_name|x|y|size|color_r|color_g|color_b|effect_type|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|bake_mode|baked_asset_key|baked_asset_path|glyph_atlas_key|glyph_atlas_path|glyph_meta_key|glyph_meta_path|rotation|curve_rotation|animation|align=N\n");
     
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
@@ -5270,7 +5289,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 }
             }
             
-            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%.3f|%d|%s\n",
+            fprintf(f, "%s|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s|%.3f|%d|%s|align=%d\n",
                 encoded_text, cue->font_name, cue->x, cue->y, cue->size,
                 cue->color.r, cue->color.g, cue->color.b,
                 cue->effect_type, abs_start, abs_end,
@@ -5282,7 +5301,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->bake_mode,
                 baked_asset_key, baked_asset_path,
                 glyph_atlas_key, glyph_atlas_path, glyph_meta_key, glyph_meta_path,
-                cue->rotation, cue->curve_rotation, serialized_animation
+                cue->rotation, cue->curve_rotation, serialized_animation, cue->alignment
             );
         }
     }
@@ -6593,7 +6612,7 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
                                 float viewport_width, float viewport_height,
                                 float wave_amp, float wave_freq, float wave_length,
                                 float jitter_amp, float jitter_freq, float time, float rotation,
-                                bool horizontal_scroll,
+                                bool horizontal_scroll, int alignment,
                                 const rev::runtime::TextAnimationConfig* animation = nullptr,
                                 float animation_time = 0.0f) {
     if (!program || !atlas || atlas->texture_id == 0 || !text) return false;
@@ -6609,12 +6628,21 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
     if (u_col >= 0) rev::shader::SetVec3(program, u_col, r, g, b);
     if (u_rot >= 0) rev::shader::SetFloat(program, u_rot, rotation);
     if (spacing < 0.01f) spacing = 0.01f;
-    float line_width = 0.0f;
-    for (const unsigned char* p = (const unsigned char*)text; *p && *p != '\n'; ++p) {
-        const rev::runtime::TextGlyph* glyph = rev::runtime::FindTextGlyph(atlas, *p);
-        if (glyph) line_width += glyph->advance * spacing * size_scale;
-    }
-    float cursor_x = x - line_width / viewport_width;
+    auto MeasureLineWidth = [&](const unsigned char* line_start) {
+        float width = 0.0f;
+        for (const unsigned char* p = line_start; *p && *p != '\n'; ++p) {
+            const rev::runtime::TextGlyph* glyph = rev::runtime::FindTextGlyph(atlas, *p);
+            if (glyph) width += glyph->advance * spacing * size_scale;
+        }
+        return width;
+    };
+    auto GetLineStartX = [&](const unsigned char* line_start) {
+        float factor = alignment == rev::runtime::TextAlignmentLeft ? 0.0f :
+                       alignment == rev::runtime::TextAlignmentRight ? 2.0f : 1.0f;
+        return x - factor * MeasureLineWidth(line_start) / viewport_width;
+    };
+    const unsigned char* line_start = (const unsigned char*)text;
+    float cursor_x = GetLineStartX(line_start);
     float cursor_y = y;
     bool drew_glyph = false;
     int glyph_index = 0;
@@ -6643,7 +6671,8 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
     glBindTexture(GL_TEXTURE_2D, atlas->texture_id);
     for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
         if (*p == '\n') {
-            cursor_x = x - line_width / viewport_width;
+            line_start = p + 1;
+            cursor_x = GetLineStartX(line_start);
             cursor_y += atlas->line_height * size_scale / viewport_height * 2.0f;
             ++line_index;
             in_word = false;
@@ -8060,6 +8089,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                             anim_color_r, anim_color_g, anim_color_b,
                             (float)editor->preview_width, (float)editor->preview_height,
                             0.0f, 0.0f, 9.0f, 0.0f, 0.0f, scene_time, anim_rotation, true,
+                            cue->alignment,
                             has_text_animation ? &cue->animation : nullptr, elapsed_time)) {
                             continue;
                         }
@@ -8075,6 +8105,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                     norm_h = (float)rt_txt.height / editor->preview_height * 2.0f;
                         pos_x  =  ((anim_x + fx.offset_x) * 2.0f) - 1.0f;
                         pos_y  = -(((anim_y + fx.offset_y) * 2.0f) - 1.0f);
+                        if (cue->alignment == rev::runtime::TextAlignmentLeft) pos_x += norm_w * 0.5f;
+                        else if (cue->alignment == rev::runtime::TextAlignmentRight) pos_x -= norm_w * 0.5f;
                         rotation = anim_rotation;
                         opacity = rev::runtime::ComputeEffectOpacity(
                         cue->effect_type, cue->fade_in_start, cue->fade_in_end,
@@ -8248,7 +8280,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                         anim_wave_amp, anim_wave_freq,
                         anim_wave_length,
                         anim_jitter_amp, anim_jitter_freq, elapsed_time, anim_rotation,
-                        cue->direction <= 1)) {
+                        cue->direction <= 1, rev::runtime::TextAlignmentCenter)) {
                         continue;
                     }
 
@@ -9609,8 +9641,12 @@ void UpdatePlayback(EditorContext* editor, float delta_time) {
         if (max_duration <= 0.0f) max_duration = 10.0f; // Default playback duration
         
         if (editor->current_time >= max_duration) {
-            editor->current_time = max_duration;
-            editor->playing = false; // Stop at end
+            if (editor->project->loop_intro) {
+                editor->current_time = fmodf(editor->current_time, max_duration);
+            } else {
+                editor->current_time = max_duration;
+                editor->playing = false;
+            }
         }
     }
 

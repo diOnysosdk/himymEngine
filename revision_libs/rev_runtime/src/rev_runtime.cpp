@@ -1368,6 +1368,8 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
     bool in_section = false;
     bool found      = false;
 
+    cue->alignment = TextAlignmentCenter;
+
     while (fgets(line, sizeof(line), f)) {
         char* s = line; TrimLeft(s);
         if (strstr(s, "[text_cues]")) { in_section = true;  continue; }
@@ -1378,7 +1380,8 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
         //         effect_type|cue_start|cue_end|
         //         fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|
         //         curve_x|curve_y|curve_size|curve_color_r|curve_color_g|curve_color_b|
-        //         bake_mode|baked_asset_key|baked_asset_path|glyph_atlas_key|glyph_atlas_path|glyph_meta_key|glyph_meta_path (optional)
+        //         bake_mode|baked_asset_key|baked_asset_path|glyph_atlas_key|glyph_atlas_path|glyph_meta_key|glyph_meta_path|
+        //         rotation|curve_rotation|animation|alignment (trailing fields optional)
         char* pipe1 = strchr(s, '|');
         if (!pipe1) continue;
         *pipe1 = '\0';
@@ -1415,6 +1418,19 @@ bool LoadTextCue(const char* cues_path, TextCue* cue)
         char glyph_atlas_path[512] = {};
         char glyph_meta_key[64] = {};
         char glyph_meta_path[512] = {};
+
+        int pipe_count = 0;
+        for (const char* p = pipe2 + 1; *p; ++p) {
+            if (*p == '|') ++pipe_count;
+        }
+        if (pipe_count >= 31) {
+            const char* last_pipe = strrchr(pipe2 + 1, '|');
+            int alignment = TextAlignmentCenter;
+            if (last_pipe && sscanf_s(last_pipe + 1, "align=%d", &alignment) == 1 &&
+                alignment >= TextAlignmentLeft && alignment <= TextAlignmentRight) {
+                cue->alignment = alignment;
+            }
+        }
         
         bool parsed_with_bake_mode = true;
         int parsed = sscanf_s(pipe2 + 1,

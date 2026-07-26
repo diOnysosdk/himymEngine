@@ -1,5 +1,9 @@
 # Scene Block Editor Guide
 
+Text cues expose an **Alignment** selector with Left, Center, and Right options. The cue's `x` position acts as the selected alignment anchor: left edge, center, or right edge. Existing projects without the field load as Center.
+
+When **Loop Intro** is enabled, preview and exported runtime wrap at the project's total scene duration. Cue end times beyond that duration do not extend the loop; they are useful for persistent layers but cannot prevent text or shader cues from restarting on the next pass.
+
 **Complete walkthrough of the Python/tkinter scene authoring tool**
 
 ## Overview

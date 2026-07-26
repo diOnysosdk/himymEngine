@@ -3017,6 +3017,14 @@ void RenderTextModal(EditorContext* editor) {
         }
         
         if (ImGui::SliderFloat("Size", &cue->size, 8.0f, 128.0f)) AutoSave();
+        const char* alignment_names[] = {"Left", "Center", "Right"};
+        if (cue->alignment < rev::runtime::TextAlignmentLeft ||
+            cue->alignment > rev::runtime::TextAlignmentRight) {
+            cue->alignment = rev::runtime::TextAlignmentCenter;
+        }
+        if (ImGui::Combo("Alignment", &cue->alignment, alignment_names, IM_ARRAYSIZE(alignment_names))) {
+            AutoSave();
+        }
         DrawCurveRecordButton(editor, &cue->curve_size, "Text Size", nullptr, "text_size");
         ImGui::SameLine();
         if (cue->curve_size >= 0) {

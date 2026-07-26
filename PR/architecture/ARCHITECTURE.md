@@ -1,5 +1,9 @@
 # Architecture Overview — revision2026
 
+## Authored timeline loop boundary
+
+When `[metadata] total_duration` is present, it is the authoritative intro timeline and loop boundary. Runtime cue ends may extend beyond that value for persistent overlays or authoring convenience, but they do not lengthen the loop. When `intro_loop=1`, runtime and editor preview wrap time into `[0, total_duration)`, so shader, text, image, mesh, pixel, particle, and scroll cue activation is evaluated again from the beginning. If metadata has no positive duration, runtime infers a fallback duration from cue ends.
+
 Single-production Windows intro/demo runtime for Revision 2026.
 No runtime plugins. One authored flow. Optional compile-time 3D path.
 

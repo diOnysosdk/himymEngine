@@ -729,6 +729,7 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
         memset(cue, 0, sizeof(TextCue));
         cue->blend_mode = 0;
         cue->bake_mode = 0;
+        cue->alignment = rev::runtime::TextAlignmentCenter;
         cue->curve_x = cue->curve_y = cue->curve_size = -1;
         cue->curve_color_r = cue->curve_color_g = cue->curve_color_b = -1;
         InitializeTextAnimationConfig(&cue->animation);
@@ -849,6 +850,16 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
             if (animation_payload && *animation_payload) {
                 char* line_end = strpbrk(animation_payload, "\r\n");
                 if (line_end) *line_end = '\0';
+                char* alignment_separator = strrchr(animation_payload, '|');
+                if (alignment_separator) {
+                    int alignment = rev::runtime::TextAlignmentCenter;
+                    if (sscanf_s(alignment_separator + 1, "align=%d", &alignment) == 1 &&
+                        alignment >= rev::runtime::TextAlignmentLeft &&
+                        alignment <= rev::runtime::TextAlignmentRight) {
+                        cue->alignment = alignment;
+                        *alignment_separator = '\0';
+                    }
+                }
                 ParseTextAnimationConfig(animation_payload, &cue->animation);
             }
 
@@ -1744,7 +1755,7 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
                          float viewport_width, float viewport_height,
                          float wave_amp, float wave_freq, float wave_length,
                          float jitter_amp, float jitter_freq, float time, float rotation,
-                         bool horizontal_scroll,
+                         bool horizontal_scroll, int alignment,
                          const rev::runtime::TextAnimationConfig* animation = nullptr,
                          float animation_time = 0.0f) {
     if (!program || !atlas || atlas->texture_id == 0 || !text) return false;
@@ -1764,13 +1775,21 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
     glBindTexture(GL_TEXTURE_2D, atlas->texture_id);
 
     if (spacing < 0.01f) spacing = 0.01f;
-    float line_width = 0.0f;
-    for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
-        if (*p == '\n') break;
-        const TextGlyph* glyph = FindTextGlyph(atlas, *p);
-        if (glyph) line_width += glyph->advance * spacing * size_scale;
-    }
-    float cursor_x = x - (line_width / viewport_width);
+    auto MeasureLineWidth = [&](const unsigned char* line_start) {
+        float width = 0.0f;
+        for (const unsigned char* p = line_start; *p && *p != '\n'; ++p) {
+            const TextGlyph* glyph = FindTextGlyph(atlas, *p);
+            if (glyph) width += glyph->advance * spacing * size_scale;
+        }
+        return width;
+    };
+    auto GetLineStartX = [&](const unsigned char* line_start) {
+        float factor = alignment == rev::runtime::TextAlignmentLeft ? 0.0f :
+                       alignment == rev::runtime::TextAlignmentRight ? 2.0f : 1.0f;
+        return x - factor * MeasureLineWidth(line_start) / viewport_width;
+    };
+    const unsigned char* line_start = (const unsigned char*)text;
+    float cursor_x = GetLineStartX(line_start);
     float cursor_y = y;
     bool drew_glyph = false;
     int glyph_index = 0;
@@ -1798,7 +1817,8 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
     in_word = false;
     for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
         if (*p == '\n') {
-            cursor_x = x - (line_width / viewport_width);
+            line_start = p + 1;
+            cursor_x = GetLineStartX(line_start);
             cursor_y += (atlas->line_height * size_scale / viewport_height) * 2.0f;
             ++line_index;
             in_word = false;
@@ -2456,7 +2476,10 @@ int main(int argc, char* argv[]) {
         float music_end = ResolveCueEnd(music_cues[i].cue_end, playback_settings.total_duration > 0.0f ? playback_settings.total_duration : total_duration);
         if (music_end > total_duration) total_duration = music_end;
     }
-    if (playback_settings.total_duration > 0.0f && playback_settings.total_duration > total_duration) {
+    // Exported metadata is the authored timeline boundary. Cue ends may
+    // intentionally extend past it (for example persistent overlays), but they
+    // must not silently lengthen an intro loop and leave shorter cues inactive.
+    if (playback_settings.total_duration > 0.0f) {
         total_duration = playback_settings.total_duration;
     }
     
@@ -4766,6 +4789,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                      anim_text_color_r, anim_text_color_g, anim_text_color_b,
                                      (float)config.width, (float)config.height,
                                      0.0f, 0.0f, 9.0f, 0.0f, 0.0f, time, anim_text_rotation, true,
+                                     text_cue.alignment,
                                      has_text_animation ? &text_cue.animation : nullptr,
                                      elapsed_time);
                         continue;
@@ -4804,6 +4828,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float h = ((float)frame_text_tex.height * size_scale) / (float)config.height * 2.0f;
                     float x =  ((anim_text_x + fx.offset_x) * 2.0f - 1.0f);
                     float y = -(((anim_text_y + fx.offset_y) * 2.0f) - 1.0f);
+                    if (text_cue.alignment == rev::runtime::TextAlignmentLeft) x += w * 0.5f;
+                    else if (text_cue.alignment == rev::runtime::TextAlignmentRight) x -= w * 0.5f;
                     if (!IsSpriteVisible(x, y, w, h)) continue;
                     const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
                     int u_pos = uniforms.position;
@@ -5007,7 +5033,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                      anim_wave_amp, anim_wave_freq,
                                      anim_wave_length,
                                      anim_jitter_amp, anim_jitter_freq, elapsed_time, anim_rotation,
-                                     cue.direction <= 1);
+                                     cue.direction <= 1, rev::runtime::TextAlignmentCenter);
                         continue;
                     }
                     if (!force_baked || frame_text_tex.texture_id == 0) {
