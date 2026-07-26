@@ -3873,8 +3873,8 @@ void RenderMeshModal(EditorContext* editor) {
         ImGui::OpenPopup("Edit Mesh Cue");
         editor->mesh_modal_request_open = false;
         editor->mesh_modal_open = true;
-        
-        // Pre-load glTF mesh into cache if not already there
+
+        // Pre-load glTF mesh into cache if not already there.
         MeshCue* cue = &editor->editing_mesh;
         if (cue->mesh_type == 4 && cue->asset_path[0]) {
             bool already_cached = false;
@@ -3884,12 +3884,14 @@ void RenderMeshModal(EditorContext* editor) {
                     break;
                 }
             }
-            
+
             if (!already_cached && editor->project && editor->project->assets_path[0]) {
                 printf("[MeshModal] Pre-loading glTF mesh: %s\n", cue->asset_path);
-                rev::gltf::ImportResult* ir = rev::gltf::LoadMesh(cue->asset_path, editor->project->assets_path);
+                rev::gltf::ImportResult* ir =
+                    rev::gltf::LoadMesh(cue->asset_path, editor->project->assets_path);
                 if (ir && ir->ok) {
                     rev::mesh::Mesh* mesh = ir->mesh;
+                    ir->mesh = nullptr;
 
                     if (mesh) {
                         mesh->has_imported_light = ir->has_light;
@@ -3901,8 +3903,7 @@ void RenderMeshModal(EditorContext* editor) {
                         mesh->emissive_color[2] = ir->material.emissive[2];
                         mesh->emissive_strength = ir->material.emissive_strength;
                     }
-                    
-                    // Load texture if present
+
                     if (mesh && ir->material.base_color_texture[0]) {
                         rev::runtime::ImageTexture tex = {};
                         if (rev::runtime::LoadImageTexture(ir->material.base_color_texture, &tex)) {
@@ -3910,7 +3911,6 @@ void RenderMeshModal(EditorContext* editor) {
                         }
                     }
 
-                    // Load per-material textures and map to mesh slots.
                     if (mesh && ir->material_count > 0 && ir->materials) {
                         unsigned int* material_textures = new unsigned int[ir->material_count];
                         memset(material_textures, 0, sizeof(unsigned int) * ir->material_count);
@@ -3924,14 +3924,15 @@ void RenderMeshModal(EditorContext* editor) {
                         }
                         for (uint32_t si = 0; si < mesh->material_slot_count; ++si) {
                             rev::mesh::MaterialSlot& slot = mesh->material_slots[si];
-                            if (slot.material_index >= 0 && slot.material_index < ir->material_count) {
-                                slot.base_color_texture = material_textures[slot.material_index];
+                            if (slot.material_index >= 0 &&
+                                slot.material_index < ir->material_count) {
+                                slot.base_color_texture =
+                                    material_textures[slot.material_index];
                             }
                         }
                         delete[] material_textures;
                     }
-                    
-                    // Transfer animations
+
                     if (mesh && ir->animation_count > 0) {
                         mesh->animation_data = ir->animations;
                         mesh->animation_count = ir->animation_count;
@@ -3941,17 +3942,17 @@ void RenderMeshModal(EditorContext* editor) {
                         mesh->animation_loop = true;
                         ir->animations = nullptr;
                     }
-                    
+
                     if (mesh) {
                         rev::mesh::UploadToGPU(mesh);
-                        
-                        // Add to cache
                         if (editor->mesh_cache_count < EditorContext::kMeshCacheSize) {
                             auto& entry = editor->mesh_cache[editor->mesh_cache_count++];
                             strncpy_s(entry.path, cue->asset_path, _TRUNCATE);
                             entry.mesh = mesh;
-                            entry.last_write_time = GetFileModificationTime(cue->asset_path);
-                            printf("[MeshModal] Cached mesh with %d animations\n", mesh->animation_count);
+                            entry.last_write_time =
+                                GetFileModificationTime(cue->asset_path);
+                            printf("[MeshModal] Cached mesh with %d animations\n",
+                                   mesh->animation_count);
                         }
                     }
                 }
@@ -4068,15 +4069,11 @@ void RenderMeshModal(EditorContext* editor) {
                         }
                         cue->metallic  = mat.metallic;
                         cue->roughness = mat.roughness;
-                           cue->emissive_color[0] = 1.0f;
-                           cue->emissive_color[1] = 1.0f;
-                           cue->emissive_color[2] = 1.0f;
-                           if (cue->emissive_strength <= 0.0f) cue->emissive_strength = 1.0f;
                         printf("[GLTF] Material: name=\"%s\" base=(%.2f,%.2f,%.2f) metallic=%.2f roughness=%.2f\n",
                                mat.name[0] ? mat.name : "(unnamed)",
                                mat.base_color[0], mat.base_color[1], mat.base_color[2],
                                mat.metallic, mat.roughness);
-                           printf("[GLTF] Emissive: color=(%.2f,%.2f,%.2f) strength=%.2f\n",
+                        printf("[GLTF] Emissive: color=(%.2f,%.2f,%.2f) strength=%.2f\n",
                                mat.emissive[0], mat.emissive[1], mat.emissive[2], mat.emissive_strength);
                         if (mat.base_color_texture[0]) {
                             printf("[GLTF] Base color texture: %s\n", mat.base_color_texture);

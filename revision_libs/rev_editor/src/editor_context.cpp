@@ -4873,14 +4873,21 @@ static void WriteAssetShadersPipe(FILE* f, const AssetShader* shaders, int shade
     fprintf(f, "|%d", shader_count);
     for (int i = 0; i < shader_count && i < rev::runtime::kMaxAssetShaders; ++i) {
         const AssetShader& shader = shaders[i];
-        fprintf(f, "|%d,%d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
+        fprintf(f, "|%d,%d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f"
+                   ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
                 shader.shader_id, shader.enabled ? 1 : 0, shader.order, shader.blend_mode,
                 shader.opacity, shader.speed, shader.intensity, shader.warp,
                 shader.exposure_base, shader.exposure_ramp, shader.fade_base, shader.fade_ramp,
                 shader.palette_low[0], shader.palette_low[1], shader.palette_low[2],
                 shader.palette_mid[0], shader.palette_mid[1], shader.palette_mid[2],
                 shader.palette_high[0], shader.palette_high[1], shader.palette_high[2],
-                shader.start_time, shader.end_time);
+                shader.start_time, shader.end_time,
+                shader.curve_speed, shader.curve_intensity, shader.curve_warp,
+                shader.curve_exposure, shader.curve_fade, shader.curve_opacity,
+                shader.curve_exposure_ramp, shader.curve_fade_ramp,
+                shader.curve_palette_low_r, shader.curve_palette_low_g, shader.curve_palette_low_b,
+                shader.curve_palette_mid_r, shader.curve_palette_mid_g, shader.curve_palette_mid_b,
+                shader.curve_palette_high_r, shader.curve_palette_high_g, shader.curve_palette_high_b);
     }
 }
 
@@ -7595,10 +7602,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                     typedef void (*PFNGLBINDVERTEXARRAYPROC)(unsigned int array);
                     auto glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
                     if (glBindVertexArray) glBindVertexArray(editor->preview_vao);
+                    glClear(GL_DEPTH_BUFFER_BIT);
                 }
-                
-                // Don't clear depth here - already cleared once before layer pass
-                
+
                 // Disable depth testing for 2D sprites
                 glDisable(0x0B71);  // GL_DEPTH_TEST
                 if (glDepthMask_mesh_fn) glDepthMask_mesh_fn(0);  // GL_FALSE
@@ -8657,11 +8663,49 @@ void RenderPreviewFrame(EditorContext* editor) {
                 float size  = anim_mesh_size > 0.0f ? anim_mesh_size : 1.0f;
                 float param = cue->mesh_param > 0.0f ? cue->mesh_param : 16.0f;
                 rev::mesh::Mesh* mesh = nullptr;
+                bool mesh_uploaded = false;
+                bool mesh_owned_by_cache = false;
+
+                auto get_procedural_mesh = [&](int mesh_type) -> rev::mesh::Mesh* {
+                    char cache_key[512] = {};
+                    snprintf(cache_key, sizeof(cache_key), "__procedural__/%d/%.9g/%.9g",
+                             mesh_type, size, param);
+                    for (int c = 0; c < editor->mesh_cache_count; ++c) {
+                        if (editor->mesh_cache[c].mesh &&
+                            strcmp(editor->mesh_cache[c].path, cache_key) == 0) {
+                            mesh_uploaded = true;
+                            mesh_owned_by_cache = true;
+                            return (rev::mesh::Mesh*)editor->mesh_cache[c].mesh;
+                        }
+                    }
+
+                    rev::mesh::Mesh* created = nullptr;
+                    switch (mesh_type) {
+                        case 0: created = rev::mesh::CreateCube(size); break;
+                        case 1: created = rev::mesh::CreateSphere(size, (int)param); break;
+                        case 2: created = rev::mesh::CreatePlane(size, param > 0.0f ? param : size); break;
+                        case 3: created = rev::mesh::CreateTorus(
+                            size, param > 0.0f ? param : 0.3f, 32, 16); break;
+                    }
+                    if (!created) return nullptr;
+
+                    rev::mesh::UploadToGPU(created);
+                    mesh_uploaded = true;
+                    if (editor->mesh_cache_count < EditorContext::kMeshCacheSize) {
+                        auto& entry = editor->mesh_cache[editor->mesh_cache_count++];
+                        strncpy_s(entry.path, cache_key, _TRUNCATE);
+                        entry.mesh = created;
+                        entry.last_write_time = 0;
+                        mesh_owned_by_cache = true;
+                    }
+                    return created;
+                };
+
                 switch (cue->mesh_type) {
-                    case 0: mesh = rev::mesh::CreateCube(size); break;
-                    case 1: mesh = rev::mesh::CreateSphere(size, (int)param); break;
-                    case 2: mesh = rev::mesh::CreatePlane(size, param > 0.0f ? param : size); break;
-                    case 3: mesh = rev::mesh::CreateTorus(size, param > 0.0f ? param : 0.3f, 32, 16); break;
+                    case 0: mesh = get_procedural_mesh(0); break;
+                    case 1: mesh = get_procedural_mesh(1); break;
+                    case 2: mesh = get_procedural_mesh(2); break;
+                    case 3: mesh = get_procedural_mesh(3); break;
                     case 4: {
                         if (cue->asset_path[0]) {
                             // Check cache for this mesh
@@ -8893,6 +8937,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     unsigned int tex_id = slot.base_color_texture;
                                     if (tex_id == 0) tex_id = cached->base_color_texture;
                                     if (tex_id != 0) {
+                                        if (glActiveTexture_preview) glActiveTexture_preview(0x84C0); // GL_TEXTURE0
                                         glBindTexture(0x0DE1, tex_id); // GL_TEXTURE_2D
                                         if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
                                         if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
@@ -8920,6 +8965,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                                             cue->emissive_strength * cached->emissive_strength);
                                     }
                                     if (cached->base_color_texture != 0) {
+                                        if (glActiveTexture_preview) glActiveTexture_preview(0x84C0); // GL_TEXTURE0
                                         glBindTexture(0x0DE1, cached->base_color_texture);
                                         if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
                                         if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
@@ -9172,6 +9218,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     unsigned int tex_id = slot.base_color_texture;
                                     if (tex_id == 0) tex_id = mesh->base_color_texture;
                                     if (tex_id != 0) {
+                                        if (glActiveTexture_preview) glActiveTexture_preview(0x84C0); // GL_TEXTURE0
                                         glBindTexture(0x0DE1, tex_id); // GL_TEXTURE_2D
                                         if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
                                         if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
@@ -9199,6 +9246,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                                             cue->emissive_strength * mesh->emissive_strength);
                                     }
                                     if (mesh->base_color_texture != 0) {
+                                        if (glActiveTexture_preview) glActiveTexture_preview(0x84C0); // GL_TEXTURE0
                                         glBindTexture(0x0DE1, mesh->base_color_texture);
                                         if (loc_tex >= 0) rev::shader::SetInt(mesh_prog, loc_tex, 0);
                                         if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 1);
@@ -9217,7 +9265,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     default: mesh = rev::mesh::CreateCube(1.0f); break;
                 }
                 if (mesh) {
-                    rev::mesh::UploadToGPU(mesh);
+                    if (!mesh_uploaded) rev::mesh::UploadToGPU(mesh);
                     // Procedural meshes don't have textures
                     if (mp_light >= 0) rev::shader::SetVec3(mesh_prog, mp_light, 3.0f, 5.0f, 4.0f);
                     int loc_has_tex = rev::shader::GetUniformLocation(mesh_prog, "u_has_texture");
@@ -9225,7 +9273,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (glDepthMask_mesh_fn) glDepthMask_mesh_fn(1); // GL_TRUE
                     if (loc_has_tex >= 0) rev::shader::SetInt(mesh_prog, loc_has_tex, 0);
                     rev::mesh::Render(mesh, -1);
-                    rev::mesh::DestroyMesh(mesh);
+                    if (!mesh_owned_by_cache) rev::mesh::DestroyMesh(mesh);
                 }
             }
         }

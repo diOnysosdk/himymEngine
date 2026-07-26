@@ -1119,16 +1119,29 @@ static void ParseAssetShadersPipe(char* data, int base_field_count,
         if (!field) break;
         ++field;
         rev::runtime::AssetShader& shader = shaders[i];
+        shader.curve_speed = shader.curve_intensity = shader.curve_warp = -1;
+        shader.curve_exposure = shader.curve_fade = shader.curve_opacity = -1;
+        shader.curve_exposure_ramp = shader.curve_fade_ramp = -1;
+        shader.curve_palette_low_r = shader.curve_palette_low_g = shader.curve_palette_low_b = -1;
+        shader.curve_palette_mid_r = shader.curve_palette_mid_g = shader.curve_palette_mid_b = -1;
+        shader.curve_palette_high_r = shader.curve_palette_high_g = shader.curve_palette_high_b = -1;
         int enabled = 0;
         int parsed = sscanf_s(field,
-            "%d,%d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
+            "%d,%d,%d,%d,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f"
+            ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
             &shader.shader_id, &enabled, &shader.order, &shader.blend_mode,
             &shader.opacity, &shader.speed, &shader.intensity, &shader.warp,
             &shader.exposure_base, &shader.exposure_ramp, &shader.fade_base, &shader.fade_ramp,
             &shader.palette_low[0], &shader.palette_low[1], &shader.palette_low[2],
             &shader.palette_mid[0], &shader.palette_mid[1], &shader.palette_mid[2],
             &shader.palette_high[0], &shader.palette_high[1], &shader.palette_high[2],
-            &shader.start_time, &shader.end_time);
+            &shader.start_time, &shader.end_time,
+            &shader.curve_speed, &shader.curve_intensity, &shader.curve_warp,
+            &shader.curve_exposure, &shader.curve_fade, &shader.curve_opacity,
+            &shader.curve_exposure_ramp, &shader.curve_fade_ramp,
+            &shader.curve_palette_low_r, &shader.curve_palette_low_g, &shader.curve_palette_low_b,
+            &shader.curve_palette_mid_r, &shader.curve_palette_mid_g, &shader.curve_palette_mid_b,
+            &shader.curve_palette_high_r, &shader.curve_palette_high_g, &shader.curve_palette_high_b);
         shader.enabled = enabled != 0;
         if (parsed < 23) {
             *shader_count = i;
@@ -4087,7 +4100,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 rev::shader::Use(post_shader);
                 rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, "u_scene"), 0);
                 rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, "u_history"), 1);
-                rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, "u_unpremultiply_scene"), 0);
+                rev::shader::SetInt(post_shader, rev::shader::GetUniformLocation(post_shader, "u_unpremultiply_scene"), 1);
                 rev::shader::SetVec2(post_shader, rev::shader::GetUniformLocation(post_shader, "u_resolution"),
                                      (float)config.width, (float)config.height);
                 rev::shader::SetFloat(post_shader, rev::shader::GetUniformLocation(post_shader, "u_time"), layer_time);
@@ -4200,7 +4213,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, asset_texture_id);
                     glEnable(GL_BLEND);
-                    ApplyShaderLayerBlendMode(asset_shader.blend_mode, asset_shader.opacity);
+                    ApplyShaderLayerBlendMode(asset_shader.blend_mode, shader_opacity);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 }
             };
