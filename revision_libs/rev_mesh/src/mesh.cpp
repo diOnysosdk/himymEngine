@@ -100,6 +100,14 @@ Mesh* CreateMesh(uint32_t vertex_count, uint32_t index_count) {
     mesh->imported_camera_target[1] = 0.0f;
     mesh->imported_camera_target[2] = 0.0f;
     mesh->imported_camera_fov_deg = 45.0f;
+    mesh->imported_camera_type = 0;
+    mesh->imported_camera_znear = 0.1f;
+    mesh->imported_camera_zfar = 0.0f;
+    mesh->imported_camera_aspect_ratio = 0.0f;
+    mesh->imported_camera_xmag = 1.0f;
+    mesh->imported_camera_ymag = 1.0f;
+    mesh->imported_camera_shift_x = 0.0f;
+    mesh->imported_camera_shift_y = 0.0f;
     mesh->imported_camera_node_index = -1;
     mesh->imported_nodes = nullptr;
     mesh->imported_node_count = 0;
@@ -184,6 +192,12 @@ void AddMaterialSlot(Mesh* mesh,
         new_slots[mesh->material_slot_count].emissive_color[2] = 1.0f;
     }
     new_slots[mesh->material_slot_count].emissive_strength = emissive_strength;
+    new_slots[mesh->material_slot_count].noise_target = 0;
+    new_slots[mesh->material_slot_count].noise_scale = 5.0f;
+    new_slots[mesh->material_slot_count].noise_detail = 2.0f;
+    new_slots[mesh->material_slot_count].noise_roughness = 0.5f;
+    new_slots[mesh->material_slot_count].noise_distortion = 0.0f;
+    new_slots[mesh->material_slot_count].noise_strength = 1.0f;
     
     mesh->material_slots = new_slots;
     mesh->material_slot_count++;

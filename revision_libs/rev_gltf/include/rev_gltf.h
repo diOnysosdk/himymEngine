@@ -69,6 +69,16 @@ struct Material {
     float emissive_strength; // emissive strength (KHR_materials_emissive_strength, default 1)
     bool  double_sided;
 
+    // Optional HiMYM procedural material exported as Blender custom properties
+    // in glTF material.extras. target: 0=disabled, 1=base color,
+    // 2=roughness, 3=emission.
+    int   noise_target;
+    float noise_scale;
+    float noise_detail;
+    float noise_roughness;
+    float noise_distortion;
+    float noise_strength;
+
     // Texture paths — workspace-relative if textures were extracted, else empty.
     // Check if [0] != '\0' before using.
     char  base_color_texture[512];
@@ -94,6 +104,14 @@ struct ImportResult {
     float            camera_pos[3];
     float            camera_target[3];
     float            camera_fov_deg;
+    int              camera_type;          // 0=perspective, 1=orthographic
+    float            camera_znear;
+    float            camera_zfar;          // 0 = infinite perspective far plane
+    float            camera_aspect_ratio;  // 0 = use viewport aspect
+    float            camera_xmag;
+    float            camera_ymag;
+    float            camera_shift_x;       // HiMYM camera extras, normalized lens shift
+    float            camera_shift_y;
     int              camera_node_index;
     bool             ok;
     char             error[256];

@@ -35,6 +35,61 @@ static void SetMaterialDefaults(Material* m) {
     m->metallic  = 0.0f;
     m->roughness = 1.0f;
     m->emissive_strength = 1.0f;
+    m->noise_scale = 5.0f;
+    m->noise_detail = 2.0f;
+    m->noise_roughness = 0.5f;
+    m->noise_strength = 1.0f;
+}
+
+static bool ReadExtrasFloat(const char* json, const char* name, float* value) {
+    if (!json || !name || !value) return false;
+    char key[96] = {};
+    snprintf(key, sizeof(key), "\"%s\"", name);
+    const char* p = strstr(json, key);
+    if (!p) return false;
+    p = strchr(p + strlen(key), ':');
+    if (!p) return false;
+    return sscanf_s(p + 1, "%f", value) == 1;
+}
+
+static int ReadNoiseTarget(const char* json) {
+    float numeric = 0.0f;
+    if (ReadExtrasFloat(json, "himym_noise_target", &numeric)) return (int)numeric;
+    const char* key = strstr(json ? json : "", "\"himym_noise_target\"");
+    if (!key) return 0;
+    const char* colon = strchr(key, ':');
+    if (!colon) return 0;
+    if (strstr(colon, "base_color")) return 1;
+    if (strstr(colon, "roughness")) return 2;
+    if (strstr(colon, "emission")) return 3;
+    return 0;
+}
+
+static void FillNoiseExtras(Material* out, const cgltf_material* mat, const cgltf_data* data) {
+    cgltf_size size = 0;
+    if (!out || !mat || !data ||
+        cgltf_copy_extras_json(data, &mat->extras, nullptr, &size) != cgltf_result_success ||
+        size <= 1) {
+        return;
+    }
+    char* json = new char[size];
+    if (cgltf_copy_extras_json(data, &mat->extras, json, &size) == cgltf_result_success) {
+        out->noise_target = ReadNoiseTarget(json);
+        ReadExtrasFloat(json, "himym_noise_scale", &out->noise_scale);
+        ReadExtrasFloat(json, "himym_noise_detail", &out->noise_detail);
+        ReadExtrasFloat(json, "himym_noise_roughness", &out->noise_roughness);
+        ReadExtrasFloat(json, "himym_noise_distortion", &out->noise_distortion);
+        ReadExtrasFloat(json, "himym_noise_strength", &out->noise_strength);
+        if (out->noise_target < 0 || out->noise_target > 3) out->noise_target = 0;
+        if (out->noise_scale < 0.001f) out->noise_scale = 0.001f;
+        if (out->noise_detail < 1.0f) out->noise_detail = 1.0f;
+        if (out->noise_detail > 4.0f) out->noise_detail = 4.0f;
+        if (out->noise_roughness < 0.0f) out->noise_roughness = 0.0f;
+        if (out->noise_roughness > 1.0f) out->noise_roughness = 1.0f;
+        if (out->noise_strength < 0.0f) out->noise_strength = 0.0f;
+        if (out->noise_strength > 1.0f) out->noise_strength = 1.0f;
+    }
+    delete[] json;
 }
 
 // Write raw bytes to a file.  Returns true on success.
@@ -174,6 +229,7 @@ static void FillMaterial(Material* out, const cgltf_material* mat,
 
     if (mat->name) strncpy_s(out->name, mat->name, _TRUNCATE);
     out->double_sided = mat->double_sided != 0;
+    FillNoiseExtras(out, mat, data);
     
     GLTF_LOGV("[glTF] Material: name='%s' has_pbr=%d\n", 
            mat->name ? mat->name : "(unnamed)", 
@@ -659,16 +715,37 @@ static void TransformPoint(const float m[16], const float in[3], float out[3]) {
     out[2] = m[2] * in[0] + m[6] * in[1] + m[10] * in[2] + m[14];
 }
 
-static void TransformVector(const float m[16], const float in[3], float out[3]) {
-    out[0] = m[0] * in[0] + m[4] * in[1] + m[8]  * in[2];
-    out[1] = m[1] * in[0] + m[5] * in[1] + m[9]  * in[2];
-    out[2] = m[2] * in[0] + m[6] * in[1] + m[10] * in[2];
+static void NormalizeVector(float out[3]) {
     float len = sqrtf(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
     if (len > 0.000001f) {
         out[0] /= len;
         out[1] /= len;
         out[2] /= len;
     }
+}
+
+static void TransformVector(const float m[16], const float in[3], float out[3]) {
+    out[0] = m[0] * in[0] + m[4] * in[1] + m[8]  * in[2];
+    out[1] = m[1] * in[0] + m[5] * in[1] + m[9]  * in[2];
+    out[2] = m[2] * in[0] + m[6] * in[1] + m[10] * in[2];
+    NormalizeVector(out);
+}
+
+static void TransformNormal(const float m[16], const float in[3], float out[3]) {
+    // inverse-transpose(mat3(m)), expanded directly for the baked node transform
+    const float c00 = m[5] * m[10] - m[9] * m[6];
+    const float c01 = m[9] * m[2] - m[1] * m[10];
+    const float c02 = m[1] * m[6] - m[5] * m[2];
+    const float c10 = m[8] * m[6] - m[4] * m[10];
+    const float c11 = m[0] * m[10] - m[8] * m[2];
+    const float c12 = m[4] * m[2] - m[0] * m[6];
+    const float c20 = m[4] * m[9] - m[8] * m[5];
+    const float c21 = m[8] * m[1] - m[0] * m[9];
+    const float c22 = m[0] * m[5] - m[4] * m[1];
+    out[0] = c00 * in[0] + c01 * in[1] + c02 * in[2];
+    out[1] = c10 * in[0] + c11 * in[1] + c12 * in[2];
+    out[2] = c20 * in[0] + c21 * in[1] + c22 * in[2];
+    NormalizeVector(out);
 }
 
 static void GatherSceneMeshNodes(cgltf_node* node, cgltf_node** out_nodes, int max_nodes, int* out_count) {
@@ -702,14 +779,54 @@ static bool FindFirstSceneLight(const cgltf_data* data, cgltf_node* node, float 
     return false;
 }
 
-static bool FindFirstSceneCamera(const cgltf_data* data, cgltf_node* node, float out_pos[3], float out_target[3], float* out_fov_deg, int* out_node_index) {
+static void SetCameraDefaults(ImportResult* result) {
+    result->has_camera = false;
+    result->camera_pos[0] = 0.0f;
+    result->camera_pos[1] = 0.0f;
+    result->camera_pos[2] = 5.0f;
+    result->camera_target[0] = 0.0f;
+    result->camera_target[1] = 0.0f;
+    result->camera_target[2] = 0.0f;
+    result->camera_fov_deg = 45.0f;
+    result->camera_type = 0;
+    result->camera_znear = 0.1f;
+    result->camera_zfar = 0.0f;
+    result->camera_aspect_ratio = 0.0f;
+    result->camera_xmag = 1.0f;
+    result->camera_ymag = 1.0f;
+    result->camera_shift_x = 0.0f;
+    result->camera_shift_y = 0.0f;
+    result->camera_node_index = -1;
+}
+
+static void FillCameraExtras(ImportResult* result, const cgltf_camera* camera,
+                             const cgltf_data* data) {
+    cgltf_size size = 0;
+    if (cgltf_copy_extras_json(data, &camera->extras, nullptr, &size) != cgltf_result_success ||
+        size <= 1) {
+        return;
+    }
+    char* json = new char[size];
+    if (cgltf_copy_extras_json(data, &camera->extras, json, &size) == cgltf_result_success) {
+        ReadExtrasFloat(json, "himym_camera_shift_x", &result->camera_shift_x);
+        ReadExtrasFloat(json, "himym_camera_shift_y", &result->camera_shift_y);
+        if (result->camera_shift_x < -1.0f) result->camera_shift_x = -1.0f;
+        if (result->camera_shift_x > 1.0f) result->camera_shift_x = 1.0f;
+        if (result->camera_shift_y < -1.0f) result->camera_shift_y = -1.0f;
+        if (result->camera_shift_y > 1.0f) result->camera_shift_y = 1.0f;
+    }
+    delete[] json;
+}
+
+static bool FindFirstSceneCamera(const cgltf_data* data, cgltf_node* node,
+                                 ImportResult* result) {
     if (!node) return false;
     if (node->camera) {
         float m[16] = {};
         cgltf_node_transform_world(node, m);
-        out_pos[0] = m[12];
-        out_pos[1] = m[13];
-        out_pos[2] = m[14];
+        result->camera_pos[0] = m[12];
+        result->camera_pos[1] = m[13];
+        result->camera_pos[2] = m[14];
 
         // Camera looks along its local -Z axis. Extract column 2 directly to
         // avoid aliasing if caller passes the same array as both in and out.
@@ -717,23 +834,31 @@ static bool FindFirstSceneCamera(const cgltf_data* data, cgltf_node* node, float
         float forward[3] = {};
         float forward_local[3] = {0.0f, 0.0f, -1.0f};
         TransformVector(m, forward_local, forward);
-        out_target[0] = out_pos[0] + forward[0];
-        out_target[1] = out_pos[1] + forward[1];
-        out_target[2] = out_pos[2] + forward[2];
+        result->camera_target[0] = result->camera_pos[0] + forward[0];
+        result->camera_target[1] = result->camera_pos[1] + forward[1];
+        result->camera_target[2] = result->camera_pos[2] + forward[2];
 
-        if (out_fov_deg) {
-            *out_fov_deg = 45.0f;
-            if (node->camera->type == cgltf_camera_type_perspective) {
-                *out_fov_deg = node->camera->data.perspective.yfov * 180.0f / 3.14159265f;
-            }
+        if (node->camera->type == cgltf_camera_type_orthographic) {
+            const cgltf_camera_orthographic& camera = node->camera->data.orthographic;
+            result->camera_type = 1;
+            result->camera_xmag = camera.xmag;
+            result->camera_ymag = camera.ymag;
+            result->camera_znear = camera.znear;
+            result->camera_zfar = camera.zfar;
+        } else {
+            const cgltf_camera_perspective& camera = node->camera->data.perspective;
+            result->camera_type = 0;
+            result->camera_fov_deg = camera.yfov * 180.0f / 3.14159265f;
+            result->camera_znear = camera.znear;
+            result->camera_zfar = camera.has_zfar ? camera.zfar : 0.0f;
+            result->camera_aspect_ratio = camera.has_aspect_ratio ? camera.aspect_ratio : 0.0f;
         }
-        if (out_node_index && data) {
-            *out_node_index = (int)cgltf_node_index(data, node);
-        }
+        FillCameraExtras(result, node->camera, data);
+        result->camera_node_index = (int)cgltf_node_index(data, node);
         return true;
     }
     for (cgltf_size ci = 0; ci < node->children_count; ++ci) {
-        if (FindFirstSceneCamera(data, node->children[ci], out_pos, out_target, out_fov_deg, out_node_index)) {
+        if (FindFirstSceneCamera(data, node->children[ci], result)) {
             return true;
         }
     }
@@ -747,24 +872,6 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
         strncpy_s(result->error, "invalid glTF data", _TRUNCATE);
         cgltf_free(data);
         return result;
-    }
-
-    // Warn when Blender exported in Z-up mode (non-standard; glTF 2.0 requires Y-up).
-    // The asset.generator string will contain "Blender" but the exporter does NOT embed
-    // an "up" field in glTF 2.0 metadata.  The only reliable detection is to check
-    // whether every root-node's world matrix has its dominant "up" component along Y.
-    // A simpler heuristic: if the file was created by Blender AND the mesh root has a
-    // large rotation around X (~±90°), that's the wrong-up-axis sign.
-    // For now, just emit a reminder whenever loading from a Blender-generated file so
-    // users see it in stdout and can fix their export settings.
-    if (data->asset.generator && strstr(data->asset.generator, "Blender")) {
-        GLTF_LOGV("[glTF] NOTE: Blender-generated file detected ('%s').\n"
-                  "       Ensure 'Up: +Y Up' is selected in Blender's glTF export dialog.\n"
-                  "       Exporting with Z-up produces non-standard glTF and will appear\n"
-                  "       rotated 90° around X in HiMYM (mesh lies on its side, camera wrong).\n",
-                  data->asset.generator);
-        // Always print this (not just when verbose) since it is actionable axis guidance.
-        printf("[glTF] Blender export detected. Verify 'Up: +Y Up' in export settings.\n");
     }
 
     const int max_nodes = (int)data->nodes_count;
@@ -832,25 +939,17 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
         }
     }
 
-    result->has_camera = false;
-    result->camera_pos[0] = 0.0f;
-    result->camera_pos[1] = 0.0f;
-    result->camera_pos[2] = 5.0f;
-    result->camera_target[0] = 0.0f;
-    result->camera_target[1] = 0.0f;
-    result->camera_target[2] = 0.0f;
-    result->camera_fov_deg = 45.0f;
-    result->camera_node_index = -1;
+    SetCameraDefaults(result);
     if (data->scene && data->scene->nodes_count > 0) {
         for (cgltf_size ni = 0; ni < data->scene->nodes_count; ++ni) {
-            if (FindFirstSceneCamera(data, data->scene->nodes[ni], result->camera_pos, result->camera_target, &result->camera_fov_deg, &result->camera_node_index)) {
+            if (FindFirstSceneCamera(data, data->scene->nodes[ni], result)) {
                 result->has_camera = true;
                 break;
             }
         }
     } else {
         for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
-            if (FindFirstSceneCamera(data, &data->nodes[ni], result->camera_pos, result->camera_target, &result->camera_fov_deg, &result->camera_node_index)) {
+            if (FindFirstSceneCamera(data, &data->nodes[ni], result)) {
                 result->has_camera = true;
                 break;
             }
@@ -950,7 +1049,7 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
                 if (norm_acc) {
                     float local_nrm[3] = {};
                     ReadVec3(norm_acc, vi, local_nrm);
-                    TransformVector(node_world, local_nrm, v.normal);
+                    TransformNormal(node_world, local_nrm, v.normal);
                 }
                 if (uv_acc) ReadVec2(uv_acc, vi, v.uv);
                 rev::mesh::SetVertex(mesh, vert_offset + vi, v);
@@ -1013,6 +1112,16 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
             rev::mesh::AddMaterialSlot(mesh, prim_idx_start, prim_idx_count, slot_color,
                                        material_index, 0, source_node_index,
                                        slot_emissive, slot_emissive_strength);
+            if (material_index >= 0 && material_index < result->material_count) {
+                const Material& mat = result->materials[material_index];
+                rev::mesh::MaterialSlot& slot = mesh->material_slots[mesh->material_slot_count - 1];
+                slot.noise_target = mat.noise_target;
+                slot.noise_scale = mat.noise_scale;
+                slot.noise_detail = mat.noise_detail;
+                slot.noise_roughness = mat.noise_roughness;
+                slot.noise_distortion = mat.noise_distortion;
+                slot.noise_strength = mat.noise_strength;
+            }
 
             vert_offset += prim_vert_count;
 
@@ -1038,6 +1147,14 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
     mesh->imported_camera_target[1] = result->camera_target[1];
     mesh->imported_camera_target[2] = result->camera_target[2];
     mesh->imported_camera_fov_deg = result->camera_fov_deg;
+    mesh->imported_camera_type = result->camera_type;
+    mesh->imported_camera_znear = result->camera_znear;
+    mesh->imported_camera_zfar = result->camera_zfar;
+    mesh->imported_camera_aspect_ratio = result->camera_aspect_ratio;
+    mesh->imported_camera_xmag = result->camera_xmag;
+    mesh->imported_camera_ymag = result->camera_ymag;
+    mesh->imported_camera_shift_x = result->camera_shift_x;
+    mesh->imported_camera_shift_y = result->camera_shift_y;
     mesh->imported_camera_node_index = result->camera_node_index;
     if (data->nodes_count > 0) {
         mesh->imported_node_count = (uint32_t)data->nodes_count;
@@ -1086,15 +1203,7 @@ ImportResult* LoadMesh(const char* gltf_path, const char* texture_output_dir) {
     result->has_light = false;
     result->light_pos[0] = result->light_pos[1] = result->light_pos[2] = 0.0f;
     result->light_node_index = -1;
-    result->has_camera = false;
-    result->camera_pos[0] = 0.0f;
-    result->camera_pos[1] = 0.0f;
-    result->camera_pos[2] = 5.0f;
-    result->camera_target[0] = 0.0f;
-    result->camera_target[1] = 0.0f;
-    result->camera_target[2] = 0.0f;
-    result->camera_fov_deg = 45.0f;
-    result->camera_node_index = -1;
+    SetCameraDefaults(result);
 
     if (!gltf_path || !gltf_path[0]) {
         strncpy_s(result->error, "null or empty gltf_path", _TRUNCATE);
@@ -1135,15 +1244,7 @@ ImportResult* LoadMeshFromMemory(const void* buf, size_t size,
     result->has_light = false;
     result->light_pos[0] = result->light_pos[1] = result->light_pos[2] = 0.0f;
     result->light_node_index = -1;
-    result->has_camera = false;
-    result->camera_pos[0] = 0.0f;
-    result->camera_pos[1] = 0.0f;
-    result->camera_pos[2] = 5.0f;
-    result->camera_target[0] = 0.0f;
-    result->camera_target[1] = 0.0f;
-    result->camera_target[2] = 0.0f;
-    result->camera_fov_deg = 45.0f;
-    result->camera_node_index = -1;
+    SetCameraDefaults(result);
 
     if (!buf || size == 0) {
         strncpy_s(result->error, "null or empty buffer", _TRUNCATE);

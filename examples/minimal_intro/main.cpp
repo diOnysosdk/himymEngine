@@ -1913,6 +1913,7 @@ layout(location = 2) in vec2 a_uv;
 out vec3 v_frag_pos;
 out vec3 v_normal;
 out vec2 v_uv;
+out vec3 v_noise_pos;
 uniform mat4 u_model;
 uniform mat4 u_view;
 uniform mat4 u_projection;
@@ -1921,6 +1922,7 @@ void main() {
     v_frag_pos = world_pos.xyz;
     v_normal   = mat3(transpose(inverse(u_model))) * a_normal;
     v_uv       = a_uv;
+    v_noise_pos = a_pos;
     gl_Position = u_projection * u_view * world_pos;
 }
 )";
@@ -1930,6 +1932,7 @@ const char* mesh_fragment_shader_src = R"(
 in vec3 v_frag_pos;
 in vec3 v_normal;
 in vec2 v_uv;
+in vec3 v_noise_pos;
 out vec4 fragColor;
 uniform vec3  u_light_pos;
 uniform vec3  u_view_pos;
@@ -1940,6 +1943,36 @@ uniform vec3  u_emissive_color;
 uniform float u_emissive_strength;
 uniform sampler2D u_base_color_texture;
 uniform int u_has_texture;
+uniform int u_noise_target;
+uniform float u_noise_scale;
+uniform float u_noise_detail;
+uniform float u_noise_roughness;
+uniform float u_noise_distortion;
+uniform float u_noise_strength;
+float hash31(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+float value_noise(vec3 p) {
+    vec3 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(hash31(i), hash31(i + vec3(1,0,0)), f.x),
+                   mix(hash31(i + vec3(0,1,0)), hash31(i + vec3(1,1,0)), f.x), f.y),
+               mix(mix(hash31(i + vec3(0,0,1)), hash31(i + vec3(1,0,1)), f.x),
+                   mix(hash31(i + vec3(0,1,1)), hash31(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+float material_noise(vec3 p) {
+    p *= u_noise_scale;
+    p += value_noise(p) * u_noise_distortion;
+    float sum = 0.0, amp = 1.0, norm = 0.0;
+    for (int octave = 0; octave < 4; ++octave) {
+        if (float(octave) >= u_noise_detail) break;
+        sum += value_noise(p) * amp; norm += amp;
+        p *= 2.0; amp *= u_noise_roughness;
+    }
+    return norm > 0.0 ? sum / norm : 0.0;
+}
 void main() {
     vec3  base = u_color.rgb;
     float alpha = u_color.a;
@@ -1948,21 +1981,69 @@ void main() {
         base *= tex_color.rgb;
         alpha *= tex_color.a;
     }
+    float noise_value = u_noise_target != 0 ? material_noise(v_noise_pos) : 0.0;
+    if (u_noise_target == 1) base *= mix(1.0, noise_value, u_noise_strength);
+    float material_roughness = u_noise_target == 2
+        ? mix(u_roughness, noise_value, u_noise_strength) : u_roughness;
     vec3  norm     = normalize(v_normal);
     vec3  ldir     = normalize(u_light_pos - v_frag_pos);
     vec3  vdir     = normalize(u_view_pos  - v_frag_pos);
     vec3  hdir     = normalize(ldir + vdir);
     float ambient  = 0.15;
     float diff     = max(dot(norm, ldir), 0.0) * (1.0 - u_metallic * 0.9);
-    float shininess   = mix(2.0, 256.0, 1.0 - u_roughness);
+    float shininess   = mix(2.0, 256.0, 1.0 - material_roughness);
     float spec_fac    = pow(max(dot(norm, hdir), 0.0), shininess);
     vec3  spec_col    = mix(vec3(0.04), base, u_metallic);
-    vec3  spec        = spec_col * spec_fac * (1.0 - u_roughness * 0.85);
+    vec3  spec        = spec_col * spec_fac * (1.0 - material_roughness * 0.85);
     vec3  emissive    = u_emissive_color * u_emissive_strength;
+    if (u_noise_target == 3) emissive *= mix(1.0, noise_value, u_noise_strength);
     vec3  result      = base * (ambient + diff) + spec + emissive;
     fragColor = vec4(result, alpha);
 }
 )";
+
+static void SetMeshNoiseUniforms(rev::shader::Program* program,
+                                 const rev::mesh::MaterialSlot* slot) {
+    const int target = slot ? slot->noise_target : 0;
+    int loc = rev::shader::GetUniformLocation(program, "u_noise_target");
+    if (loc >= 0) rev::shader::SetInt(program, loc, target);
+    if (!slot || target == 0) return;
+    loc = rev::shader::GetUniformLocation(program, "u_noise_scale");
+    if (loc >= 0) rev::shader::SetFloat(program, loc, slot->noise_scale);
+    loc = rev::shader::GetUniformLocation(program, "u_noise_detail");
+    if (loc >= 0) rev::shader::SetFloat(program, loc, slot->noise_detail);
+    loc = rev::shader::GetUniformLocation(program, "u_noise_roughness");
+    if (loc >= 0) rev::shader::SetFloat(program, loc, slot->noise_roughness);
+    loc = rev::shader::GetUniformLocation(program, "u_noise_distortion");
+    if (loc >= 0) rev::shader::SetFloat(program, loc, slot->noise_distortion);
+    loc = rev::shader::GetUniformLocation(program, "u_noise_strength");
+    if (loc >= 0) rev::shader::SetFloat(program, loc, slot->noise_strength);
+}
+
+static void BuildMeshProjection(float out[16], const rev::mesh::Mesh* mesh,
+                                bool use_imported_camera, float fallback_fov_deg,
+                                float viewport_aspect) {
+    if (!use_imported_camera || !mesh || !mesh->has_imported_camera) {
+        Mat4Perspective(out, fallback_fov_deg * 3.14159265f / 180.0f,
+                        viewport_aspect, 0.1f, 100.0f);
+        return;
+    }
+    float znear = mesh->imported_camera_znear > 0.0001f
+        ? mesh->imported_camera_znear : 0.0001f;
+    if (mesh->imported_camera_type == 1) {
+        rev::runtime::Mat4Orthographic(out,
+            mesh->imported_camera_xmag, mesh->imported_camera_ymag,
+            znear, mesh->imported_camera_zfar,
+            mesh->imported_camera_shift_x, mesh->imported_camera_shift_y);
+        return;
+    }
+    float aspect = mesh->imported_camera_aspect_ratio > 0.0f
+        ? mesh->imported_camera_aspect_ratio : viewport_aspect;
+    rev::runtime::Mat4PerspectiveShift(out,
+        mesh->imported_camera_fov_deg * 3.14159265f / 180.0f,
+        aspect, znear, mesh->imported_camera_zfar,
+        mesh->imported_camera_shift_x, mesh->imported_camera_shift_y);
+}
 
 // Fragment shaders - synchronized with rev_editor shader_presets.cpp
 static const char* GetRuntimeShaderSourceById(int shader_id) {
@@ -3437,7 +3518,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (camera_fov_deg < 1.0f) camera_fov_deg = 1.0f;
                     if (camera_fov_deg > 170.0f) camera_fov_deg = 170.0f;
                     Mat4LookAt(view_mat, camera_eye, camera_center, camera_up);
-                    Mat4Perspective(proj_mat, camera_fov_deg * 3.14159265f / 180.0f, aspect, 0.1f, 100.0f);
+                    BuildMeshProjection(proj_mat, mesh_obj,
+                        mesh_cue.use_imported_camera != 0,
+                        camera_fov_deg, aspect);
                     if (glUniformMatrix4fv_fn && loc_view >= 0) glUniformMatrix4fv_fn(loc_view, 1, 0, view_mat);
                     if (glUniformMatrix4fv_fn && loc_proj >= 0) glUniformMatrix4fv_fn(loc_proj, 1, 0, proj_mat);
                     if (loc_vpos >= 0) rev::shader::SetVec3(mesh_shader, loc_vpos, camera_eye[0], camera_eye[1], camera_eye[2]);
@@ -3498,6 +3581,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         } else if (loc_has_tex >= 0) {
                             rev::shader::SetInt(mesh_shader, loc_has_tex, 0);
                         }
+                        SetMeshNoiseUniforms(mesh_shader, &slot);
                         rev::mesh::Render(mesh_obj, (int)si);
                         rendered_slot = true;
                     }
@@ -3524,6 +3608,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         } else if (loc_has_tex >= 0) {
                             rev::shader::SetInt(mesh_shader, loc_has_tex, 0);
                         }
+                        SetMeshNoiseUniforms(mesh_shader, nullptr);
                         rev::mesh::Render(mesh_obj, -1);
                     }
                     delete[] node_delta_mats;
@@ -5246,7 +5331,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float view_mat[16], proj_mat[16], model_mat[16];
                     if (anim_fov < 1.0f) anim_fov = 1.0f;
                     if (anim_fov > 170.0f) anim_fov = 170.0f;
-                    Mat4Perspective(proj_mat, anim_fov * 3.14159265f / 180.0f, aspect, 0.1f, 100.0f);
+                    BuildMeshProjection(proj_mat, mesh_obj,
+                        mesh_cue.use_imported_camera != 0,
+                        anim_fov, aspect);
                     Mat4LookAt(view_mat, eye, center, up_v);
                     Mat4Model(model_mat, anim_pos, anim_rot, anim_scale);  // Use animated transform
                     typedef void (*PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
@@ -5436,6 +5523,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                 rev::shader::SetInt(mesh_shader, loc_has_tex, 0);
                             }
 
+                            SetMeshNoiseUniforms(mesh_shader, &slot);
                             rev::mesh::Render(mesh_obj, (int)si);
                             rendered_slot = true;
                         }
@@ -5481,6 +5569,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         } else if (loc_has_tex >= 0) {
                             rev::shader::SetInt(mesh_shader, loc_has_tex, 0);
                         }
+                        SetMeshNoiseUniforms(mesh_shader, nullptr);
                         rev::mesh::Render(mesh_obj, -1);
                     }
                     delete[] node_delta_mats;

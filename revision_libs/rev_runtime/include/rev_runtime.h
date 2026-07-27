@@ -729,6 +729,10 @@ int LoadCurves(const char* cues_path, curve::Curve* curves, int max_curves);
 // ------------------------------------------------------------------
 void Mat4Identity    (float* m);
 void Mat4Perspective (float* m, float fov_rad, float aspect, float znear, float zfar);
+void Mat4PerspectiveShift(float* m, float fov_rad, float aspect, float znear,
+                          float zfar, float shift_x, float shift_y);
+void Mat4Orthographic(float* m, float xmag, float ymag, float znear, float zfar,
+                      float shift_x, float shift_y);
 void Mat4LookAt      (float* m, const float eye[3], const float center[3], const float up[3]);
 void Mat4Translate   (float* m, float x, float y, float z);
 void Mat4RotateEuler (float* m, float rx_deg, float ry_deg, float rz_deg);

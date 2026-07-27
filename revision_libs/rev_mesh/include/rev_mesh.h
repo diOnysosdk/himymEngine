@@ -20,6 +20,12 @@ struct MaterialSlot {
     int      source_node_index; // Source glTF node for imported meshes (-1 if unknown)
     float    emissive_color[3];
     float    emissive_strength;
+    int      noise_target;
+    float    noise_scale;
+    float    noise_detail;
+    float    noise_roughness;
+    float    noise_distortion;
+    float    noise_strength;
 };
 
 struct ImportedNode {
@@ -58,6 +64,14 @@ struct Mesh {
     float    imported_camera_pos[3];
     float    imported_camera_target[3];
     float    imported_camera_fov_deg;
+    int      imported_camera_type;
+    float    imported_camera_znear;
+    float    imported_camera_zfar;
+    float    imported_camera_aspect_ratio;
+    float    imported_camera_xmag;
+    float    imported_camera_ymag;
+    float    imported_camera_shift_x;
+    float    imported_camera_shift_y;
     int      imported_camera_node_index;
     ImportedNode* imported_nodes;
     uint32_t      imported_node_count;

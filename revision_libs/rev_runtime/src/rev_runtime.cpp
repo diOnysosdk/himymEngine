@@ -1805,14 +1805,36 @@ void Mat4Identity(float* m) {
 }
 
 void Mat4Perspective(float* m, float fov_rad, float aspect, float znear, float zfar) {
+    Mat4PerspectiveShift(m, fov_rad, aspect, znear, zfar, 0.0f, 0.0f);
+}
+
+void Mat4PerspectiveShift(float* m, float fov_rad, float aspect, float znear,
+                          float zfar, float shift_x, float shift_y) {
     float f = 1.0f / tanf(fov_rad * 0.5f);
     Mat4Identity(m);
     m[0]  =  f / aspect;
     m[5]  =  f;
-    m[10] =  (zfar + znear) / (znear - zfar);
+    m[8]  =  2.0f * shift_x;
+    m[9]  =  2.0f * shift_y;
+    m[10] = zfar > znear ? (zfar + znear) / (znear - zfar) : -1.0f;
     m[11] = -1.0f;
-    m[14] =  (2.0f * zfar * znear) / (znear - zfar);
+    m[14] = zfar > znear ? (2.0f * zfar * znear) / (znear - zfar) : -2.0f * znear;
     m[15] =  0.0f;
+}
+
+void Mat4Orthographic(float* m, float xmag, float ymag, float znear, float zfar,
+                      float shift_x, float shift_y) {
+    if (xmag <= 0.0f) xmag = 1.0f;
+    if (ymag <= 0.0f) ymag = 1.0f;
+    if (znear < 0.0f) znear = 0.0f;
+    if (zfar <= znear) zfar = znear + 100.0f;
+    Mat4Identity(m);
+    m[0] = 1.0f / xmag;
+    m[5] = 1.0f / ymag;
+    m[10] = -2.0f / (zfar - znear);
+    m[12] = -2.0f * shift_x;
+    m[13] = -2.0f * shift_y;
+    m[14] = -(zfar + znear) / (zfar - znear);
 }
 
 void Mat4LookAt(float* m, const float eye[3], const float center[3], const float up[3]) {
@@ -1833,9 +1855,11 @@ void Mat4LookAt(float* m, const float eye[3], const float center[3], const float
     float uz = sx*fy - sy*fx;
 
     Mat4Identity(m);
-    m[0] = sx; m[4] = ux; m[8]  = -fx;
-    m[1] = sy; m[5] = uy; m[9]  = -fy;
-    m[2] = sz; m[6] = uz; m[10] = -fz;
+    // Column-major storage: the camera basis vectors form the rows of the
+    // world-to-view transform.
+    m[0] = sx; m[4] = sy; m[8]  = sz;
+    m[1] = ux; m[5] = uy; m[9]  = uz;
+    m[2] = -fx; m[6] = -fy; m[10] = -fz;
     m[12] = -(sx*eye[0] + sy*eye[1] + sz*eye[2]);
     m[13] = -(ux*eye[0] + uy*eye[1] + uz*eye[2]);
     m[14] =   fx*eye[0] + fy*eye[1] + fz*eye[2];

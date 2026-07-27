@@ -52,6 +52,15 @@ if(MSVC)
     )
 endif()
 
+# Focused Blender/glTF coordinate, normal, camera, and material-extras tests.
+add_executable(gltf_import_tests tests/gltf_import_tests.cpp)
+target_link_libraries(gltf_import_tests PRIVATE rev_gltf rev_runtime)
+if(MSVC)
+    set_target_properties(gltf_import_tests PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup"
+    )
+endif()
+
 # Utility CLI: generate build/packed_assets.h without launching editor UI.
 add_executable(pack_cli tools/pack_cli.cpp)
 target_link_libraries(pack_cli PRIVATE rev_pack)

@@ -26,6 +26,7 @@ These are the preferred documentation entry points. They can still drift, so ver
 | `architecture/API-REFERENCE.md` | Preferred API/format reference; verify exact signatures and field counts in headers/parsers. |
 | `context/CODE_STYLE.md` | Current coding, build-profile, and completion rules. |
 | `guides/EDITOR_GUIDE.md` | Current C++/ImGui editor workflow. |
+| `guides/BLENDER_GLTF_GUIDE.md` | Current Blender 5.2/glTF axis and compact procedural-material contract. |
 | `CURVES_RUNTIME_USAGE.md` | Current curve consumption patterns. |
 | `QUICK_START.md` | Useful current quick-start material, subject to code/build verification. |
 
