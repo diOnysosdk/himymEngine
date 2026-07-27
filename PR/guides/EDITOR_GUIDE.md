@@ -79,6 +79,13 @@ for their authored scene window even if an individual cue ends. The next scene s
 own stack at the scene boundary; effects do not carry across scenes unless they are authored in
 both scene stacks.
 
+For **Fade In / Fade Out**, **Intensity** is the maximum black fade, while
+**Fade In Duration** and **Fade Out Duration** control the scene-local envelope.
+The scene remains fully visible between those two fades; adding the effect does
+not hold the completed scene at a constant black level. When an intensity curve
+is assigned, that curve directly controls the black-fade amount and replaces the
+automatic duration envelope (`1` is black and `0` is fully visible).
+
 ### Workflow 2: Add Shader to Scene
 
 1. **Select scene** in timeline
@@ -142,6 +149,12 @@ both scene stacks.
    - **Asset Key**: Give it a name (e.g., `main_track`)
    - **Browse**: Opens file picker — selected XM file is **copied into `{project}_assets/`** and stored as a workspace-relative path
    - **Start/End**: Music cue timing (usually 0.0 to scene end)
+
+The Music Settings window also provides project-wide gain, compressor, stereo
+width, and three-band EQ controls. Each numeric audio parameter has a **Record**
+button and can reuse an existing curve. Audio curves run on the project timeline,
+so they continue across scene boundaries and wrap with an intro loop. The effect
+checkbox must be enabled for its animated values to affect the music.
 3. **Apply & Close**
 
 **Result**: XM module plays during intro. The asset copy ensures the file is available for both regular and packed builds.
@@ -369,6 +382,10 @@ type build_diagnostics\runtime_startup.log
 ---
 
 ## Asset Management
+
+Deleting a cue or scene immediately closes stale cue editors, clears cached mesh
+resources, and removes files from the managed project-assets folder when no
+remaining cue references them. Assets shared by other cues are retained.
 
 ### Workspace Assets
 

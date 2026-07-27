@@ -27,6 +27,7 @@ static void CloseCueSettingsForRecording(EditorContext* editor)
         case CueTypePixelEmitter: editor->pixel_emitter_modal_open = false; break;
         case CueTypeText: editor->text_modal_open = false; break;
         case CueTypeScrollText: editor->scroll_text_modal_open = false; break;
+        case CueTypeMusic: editor->music_modal_open = false; break;
         case CueTypeMesh: editor->mesh_modal_open = false; break;
         default: break;
     }
@@ -365,9 +366,12 @@ void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int
         DrawCurveRecordButton(editor, &effect.curve_intensity, "Layer Effect Intensity", modified, "layer_effect_intensity");
         if (effect.blend_mode < 0 || effect.blend_mode > 3) effect.blend_mode = 0;
         if (ImGui::Combo("Blend Mode", &effect.blend_mode, blend_names, 4) && modified) *modified = true;
-        if (ImGui::SliderFloat("Threshold", &effect.threshold, 0.0f, 4.0f) && modified) *modified = true;
+        const bool is_fade = effect.type == PostEffectFade;
+        if (ImGui::SliderFloat(is_fade ? "Fade In Duration" : "Threshold",
+                               &effect.threshold, 0.0f, 4.0f) && modified) *modified = true;
         DrawCurveRecordButton(editor, &effect.curve_threshold, "Layer Effect Threshold", modified, "layer_effect_threshold");
-        if (ImGui::SliderFloat("Radius", &effect.radius, 0.0f, 4.0f) && modified) *modified = true;
+        if (ImGui::SliderFloat(is_fade ? "Fade Out Duration" : "Radius",
+                               &effect.radius, 0.0f, 4.0f) && modified) *modified = true;
         DrawCurveRecordButton(editor, &effect.curve_radius, "Layer Effect Radius", modified, "layer_effect_radius");
         if (ImGui::ColorEdit4("Color", effect.color) && modified) *modified = true;
         if (ImGui::InputFloat("Start", &effect.start_time, 0.1f, 1.0f) && modified) *modified = true;
@@ -583,6 +587,17 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
     if (!project || !used) return;
 
     for (int i = 0; i < rev::runtime::kMaxCurves; ++i) used[i] = false;
+
+    AudioEffects* audio = &project->audio_effects;
+    MarkCurveUsed(used, audio->curve_gain_db);
+    MarkCurveUsed(used, audio->curve_compressor_threshold);
+    MarkCurveUsed(used, audio->curve_compressor_ratio);
+    MarkCurveUsed(used, audio->curve_compressor_attack);
+    MarkCurveUsed(used, audio->curve_compressor_release);
+    MarkCurveUsed(used, audio->curve_widener_amount);
+    MarkCurveUsed(used, audio->curve_eq_low_db);
+    MarkCurveUsed(used, audio->curve_eq_mid_db);
+    MarkCurveUsed(used, audio->curve_eq_high_db);
 
     for (int s = 0; s < project->scene_count; ++s) {
         SceneBlock* scene = &project->scenes[s];
@@ -919,6 +934,20 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 add_target("Scroll Wave Length", &cue->curve_wave_length, cue->wave_length);
                 add_target("Scroll Jitter Amp", &cue->curve_jitter_amp, cue->jitter_amp);
                 add_target("Scroll Jitter Freq", &cue->curve_jitter_freq, cue->jitter_freq);
+            }
+            break;
+        case CueTypeMusic:
+            {
+                AudioEffects* audio = &editor->project->audio_effects;
+                add_target("Audio Gain", &audio->curve_gain_db, audio->gain_db);
+                add_target("Compressor Threshold", &audio->curve_compressor_threshold, audio->compressor_threshold);
+                add_target("Compressor Ratio", &audio->curve_compressor_ratio, audio->compressor_ratio);
+                add_target("Compressor Attack", &audio->curve_compressor_attack, audio->compressor_attack);
+                add_target("Compressor Release", &audio->curve_compressor_release, audio->compressor_release);
+                add_target("Stereo Width", &audio->curve_widener_amount, audio->widener_amount);
+                add_target("EQ Low", &audio->curve_eq_low_db, audio->eq_low_db);
+                add_target("EQ Mid", &audio->curve_eq_mid_db, audio->eq_mid_db);
+                add_target("EQ High", &audio->curve_eq_high_db, audio->eq_high_db);
             }
             break;
         case CueTypeMesh:
@@ -2288,35 +2317,94 @@ void RenderMusicModal(EditorContext* editor) {
         ImGui::Separator();
 
         ImGui::Text("Overall Audio Effects");
+        bool audio_curve_modified = false;
+        auto DrawAudioCurveButtons = [&](int* curve_target, float base_value,
+                                         const char* parameter_label, const char* id_suffix) {
+            if (!curve_target || !parameter_label || !id_suffix) return;
+            ImGui::SameLine();
+            char add_label[64] = {};
+            snprintf(add_label, sizeof(add_label), "+##add_%s", id_suffix);
+            if (ImGui::SmallButton(add_label)) {
+                if (*curve_target < 0) {
+                    *curve_target = AcquireCurveSlot(editor, base_value, nullptr);
+                }
+                if (*curve_target >= 0 && *curve_target < editor->project->curve_count) {
+                    editor->editing_curve_index = *curve_target;
+                    editor->editing_curve_cue_type = CueTypeMusic;
+                    editor->editing_curve_field = -1;
+                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label),
+                             "%s", parameter_label);
+                    editor->curve_editor_modal_request_open = true;
+                    editor->music_modal_open = false;
+                    ImGui::CloseCurrentPopup();
+                    audio_curve_modified = true;
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(*curve_target >= 0
+                    ? "Open the assigned %s curve"
+                    : "Create and edit a %s curve", parameter_label);
+            }
+            DrawCurveRecordButton(editor, curve_target, parameter_label,
+                                  &audio_curve_modified, id_suffix);
+        };
         bool gain_enabled = editor->project->audio_effects.gain_enabled != 0;
         if (ImGui::Checkbox("Gain", &gain_enabled)) {
             editor->project->audio_effects.gain_enabled = gain_enabled ? 1 : 0;
             AutoSave();
         }
         if (ImGui::SliderFloat("Gain (dB)", &editor->project->audio_effects.gain_db, -24.0f, 24.0f)) AutoSave();
+        DrawAudioCurveButtons(&editor->project->audio_effects.curve_gain_db,
+                              editor->project->audio_effects.gain_db, "Audio Gain", "audio_gain");
         bool compressor_enabled = editor->project->audio_effects.compressor_enabled != 0;
         if (ImGui::Checkbox("Compressor", &compressor_enabled)) {
             editor->project->audio_effects.compressor_enabled = compressor_enabled ? 1 : 0;
             AutoSave();
         }
         if (ImGui::SliderFloat("Threshold", &editor->project->audio_effects.compressor_threshold, 0.05f, 1.0f)) AutoSave();
+        DrawAudioCurveButtons(&editor->project->audio_effects.curve_compressor_threshold,
+                              editor->project->audio_effects.compressor_threshold,
+                              "Compressor Threshold", "audio_comp_threshold");
         if (ImGui::SliderFloat("Ratio", &editor->project->audio_effects.compressor_ratio, 1.0f, 20.0f)) AutoSave();
+        DrawAudioCurveButtons(&editor->project->audio_effects.curve_compressor_ratio,
+                              editor->project->audio_effects.compressor_ratio,
+                              "Compressor Ratio", "audio_comp_ratio");
         if (ImGui::SliderFloat("Attack (s)", &editor->project->audio_effects.compressor_attack, 0.001f, 1.0f)) AutoSave();
+        DrawAudioCurveButtons(&editor->project->audio_effects.curve_compressor_attack,
+                              editor->project->audio_effects.compressor_attack,
+                              "Compressor Attack", "audio_comp_attack");
         if (ImGui::SliderFloat("Release (s)", &editor->project->audio_effects.compressor_release, 0.005f, 2.0f)) AutoSave();
+        DrawAudioCurveButtons(&editor->project->audio_effects.curve_compressor_release,
+                              editor->project->audio_effects.compressor_release,
+                              "Compressor Release", "audio_comp_release");
         bool widener_enabled = editor->project->audio_effects.widener_enabled != 0;
         if (ImGui::Checkbox("Widener", &widener_enabled)) {
             editor->project->audio_effects.widener_enabled = widener_enabled ? 1 : 0;
             AutoSave();
         }
         if (ImGui::SliderFloat("Width", &editor->project->audio_effects.widener_amount, 0.0f, 2.0f)) AutoSave();
+        DrawAudioCurveButtons(&editor->project->audio_effects.curve_widener_amount,
+                              editor->project->audio_effects.widener_amount,
+                              "Stereo Width", "audio_width");
         bool eq_enabled = editor->project->audio_effects.eq_enabled != 0;
         if (ImGui::Checkbox("EQ", &eq_enabled)) {
             editor->project->audio_effects.eq_enabled = eq_enabled ? 1 : 0;
             AutoSave();
         }
         if (ImGui::SliderFloat("EQ Low (dB)", &editor->project->audio_effects.eq_low_db, -18.0f, 18.0f)) AutoSave();
+        DrawAudioCurveButtons(&editor->project->audio_effects.curve_eq_low_db,
+                              editor->project->audio_effects.eq_low_db, "EQ Low", "audio_eq_low");
         if (ImGui::SliderFloat("EQ Mid (dB)", &editor->project->audio_effects.eq_mid_db, -18.0f, 18.0f)) AutoSave();
+        DrawAudioCurveButtons(&editor->project->audio_effects.curve_eq_mid_db,
+                              editor->project->audio_effects.eq_mid_db, "EQ Mid", "audio_eq_mid");
         if (ImGui::SliderFloat("EQ High (dB)", &editor->project->audio_effects.eq_high_db, -18.0f, 18.0f)) AutoSave();
+        DrawAudioCurveButtons(&editor->project->audio_effects.curve_eq_high_db,
+                              editor->project->audio_effects.eq_high_db, "EQ High", "audio_eq_high");
+        if (audio_curve_modified) AutoSave();
+        static int audio_reuse_target = 0;
+        static int audio_reuse_curve = 0;
+        RenderCurveReuseSection(editor, "audio_curve_reuse", CueTypeMusic,
+                                &audio_reuse_target, &audio_reuse_curve);
         
         ImGui::Separator();
         
@@ -4670,6 +4758,7 @@ void RenderMeshModal(EditorContext* editor) {
         if (ImGui::Combo("Face Culling", &cue->cull_mode, cull_mode_names, 3)) AutoSave();
 
         ImGui::Separator();
+        ImGui::TextDisabled("Timing is relative to this scene (0 = scene start).");
         if (ImGui::DragFloat("Cue Start", &cue->cue_start, 0.01f, 0.0f, 9999.0f)) AutoSave();
         if (ImGui::DragFloat("Cue End",   &cue->cue_end,   0.01f, 0.0f, 9999.0f)) AutoSave();
         if (ImGui::DragInt  ("Layer Order", &cue->layer_order, 1, -100, 100)) AutoSave();

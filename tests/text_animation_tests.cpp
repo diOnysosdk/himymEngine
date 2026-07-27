@@ -23,6 +23,33 @@ int main()
 {
     bool passed = true;
 
+    passed &= Check(NearlyEqual(ComputePostFadeIntensity(1.0f, 0.0f, 0.0f, 10.0f, 2.0f, 2.0f), 1.0f),
+                    "post fade starts black");
+    passed &= Check(NearlyEqual(ComputePostFadeIntensity(1.0f, 1.0f, 0.0f, 10.0f, 2.0f, 2.0f), 0.5f),
+                    "post fade-in interpolates");
+    passed &= Check(NearlyEqual(ComputePostFadeIntensity(1.0f, 5.0f, 0.0f, 10.0f, 2.0f, 2.0f), 0.0f),
+                    "post fade leaves scene visible between fades");
+    passed &= Check(NearlyEqual(ComputePostFadeIntensity(1.0f, 9.0f, 0.0f, 10.0f, 2.0f, 2.0f), 0.5f),
+                    "post fade-out interpolates");
+
+    AudioEffects authored_audio = {};
+    InitializeAudioEffects(&authored_audio);
+    passed &= Check(authored_audio.curve_gain_db == -1 &&
+                        authored_audio.curve_eq_high_db == -1,
+                    "audio curve defaults are unassigned");
+    rev::curve::Curve audio_curve = rev::curve::CreateCurve(2);
+    audio_curve.duration = 10.0f;
+    rev::curve::AddPoint(audio_curve, 0.0f, -12.0f);
+    rev::curve::AddPoint(audio_curve, 1.0f, 0.0f);
+    authored_audio.gain_enabled = 1;
+    authored_audio.gain_db = -6.0f;
+    authored_audio.curve_gain_db = 0;
+    AudioEffects evaluated_audio = {};
+    EvaluateAudioEffects(&authored_audio, &audio_curve, 1, 5.0f, &evaluated_audio);
+    passed &= Check(NearlyEqual(evaluated_audio.gain_db, -6.0f),
+                    "audio gain curve uses project timeline");
+    rev::curve::DestroyCurve(audio_curve);
+
     passed &= Check(NearlyEqual(ApplyTextEasing(0.5f, TextEasingEaseInQuad), 0.25f),
                     "ease-in quadratic midpoint");
     passed &= Check(NearlyEqual(GetTextElementOrder(1, 4, TextStaggerOrderForward, 7), 1.0f / 3.0f),

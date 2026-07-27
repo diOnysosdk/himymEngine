@@ -17,6 +17,66 @@
 namespace rev {
 namespace runtime {
 
+void InitializeAudioEffects(AudioEffects* effects)
+{
+    if (!effects) return;
+    memset(effects, 0, sizeof(*effects));
+    effects->compressor_threshold = 0.7f;
+    effects->compressor_ratio = 4.0f;
+    effects->compressor_attack = 0.01f;
+    effects->compressor_release = 0.12f;
+    effects->widener_amount = 1.0f;
+    effects->curve_gain_db = -1;
+    effects->curve_compressor_threshold = -1;
+    effects->curve_compressor_ratio = -1;
+    effects->curve_compressor_attack = -1;
+    effects->curve_compressor_release = -1;
+    effects->curve_widener_amount = -1;
+    effects->curve_eq_low_db = -1;
+    effects->curve_eq_mid_db = -1;
+    effects->curve_eq_high_db = -1;
+}
+
+static float EvaluateAudioCurve(const rev::curve::Curve* curves, int curve_count,
+                                int curve_index, float timeline_time, float fallback)
+{
+    if (!curves || curve_index < 0 || curve_index >= curve_count) return fallback;
+    const rev::curve::Curve& curve = curves[curve_index];
+    if (curve.duration <= 0.0f) return fallback;
+    return rev::curve::Evaluate(curve, timeline_time / curve.duration);
+}
+
+void EvaluateAudioEffects(const AudioEffects* authored,
+                          const rev::curve::Curve* curves, int curve_count,
+                          float timeline_time, AudioEffects* evaluated)
+{
+    if (!authored || !evaluated) return;
+    *evaluated = *authored;
+    evaluated->gain_db = EvaluateAudioCurve(
+        curves, curve_count, authored->curve_gain_db, timeline_time, authored->gain_db);
+    evaluated->compressor_threshold = EvaluateAudioCurve(
+        curves, curve_count, authored->curve_compressor_threshold, timeline_time,
+        authored->compressor_threshold);
+    evaluated->compressor_ratio = EvaluateAudioCurve(
+        curves, curve_count, authored->curve_compressor_ratio, timeline_time,
+        authored->compressor_ratio);
+    evaluated->compressor_attack = EvaluateAudioCurve(
+        curves, curve_count, authored->curve_compressor_attack, timeline_time,
+        authored->compressor_attack);
+    evaluated->compressor_release = EvaluateAudioCurve(
+        curves, curve_count, authored->curve_compressor_release, timeline_time,
+        authored->compressor_release);
+    evaluated->widener_amount = EvaluateAudioCurve(
+        curves, curve_count, authored->curve_widener_amount, timeline_time,
+        authored->widener_amount);
+    evaluated->eq_low_db = EvaluateAudioCurve(
+        curves, curve_count, authored->curve_eq_low_db, timeline_time, authored->eq_low_db);
+    evaluated->eq_mid_db = EvaluateAudioCurve(
+        curves, curve_count, authored->curve_eq_mid_db, timeline_time, authored->eq_mid_db);
+    evaluated->eq_high_db = EvaluateAudioCurve(
+        curves, curve_count, authored->curve_eq_high_db, timeline_time, authored->eq_high_db);
+}
+
 // ------------------------------------------------------------------
 // ComputeEffectOpacity
 // ------------------------------------------------------------------
@@ -36,6 +96,29 @@ float ComputeEffectOpacity(int effect_type,
                                          : 1.0f - (time - fade_out_start) / out_dur;
     }
     return 1.0f;
+}
+
+float ComputePostFadeIntensity(float maximum_intensity, float time,
+                               float start_time, float end_time,
+                               float fade_in_duration, float fade_out_duration)
+{
+    float fade = 0.0f;
+    if (fade_in_duration > 0.0f) {
+        float progress = (time - start_time) / fade_in_duration;
+        if (progress < 0.0f) progress = 0.0f;
+        if (progress > 1.0f) progress = 1.0f;
+        fade = 1.0f - progress;
+    }
+    if (fade_out_duration > 0.0f && end_time > start_time) {
+        float progress = (end_time - time) / fade_out_duration;
+        if (progress < 0.0f) progress = 0.0f;
+        if (progress > 1.0f) progress = 1.0f;
+        float fade_out = 1.0f - progress;
+        if (fade_out > fade) fade = fade_out;
+    }
+    if (maximum_intensity < 0.0f) maximum_intensity = 0.0f;
+    if (maximum_intensity > 1.0f) maximum_intensity = 1.0f;
+    return maximum_intensity * fade;
 }
 
 static float Clamp01(float v) {

@@ -261,8 +261,13 @@ static void FillEditorAudioBuffer(EditorAudioState* state, float* output, int fr
 void UpdateEditorAudioEffects(EditorContext* editor) {
     EditorAudioState* state = editor ? (EditorAudioState*)editor->audio_state : nullptr;
     if (!state || !editor->project) return;
+    AudioEffects evaluated = {};
+    rev::runtime::EvaluateAudioEffects(&editor->project->audio_effects,
+                                       editor->project->curves,
+                                       editor->project->curve_count,
+                                       editor->current_time, &evaluated);
     std::lock_guard<std::mutex> lock(state->player_mutex);
-    if (state->player) rev::xm::SetAudioEffects(state->player, &editor->project->audio_effects);
+    if (state->player) rev::xm::SetAudioEffects(state->player, &evaluated);
 }
 
 static DWORD WINAPI EditorAudioThreadProc(LPVOID param) {
@@ -451,7 +456,12 @@ static bool ReplaceEditorMusic(EditorContext* editor, const MusicCue* cue, float
         !ReadEditorFile(path, &bytes)) return false;
     rev::xm::Player* replacement = rev::xm::CreatePlayer(bytes.data(), bytes.size());
     if (!replacement) return false;
-    rev::xm::SetAudioEffects(replacement, &editor->project->audio_effects);
+    AudioEffects evaluated = {};
+    rev::runtime::EvaluateAudioEffects(&editor->project->audio_effects,
+                                       editor->project->curves,
+                                       editor->project->curve_count,
+                                       timeline_time, &evaluated);
+    rev::xm::SetAudioEffects(replacement, &evaluated);
 
     float offset = timeline_time - cue_start;
     if (offset < 0.0f) offset = 0.0f;
@@ -508,6 +518,7 @@ static void SyncEditorAudio(EditorContext* editor, float delta_time) {
     }
 
     state->playing.store(editor->playing && has_cue, std::memory_order_release);
+    UpdateEditorAudioEffects(editor);
     state->last_time = editor->current_time;
     state->initialized = true;
 }
@@ -1268,12 +1279,7 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->project->music_persist_across_scenes = false;
     editor->project->runtime_fullscreen = true;
     strncpy_s(editor->project->runtime_title, sizeof(editor->project->runtime_title), "HiMYM - Minimal Intro Test", _TRUNCATE);
-    editor->project->audio_effects = {};
-    editor->project->audio_effects.compressor_threshold = 0.7f;
-    editor->project->audio_effects.compressor_ratio = 4.0f;
-    editor->project->audio_effects.compressor_attack = 0.01f;
-    editor->project->audio_effects.compressor_release = 0.12f;
-    editor->project->audio_effects.widener_amount = 1.0f;
+    rev::runtime::InitializeAudioEffects(&editor->project->audio_effects);
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
     memset(editor->project->assets_path, 0, sizeof(editor->project->assets_path));
@@ -1601,6 +1607,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             continue;
         }
         if (sscanf_s(start, "\"audio_gain_db\": %f", &editor->project->audio_effects.gain_db) == 1) continue;
+        if (sscanf_s(start, "\"audio_curve_gain_db\": %d", &editor->project->audio_effects.curve_gain_db) == 1) continue;
         if (sscanf_s(start, "\"audio_compressor_enabled\": %d", &bool_value) == 1) {
             editor->project->audio_effects.compressor_enabled = bool_value;
             continue;
@@ -1609,11 +1616,16 @@ bool LoadProject(EditorContext* editor, const char* path) {
         if (sscanf_s(start, "\"audio_compressor_ratio\": %f", &editor->project->audio_effects.compressor_ratio) == 1) continue;
         if (sscanf_s(start, "\"audio_compressor_attack\": %f", &editor->project->audio_effects.compressor_attack) == 1) continue;
         if (sscanf_s(start, "\"audio_compressor_release\": %f", &editor->project->audio_effects.compressor_release) == 1) continue;
+        if (sscanf_s(start, "\"audio_curve_compressor_threshold\": %d", &editor->project->audio_effects.curve_compressor_threshold) == 1) continue;
+        if (sscanf_s(start, "\"audio_curve_compressor_ratio\": %d", &editor->project->audio_effects.curve_compressor_ratio) == 1) continue;
+        if (sscanf_s(start, "\"audio_curve_compressor_attack\": %d", &editor->project->audio_effects.curve_compressor_attack) == 1) continue;
+        if (sscanf_s(start, "\"audio_curve_compressor_release\": %d", &editor->project->audio_effects.curve_compressor_release) == 1) continue;
         if (sscanf_s(start, "\"audio_widener_enabled\": %d", &bool_value) == 1) {
             editor->project->audio_effects.widener_enabled = bool_value;
             continue;
         }
         if (sscanf_s(start, "\"audio_widener_amount\": %f", &editor->project->audio_effects.widener_amount) == 1) continue;
+        if (sscanf_s(start, "\"audio_curve_widener_amount\": %d", &editor->project->audio_effects.curve_widener_amount) == 1) continue;
         if (sscanf_s(start, "\"audio_eq_enabled\": %d", &bool_value) == 1) {
             editor->project->audio_effects.eq_enabled = bool_value;
             continue;
@@ -1621,6 +1633,9 @@ bool LoadProject(EditorContext* editor, const char* path) {
         if (sscanf_s(start, "\"audio_eq_low_db\": %f", &editor->project->audio_effects.eq_low_db) == 1) continue;
         if (sscanf_s(start, "\"audio_eq_mid_db\": %f", &editor->project->audio_effects.eq_mid_db) == 1) continue;
         if (sscanf_s(start, "\"audio_eq_high_db\": %f", &editor->project->audio_effects.eq_high_db) == 1) continue;
+        if (sscanf_s(start, "\"audio_curve_eq_low_db\": %d", &editor->project->audio_effects.curve_eq_low_db) == 1) continue;
+        if (sscanf_s(start, "\"audio_curve_eq_mid_db\": %d", &editor->project->audio_effects.curve_eq_mid_db) == 1) continue;
+        if (sscanf_s(start, "\"audio_curve_eq_high_db\": %d", &editor->project->audio_effects.curve_eq_high_db) == 1) continue;
         
         // Detect sections
         if (strstr(start, "\"scenes\":")) {
@@ -3079,17 +3094,26 @@ bool SaveProject(EditorContext* editor, const char* path) {
     fprintf(f, "  \"runtime_title\": \"%s\",\n", escaped_runtime_title);
     fprintf(f, "  \"audio_gain_enabled\": %d,\n", editor->project->audio_effects.gain_enabled);
     fprintf(f, "  \"audio_gain_db\": %.3f,\n", editor->project->audio_effects.gain_db);
+    fprintf(f, "  \"audio_curve_gain_db\": %d,\n", editor->project->audio_effects.curve_gain_db);
     fprintf(f, "  \"audio_compressor_enabled\": %d,\n", editor->project->audio_effects.compressor_enabled);
     fprintf(f, "  \"audio_compressor_threshold\": %.3f,\n", editor->project->audio_effects.compressor_threshold);
     fprintf(f, "  \"audio_compressor_ratio\": %.3f,\n", editor->project->audio_effects.compressor_ratio);
     fprintf(f, "  \"audio_compressor_attack\": %.3f,\n", editor->project->audio_effects.compressor_attack);
     fprintf(f, "  \"audio_compressor_release\": %.3f,\n", editor->project->audio_effects.compressor_release);
+    fprintf(f, "  \"audio_curve_compressor_threshold\": %d,\n", editor->project->audio_effects.curve_compressor_threshold);
+    fprintf(f, "  \"audio_curve_compressor_ratio\": %d,\n", editor->project->audio_effects.curve_compressor_ratio);
+    fprintf(f, "  \"audio_curve_compressor_attack\": %d,\n", editor->project->audio_effects.curve_compressor_attack);
+    fprintf(f, "  \"audio_curve_compressor_release\": %d,\n", editor->project->audio_effects.curve_compressor_release);
     fprintf(f, "  \"audio_widener_enabled\": %d,\n", editor->project->audio_effects.widener_enabled);
     fprintf(f, "  \"audio_widener_amount\": %.3f,\n", editor->project->audio_effects.widener_amount);
+    fprintf(f, "  \"audio_curve_widener_amount\": %d,\n", editor->project->audio_effects.curve_widener_amount);
     fprintf(f, "  \"audio_eq_enabled\": %d,\n", editor->project->audio_effects.eq_enabled);
     fprintf(f, "  \"audio_eq_low_db\": %.3f,\n", editor->project->audio_effects.eq_low_db);
     fprintf(f, "  \"audio_eq_mid_db\": %.3f,\n", editor->project->audio_effects.eq_mid_db);
     fprintf(f, "  \"audio_eq_high_db\": %.3f,\n", editor->project->audio_effects.eq_high_db);
+    fprintf(f, "  \"audio_curve_eq_low_db\": %d,\n", editor->project->audio_effects.curve_eq_low_db);
+    fprintf(f, "  \"audio_curve_eq_mid_db\": %d,\n", editor->project->audio_effects.curve_eq_mid_db);
+    fprintf(f, "  \"audio_curve_eq_high_db\": %d,\n", editor->project->audio_effects.curve_eq_high_db);
     fprintf(f, "  \"scenes\": [\n");
     
     // Save scenes
@@ -3683,11 +3707,7 @@ bool NewProject(EditorContext* editor) {
     if (!editor) return false;
 
     ResetEditorAudio(editor);
-    editor->project->audio_effects.compressor_threshold = 0.7f;
-    editor->project->audio_effects.compressor_ratio = 4.0f;
-    editor->project->audio_effects.compressor_attack = 0.01f;
-    editor->project->audio_effects.compressor_release = 0.12f;
-    editor->project->audio_effects.widener_amount = 1.0f;
+    rev::runtime::InitializeAudioEffects(&editor->project->audio_effects);
     
     // Clean up existing scenes
     for (int i = 0; i < editor->project->scene_count; ++i) {
@@ -4123,6 +4143,43 @@ static int CleanUnusedProjectAssets(EditorContext* editor) {
     return removed;
 }
 
+void CleanupDeletedCueResources(EditorContext* editor) {
+    if (!editor || !editor->project) return;
+
+    // A modal owns an editable copy of its cue. Close every cue modal so a stale
+    // copy cannot be auto-saved into a cue that shifted into the deleted index.
+    editor->selected_cue_index = -1;
+    editor->shader_modal_open = false;
+    editor->shader_modal_request_open = false;
+    editor->music_modal_open = false;
+    editor->music_modal_request_open = false;
+    editor->image_modal_open = false;
+    editor->image_modal_request_open = false;
+    editor->animated_sprite_modal_open = false;
+    editor->animated_sprite_modal_request_open = false;
+    editor->pixel_modal_open = false;
+    editor->pixel_modal_request_open = false;
+    editor->pixel_emitter_modal_open = false;
+    editor->pixel_emitter_modal_request_open = false;
+    editor->text_modal_open = false;
+    editor->text_modal_request_open = false;
+    editor->scroll_text_modal_open = false;
+    editor->scroll_text_modal_request_open = false;
+    editor->mesh_modal_open = false;
+    editor->mesh_modal_request_open = false;
+
+    ReloadEditorAssets(editor);
+    int removed = CleanUnusedProjectAssets(editor);
+    if (removed >= 0) {
+        char message[128] = {};
+        snprintf(message, sizeof(message),
+                 "Cue deleted; removed %d unused project asset(s).", removed);
+        strncpy_s(editor->build_status_message,
+                  sizeof(editor->build_status_message), message, _TRUNCATE);
+        editor->build_status_timer = 3.0f;
+    }
+}
+
 void RenderMenuBar(EditorContext* editor) {
     if (!editor) return;
     
@@ -4305,11 +4362,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     int runtime_fullscreen_setting = 1;
     char runtime_title_setting[128] = "HiMYM - Minimal Intro Test";
     AudioEffects audio_effects = {};
-    audio_effects.compressor_threshold = 0.7f;
-    audio_effects.compressor_ratio = 4.0f;
-    audio_effects.compressor_attack = 0.01f;
-    audio_effects.compressor_release = 0.12f;
-    audio_effects.widener_amount = 1.0f;
+    rev::runtime::InitializeAudioEffects(&audio_effects);
     
     while (fgets(line, sizeof(line), f)) {
         // Trim whitespace
@@ -4348,17 +4401,26 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
                 runtime_title_setting[title_len] = '\0';
             } else if (sscanf_s(start, "audio_gain_enabled=%d", &audio_effects.gain_enabled) == 1) {
             } else if (sscanf_s(start, "audio_gain_db=%f", &audio_effects.gain_db) == 1) {
+            } else if (sscanf_s(start, "audio_curve_gain_db=%d", &audio_effects.curve_gain_db) == 1) {
             } else if (sscanf_s(start, "audio_compressor_enabled=%d", &audio_effects.compressor_enabled) == 1) {
             } else if (sscanf_s(start, "audio_compressor_threshold=%f", &audio_effects.compressor_threshold) == 1) {
             } else if (sscanf_s(start, "audio_compressor_ratio=%f", &audio_effects.compressor_ratio) == 1) {
             } else if (sscanf_s(start, "audio_compressor_attack=%f", &audio_effects.compressor_attack) == 1) {
             } else if (sscanf_s(start, "audio_compressor_release=%f", &audio_effects.compressor_release) == 1) {
+            } else if (sscanf_s(start, "audio_curve_compressor_threshold=%d", &audio_effects.curve_compressor_threshold) == 1) {
+            } else if (sscanf_s(start, "audio_curve_compressor_ratio=%d", &audio_effects.curve_compressor_ratio) == 1) {
+            } else if (sscanf_s(start, "audio_curve_compressor_attack=%d", &audio_effects.curve_compressor_attack) == 1) {
+            } else if (sscanf_s(start, "audio_curve_compressor_release=%d", &audio_effects.curve_compressor_release) == 1) {
             } else if (sscanf_s(start, "audio_widener_enabled=%d", &audio_effects.widener_enabled) == 1) {
             } else if (sscanf_s(start, "audio_widener_amount=%f", &audio_effects.widener_amount) == 1) {
+            } else if (sscanf_s(start, "audio_curve_widener_amount=%d", &audio_effects.curve_widener_amount) == 1) {
             } else if (sscanf_s(start, "audio_eq_enabled=%d", &audio_effects.eq_enabled) == 1) {
             } else if (sscanf_s(start, "audio_eq_low_db=%f", &audio_effects.eq_low_db) == 1) {
             } else if (sscanf_s(start, "audio_eq_mid_db=%f", &audio_effects.eq_mid_db) == 1) {
             } else if (sscanf_s(start, "audio_eq_high_db=%f", &audio_effects.eq_high_db) == 1) {
+            } else if (sscanf_s(start, "audio_curve_eq_low_db=%d", &audio_effects.curve_eq_low_db) == 1) {
+            } else if (sscanf_s(start, "audio_curve_eq_mid_db=%d", &audio_effects.curve_eq_mid_db) == 1) {
+            } else if (sscanf_s(start, "audio_curve_eq_high_db=%d", &audio_effects.curve_eq_high_db) == 1) {
             }
             continue;
         }
@@ -5567,17 +5629,26 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     fprintf(f, "runtime_title=%s\n", editor->project->runtime_title);
     fprintf(f, "audio_gain_enabled=%d\n", editor->project->audio_effects.gain_enabled);
     fprintf(f, "audio_gain_db=%.3f\n", editor->project->audio_effects.gain_db);
+    fprintf(f, "audio_curve_gain_db=%d\n", editor->project->audio_effects.curve_gain_db);
     fprintf(f, "audio_compressor_enabled=%d\n", editor->project->audio_effects.compressor_enabled);
     fprintf(f, "audio_compressor_threshold=%.3f\n", editor->project->audio_effects.compressor_threshold);
     fprintf(f, "audio_compressor_ratio=%.3f\n", editor->project->audio_effects.compressor_ratio);
     fprintf(f, "audio_compressor_attack=%.3f\n", editor->project->audio_effects.compressor_attack);
     fprintf(f, "audio_compressor_release=%.3f\n", editor->project->audio_effects.compressor_release);
+    fprintf(f, "audio_curve_compressor_threshold=%d\n", editor->project->audio_effects.curve_compressor_threshold);
+    fprintf(f, "audio_curve_compressor_ratio=%d\n", editor->project->audio_effects.curve_compressor_ratio);
+    fprintf(f, "audio_curve_compressor_attack=%d\n", editor->project->audio_effects.curve_compressor_attack);
+    fprintf(f, "audio_curve_compressor_release=%d\n", editor->project->audio_effects.curve_compressor_release);
     fprintf(f, "audio_widener_enabled=%d\n", editor->project->audio_effects.widener_enabled);
     fprintf(f, "audio_widener_amount=%.3f\n", editor->project->audio_effects.widener_amount);
+    fprintf(f, "audio_curve_widener_amount=%d\n", editor->project->audio_effects.curve_widener_amount);
     fprintf(f, "audio_eq_enabled=%d\n", editor->project->audio_effects.eq_enabled);
     fprintf(f, "audio_eq_low_db=%.3f\n", editor->project->audio_effects.eq_low_db);
     fprintf(f, "audio_eq_mid_db=%.3f\n", editor->project->audio_effects.eq_mid_db);
     fprintf(f, "audio_eq_high_db=%.3f\n", editor->project->audio_effects.eq_high_db);
+    fprintf(f, "audio_curve_eq_low_db=%d\n", editor->project->audio_effects.curve_eq_low_db);
+    fprintf(f, "audio_curve_eq_mid_db=%d\n", editor->project->audio_effects.curve_eq_mid_db);
+    fprintf(f, "audio_curve_eq_high_db=%d\n", editor->project->audio_effects.curve_eq_high_db);
     
     fclose(f);
     return true;
@@ -6068,6 +6139,7 @@ void DeleteScene(EditorContext* editor, int scene_index) {
     
     editor->project->scene_count--;
     editor->project->modified = true;
+    CleanupDeletedCueResources(editor);
 }
 
 void MoveScene(EditorContext* editor, int from_index, int to_index) {
@@ -9614,11 +9686,19 @@ void RenderPreviewFrame(EditorContext* editor) {
                     evaluate_curve(effect.curve_color_g, effect.color[1], curve_time),
                     evaluate_curve(effect.curve_color_b, effect.color[2], curve_time),
                     evaluate_curve(effect.curve_color_a, effect.color[3], curve_time)};
-                add_effect(effect.type,
-                           evaluate_curve(effect.curve_intensity, effect.intensity, curve_time) *
-                               evaluate_trigger(effect.trigger_track, effect.trigger_pulse_beats),
-                           evaluate_curve(effect.curve_threshold, effect.threshold, curve_time),
-                           evaluate_curve(effect.curve_radius, effect.radius, curve_time),
+                float effect_intensity =
+                    evaluate_curve(effect.curve_intensity, effect.intensity, curve_time) *
+                    evaluate_trigger(effect.trigger_track, effect.trigger_pulse_beats);
+                float effect_threshold =
+                    evaluate_curve(effect.curve_threshold, effect.threshold, curve_time);
+                float effect_radius =
+                    evaluate_curve(effect.curve_radius, effect.radius, curve_time);
+                if (effect.type == PostEffectFade && effect.curve_intensity < 0) {
+                    effect_intensity = rev::runtime::ComputePostFadeIntensity(
+                        effect_intensity, local_time, effect.start_time, effect_end,
+                        effect_threshold, effect_radius);
+                }
+                add_effect(effect.type, effect_intensity, effect_threshold, effect_radius,
                            effect_color, local_time);
             }
             for (int i = 0; i < active_scene->post_effect_count; ++i) {
@@ -9645,11 +9725,17 @@ void RenderPreviewFrame(EditorContext* editor) {
             rev::shader::Program* post_prog = (rev::shader::Program*)editor->post_shader;
             typedef void (*PFNGLACTIVETEXTUREPROC)(unsigned int texture);
             auto glActiveTexture_scene = (PFNGLACTIVETEXTUREPROC)wglGetProcAddress("glActiveTexture");
+            typedef void (*PFNGLBINDVERTEXARRAYPROC)(unsigned int array);
+            auto glBindVertexArray_scene =
+                (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
             for (const ActivePostEffect& effect : active_effects) {
                 glBindFramebuffer(0x8D40, destination_fbo);
                 glViewport(0, 0, editor->preview_width, editor->preview_height);
                 glDisable(GL_DEPTH_TEST);
                 glDisable(GL_BLEND);
+                if (glBindVertexArray_scene && editor->preview_vao) {
+                    glBindVertexArray_scene(editor->preview_vao);
+                }
                 rev::shader::Use(post_prog);
                 rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, "u_scene"), 0);
                 rev::shader::SetInt(post_prog, rev::shader::GetUniformLocation(post_prog, "u_history"), 1);

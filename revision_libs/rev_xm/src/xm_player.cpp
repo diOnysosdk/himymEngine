@@ -164,10 +164,14 @@ void Update(Player* player, float* output, int frame_count) {
 void SetAudioEffects(Player* player, const rev::runtime::AudioEffects* effects) {
     if (!player || !effects) return;
     std::lock_guard<std::mutex> lock(player->mutex);
+    const bool compressor_started = !player->effects.compressor_enabled && effects->compressor_enabled;
+    const bool eq_started = !player->effects.eq_enabled && effects->eq_enabled;
     player->effects = *effects;
-    player->compressor_gain = 0.0f;
-    player->eq_low[0] = player->eq_low[1] = 0.0f;
-    player->eq_high[0] = player->eq_high[1] = 0.0f;
+    if (compressor_started) player->compressor_gain = 0.0f;
+    if (eq_started) {
+        player->eq_low[0] = player->eq_low[1] = 0.0f;
+        player->eq_high[0] = player->eq_high[1] = 0.0f;
+    }
 }
 
 void SetPosition(Player* player, int pattern, int row) {

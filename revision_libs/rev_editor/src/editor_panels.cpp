@@ -120,6 +120,17 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
 {
     if (!project || deleted_curve < 0) return;
 
+    AudioEffects* audio = &project->audio_effects;
+    UpdateCurveRefAfterDelete(&audio->curve_gain_db, deleted_curve);
+    UpdateCurveRefAfterDelete(&audio->curve_compressor_threshold, deleted_curve);
+    UpdateCurveRefAfterDelete(&audio->curve_compressor_ratio, deleted_curve);
+    UpdateCurveRefAfterDelete(&audio->curve_compressor_attack, deleted_curve);
+    UpdateCurveRefAfterDelete(&audio->curve_compressor_release, deleted_curve);
+    UpdateCurveRefAfterDelete(&audio->curve_widener_amount, deleted_curve);
+    UpdateCurveRefAfterDelete(&audio->curve_eq_low_db, deleted_curve);
+    UpdateCurveRefAfterDelete(&audio->curve_eq_mid_db, deleted_curve);
+    UpdateCurveRefAfterDelete(&audio->curve_eq_high_db, deleted_curve);
+
     for (int si = 0; si < project->scene_count; ++si) {
         SceneBlock* scene = &project->scenes[si];
 
@@ -288,6 +299,17 @@ void BuildCurveDisplayLabelInternal(EditorContext* editor, int curve_index, char
 
     int usage_count = 0;
     char first_usage[192] = {};
+
+    const AudioEffects& audio = editor->project->audio_effects;
+    RegisterCurveUsage(audio.curve_gain_db, curve_index, "Audio Gain", "Project Audio", &usage_count, first_usage, sizeof(first_usage));
+    RegisterCurveUsage(audio.curve_compressor_threshold, curve_index, "Compressor Threshold", "Project Audio", &usage_count, first_usage, sizeof(first_usage));
+    RegisterCurveUsage(audio.curve_compressor_ratio, curve_index, "Compressor Ratio", "Project Audio", &usage_count, first_usage, sizeof(first_usage));
+    RegisterCurveUsage(audio.curve_compressor_attack, curve_index, "Compressor Attack", "Project Audio", &usage_count, first_usage, sizeof(first_usage));
+    RegisterCurveUsage(audio.curve_compressor_release, curve_index, "Compressor Release", "Project Audio", &usage_count, first_usage, sizeof(first_usage));
+    RegisterCurveUsage(audio.curve_widener_amount, curve_index, "Stereo Width", "Project Audio", &usage_count, first_usage, sizeof(first_usage));
+    RegisterCurveUsage(audio.curve_eq_low_db, curve_index, "EQ Low", "Project Audio", &usage_count, first_usage, sizeof(first_usage));
+    RegisterCurveUsage(audio.curve_eq_mid_db, curve_index, "EQ Mid", "Project Audio", &usage_count, first_usage, sizeof(first_usage));
+    RegisterCurveUsage(audio.curve_eq_high_db, curve_index, "EQ High", "Project Audio", &usage_count, first_usage, sizeof(first_usage));
 
     for (int si = 0; si < editor->project->scene_count; ++si) {
         SceneBlock* scene = &editor->project->scenes[si];
@@ -1005,6 +1027,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::SmallButton("X")) {
                         DeleteShaderCue(scene, i);
                         editor->project->modified = true;
+                        CleanupDeletedCueResources(editor);
                     }
                     ImGui::PopID();
                 }
@@ -1317,6 +1340,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::SmallButton("X")) {
                         DeleteImageCue(scene, i);
                         editor->project->modified = true;
+                        CleanupDeletedCueResources(editor);
                     }
                     ImGui::PopID();
                 }
@@ -1349,6 +1373,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::SmallButton("X")) {
                         DeleteAnimatedSpriteCue(scene, i);
                         editor->project->modified = true;
+                        CleanupDeletedCueResources(editor);
                     }
                     ImGui::PopID();
                 }
@@ -1380,6 +1405,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::SmallButton("X")) {
                         DeletePixelCue(scene, i);
                         editor->project->modified = true;
+                        CleanupDeletedCueResources(editor);
                     }
                     ImGui::PopID();
                 }
@@ -1412,6 +1438,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::SmallButton("X")) {
                         DeletePixelEmitterCue(scene, i);
                         editor->project->modified = true;
+                        CleanupDeletedCueResources(editor);
                     }
                     ImGui::PopID();
                 }
@@ -1445,6 +1472,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::SmallButton("X")) {
                         DeleteTextCue(scene, i);
                         editor->project->modified = true;
+                        CleanupDeletedCueResources(editor);
                     }
                     ImGui::PopID();
                 }
@@ -1480,6 +1508,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::SmallButton("X")) {
                         DeleteScrollTextCue(scene, i);
                         editor->project->modified = true;
+                        CleanupDeletedCueResources(editor);
                     }
                     ImGui::PopID();
                 }
@@ -1513,6 +1542,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::SmallButton("X")) {
                         DeleteMusicCue(scene, i);
                         editor->project->modified = true;
+                        CleanupDeletedCueResources(editor);
                     }
                     ImGui::PopID();
                 }
@@ -1549,6 +1579,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::SmallButton("X")) {
                         DeleteMeshCue(scene, i);
                         editor->project->modified = true;
+                        CleanupDeletedCueResources(editor);
                     }
                     ImGui::PopID();
                 }

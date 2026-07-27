@@ -14,18 +14,32 @@ namespace runtime {
 struct AudioEffects {
     int gain_enabled;
     float gain_db;
+    int curve_gain_db;
     int compressor_enabled;
     float compressor_threshold;
     float compressor_ratio;
     float compressor_attack;
     float compressor_release;
+    int curve_compressor_threshold;
+    int curve_compressor_ratio;
+    int curve_compressor_attack;
+    int curve_compressor_release;
     int widener_enabled;
     float widener_amount;
+    int curve_widener_amount;
     int eq_enabled;
     float eq_low_db;
     float eq_mid_db;
     float eq_high_db;
+    int curve_eq_low_db;
+    int curve_eq_mid_db;
+    int curve_eq_high_db;
 };
+
+void InitializeAudioEffects(AudioEffects* effects);
+void EvaluateAudioEffects(const AudioEffects* authored,
+                          const rev::curve::Curve* curves, int curve_count,
+                          float timeline_time, AudioEffects* evaluated);
 
 constexpr int kMaxCurves = 128;
 constexpr int kMaxLayerPostEffects = 8;
@@ -648,6 +662,12 @@ float ComputeEffectOpacity(int   effect_type,
                            float fade_in_start,  float fade_in_end,
                            float fade_out_start, float fade_out_end,
                            float time);
+
+// Returns the black-fade amount for a post effect. threshold and radius are
+// authored as fade-in and fade-out durations for PostEffectFade.
+float ComputePostFadeIntensity(float maximum_intensity, float time,
+                               float start_time, float end_time,
+                               float fade_in_duration, float fade_out_duration);
 
 // Build per-frame text content and transform modifiers for advanced text effects.
 // Returns false when no visible text should be drawn for this frame.

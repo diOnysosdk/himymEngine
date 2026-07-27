@@ -467,6 +467,7 @@ void ResizePreview(EditorContext* editor, int width, int height);
 void RenderPreviewFrame(EditorContext* editor);
 void UpdatePlayback(EditorContext* editor, float delta_time);
 void ReloadEditorAssets(EditorContext* editor);
+void CleanupDeletedCueResources(EditorContext* editor);
 
 // Scene management
 int AddScene(EditorContext* editor, const char* name, float duration);
