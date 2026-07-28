@@ -61,6 +61,15 @@ if(MSVC)
     )
 endif()
 
+# Focused deterministic tests for pixel-emitter direction and cone sampling.
+add_executable(particle_direction_tests tests/particle_direction_tests.cpp)
+target_link_libraries(particle_direction_tests PRIVATE rev_particles)
+if(MSVC)
+    set_target_properties(particle_direction_tests PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup"
+    )
+endif()
+
 # Utility CLI: generate build/packed_assets.h without launching editor UI.
 add_executable(pack_cli tools/pack_cli.cpp)
 target_link_libraries(pack_cli PRIVATE rev_pack)

@@ -1361,6 +1361,7 @@ int LoadAllPixelEmitterCues(const char* path, PixelEmitterCue* cues, int max_cue
 
         PixelEmitterCue* cue = &cues[count];
         memset(cue, 0, sizeof(PixelEmitterCue));
+        cue->direction_y = 1.0f;
         cue->primitive_color[0] = cue->primitive_color[1] = cue->primitive_color[2] = 1.0f;
         cue->primitive_color[3] = 1.0f;
         cue->curve_x = cue->curve_y = cue->curve_scale = cue->curve_rotation = -1;
@@ -1377,7 +1378,7 @@ int LoadAllPixelEmitterCues(const char* path, PixelEmitterCue* cues, int max_cue
         *pipe2 = '\0';
         strncpy_s(cue->asset_path, pipe1 + 1, _TRUNCATE);
         int parsed = sscanf_s(pipe2 + 1,
-            "%d|%d|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%f|%d|%f|%d|%f|%f|%f|%f|%f|%f|%u|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+            "%d|%d|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%f|%d|%f|%d|%f|%f|%f|%f|%f|%f|%u|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%f|%f",
             &cue->visual_source, &cue->primitive_shape, &cue->x, &cue->y,
             &cue->scale, &cue->rotation, &cue->opacity, &cue->cue_start,
             &cue->cue_end, &cue->layer_order, &cue->blend_mode, &cue->max_particles,
@@ -1387,7 +1388,8 @@ int LoadAllPixelEmitterCues(const char* path, PixelEmitterCue* cues, int max_cue
             &cue->primitive_color[0], &cue->primitive_color[1], &cue->primitive_color[2], &cue->primitive_color[3],
             &cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_rotation,
             &cue->curve_opacity, &cue->curve_emission_rate, &cue->curve_speed_min, &cue->curve_speed_max,
-            &cue->curve_lifetime_min, &cue->curve_lifetime_max, &cue->curve_scale_min, &cue->curve_scale_max);
+            &cue->curve_lifetime_min, &cue->curve_lifetime_max, &cue->curve_scale_min, &cue->curve_scale_max,
+            &cue->direction_x, &cue->direction_y, &cue->cone_angle_degrees);
         if (parsed >= 23) ++count;
     }
     fclose(f);
@@ -4716,6 +4718,25 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     PixelEmitterCue& cue = pixel_emitter_cues[entries[ei].cue_idx];
                     ImageTexture& emitter_image = pixel_emitter_images[entries[ei].cue_idx];
                     if (cue.visual_source == 0 && emitter_image.texture_id == 0) continue;
+
+                    // Pixel emitters are an independent 2D layer. Establish the
+                    // complete sprite state instead of inheriting VAO, depth,
+                    // blend, shader, or UV state from the previous layer.
+                    glBindVertexArray(vao);
+                    if (depth_on) {
+                        glDisable(GL_DEPTH_TEST);
+                        glDepthMask(GL_FALSE);
+                        depth_on = false;
+                    }
+                    if (!blend_on) {
+                        glEnable(GL_BLEND);
+                        blend_on = true;
+                    }
+                    ApplySpriteBlendMode(cue.blend_mode);
+                    rev::shader::Use(sprite_shader);
+                    int emitter_uv = rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect");
+                    if (emitter_uv >= 0)
+                        rev::shader::SetVec4(sprite_shader, emitter_uv, 0.0f, 0.0f, 1.0f, 1.0f);
 
                     float elapsed_time = time - cue.cue_start;
                     if (elapsed_time < 0.0f) continue;

@@ -70,7 +70,7 @@ Indexed pixel cue contract (editor export + runtime):
 - Particle core: `rev::particles::ParticleSystem` uses caller-owned fixed storage. `Initialize()` binds a pool and `EmitterSettings`, `Update()` performs deterministic burst/rate emission and integrates active particles, and `GetParticles()` exposes the active pool for a renderer. It has no OpenGL or pixel-asset dependency.
 - Particle visuals: `EmitterSettings.visual_source` selects `VisualSourceAsset` or `VisualSourcePrimitive`; primitive visuals use `PrimitiveShapeSquare`, `PrimitiveShapeCircle`, `PrimitiveShapeTriangle`, or `PrimitiveShapeDiamond`. Asset key/path fields belong to the future `PixelEmitterCue`, not to individual particles.
 - Emitter migration: `PixelEmitterCue` is a separate timeline type whose asset source accepts ordinary image formats supported by the runtime image loader. Keep `PixelCue` as the single-sprite compatibility path for existing indexed `.pix` projects.
-- Editor persistence: `PixelEmitterCue` is stored in the JSON `pixel_emitter_cues` array and exported/imported through `[pixel_emitter_cues]` in `cues.txt`; its `visual_source` and `primitive_shape` values are preserved alongside emitter ranges.
+- Editor persistence: `PixelEmitterCue` is stored in the JSON `pixel_emitter_cues` array and exported/imported through `[pixel_emitter_cues]` in `cues.txt`; its `visual_source`, `primitive_shape`, screen-space spray direction, and full cone spread are preserved alongside emitter ranges. Direction uses `+X` right and `+Y` down; a `0` degree cone is a straight ray, `90` degrees is `+/-45` degrees, and `360` degrees is omnidirectional.
     - `start_frame` sets initial offset
     - `curve_frame` (when assigned) can override frame index over time
 - Packing semantics:

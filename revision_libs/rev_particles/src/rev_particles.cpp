@@ -34,10 +34,22 @@ Vec3 Normalize(Vec3 value) {
 
 Vec3 SpawnDirection(uint32_t* state, const EmitterSettings& settings) {
     Vec3 direction = Normalize(settings.direction);
-    float cone = settings.cone_angle_degrees * kPi / 180.0f;
-    if (cone <= 0.00001f) return direction;
+    float spread_degrees = settings.cone_angle_degrees;
+    if (spread_degrees < 0.0f) spread_degrees = 0.0f;
+    if (spread_degrees > 360.0f) spread_degrees = 360.0f;
+    if (spread_degrees <= 0.00001f) return direction;
 
-    float z = 1.0f - Random01(state) * (1.0f - std::cos(cone));
+    // Pixel emitters live in the XY plane. Sample a flat, full-width spread so
+    // no authored speed is lost into an invisible Z component.
+    if (std::fabs(direction.z) <= 0.00001f) {
+        float base_angle = std::atan2(direction.y, direction.x);
+        float spread = spread_degrees * kPi / 180.0f;
+        float angle = base_angle + (Random01(state) - 0.5f) * spread;
+        return {std::cos(angle), std::sin(angle), 0.0f};
+    }
+
+    float half_angle = spread_degrees * 0.5f * kPi / 180.0f;
+    float z = 1.0f - Random01(state) * (1.0f - std::cos(half_angle));
     float radius = std::sqrt(1.0f - z * z);
     float angle = Random01(state) * kPi * 2.0f;
     Vec3 local = {radius * std::cos(angle), radius * std::sin(angle), z};

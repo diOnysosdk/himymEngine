@@ -260,9 +260,9 @@ struct PixelEmitterCue {
     int loop;
     float start_delay;
     int simulation_space;
-    float direction_x;
+    float direction_x;       // Screen-space spray axis; +X=right, +Y=down
     float direction_y;
-    float cone_angle_degrees;
+    float cone_angle_degrees; // Full spread centered on direction [0..360]
     float speed_min;
     float speed_max;
     float lifetime_min;

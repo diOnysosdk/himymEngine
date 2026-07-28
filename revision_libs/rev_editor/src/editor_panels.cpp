@@ -1163,6 +1163,9 @@ void RenderProperties(EditorContext* editor) {
                 cue.burst_count = 8;
                 cue.duration = scene->duration;
                 cue.loop = 1;
+                cue.direction_x = 0.0f;
+                cue.direction_y = -1.0f;
+                cue.cone_angle_degrees = 30.0f;
                 cue.speed_min = 0.05f;
                 cue.speed_max = 0.15f;
                 cue.lifetime_min = 0.5f;

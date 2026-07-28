@@ -1497,6 +1497,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_pixel_cue.curve_frame = -1;
     current_pixel_cue.curve_palette_offset = -1;
     PixelEmitterCue current_pixel_emitter_cue = {};
+    current_pixel_emitter_cue.direction_y = 1.0f;
     current_pixel_emitter_cue.curve_x = current_pixel_emitter_cue.curve_y = -1;
     current_pixel_emitter_cue.curve_scale = current_pixel_emitter_cue.curve_rotation = -1;
     current_pixel_emitter_cue.curve_opacity = current_pixel_emitter_cue.curve_emission_rate = -1;
@@ -2295,6 +2296,12 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"duration\": %f", &current_pixel_emitter_cue.duration);
             } else if (strstr(start, "\"loop\":")) {
                 sscanf_s(start, "\"loop\": %d", &current_pixel_emitter_cue.loop);
+            } else if (strstr(start, "\"direction_x\":")) {
+                sscanf_s(start, "\"direction_x\": %f", &current_pixel_emitter_cue.direction_x);
+            } else if (strstr(start, "\"direction_y\":")) {
+                sscanf_s(start, "\"direction_y\": %f", &current_pixel_emitter_cue.direction_y);
+            } else if (strstr(start, "\"cone_angle_degrees\":")) {
+                sscanf_s(start, "\"cone_angle_degrees\": %f", &current_pixel_emitter_cue.cone_angle_degrees);
             } else if (strstr(start, "\"speed_min\":")) {
                 sscanf_s(start, "\"speed_min\": %f", &current_pixel_emitter_cue.speed_min);
             } else if (strstr(start, "\"speed_max\":")) {
@@ -2338,6 +2345,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                         current_pixel_emitter_cue.visual_source == 1)) {
                 AddPixelEmitterCue(current_scene, current_pixel_emitter_cue);
                 memset(&current_pixel_emitter_cue, 0, sizeof(current_pixel_emitter_cue));
+                current_pixel_emitter_cue.direction_y = 1.0f;
                 current_pixel_emitter_cue.curve_x = current_pixel_emitter_cue.curve_y = -1;
                 current_pixel_emitter_cue.curve_scale = current_pixel_emitter_cue.curve_rotation = -1;
                 current_pixel_emitter_cue.curve_opacity = current_pixel_emitter_cue.curve_emission_rate = -1;
@@ -3345,6 +3353,9 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"burst_count\": %d,\n", cue->burst_count);
             fprintf(f, "          \"duration\": %.3f,\n", cue->duration);
             fprintf(f, "          \"loop\": %d,\n", cue->loop);
+            fprintf(f, "          \"direction_x\": %.3f,\n", cue->direction_x);
+            fprintf(f, "          \"direction_y\": %.3f,\n", cue->direction_y);
+            fprintf(f, "          \"cone_angle_degrees\": %.3f,\n", cue->cone_angle_degrees);
             fprintf(f, "          \"speed_min\": %.3f,\n", cue->speed_min);
             fprintf(f, "          \"speed_max\": %.3f,\n", cue->speed_max);
             fprintf(f, "          \"lifetime_min\": %.3f,\n", cue->lifetime_min);
@@ -4616,6 +4627,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             char* p1 = strchr(start, '|');
             if (!p1) continue;
             PixelEmitterCue cue = {};
+            cue.direction_y = 1.0f;
             cue.curve_x = cue.curve_y = -1;
             cue.curve_scale = cue.curve_rotation = -1;
             cue.curve_opacity = cue.curve_emission_rate = -1;
@@ -4631,12 +4643,13 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             if (path_len >= sizeof(cue.asset_path)) path_len = sizeof(cue.asset_path) - 1;
             strncpy_s(cue.asset_path, p1 + 1, path_len);
             int parsed = sscanf_s(p2 + 1,
-                "%d|%d|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%f|%d|%f|%d|%f|%f|%f|%f|%f|%f|%u",
+                "%d|%d|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%f|%d|%f|%d|%f|%f|%f|%f|%f|%f|%u|%*f|%*f|%*f|%*f|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%f|%f|%f",
                 &cue.visual_source, &cue.primitive_shape, &cue.x, &cue.y,
                 &cue.scale, &cue.rotation, &cue.opacity, &cue.cue_start, &cue.cue_end,
                 &cue.layer_order, &cue.blend_mode, &cue.max_particles, &cue.emission_rate,
                 &cue.burst_count, &cue.duration, &cue.loop, &cue.speed_min, &cue.speed_max,
-                &cue.lifetime_min, &cue.lifetime_max, &cue.scale_min, &cue.scale_max, &cue.seed);
+                &cue.lifetime_min, &cue.lifetime_max, &cue.scale_min, &cue.scale_max, &cue.seed,
+                &cue.direction_x, &cue.direction_y, &cue.cone_angle_degrees);
             if (parsed >= 9) {
                 if (editor->project->scene_count == 0)
                     AddScene(editor, "Imported Scene", total_duration);
@@ -5226,7 +5239,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     }
 
     fprintf(f, "\n[pixel_emitter_cues]\n");
-    fprintf(f, "# asset_key|asset_path|visual_source|primitive_shape|x|y|scale|rotation|opacity|cue_start|cue_end|layer_order|blend_mode|max_particles|emission_rate|burst_count|duration|loop|speed_min|speed_max|lifetime_min|lifetime_max|scale_min|scale_max|seed|primitive_color_r|primitive_color_g|primitive_color_b|primitive_color_a|curve_x|curve_y|curve_scale|curve_rotation|curve_opacity|curve_emission_rate|curve_speed_min|curve_speed_max|curve_lifetime_min|curve_lifetime_max|curve_scale_min|curve_scale_max\n");
+    fprintf(f, "# asset_key|asset_path|visual_source|primitive_shape|x|y|scale|rotation|opacity|cue_start|cue_end|layer_order|blend_mode|max_particles|emission_rate|burst_count|duration|loop|speed_min|speed_max|lifetime_min|lifetime_max|scale_min|scale_max|seed|primitive_color_r|primitive_color_g|primitive_color_b|primitive_color_a|curve_x|curve_y|curve_scale|curve_rotation|curve_opacity|curve_emission_rate|curve_speed_min|curve_speed_max|curve_lifetime_min|curve_lifetime_max|curve_scale_min|curve_scale_max|direction_x|direction_y|cone_angle_degrees\n");
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
         float scene_start = 0.0f;
@@ -5242,7 +5255,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             for (char* p = asset_path; *p; ++p) if (*p == '\\') *p = '/';
             float abs_start = scene_start + cue->cue_start;
             float abs_end = cue->cue_end < 0.0f ? scene_start + scene->duration : scene_start + cue->cue_end;
-            fprintf(f, "%s|%s|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%.3f|%d|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%u|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d\n",
+            fprintf(f, "%s|%s|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%.3f|%d|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%u|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%.3f|%.3f\n",
                 cue->asset_key, asset_path, cue->visual_source, cue->primitive_shape,
                 cue->x, cue->y, cue->scale, cue->rotation, cue->opacity,
                 abs_start, abs_end, cue->layer_order, cue->blend_mode,
@@ -5252,7 +5265,8 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->primitive_color[0], cue->primitive_color[1], cue->primitive_color[2], cue->primitive_color[3],
                 cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_rotation,
                 cue->curve_opacity, cue->curve_emission_rate, cue->curve_speed_min, cue->curve_speed_max,
-                cue->curve_lifetime_min, cue->curve_lifetime_max, cue->curve_scale_min, cue->curve_scale_max);
+                cue->curve_lifetime_min, cue->curve_lifetime_max, cue->curve_scale_min, cue->curve_scale_max,
+                cue->direction_x, cue->direction_y, cue->cone_angle_degrees);
         }
     }
 

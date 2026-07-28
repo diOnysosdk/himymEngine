@@ -5201,6 +5201,12 @@ void RenderPixelEmitterModal(EditorContext* editor) {
             cue->loop = loop ? 1 : 0;
             AutoSave();
         }
+        if (ImGui::InputFloat2("Spray Direction", &cue->direction_x)) AutoSave();
+        ImGui::TextDisabled("+X sprays right; +Y sprays down. The vector is normalized.");
+        if (ImGui::SliderFloat("Cone Spread", &cue->cone_angle_degrees, 0.0f, 360.0f, "%.1f deg")) {
+            AutoSave();
+        }
+        ImGui::TextDisabled("Full cone width: 0 = straight, 90 = +/-45, 360 = all directions.");
         if (ImGui::SliderFloat("Speed Min", &cue->speed_min, 0.0f, 2.0f)) AutoSave();
         CurveControl("Speed Min", &cue->curve_speed_min, cue->speed_min);
         if (ImGui::SliderFloat("Speed Max", &cue->speed_max, 0.0f, 2.0f)) AutoSave();
