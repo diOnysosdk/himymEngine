@@ -52,6 +52,46 @@ static bool ReadExtrasFloat(const char* json, const char* name, float* value) {
     return sscanf_s(p + 1, "%f", value) == 1;
 }
 
+static bool ReadExtrasBool(const char* json, const char* name, bool* value) {
+    if (!json || !name || !value) return false;
+    char key[96] = {};
+    snprintf(key, sizeof(key), "\"%s\"", name);
+    const char* p = strstr(json, key);
+    if (!p || !(p = strchr(p + strlen(key), ':'))) return false;
+    ++p;
+    while (*p == ' ' || *p == '\t') ++p;
+    if (strncmp(p, "true", 4) == 0 || *p == '1') { *value = true; return true; }
+    if (strncmp(p, "false", 5) == 0 || *p == '0') { *value = false; return true; }
+    return false;
+}
+
+static bool ReadExtrasString(const char* json, const char* name, char* value, size_t value_size) {
+    if (!json || !name || !value || value_size == 0) return false;
+    char key[96] = {};
+    snprintf(key, sizeof(key), "\"%s\"", name);
+    const char* p = strstr(json, key);
+    if (!p || !(p = strchr(p + strlen(key), ':'))) return false;
+    p = strchr(p, '"');
+    if (!p) return false;
+    const char* end = strchr(++p, '"');
+    if (!end) return false;
+    size_t length = static_cast<size_t>(end - p);
+    if (length >= value_size) length = value_size - 1;
+    memcpy(value, p, length);
+    value[length] = '\0';
+    return true;
+}
+
+static int AttachmentAxisFromString(const char* axis) {
+    if (!axis) return 4;
+    if (strcmp(axis, "+X") == 0) return 0;
+    if (strcmp(axis, "-X") == 0) return 1;
+    if (strcmp(axis, "+Y") == 0) return 2;
+    if (strcmp(axis, "-Y") == 0) return 3;
+    if (strcmp(axis, "-Z") == 0) return 5;
+    return 4;
+}
+
 static int ReadNoiseTarget(const char* json) {
     float numeric = 0.0f;
     if (ReadExtrasFloat(json, "himym_noise_target", &numeric)) return (int)numeric;
@@ -1163,7 +1203,28 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
         for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
             const cgltf_node* node = &data->nodes[ni];
             rev::mesh::ImportedNode& dst_node = mesh->imported_nodes[ni];
+            if (node->name) strncpy_s(dst_node.name, node->name, _TRUNCATE);
             dst_node.parent_index = node->parent ? (int)cgltf_node_index(data, node->parent) : -1;
+            cgltf_size extras_size = 0;
+            if (cgltf_copy_extras_json(data, &node->extras, nullptr, &extras_size) == cgltf_result_success &&
+                extras_size > 1) {
+                char* extras_json = new char[extras_size];
+                if (cgltf_copy_extras_json(data, &node->extras, extras_json, &extras_size) == cgltf_result_success) {
+                    ReadExtrasBool(extras_json, "himym_attachment", &dst_node.is_attachment);
+                    char attachment_name[64] = {};
+                    if (ReadExtrasString(extras_json, "himym_attachment_name",
+                                         attachment_name, sizeof(attachment_name)) &&
+                        attachment_name[0]) {
+                        strncpy_s(dst_node.name, attachment_name, _TRUNCATE);
+                    }
+                    char axis[8] = {};
+                    if (ReadExtrasString(extras_json, "himym_direction_axis", axis, sizeof(axis)))
+                        dst_node.attachment_axis = AttachmentAxisFromString(axis);
+                    else
+                        dst_node.attachment_axis = 4;
+                }
+                delete[] extras_json;
+            }
             dst_node.base_translation[0] = node->has_translation ? node->translation[0] : 0.0f;
             dst_node.base_translation[1] = node->has_translation ? node->translation[1] : 0.0f;
             dst_node.base_translation[2] = node->has_translation ? node->translation[2] : 0.0f;

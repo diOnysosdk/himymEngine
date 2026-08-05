@@ -1378,7 +1378,7 @@ int LoadAllPixelEmitterCues(const char* path, PixelEmitterCue* cues, int max_cue
         *pipe2 = '\0';
         strncpy_s(cue->asset_path, pipe1 + 1, _TRUNCATE);
         int parsed = sscanf_s(pipe2 + 1,
-            "%d|%d|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%f|%d|%f|%d|%f|%f|%f|%f|%f|%f|%u|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%f|%f",
+            "%d|%d|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%f|%d|%f|%d|%f|%f|%f|%f|%f|%f|%u|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%f|%f|%f|%d|%63[^|]|%63[^|]|%f|%f|%f|%d",
             &cue->visual_source, &cue->primitive_shape, &cue->x, &cue->y,
             &cue->scale, &cue->rotation, &cue->opacity, &cue->cue_start,
             &cue->cue_end, &cue->layer_order, &cue->blend_mode, &cue->max_particles,
@@ -1389,7 +1389,12 @@ int LoadAllPixelEmitterCues(const char* path, PixelEmitterCue* cues, int max_cue
             &cue->curve_x, &cue->curve_y, &cue->curve_scale, &cue->curve_rotation,
             &cue->curve_opacity, &cue->curve_emission_rate, &cue->curve_speed_min, &cue->curve_speed_max,
             &cue->curve_lifetime_min, &cue->curve_lifetime_max, &cue->curve_scale_min, &cue->curve_scale_max,
-            &cue->direction_x, &cue->direction_y, &cue->cone_angle_degrees);
+            &cue->direction_x, &cue->direction_y, &cue->cone_angle_degrees,
+            &cue->attachment_enabled,
+            cue->attachment_mesh_key, (unsigned)sizeof(cue->attachment_mesh_key),
+            cue->attachment_node_name, (unsigned)sizeof(cue->attachment_node_name),
+            &cue->attachment_offset[0], &cue->attachment_offset[1],
+            &cue->attachment_offset[2], &cue->attachment_axis);
         if (parsed >= 23) ++count;
     }
     fclose(f);
@@ -2060,6 +2065,48 @@ static void BuildMeshProjection(float out[16], const rev::mesh::Mesh* mesh,
         mesh->imported_camera_fov_deg * 3.14159265f / 180.0f,
         aspect, znear, mesh->imported_camera_zfar,
         mesh->imported_camera_shift_x, mesh->imported_camera_shift_y);
+}
+
+static void TransformPoint3(const float matrix[16], const float point[3], float out[3]) {
+    out[0] = matrix[0] * point[0] + matrix[4] * point[1] + matrix[8]  * point[2] + matrix[12];
+    out[1] = matrix[1] * point[0] + matrix[5] * point[1] + matrix[9]  * point[2] + matrix[13];
+    out[2] = matrix[2] * point[0] + matrix[6] * point[1] + matrix[10] * point[2] + matrix[14];
+}
+
+static bool ProjectToEmitterSpace(const float view[16], const float projection[16],
+                                  const float world[3], float* out_x, float* out_y) {
+    float view_point[4] = {
+        view[0] * world[0] + view[4] * world[1] + view[8]  * world[2] + view[12],
+        view[1] * world[0] + view[5] * world[1] + view[9]  * world[2] + view[13],
+        view[2] * world[0] + view[6] * world[1] + view[10] * world[2] + view[14],
+        view[3] * world[0] + view[7] * world[1] + view[11] * world[2] + view[15]
+    };
+    float clip[4] = {
+        projection[0] * view_point[0] + projection[4] * view_point[1] +
+            projection[8] * view_point[2] + projection[12] * view_point[3],
+        projection[1] * view_point[0] + projection[5] * view_point[1] +
+            projection[9] * view_point[2] + projection[13] * view_point[3],
+        projection[2] * view_point[0] + projection[6] * view_point[1] +
+            projection[10] * view_point[2] + projection[14] * view_point[3],
+        projection[3] * view_point[0] + projection[7] * view_point[1] +
+            projection[11] * view_point[2] + projection[15] * view_point[3]
+    };
+    if (clip[3] <= 0.00001f) return false;
+    *out_x = clip[0] / clip[3] * 0.5f + 0.5f;
+    *out_y = 0.5f - clip[1] / clip[3] * 0.5f;
+    return true;
+}
+
+static void AttachmentAxisVector(int axis, float out[3]) {
+    out[0] = out[1] = out[2] = 0.0f;
+    switch (axis) {
+        case 1: out[0] = -1.0f; break;
+        case 2: out[1] =  1.0f; break;
+        case 3: out[1] = -1.0f; break;
+        case 4: out[2] =  1.0f; break;
+        case 5: out[2] = -1.0f; break;
+        default: out[0] = 1.0f; break;
+    }
 }
 
 // Fragment shaders - synchronized with rev_editor shader_presets.cpp
@@ -4759,6 +4806,139 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float lifetime_max = EvaluateEmitterCurve(cue.curve_lifetime_max, cue.lifetime_max);
                     float scale_min = EvaluateEmitterCurve(cue.curve_scale_min, cue.scale_min);
                     float scale_max = EvaluateEmitterCurve(cue.curve_scale_max, cue.scale_max);
+                    float spray_direction_x = cue.direction_x;
+                    float spray_direction_y = cue.direction_y;
+
+                    if (cue.attachment_enabled && cue.attachment_mesh_key[0] &&
+                        cue.attachment_node_name[0]) {
+                        int attached_mesh_index = -1;
+                        for (int mesh_index = 0; mesh_index < mesh_cue_count; ++mesh_index) {
+                            if (strcmp(mesh_cues[mesh_index].asset_key,
+                                       cue.attachment_mesh_key) == 0) {
+                                attached_mesh_index = mesh_index;
+                                break;
+                            }
+                        }
+                        if (attached_mesh_index >= 0 && mesh_objs[attached_mesh_index]) {
+                            MeshCue& attached_cue = mesh_cues[attached_mesh_index];
+                            rev::mesh::Mesh* attached_mesh = mesh_objs[attached_mesh_index];
+                            int node_index = -1;
+                            for (uint32_t imported_index = 0;
+                                 imported_index < attached_mesh->imported_node_count; ++imported_index) {
+                                const rev::mesh::ImportedNode& node =
+                                    attached_mesh->imported_nodes[imported_index];
+                                if (node.is_attachment &&
+                                    strcmp(node.name, cue.attachment_node_name) == 0) {
+                                    node_index = (int)imported_index;
+                                    break;
+                                }
+                            }
+                            if (node_index >= 0) {
+                                const rev::mesh::ImportedNode& node =
+                                    attached_mesh->imported_nodes[node_index];
+                                float node_world[16] = {};
+                                memcpy(node_world, node.base_world, sizeof(node_world));
+#if defined(REV_GLTF_AVAILABLE)
+                                if (attached_mesh->animation_data &&
+                                    attached_mesh->animation_count > 0) {
+                                    float* deltas =
+                                        new float[attached_mesh->imported_node_count * 16];
+                                    float attachment_time = time - attached_cue.cue_start;
+                                    if (attachment_time < 0.0f) attachment_time = 0.0f;
+                                    if (rev::gltf::BuildAnimatedNodeDeltaMatricesAll(
+                                            attached_mesh,
+                                            (rev::gltf::Animation*)attached_mesh->animation_data,
+                                            attached_mesh->animation_count,
+                                            attachment_time,
+                                            attached_mesh->animation_loop,
+                                            deltas,
+                                            (int)attached_mesh->imported_node_count)) {
+                                        Mat4Multiply(node_world, &deltas[node_index * 16],
+                                                     node.base_world);
+                                    }
+                                    delete[] deltas;
+                                }
+#endif
+                                float model[16], attachment_world[16];
+                                float attached_pos[3] = {
+                                    attached_cue.pos[0], attached_cue.pos[1], attached_cue.pos[2]
+                                };
+                                float attached_rot[3] = {
+                                    attached_cue.rot[0], attached_cue.rot[1], attached_cue.rot[2]
+                                };
+                                float attached_scale[3] = {
+                                    attached_cue.scale[0], attached_cue.scale[1], attached_cue.scale[2]
+                                };
+                                float attached_elapsed = time - attached_cue.cue_start;
+                                auto EvaluateAttachedCurve = [&](int curve_index, float fallback) {
+                                    if (curve_index < 0 || curve_index >= curve_count ||
+                                        attached_elapsed < 0.0f) return fallback;
+                                    const rev::curve::Curve& curve = curves[curve_index];
+                                    float curve_time = curve.duration > 0.0f
+                                        ? attached_elapsed / curve.duration : 0.0f;
+                                    return rev::curve::Evaluate(curve, curve_time);
+                                };
+                                attached_pos[0] = EvaluateAttachedCurve(attached_cue.curve_pos_x, attached_pos[0]);
+                                attached_pos[1] = EvaluateAttachedCurve(attached_cue.curve_pos_y, attached_pos[1]);
+                                attached_pos[2] = EvaluateAttachedCurve(attached_cue.curve_pos_z, attached_pos[2]);
+                                attached_rot[0] = EvaluateAttachedCurve(attached_cue.curve_rot_x, attached_rot[0]);
+                                attached_rot[1] = EvaluateAttachedCurve(attached_cue.curve_rot_y, attached_rot[1]);
+                                attached_rot[2] = EvaluateAttachedCurve(attached_cue.curve_rot_z, attached_rot[2]);
+                                attached_scale[0] = EvaluateAttachedCurve(attached_cue.curve_scale_x, attached_scale[0]);
+                                attached_scale[1] = EvaluateAttachedCurve(attached_cue.curve_scale_y, attached_scale[1]);
+                                attached_scale[2] = EvaluateAttachedCurve(attached_cue.curve_scale_z, attached_scale[2]);
+                                Mat4Model(model, attached_pos, attached_rot, attached_scale);
+                                Mat4Multiply(attachment_world, model, node_world);
+                                float local_origin[3] = {
+                                    cue.attachment_offset[0], cue.attachment_offset[1],
+                                    cue.attachment_offset[2]
+                                };
+                                int axis = cue.attachment_axis > 0
+                                    ? cue.attachment_axis - 1 : node.attachment_axis;
+                                float local_axis[3] = {};
+                                AttachmentAxisVector(axis, local_axis);
+                                float local_tip[3] = {
+                                    local_origin[0] + local_axis[0],
+                                    local_origin[1] + local_axis[1],
+                                    local_origin[2] + local_axis[2]
+                                };
+                                float world_origin[3], world_tip[3];
+                                TransformPoint3(attachment_world, local_origin, world_origin);
+                                TransformPoint3(attachment_world, local_tip, world_tip);
+
+                                float eye[3] = {0.0f, 0.0f, 5.0f};
+                                float center[3] = {0.0f, 0.0f, 0.0f};
+                                float up[3] = {0.0f, 1.0f, 0.0f};
+                                if (attached_cue.use_imported_camera &&
+                                    attached_mesh->has_imported_camera) {
+                                    eye[0] = attached_mesh->imported_camera_pos[0];
+                                    eye[1] = attached_mesh->imported_camera_pos[1];
+                                    eye[2] = attached_mesh->imported_camera_pos[2];
+                                    center[0] = attached_mesh->imported_camera_target[0];
+                                    center[1] = attached_mesh->imported_camera_target[1];
+                                    center[2] = attached_mesh->imported_camera_target[2];
+                                }
+                                float view[16], projection[16];
+                                Mat4LookAt(view, eye, center, up);
+                                BuildMeshProjection(
+                                    projection, attached_mesh,
+                                    attached_cue.use_imported_camera != 0,
+                                    attached_cue.fov_deg > 0.0f
+                                        ? attached_cue.fov_deg : 45.0f,
+                                    (float)config.width / (float)config.height);
+                                float origin_x, origin_y, tip_x, tip_y;
+                                if (ProjectToEmitterSpace(view, projection, world_origin,
+                                                          &origin_x, &origin_y) &&
+                                    ProjectToEmitterSpace(view, projection, world_tip,
+                                                          &tip_x, &tip_y)) {
+                                    emitter_x = origin_x;
+                                    emitter_y = origin_y;
+                                    spray_direction_x = tip_x - origin_x;
+                                    spray_direction_y = tip_y - origin_y;
+                                }
+                            }
+                        }
+                    }
                     settings.seed = cue.seed;
                     settings.visual_source = cue.visual_source == 0
                         ? rev::particles::VisualSourceAsset : rev::particles::VisualSourcePrimitive;
@@ -4770,7 +4950,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     settings.loop = cue.loop != 0;
                     settings.start_delay = cue.start_delay;
                     settings.simulation_space = (rev::particles::SimulationSpace)cue.simulation_space;
-                    settings.direction = {cue.direction_x, cue.direction_y, 0.0f};
+                    settings.direction = {spray_direction_x, spray_direction_y, 0.0f};
                     settings.cone_angle_degrees = cue.cone_angle_degrees;
                     settings.speed = {speed_min, speed_max};
                     settings.lifetime = {lifetime_min, lifetime_max};

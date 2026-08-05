@@ -5207,6 +5207,79 @@ void RenderPixelEmitterModal(EditorContext* editor) {
             AutoSave();
         }
         ImGui::TextDisabled("Full cone width: 0 = straight, 90 = +/-45, 360 = all directions.");
+        if (ImGui::CollapsingHeader("glTF Attachment Socket")) {
+            bool attached = cue->attachment_enabled != 0;
+            if (ImGui::Checkbox("Attach to glTF Socket", &attached)) {
+                cue->attachment_enabled = attached ? 1 : 0;
+                AutoSave();
+            }
+            if (attached) {
+                SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+                const char* mesh_preview = cue->attachment_mesh_key[0]
+                    ? cue->attachment_mesh_key : "(select mesh cue)";
+                if (ImGui::BeginCombo("Mesh Cue", mesh_preview)) {
+                    if (scene) {
+                        for (int mesh_index = 0; mesh_index < scene->mesh_cue_count; ++mesh_index) {
+                            const MeshCue& mesh_cue = scene->mesh_cues[mesh_index];
+                            if (mesh_cue.mesh_type != 4 || !mesh_cue.asset_key[0]) continue;
+                            bool selected = strcmp(cue->attachment_mesh_key, mesh_cue.asset_key) == 0;
+                            if (ImGui::Selectable(mesh_cue.asset_key, selected)) {
+                                strncpy_s(cue->attachment_mesh_key, mesh_cue.asset_key, _TRUNCATE);
+                                cue->attachment_node_name[0] = '\0';
+                                AutoSave();
+                            }
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                const MeshCue* selected_mesh_cue = nullptr;
+                if (scene) {
+                    for (int mesh_index = 0; mesh_index < scene->mesh_cue_count; ++mesh_index) {
+                        if (strcmp(scene->mesh_cues[mesh_index].asset_key,
+                                   cue->attachment_mesh_key) == 0) {
+                            selected_mesh_cue = &scene->mesh_cues[mesh_index];
+                            break;
+                        }
+                    }
+                }
+                rev::mesh::Mesh* attachment_mesh = nullptr;
+                if (selected_mesh_cue) {
+                    for (int cache_index = 0; cache_index < editor->mesh_cache_count; ++cache_index) {
+                        if (strcmp(editor->mesh_cache[cache_index].path,
+                                   selected_mesh_cue->asset_path) == 0) {
+                            attachment_mesh = (rev::mesh::Mesh*)editor->mesh_cache[cache_index].mesh;
+                            break;
+                        }
+                    }
+                }
+                const char* socket_preview = cue->attachment_node_name[0]
+                    ? cue->attachment_node_name : "(select socket)";
+                if (ImGui::BeginCombo("Socket", socket_preview)) {
+                    if (attachment_mesh) {
+                        for (uint32_t node_index = 0;
+                             node_index < attachment_mesh->imported_node_count; ++node_index) {
+                            const rev::mesh::ImportedNode& node = attachment_mesh->imported_nodes[node_index];
+                            if (!node.is_attachment || !node.name[0]) continue;
+                            bool selected = strcmp(cue->attachment_node_name, node.name) == 0;
+                            if (ImGui::Selectable(node.name, selected)) {
+                                strncpy_s(cue->attachment_node_name, node.name, _TRUNCATE);
+                                cue->attachment_axis = 0;
+                                AutoSave();
+                            }
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                if (!attachment_mesh)
+                    ImGui::TextDisabled("Preview the selected mesh once to load its sockets.");
+                if (ImGui::InputFloat3("Socket Offset XYZ", cue->attachment_offset)) AutoSave();
+                const char* axes[] = {"Socket Default", "+X", "-X", "+Y", "-Y", "+Z", "-Z"};
+                if (cue->attachment_axis < 0 || cue->attachment_axis > 6) cue->attachment_axis = 0;
+                if (ImGui::Combo("Socket Direction", &cue->attachment_axis, axes, 7)) AutoSave();
+                ImGui::TextDisabled("Current milestone keeps particles in the 2D emitter simulation.");
+            }
+        }
         if (ImGui::SliderFloat("Speed Min", &cue->speed_min, 0.0f, 2.0f)) AutoSave();
         CurveControl("Speed Min", &cue->curve_speed_min, cue->speed_min);
         if (ImGui::SliderFloat("Speed Max", &cue->speed_max, 0.0f, 2.0f)) AutoSave();

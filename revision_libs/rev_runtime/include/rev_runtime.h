@@ -277,6 +277,11 @@ struct PixelEmitterCue {
     float acceleration_y;
     float drag;
     unsigned int seed;
+    int attachment_enabled;
+    char attachment_mesh_key[64];
+    char attachment_node_name[64];
+    float attachment_offset[3];
+    int attachment_axis; // 0=socket default, 1=+X 2=-X 3=+Y 4=-Y 5=+Z 6=-Z
 
     int curve_x;
     int curve_y;

@@ -2340,6 +2340,22 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 sscanf_s(start, "\"curve_scale_max\": %d", &current_pixel_emitter_cue.curve_scale_max);
             } else if (strstr(start, "\"seed\":")) {
                 sscanf_s(start, "\"seed\": %u", &current_pixel_emitter_cue.seed);
+            } else if (strstr(start, "\"attachment_enabled\":")) {
+                sscanf_s(start, "\"attachment_enabled\": %d", &current_pixel_emitter_cue.attachment_enabled);
+            } else if (strstr(start, "\"attachment_mesh_key\":")) {
+                ParseJsonStringValue(start, current_pixel_emitter_cue.attachment_mesh_key,
+                                     sizeof(current_pixel_emitter_cue.attachment_mesh_key));
+            } else if (strstr(start, "\"attachment_node_name\":")) {
+                ParseJsonStringValue(start, current_pixel_emitter_cue.attachment_node_name,
+                                     sizeof(current_pixel_emitter_cue.attachment_node_name));
+            } else if (strstr(start, "\"attachment_offset_x\":")) {
+                sscanf_s(start, "\"attachment_offset_x\": %f", &current_pixel_emitter_cue.attachment_offset[0]);
+            } else if (strstr(start, "\"attachment_offset_y\":")) {
+                sscanf_s(start, "\"attachment_offset_y\": %f", &current_pixel_emitter_cue.attachment_offset[1]);
+            } else if (strstr(start, "\"attachment_offset_z\":")) {
+                sscanf_s(start, "\"attachment_offset_z\": %f", &current_pixel_emitter_cue.attachment_offset[2]);
+            } else if (strstr(start, "\"attachment_axis\":")) {
+                sscanf_s(start, "\"attachment_axis\": %d", &current_pixel_emitter_cue.attachment_axis);
             } else if (indent == 8 && start[0] == '}' &&
                        (current_pixel_emitter_cue.asset_key[0] != '\0' ||
                         current_pixel_emitter_cue.visual_source == 1)) {
@@ -3374,7 +3390,18 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"curve_lifetime_max\": %d,\n", cue->curve_lifetime_max);
             fprintf(f, "          \"curve_scale_min\": %d,\n", cue->curve_scale_min);
             fprintf(f, "          \"curve_scale_max\": %d,\n", cue->curve_scale_max);
-            fprintf(f, "          \"seed\": %u\n", cue->seed);
+            char escaped_attachment_mesh[256] = {};
+            char escaped_attachment_node[256] = {};
+            JsonEscapeString(cue->attachment_mesh_key, escaped_attachment_mesh, sizeof(escaped_attachment_mesh));
+            JsonEscapeString(cue->attachment_node_name, escaped_attachment_node, sizeof(escaped_attachment_node));
+            fprintf(f, "          \"seed\": %u,\n", cue->seed);
+            fprintf(f, "          \"attachment_enabled\": %d,\n", cue->attachment_enabled);
+            fprintf(f, "          \"attachment_mesh_key\": \"%s\",\n", escaped_attachment_mesh);
+            fprintf(f, "          \"attachment_node_name\": \"%s\",\n", escaped_attachment_node);
+            fprintf(f, "          \"attachment_offset_x\": %.3f,\n", cue->attachment_offset[0]);
+            fprintf(f, "          \"attachment_offset_y\": %.3f,\n", cue->attachment_offset[1]);
+            fprintf(f, "          \"attachment_offset_z\": %.3f,\n", cue->attachment_offset[2]);
+            fprintf(f, "          \"attachment_axis\": %d\n", cue->attachment_axis);
             fprintf(f, "        }%s\n", (i < scene->pixel_emitter_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
@@ -4643,13 +4670,18 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             if (path_len >= sizeof(cue.asset_path)) path_len = sizeof(cue.asset_path) - 1;
             strncpy_s(cue.asset_path, p1 + 1, path_len);
             int parsed = sscanf_s(p2 + 1,
-                "%d|%d|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%f|%d|%f|%d|%f|%f|%f|%f|%f|%f|%u|%*f|%*f|%*f|%*f|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%f|%f|%f",
+                "%d|%d|%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%f|%d|%f|%d|%f|%f|%f|%f|%f|%f|%u|%*f|%*f|%*f|%*f|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%*d|%f|%f|%f|%d|%63[^|]|%63[^|]|%f|%f|%f|%d",
                 &cue.visual_source, &cue.primitive_shape, &cue.x, &cue.y,
                 &cue.scale, &cue.rotation, &cue.opacity, &cue.cue_start, &cue.cue_end,
                 &cue.layer_order, &cue.blend_mode, &cue.max_particles, &cue.emission_rate,
                 &cue.burst_count, &cue.duration, &cue.loop, &cue.speed_min, &cue.speed_max,
                 &cue.lifetime_min, &cue.lifetime_max, &cue.scale_min, &cue.scale_max, &cue.seed,
-                &cue.direction_x, &cue.direction_y, &cue.cone_angle_degrees);
+                &cue.direction_x, &cue.direction_y, &cue.cone_angle_degrees,
+                &cue.attachment_enabled,
+                cue.attachment_mesh_key, (unsigned)sizeof(cue.attachment_mesh_key),
+                cue.attachment_node_name, (unsigned)sizeof(cue.attachment_node_name),
+                &cue.attachment_offset[0], &cue.attachment_offset[1],
+                &cue.attachment_offset[2], &cue.attachment_axis);
             if (parsed >= 9) {
                 if (editor->project->scene_count == 0)
                     AddScene(editor, "Imported Scene", total_duration);
@@ -5239,7 +5271,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     }
 
     fprintf(f, "\n[pixel_emitter_cues]\n");
-    fprintf(f, "# asset_key|asset_path|visual_source|primitive_shape|x|y|scale|rotation|opacity|cue_start|cue_end|layer_order|blend_mode|max_particles|emission_rate|burst_count|duration|loop|speed_min|speed_max|lifetime_min|lifetime_max|scale_min|scale_max|seed|primitive_color_r|primitive_color_g|primitive_color_b|primitive_color_a|curve_x|curve_y|curve_scale|curve_rotation|curve_opacity|curve_emission_rate|curve_speed_min|curve_speed_max|curve_lifetime_min|curve_lifetime_max|curve_scale_min|curve_scale_max|direction_x|direction_y|cone_angle_degrees\n");
+    fprintf(f, "# asset_key|asset_path|visual_source|primitive_shape|x|y|scale|rotation|opacity|cue_start|cue_end|layer_order|blend_mode|max_particles|emission_rate|burst_count|duration|loop|speed_min|speed_max|lifetime_min|lifetime_max|scale_min|scale_max|seed|primitive_color_r|primitive_color_g|primitive_color_b|primitive_color_a|curve_x|curve_y|curve_scale|curve_rotation|curve_opacity|curve_emission_rate|curve_speed_min|curve_speed_max|curve_lifetime_min|curve_lifetime_max|curve_scale_min|curve_scale_max|direction_x|direction_y|cone_angle_degrees|attachment_enabled|attachment_mesh_key|attachment_node_name|attachment_offset_x|attachment_offset_y|attachment_offset_z|attachment_axis\n");
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
         float scene_start = 0.0f;
@@ -5255,7 +5287,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             for (char* p = asset_path; *p; ++p) if (*p == '\\') *p = '/';
             float abs_start = scene_start + cue->cue_start;
             float abs_end = cue->cue_end < 0.0f ? scene_start + scene->duration : scene_start + cue->cue_end;
-            fprintf(f, "%s|%s|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%.3f|%d|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%u|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%.3f|%.3f\n",
+            fprintf(f, "%s|%s|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%.3f|%d|%.3f|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%u|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%.3f|%.3f|%.3f|%d|%s|%s|%.3f|%.3f|%.3f|%d\n",
                 cue->asset_key, asset_path, cue->visual_source, cue->primitive_shape,
                 cue->x, cue->y, cue->scale, cue->rotation, cue->opacity,
                 abs_start, abs_end, cue->layer_order, cue->blend_mode,
@@ -5266,7 +5298,10 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 cue->curve_x, cue->curve_y, cue->curve_scale, cue->curve_rotation,
                 cue->curve_opacity, cue->curve_emission_rate, cue->curve_speed_min, cue->curve_speed_max,
                 cue->curve_lifetime_min, cue->curve_lifetime_max, cue->curve_scale_min, cue->curve_scale_max,
-                cue->direction_x, cue->direction_y, cue->cone_angle_degrees);
+                cue->direction_x, cue->direction_y, cue->cone_angle_degrees,
+                cue->attachment_enabled, cue->attachment_mesh_key, cue->attachment_node_name,
+                cue->attachment_offset[0], cue->attachment_offset[1],
+                cue->attachment_offset[2], cue->attachment_axis);
         }
     }
 
@@ -6586,6 +6621,44 @@ static void BuildMeshProjection(float out[16], const rev::mesh::Mesh* mesh,
         mesh->imported_camera_shift_x, mesh->imported_camera_shift_y);
 }
 
+static void TransformAttachmentPoint(const float matrix[16], const float point[3], float out[3]) {
+    out[0] = matrix[0] * point[0] + matrix[4] * point[1] + matrix[8]  * point[2] + matrix[12];
+    out[1] = matrix[1] * point[0] + matrix[5] * point[1] + matrix[9]  * point[2] + matrix[13];
+    out[2] = matrix[2] * point[0] + matrix[6] * point[1] + matrix[10] * point[2] + matrix[14];
+}
+
+static bool ProjectAttachmentPoint(const float view[16], const float projection[16],
+                                   const float world[3], float* out_x, float* out_y) {
+    float vp[4] = {
+        view[0] * world[0] + view[4] * world[1] + view[8]  * world[2] + view[12],
+        view[1] * world[0] + view[5] * world[1] + view[9]  * world[2] + view[13],
+        view[2] * world[0] + view[6] * world[1] + view[10] * world[2] + view[14],
+        view[3] * world[0] + view[7] * world[1] + view[11] * world[2] + view[15]
+    };
+    float cx = projection[0] * vp[0] + projection[4] * vp[1] +
+               projection[8] * vp[2] + projection[12] * vp[3];
+    float cy = projection[1] * vp[0] + projection[5] * vp[1] +
+               projection[9] * vp[2] + projection[13] * vp[3];
+    float cw = projection[3] * vp[0] + projection[7] * vp[1] +
+               projection[11] * vp[2] + projection[15] * vp[3];
+    if (cw <= 0.00001f) return false;
+    *out_x = cx / cw * 0.5f + 0.5f;
+    *out_y = 0.5f - cy / cw * 0.5f;
+    return true;
+}
+
+static void GetAttachmentAxis(int axis, float out[3]) {
+    out[0] = out[1] = out[2] = 0.0f;
+    switch (axis) {
+        case 1: out[0] = -1.0f; break;
+        case 2: out[1] =  1.0f; break;
+        case 3: out[1] = -1.0f; break;
+        case 4: out[2] =  1.0f; break;
+        case 5: out[2] = -1.0f; break;
+        default: out[0] = 1.0f; break;
+    }
+}
+
 // Test fragment shader - Plasma effect
 static const char* preview_fragment_shader = R"(
 #version 330 core
@@ -7855,6 +7928,165 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float lifetime_max = EvaluateEmitterCurve(cue->curve_lifetime_max, cue->lifetime_max);
                     float scale_min = EvaluateEmitterCurve(cue->curve_scale_min, cue->scale_min);
                     float scale_max = EvaluateEmitterCurve(cue->curve_scale_max, cue->scale_max);
+                    float spray_direction_x = cue->direction_x;
+                    float spray_direction_y = cue->direction_y;
+                    if (cue->attachment_enabled && cue->attachment_mesh_key[0] &&
+                        cue->attachment_node_name[0]) {
+                        const MeshCue* attached_cue = nullptr;
+                        rev::mesh::Mesh* attached_mesh = nullptr;
+                        for (int scene_index = 0;
+                             scene_index < editor->project->scene_count && !attached_cue;
+                             ++scene_index) {
+                            SceneBlock& scene = editor->project->scenes[scene_index];
+                            bool owns_emitter = false;
+                            for (int emitter_index = 0;
+                                 emitter_index < scene.pixel_emitter_cue_count; ++emitter_index) {
+                                if (&scene.pixel_emitter_cues[emitter_index] == cue) {
+                                    owns_emitter = true;
+                                    break;
+                                }
+                            }
+                            if (!owns_emitter) continue;
+                            for (int mesh_index = 0; mesh_index < scene.mesh_cue_count; ++mesh_index) {
+                                if (strcmp(scene.mesh_cues[mesh_index].asset_key,
+                                           cue->attachment_mesh_key) == 0) {
+                                    attached_cue = &scene.mesh_cues[mesh_index];
+                                    break;
+                                }
+                            }
+                        }
+                        if (attached_cue) {
+                            for (int cache_index = 0; cache_index < editor->mesh_cache_count; ++cache_index) {
+                                if (strcmp(editor->mesh_cache[cache_index].path,
+                                           attached_cue->asset_path) == 0) {
+                                    attached_mesh =
+                                        (rev::mesh::Mesh*)editor->mesh_cache[cache_index].mesh;
+                                    break;
+                                }
+                            }
+                        }
+                        if (attached_cue && attached_mesh) {
+                            int node_index = -1;
+                            for (uint32_t index = 0;
+                                 index < attached_mesh->imported_node_count; ++index) {
+                                const rev::mesh::ImportedNode& node =
+                                    attached_mesh->imported_nodes[index];
+                                if (node.is_attachment &&
+                                    strcmp(node.name, cue->attachment_node_name) == 0) {
+                                    node_index = (int)index;
+                                    break;
+                                }
+                            }
+                            if (node_index >= 0) {
+                                const rev::mesh::ImportedNode& node =
+                                    attached_mesh->imported_nodes[node_index];
+                                float node_world[16] = {};
+                                memcpy(node_world, node.base_world, sizeof(node_world));
+                                if (attached_mesh->animation_data &&
+                                    attached_mesh->animation_count > 0) {
+                                    float* deltas =
+                                        new float[attached_mesh->imported_node_count * 16];
+                                    float attachment_time = editor->current_time -
+                                        (item.scene_start_time + attached_cue->cue_start);
+                                    if (attachment_time < 0.0f) attachment_time = 0.0f;
+                                    if (rev::gltf::BuildAnimatedNodeDeltaMatricesAll(
+                                            attached_mesh,
+                                            (rev::gltf::Animation*)attached_mesh->animation_data,
+                                            attached_mesh->animation_count,
+                                            attachment_time,
+                                            attached_mesh->animation_loop,
+                                            deltas,
+                                            (int)attached_mesh->imported_node_count)) {
+                                        rev::runtime::Mat4Multiply(
+                                            node_world, &deltas[node_index * 16],
+                                            node.base_world);
+                                    }
+                                    delete[] deltas;
+                                }
+                                float model[16], attachment_world[16];
+                                float attached_pos[3] = {
+                                    attached_cue->pos[0], attached_cue->pos[1], attached_cue->pos[2]
+                                };
+                                float attached_rot[3] = {
+                                    attached_cue->rot[0], attached_cue->rot[1], attached_cue->rot[2]
+                                };
+                                float attached_scale[3] = {
+                                    attached_cue->scale[0], attached_cue->scale[1],
+                                    attached_cue->scale[2]
+                                };
+                                float attached_elapsed = editor->current_time -
+                                    (item.scene_start_time + attached_cue->cue_start);
+                                auto EvaluateAttachedCurve = [&](int curve_index, float fallback) {
+                                    if (curve_index < 0 ||
+                                        curve_index >= editor->project->curve_count ||
+                                        attached_elapsed < 0.0f) return fallback;
+                                    const rev::curve::Curve& curve =
+                                        editor->project->curves[curve_index];
+                                    float curve_time = curve.duration > 0.0f
+                                        ? attached_elapsed / curve.duration : 0.0f;
+                                    return rev::curve::Evaluate(curve, curve_time);
+                                };
+                                attached_pos[0] = EvaluateAttachedCurve(attached_cue->curve_pos_x, attached_pos[0]);
+                                attached_pos[1] = EvaluateAttachedCurve(attached_cue->curve_pos_y, attached_pos[1]);
+                                attached_pos[2] = EvaluateAttachedCurve(attached_cue->curve_pos_z, attached_pos[2]);
+                                attached_rot[0] = EvaluateAttachedCurve(attached_cue->curve_rot_x, attached_rot[0]);
+                                attached_rot[1] = EvaluateAttachedCurve(attached_cue->curve_rot_y, attached_rot[1]);
+                                attached_rot[2] = EvaluateAttachedCurve(attached_cue->curve_rot_z, attached_rot[2]);
+                                attached_scale[0] = EvaluateAttachedCurve(attached_cue->curve_scale_x, attached_scale[0]);
+                                attached_scale[1] = EvaluateAttachedCurve(attached_cue->curve_scale_y, attached_scale[1]);
+                                attached_scale[2] = EvaluateAttachedCurve(attached_cue->curve_scale_z, attached_scale[2]);
+                                rev::runtime::Mat4Model(
+                                    model, attached_pos, attached_rot, attached_scale);
+                                rev::runtime::Mat4Multiply(attachment_world, model, node_world);
+                                float local_origin[3] = {
+                                    cue->attachment_offset[0], cue->attachment_offset[1],
+                                    cue->attachment_offset[2]
+                                };
+                                int axis = cue->attachment_axis > 0
+                                    ? cue->attachment_axis - 1 : node.attachment_axis;
+                                float local_axis[3] = {};
+                                GetAttachmentAxis(axis, local_axis);
+                                float local_tip[3] = {
+                                    local_origin[0] + local_axis[0],
+                                    local_origin[1] + local_axis[1],
+                                    local_origin[2] + local_axis[2]
+                                };
+                                float world_origin[3], world_tip[3];
+                                TransformAttachmentPoint(attachment_world, local_origin, world_origin);
+                                TransformAttachmentPoint(attachment_world, local_tip, world_tip);
+                                float attachment_eye[3] = {0.0f, 0.0f, 5.0f};
+                                float attachment_center[3] = {0.0f, 0.0f, 0.0f};
+                                float attachment_up[3] = {0.0f, 1.0f, 0.0f};
+                                if (attached_cue->use_imported_camera &&
+                                    attached_mesh->has_imported_camera) {
+                                    memcpy(attachment_eye, attached_mesh->imported_camera_pos,
+                                           sizeof(attachment_eye));
+                                    memcpy(attachment_center, attached_mesh->imported_camera_target,
+                                           sizeof(attachment_center));
+                                }
+                                float view[16], projection[16];
+                                rev::runtime::Mat4LookAt(
+                                    view, attachment_eye, attachment_center, attachment_up);
+                                BuildMeshProjection(
+                                    projection, attached_mesh,
+                                    attached_cue->use_imported_camera != 0,
+                                    attached_cue->fov_deg > 0.0f
+                                        ? attached_cue->fov_deg : 45.0f,
+                                    (float)editor->preview_width /
+                                        (float)editor->preview_height);
+                                float origin_x, origin_y, tip_x, tip_y;
+                                if (ProjectAttachmentPoint(view, projection, world_origin,
+                                                           &origin_x, &origin_y) &&
+                                    ProjectAttachmentPoint(view, projection, world_tip,
+                                                           &tip_x, &tip_y)) {
+                                    emitter_x = origin_x;
+                                    emitter_y = origin_y;
+                                    spray_direction_x = tip_x - origin_x;
+                                    spray_direction_y = tip_y - origin_y;
+                                }
+                            }
+                        }
+                    }
                     settings.seed = cue->seed;
                     settings.visual_source = cue->visual_source == 0
                         ? rev::particles::VisualSourceAsset : rev::particles::VisualSourcePrimitive;
@@ -7867,7 +8099,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     settings.start_delay = cue->start_delay;
                     settings.simulation_space = (rev::particles::SimulationSpace)cue->simulation_space;
                     settings.position = {0.0f, 0.0f, 0.0f};
-                    settings.direction = {cue->direction_x, cue->direction_y, 0.0f};
+                    settings.direction = {spray_direction_x, spray_direction_y, 0.0f};
                     settings.cone_angle_degrees = cue->cone_angle_degrees;
                     settings.speed = {speed_min, speed_max};
                     settings.lifetime = {lifetime_min, lifetime_max};

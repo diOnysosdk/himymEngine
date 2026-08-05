@@ -29,7 +29,10 @@ struct MaterialSlot {
 };
 
 struct ImportedNode {
+    char  name[64];
     int   parent_index;
+    bool  is_attachment;
+    int   attachment_axis; // 0=+X 1=-X 2=+Y 3=-Y 4=+Z 5=-Z
     float base_translation[3];
     float base_rotation[4];
     float base_scale[3];

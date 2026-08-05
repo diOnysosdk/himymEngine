@@ -128,6 +128,32 @@ Only material `extras` are consumed. Unknown custom properties are ignored.
 The imported values are copied to fixed material-slot fields; Blender APIs and
 node-graph interpretation are not part of playback.
 
+## Pixel-emitter attachment sockets
+
+The HiMYM Blender sidebar can create or mark named attachment sockets. A socket
+is normally an Empty parented to an object or armature bone so its local
+position and orientation can be edited without changing the rig. Use names such
+as `FX_Exhaust`, `FX_Hand`, or `FX_Eye`.
+
+Each socket is exported as a glTF node with these extras:
+
+```text
+himym_attachment = true
+himym_attachment_name = "FX_Exhaust"
+himym_direction_axis = "+Z"
+```
+
+The direction axis is one of `+X`, `-X`, `+Y`, `-Y`, `+Z`, or `-Z`. The editor
+can attach a pixel emitter to the declared socket, add a local XYZ offset, and
+override the exported axis. Preview, standalone, and packed playback evaluate
+the animated node transform, apply the mesh cue transform, and project the
+socket position and axis through the active mesh camera. The current compact
+milestone keeps particle simulation in 2D; the socket controls the emitter
+origin and spray direction.
+
+Attachment names must be non-empty, unique within an exported scene, and must
+not contain the `|` character used by `cues.txt`.
+
 ## Regression fixture
 
 `tests/fixtures/blender_axis_material.gltf` contains an asymmetric transformed

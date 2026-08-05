@@ -29,6 +29,27 @@ static void TransformPoint(const float matrix[16], const float point[3], float o
 }
 
 int main(int argc, char** argv) {
+    if (argc >= 3 && std::strcmp(argv[1], "--attachment-smoke") == 0) {
+        rev::gltf::ImportResult* smoke = rev::gltf::LoadMesh(argv[2]);
+        Check(smoke != nullptr, "attachment smoke LoadMesh returned null");
+        if (smoke) {
+            Check(smoke->ok, smoke->error);
+            bool found = false;
+            if (smoke->mesh) {
+                for (uint32_t index = 0; index < smoke->mesh->imported_node_count; ++index) {
+                    const rev::mesh::ImportedNode& node = smoke->mesh->imported_nodes[index];
+                    if (node.is_attachment && std::strcmp(node.name, "FX_Test") == 0) {
+                        found = node.attachment_axis == 3;
+                        break;
+                    }
+                }
+            }
+            Check(found, "Blender-exported FX_Test/-Y attachment metadata");
+        }
+        rev::gltf::FreeImportResult(smoke);
+        if (failures == 0) std::printf("[gltf_import_tests] ATTACHMENT SMOKE PASS\n");
+        return failures == 0 ? 0 : 1;
+    }
     if (argc >= 3 && std::strcmp(argv[1], "--smoke") == 0) {
         rev::gltf::ImportResult* smoke = rev::gltf::LoadMesh(argv[2]);
         Check(smoke != nullptr, "smoke LoadMesh returned null");
@@ -59,6 +80,14 @@ int main(int argc, char** argv) {
               Near(transformed.normal[1], -0.447214f) &&
               Near(transformed.normal[2], 0.0f),
               "non-uniform node scale must use inverse-transpose normal transformation");
+        Check(result->mesh->imported_node_count >= 1,
+              "fixture imported node metadata");
+        if (result->mesh->imported_node_count >= 1) {
+            const rev::mesh::ImportedNode& node = result->mesh->imported_nodes[0];
+            Check(node.is_attachment && std::strcmp(node.name, "FX_Test") == 0,
+                  "HiMYM attachment name import");
+            Check(node.attachment_axis == 3, "HiMYM attachment axis import");
+        }
 
         Check(result->mesh->material_slot_count == 1, "fixture material slot count");
         if (result->mesh->material_slot_count == 1) {

@@ -13,7 +13,12 @@
       "mesh": 0,
       "translation": [1, 2, 3],
       "rotation": [0.70710678, 0, 0, 0.70710678],
-      "scale": [2, 3, 4]
+      "scale": [2, 3, 4],
+      "extras": {
+        "himym_attachment": true,
+        "himym_attachment_name": "FX_Test",
+        "himym_direction_axis": "-Y"
+      }
     },
     {
       "name": "BlenderCamera",
