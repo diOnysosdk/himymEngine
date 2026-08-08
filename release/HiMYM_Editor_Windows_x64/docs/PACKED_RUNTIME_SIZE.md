@@ -214,8 +214,9 @@ and 6,144 raw / 1,024 UPX bytes from INTRO.
 
 The project author completed a full Windows 10 playback of the compressed
 INTRO result and confirmed correct visuals, XM audio, ESC shutdown, and
-Alt+F4 shutdown. This validates the compressor result on the development
-machine; a separate clean-machine check is still tracked for release handoff.
+Alt+F4 shutdown. A separate-machine test and the final Windows 11 x64
+competition-machine check also passed. The latest specialized post-effect
+build retained rectruitro's fade behavior correctly.
 
 Classic kkrunchy 0.23alpha2 was also acquired from the author's official
 distribution and tested. Its executable is x86/PE32, while HiMYM targets

@@ -83,9 +83,8 @@ Goal: make size decisions evidence-based and repeatable.
       entry points, so a physical source split is not currently justified.
 - [x] Document the UPX compressor workflow and manually verify the compressed
       INTRO executable's visuals, XM audio, ESC, and Alt+F4 on Windows 10 x64.
-- [ ] Repeat the release test on a clean Windows 10 x64 machine; retain Windows
-      11 x64 as the final competition-machine compatibility check when that
-      environment is available.
+- [x] Repeat the release test on another Windows machine and complete the final
+      Windows 11 x64 competition-machine compatibility check.
 
 Exit criteria:
 
