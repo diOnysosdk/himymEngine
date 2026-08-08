@@ -181,6 +181,11 @@ GENERAL. Run `tools/test_compressor_profiles.ps1 -KeepArtifacts` to reproduce
 the builds, retain both raw and compressed executables, and write
 `build/compressor_profiles/compressor_size_report.txt`.
 
+The project author completed a full Windows 10 playback of the compressed
+INTRO result and confirmed correct visuals, XM audio, ESC shutdown, and
+Alt+F4 shutdown. This validates the compressor result on the development
+machine; a separate clean-machine check is still tracked for release handoff.
+
 Classic kkrunchy 0.23alpha2 was also acquired from the author's official
 distribution and tested. Its executable is x86/PE32, while HiMYM targets
 x64/PE32+. It reaches its PE parser but terminates with an internal

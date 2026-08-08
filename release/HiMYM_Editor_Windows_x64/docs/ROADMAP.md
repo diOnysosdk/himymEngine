@@ -71,9 +71,11 @@ Goal: make size decisions evidence-based and repeatable.
 - [x] Evaluate splitting monolithic library translation units. Linker-map
       auditing confirmed `/Gy /GL /OPT:REF` already removes unused glTF
       entry points, so a physical source split is not currently justified.
-- [ ] Document the final compressor workflow and verify the resulting executable
-      on a clean Windows 10 x64 machine; retain Windows 11 x64 as the final
-      competition-machine compatibility check when that environment is available.
+- [x] Document the UPX compressor workflow and manually verify the compressed
+      INTRO executable's visuals, XM audio, ESC, and Alt+F4 on Windows 10 x64.
+- [ ] Repeat the release test on a clean Windows 10 x64 machine; retain Windows
+      11 x64 as the final competition-machine compatibility check when that
+      environment is available.
 
 Exit criteria:
 
