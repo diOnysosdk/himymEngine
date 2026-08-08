@@ -5,13 +5,39 @@ project(HiMYM VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(HIMYM_RELEASE_PROFILE "GENERAL" CACHE STRING
+    "Release profile: GENERAL for normal demos, INTRO for size-limited packed intros")
+set_property(CACHE HIMYM_RELEASE_PROFILE PROPERTY STRINGS GENERAL INTRO)
+string(TOUPPER "${HIMYM_RELEASE_PROFILE}" HIMYM_RELEASE_PROFILE)
+if(NOT HIMYM_RELEASE_PROFILE STREQUAL "GENERAL" AND
+   NOT HIMYM_RELEASE_PROFILE STREQUAL "INTRO")
+    message(FATAL_ERROR "HIMYM_RELEASE_PROFILE must be GENERAL or INTRO")
+endif()
+message(STATUS "HiMYM Release profile: ${HIMYM_RELEASE_PROFILE}")
+
 # Build configuration
 if(MSVC)
-    # Size optimization flags for release
-    set(CMAKE_CXX_FLAGS_RELEASE "/O1 /GS- /GL /MT")
+    if(HIMYM_RELEASE_PROFILE STREQUAL "INTRO")
+        # Visual Studio's default C++ flags contain /GR and /EHsc. Remove them
+        # before selecting the size profile so cl.exe does not emit override
+        # warnings for every translation unit.
+        string(REPLACE "/GR" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+        string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+        set(CMAKE_CXX_FLAGS_RELEASE "/O1 /Os /GS- /GL /Gy /Gw /GR- /EHs-c- /MT")
+        set(CMAKE_C_FLAGS_RELEASE "/O1 /Os /GS- /GL /Gy /Gw /MT")
+    else()
+        set(CMAKE_CXX_FLAGS_RELEASE "/O2 /GS /GL /Gy /Gw /MT")
+        set(CMAKE_C_FLAGS_RELEASE "/O2 /GS /GL /Gy /Gw /MT")
+    endif()
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/LTCG /INCREMENTAL:NO /OPT:REF /OPT:ICF /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
 else()
-    set(CMAKE_CXX_FLAGS_RELEASE "-Os -fno-exceptions -fno-rtti")
+    if(HIMYM_RELEASE_PROFILE STREQUAL "INTRO")
+        set(CMAKE_CXX_FLAGS_RELEASE "-Os -fno-exceptions -fno-rtti -ffunction-sections -fdata-sections")
+        set(CMAKE_C_FLAGS_RELEASE "-Os -ffunction-sections -fdata-sections")
+    else()
+        set(CMAKE_CXX_FLAGS_RELEASE "-O2")
+        set(CMAKE_C_FLAGS_RELEASE "-O2")
+    endif()
 endif()
 
 # Output directories

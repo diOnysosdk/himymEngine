@@ -120,6 +120,25 @@ Attribution assigns each symbol range to its MSVC map `Lib:Object` owner.
 COMDAT folding means the values are approximate, but they are deterministic
 and suitable for tracking subsystem trends between equivalent builds.
 
+## Release profile comparison
+
+`tools/test_release_profiles.ps1` builds the retained all-cue editor-pipeline
+fixture twice from identical generated manifests. `GENERAL` favors normal demo
+reliability and performance. `INTRO` favors raw size and disables stack
+protection, RTTI, and C++ exception unwinding, so it must receive the full
+production playback validation before competition use.
+
+Measured August 8, 2026:
+
+| Profile | EXE bytes | Embedded payload | Non-asset remainder | CODE segment |
+|---|---:|---:|---:|---:|
+| `GENERAL` | 1,773,568 | 1,353,410 | 420,158 | 246,002 |
+| `INTRO` | 1,719,296 | 1,353,410 | 365,886 | 202,924 |
+
+The INTRO profile saved **54,272 bytes** (3.06% of the complete executable)
+for this fixture. This is a raw, uncompressed comparison; final compressor
+results remain project-specific.
+
 ## Release procedure
 
 1. Export the current project to `cues.txt`.

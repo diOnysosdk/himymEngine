@@ -6,7 +6,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repository_root = Split-Path -Parent $PSScriptRoot
-$build_root = [System.IO.Path]::GetFullPath((Join-Path $repository_root $BuildDirectory))
+$build_root = if ([System.IO.Path]::IsPathRooted($BuildDirectory)) {
+    [System.IO.Path]::GetFullPath($BuildDirectory)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $repository_root $BuildDirectory))
+}
 $header_path = Join-Path $build_root "packed_assets.h"
 $features_path = Join-Path $build_root "packed_features.cmake"
 $exe_path = Join-Path $build_root "bin\$Configuration\minimal_intro_packed.exe"

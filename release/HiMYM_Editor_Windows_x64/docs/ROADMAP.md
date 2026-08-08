@@ -65,7 +65,8 @@ Goal: make size decisions evidence-based and repeatable.
 - [x] Aggregate linker-map symbol ranges into per-library/subsystem CODE attribution.
 - [x] Track unique packed-asset and embedded-cue bytes separately from the
       non-asset executable remainder.
-- [ ] Establish checked Release profiles for general demos and size-limited intros.
+- [x] Establish checked `GENERAL` and `INTRO` Release profiles for normal demos
+      and size-limited packed intros.
 - [ ] Evaluate splitting monolithic library translation units only where measured
       dead-code retention justifies the complexity.
 - [ ] Document the final compressor workflow and verify the resulting executable
@@ -109,6 +110,7 @@ cmake --build build --config Release --target packed_feature_manifest_tests
 .\tools\test_packed_pipeline.ps1
 .\tools\test_editor_pipeline.ps1
 .\tools\report_packed_size.ps1 -BuildDirectory build\editor_pipeline_test\cmake
+.\tools\test_release_profiles.ps1
 ```
 
 Run the focused test executables after building them. Rebuild `pack_cli` or the

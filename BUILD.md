@@ -19,6 +19,18 @@ cmake -B build -G "Visual Studio 17 2022"
 cmake --build build --config Release
 ```
 
+Release configuration defaults to the `GENERAL` profile. Select the
+size-limited packed-intro profile when configuring:
+
+```powershell
+cmake -S . -B build -DHIMYM_RELEASE_PROFILE=INTRO
+cmake --build build --config Release --target minimal_intro_packed
+```
+
+Use `GENERAL` for editor and normal demo releases. Use `INTRO` only for a
+measured size-limited runtime; it disables stack protection, RTTI, and C++
+exception unwinding and therefore requires the complete packed validation run.
+
 ### Debug Build
 ```powershell
 cmake --build build --config Debug
