@@ -23,7 +23,8 @@ project, while `minimal_intro` remains a universal external-cue player.
 - [x] Add automated packer feature-manifest tests for empty, shader-only, XM,
       pixel, particle, procedural-mesh, and glTF projects.
 - [x] Record controlled uncompressed size deltas in `PACKED_RUNTIME_SIZE.md`.
-- [ ] Record compressor-specific output sizes for a final competition project.
+- [x] Record UPX 5.1.1 `--best --lzma` output sizes for the validated
+      `rectruitro` project in both GENERAL and INTRO profiles.
 
 Exit criteria:
 
@@ -113,6 +114,7 @@ cmake --build build --config Release --target packed_feature_manifest_tests
 .\tools\report_packed_size.ps1 -BuildDirectory build\editor_pipeline_test\cmake
 .\tools\test_release_profiles.ps1
 .\tools\audit_gltf_link_retention.ps1
+.\tools\test_compressor_profiles.ps1 -KeepArtifacts
 ```
 
 Run the focused test executables after building them. Rebuild `pack_cli` or the

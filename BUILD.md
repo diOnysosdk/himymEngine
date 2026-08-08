@@ -110,6 +110,12 @@ INTRO from identical all-cue manifests. Then run
 `.\tools\audit_gltf_link_retention.ps1` to confirm that editor/filesystem glTF
 entry points remain absent from the packed INTRO linker map.
 
+Run `.\tools\test_compressor_profiles.ps1 -KeepArtifacts` to rebuild the
+retained `rectruitro` fixture in both profiles, compress independent copies with
+UPX 5.1.1 `--best --lzma`, validate them with `upx -t`, and write a comparison
+report. Classic kkrunchy cannot pack the project's x64/PE32+ executable; it is
+an x86/PE32 tool and fails in its PE parser.
+
 The compiler can then place the received files in the matching workspace,
 copy both generated manifests into that workspace's `build` directory if needed,
 repack, and run the normal `minimal_intro_packed` build. The editor stores its

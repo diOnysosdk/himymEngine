@@ -164,3 +164,27 @@ profile harness to verify this assumption against the INTRO map.
 5. Check the dependency list in build output and record the raw EXE size.
 6. Run the complete packed production and visually verify it.
 7. Apply the chosen executable compressor and record compressed size separately.
+
+## Compressor measurements
+
+Measured August 8, 2026 from the retained transferred `rectruitro` manifests.
+Both profiles used the identical XM-only packed assets. UPX 5.1.1 was invoked
+with `--best --lzma`, and each result passed `upx -t` integrity validation.
+
+| Profile | Raw EXE | UPX EXE | Bytes removed | Packed/raw |
+|---|---:|---:|---:|---:|
+| `GENERAL` | 417,792 | 182,272 | 235,520 | 43.63% |
+| `INTRO` | 396,288 | 176,128 | 220,160 | 44.44% |
+
+INTRO remains the smaller result, saving 6,144 compressed bytes relative to
+GENERAL. Run `tools/test_compressor_profiles.ps1 -KeepArtifacts` to reproduce
+the builds, retain both raw and compressed executables, and write
+`build/compressor_profiles/compressor_size_report.txt`.
+
+Classic kkrunchy 0.23alpha2 was also acquired from the author's official
+distribution and tested. Its executable is x86/PE32, while HiMYM targets
+x64/PE32+. It reaches its PE parser but terminates with an internal
+`exepacker.cpp` assertion and produces no output. The author identifies missing
+x86-64 support, so kkrunchy is not a compatible compressor for the current x64
+release target. The local downloaded copy is kept only under ignored
+`build/tools/kkrunchy` and is not shipped in the editor release.
