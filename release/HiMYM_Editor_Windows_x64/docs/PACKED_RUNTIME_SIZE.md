@@ -99,7 +99,26 @@ All-cue regression baseline on August 8, 2026:
 | MSVC linker map | 238,871 |
 
 All optional feature groups were enabled. Per-library symbol aggregation from
-the linker map remains a separate profiling task.
+the linker map attributes the 203,452-byte CODE segment approximately as:
+
+| Link owner | CODE bytes |
+|---|---:|
+| `main` runtime orchestration | 78,092 |
+| `rev_gltf` | 61,448 |
+| libxm (`xm`) | 30,016 |
+| `rev_runtime` | 14,616 |
+| `rev_mesh` | 5,416 |
+| MSVC runtime libraries | 5,164 |
+| `rev_particles` | 2,804 |
+| `rev_xm` | 2,172 |
+| `rev_platform` | 1,256 |
+| `rev_shader` | 1,184 |
+| `rev_curve` | 700 |
+| `rev_pixel` | 584 |
+
+Attribution assigns each symbol range to its MSVC map `Lib:Object` owner.
+COMDAT folding means the values are approximate, but they are deterministic
+and suitable for tracking subsystem trends between equivalent builds.
 
 ## Release procedure
 

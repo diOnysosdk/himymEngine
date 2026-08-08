@@ -38,6 +38,37 @@ $non_asset_bytes = [Math]::Max(0L, $exe_bytes - $embedded_bytes)
 $map_bytes = if (Test-Path -LiteralPath $map_path) { (Get-Item -LiteralPath $map_path).Length } else { 0L }
 $header_bytes = (Get-Item -LiteralPath $header_path).Length
 
+$code_end = 0L
+$code_symbols = @{}
+foreach ($line in Get-Content -LiteralPath $map_path) {
+    if ($line -match '^\s*0001:([0-9A-Fa-f]{8})\s+([0-9A-Fa-f]{8})H\s+') {
+        $start = [Convert]::ToInt64($Matches[1], 16)
+        $length = [Convert]::ToInt64($Matches[2], 16)
+        $code_end = [Math]::Max($code_end, $start + $length)
+    }
+    if ($line -match '^\s*0001:([0-9A-Fa-f]{8})\s+.+\s+([^\s]+\.obj)\s*$') {
+        $address = [Convert]::ToInt64($Matches[1], 16)
+        if (-not $code_symbols.ContainsKey($address)) { $code_symbols[$address] = $Matches[2] }
+    }
+}
+$subsystem_bytes = @{}
+$addresses = @($code_symbols.Keys | Sort-Object)
+for ($index = 0; $index -lt $addresses.Count; ++$index) {
+    $address = [long]$addresses[$index]
+    $next_address = if ($index + 1 -lt $addresses.Count) { [long]$addresses[$index + 1] } else { $code_end }
+    $bytes = [Math]::Max(0L, $next_address - $address)
+    $object = $code_symbols[$address]
+    $subsystem = if ($object -match '^([^:]+):') {
+        $Matches[1]
+    } elseif ($object -eq 'main.obj') {
+        'main'
+    } else {
+        'runtime_support'
+    }
+    if (-not $subsystem_bytes.ContainsKey($subsystem)) { $subsystem_bytes[$subsystem] = 0L }
+    $subsystem_bytes[$subsystem] += $bytes
+}
+
 $features = @()
 foreach ($line in Get-Content -LiteralPath $features_path) {
     if ($line -match '^set\(HIMYM_PACKED_USE_([A-Z]+)\s+(ON|OFF)\)') {
@@ -58,6 +89,14 @@ $report = @(
     "Non-asset EXE remainder:   $non_asset_bytes"
     "Generated header bytes:    $header_bytes"
     "Linker map bytes:          $map_bytes"
+    "Attributed CODE bytes:     $code_end"
+    ""
+    "Approximate linked CODE attribution:"
+)
+foreach ($entry in ($subsystem_bytes.GetEnumerator() | Sort-Object Value -Descending)) {
+    $report += "  $($entry.Name.PadRight(20)) $($entry.Value)"
+}
+$report += @(
     ""
     "Executable: $exe_path"
     "Packed header: $header_path"
@@ -66,6 +105,8 @@ $report = @(
     ""
     "Note: non-asset EXE remainder is EXE size minus raw embedded payload; it"
     "includes PE headers, alignment, code, constants, imports, and linker overhead."
+    "CODE attribution assigns symbol ranges to their map-file Lib:Object owner;"
+    "it is deterministic for trends, but COMDAT folding makes it approximate."
 )
 $report | Set-Content -LiteralPath $OutputPath -Encoding UTF8
 $report | ForEach-Object { Write-Host $_ }

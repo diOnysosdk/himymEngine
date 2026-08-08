@@ -62,7 +62,7 @@ Exit criteria:
 Goal: make size decisions evidence-based and repeatable.
 
 - [x] Produce repeatable linker maps and packed size reports.
-- [ ] Aggregate linker-map symbols into per-library/subsystem code attribution.
+- [x] Aggregate linker-map symbol ranges into per-library/subsystem CODE attribution.
 - [x] Track unique packed-asset and embedded-cue bytes separately from the
       non-asset executable remainder.
 - [ ] Establish checked Release profiles for general demos and size-limited intros.
