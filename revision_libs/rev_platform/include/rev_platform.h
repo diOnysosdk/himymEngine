@@ -23,8 +23,8 @@ struct Window {
     void* hglrc;
     bool should_close;
     MessageCallbackFn message_callback;
-    int win_width;   // Actual framebuffer width  (physical pixels, set by CreateIntroWindow)
-    int win_height;  // Actual framebuffer height (physical pixels, set by CreateIntroWindow)
+    int win_width;   // Current client framebuffer width in physical pixels.
+    int win_height;  // Current client framebuffer height in physical pixels.
 };
 
 // Lifecycle

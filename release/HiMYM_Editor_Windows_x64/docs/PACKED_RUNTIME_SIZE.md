@@ -67,6 +67,11 @@ comparable because embedded asset payloads differ.
   editor/standalone visual parity, ESC and Alt+F4 shutdown during playback and
   audio teardown, mixed 2D/3D GL-state and draw ordering, and opaque-before-
   transparent glTF material-slot rendering.
+- A second Windows 10 machine exposed resolution-dependent asset placement.
+  The runtime now refreshes its physical client dimensions from `WM_SIZE` and
+  `GetClientRect`, while rendering remains on the authored 1920x1080 canvas and
+  the final output is uniformly scaled into a centered 16:9 viewport. Manual
+  retesting on that non-16:9 machine confirmed the corrected composition.
 - `tools/test_editor_pipeline.ps1`: PASS for a generated all-cue regression
   project. The headless editor loaded `Salute`, added the missing pixel,
   particle, scroll-text, and post-effect families, saved, reloaded, exported,

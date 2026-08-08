@@ -48,6 +48,10 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
 - [x] Verify ESC and Alt+F4 shutdown during loading, playback, and audio teardown.
 - [x] Audit 2D/3D interleaving for VAO, depth-write, blend, and draw-order parity.
 - [x] Validate opaque-before-transparent glTF material-slot rendering.
+- [x] Track the actual Win32 client size and use the centered
+      letterbox/pillarbox output viewport for the authored 16:9 canvas.
+- [x] Confirm the corrected asset placement on the second Windows 10 machine
+      and its non-16:9 display.
 - [x] Resolve the libxm `xm_tick_envelope` return-path warning.
 - [x] Resolve the libxm `load.c` C4333 shift warnings exposed by clean XM builds.
 

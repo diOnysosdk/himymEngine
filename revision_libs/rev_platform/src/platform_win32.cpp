@@ -31,6 +31,17 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
                 window->should_close = true;
             }
             return 0;
+
+        case WM_SIZE:
+            if (window) {
+                const int client_width = static_cast<int>(LOWORD(lparam));
+                const int client_height = static_cast<int>(HIWORD(lparam));
+                if (client_width > 0 && client_height > 0) {
+                    window->win_width = client_width;
+                    window->win_height = client_height;
+                }
+            }
+            return 0;
             
         case WM_KEYDOWN:
             return 0;
@@ -95,6 +106,20 @@ Window* CreateIntroWindow(const WindowConfig& config) {
         return nullptr;
     }
     SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(window));
+
+    // CreateWindowEx sends its initial WM_SIZE before GWLP_USERDATA is set.
+    // Query the actual client area now so DPI scaling, display resolution, and
+    // window decorations cannot leave the render viewport using requested
+    // rather than drawable dimensions.
+    RECT client_rect = {};
+    if (GetClientRect(hwnd, &client_rect)) {
+        const int client_width = client_rect.right - client_rect.left;
+        const int client_height = client_rect.bottom - client_rect.top;
+        if (client_width > 0 && client_height > 0) {
+            window->win_width = client_width;
+            window->win_height = client_height;
+        }
+    }
     
     // Get device context
     HDC hdc = GetDC(hwnd);
