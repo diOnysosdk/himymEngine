@@ -157,6 +157,11 @@ Runtime timing model:
 - `animated_sprite` cue flow: scene-authored frame-sequence overlays exported as `[animated_sprite_cues]` with `sprite_name|frame_keys_csv|frame_paths_csv|...` timing/playback fields.
   Runtime resolves frame images per active cue using playback mode (`loop`/`once`/`pingpong`), `fps`, and optional curve-driven frame index.
   `rev_pack` includes referenced frame assets from both explicit relative paths and project-assets fallback resolution.
+  The generated `packed_assets.h` also records project-derived `HIMYM_USE_XM`,
+  `HIMYM_USE_PIXEL`, `HIMYM_USE_PARTICLES`, `HIMYM_USE_MESH`, and
+  `HIMYM_USE_GLTF` feature macros. Packed runtime code may use these flags to
+  remove unreachable subsystem paths at compile time; the external-cue runtime
+  deliberately retains all supported paths.
 - `text_cue_loader`: scene-authored text objects with active/effect timing and text effect parameters.
 - `music_cue_loader`: music cue metadata for runtime.
 - `shader_pipeline_loader`: authored pass-graph metadata exported by the Python editor and validated at load time before the runtime accepts the shader pipeline bundle. The editor now validates shader pipeline dependency chains before export. The loader topologically orders passes and rejects missing, disabled, or cyclic dependencies. The runtime builds a typed active-pass plan per scene/time, uses authored `material` passes to preblend scene visuals, uses the overlay bucket plus scene-pass resolution ahead of legacy `shader_cues`, and executes authored `postfx` / `output` passes as final fullscreen composition layers.

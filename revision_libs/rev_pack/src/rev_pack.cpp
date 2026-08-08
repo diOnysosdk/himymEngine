@@ -231,6 +231,30 @@ static bool ParseMeshAssetLine(const char* line, char* key_out, char* path_out) 
     return key_out[0] != '\0' && path_out[0] != '\0';
 }
 
+static int ParseMeshType(const char* line) {
+    if (!line) return -1;
+    const char* first = strchr(line, '|');
+    const char* second = first ? strchr(first + 1, '|') : nullptr;
+    return second ? atoi(second + 1) : -1;
+}
+
+struct ProjectFeatures {
+    bool xm;
+    bool pixel;
+    bool particles;
+    bool mesh;
+    bool gltf;
+};
+
+static void WriteProjectFeatures(FILE* header, const ProjectFeatures& features) {
+    fprintf(header, "// Project-derived packed-runtime feature manifest.\n");
+    fprintf(header, "#define HIMYM_USE_XM %d\n", features.xm ? 1 : 0);
+    fprintf(header, "#define HIMYM_USE_PIXEL %d\n", features.pixel ? 1 : 0);
+    fprintf(header, "#define HIMYM_USE_PARTICLES %d\n", features.particles ? 1 : 0);
+    fprintf(header, "#define HIMYM_USE_MESH %d\n", features.mesh ? 1 : 0);
+    fprintf(header, "#define HIMYM_USE_GLTF %d\n\n", features.gltf ? 1 : 0);
+}
+
 // Parse [text_cues] line and read baked and optional glyph atlas asset pairs.
 static bool ParseTextAssetLine(const char* line, char* key_out, char* path_out,
                                char* atlas_key_out, char* atlas_path_out,
@@ -380,6 +404,7 @@ PackResult PackAssets(const char* cues_path,
 
     AssetRef refs[kMaxAssets];
     int ref_count = 0;
+    ProjectFeatures features = {};
     bool in_image = false, in_music = false, in_mesh = false, in_text = false, in_scroll_text = false, in_animated_sprite = false, in_pixel = false, in_pixel_emitter = false;
     char line[1024];
 
@@ -396,6 +421,16 @@ PackResult PackAssets(const char* cues_path,
         if (strstr(s, "[scroll_text_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = true;  in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (s[0] == '[') { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (s[0] == '#' || s[0] == '\r' || s[0] == '\n' || s[0] == '\0') continue;
+
+        if (in_music) features.xm = true;
+        if (in_pixel) features.pixel = true;
+        if (in_mesh) {
+            features.mesh = true;
+            if (ParseMeshType(s) == 4) features.gltf = true;
+        }
+        if (in_pixel_emitter) {
+            features.particles = true;
+        }
 
         if ((in_image || in_music) && ref_count < kMaxAssets) {
             if (ParseAssetLine(s, refs[ref_count].key, refs[ref_count].path))
@@ -461,6 +496,7 @@ PackResult PackAssets(const char* cues_path,
             fprintf(hdr, "#pragma once\n");
             fprintf(hdr, "#include \"rev_pack.h\"\n\n");
             fprintf(hdr, "#define HIMYM_PACKED_ASSET_FORMAT_VERSION 2\n\n");
+            WriteProjectFeatures(hdr, features);
             fprintf(hdr, "static const char* PACKED_CUES_PATH = \"%s\";\n\n", cues_fwd);
             fprintf(hdr, "static const rev::pack::PackedAsset kPackedAssets[] = { { nullptr, nullptr, 0, 0 } };\n");
             fprintf(hdr, "static const int kPackedAssetCount = 0;\n");
@@ -624,6 +660,7 @@ PackResult PackAssets(const char* cues_path,
     fprintf(hdr, "#pragma once\n");
     fprintf(hdr, "#include \"rev_pack.h\"\n\n");
     fprintf(hdr, "#define HIMYM_PACKED_ASSET_FORMAT_VERSION 2\n\n");
+    WriteProjectFeatures(hdr, features);
 
     // Embed the cues path (kept for backward compat) and the full cues.txt content.
     {
