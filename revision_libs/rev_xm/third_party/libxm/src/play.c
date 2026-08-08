@@ -1336,8 +1336,9 @@ static uint8_t xm_tick_envelope(xm_channel_context_t* ch,
         if(*counter < env->points[j-1].frame) continue;
         return xm_envelope_lerp(env->points + j - 1, env->points + j, (*counter)++);
     }
-    
+
     assert(0);
+    return 0;
 }
 
 static void xm_tick_envelopes(xm_channel_context_t* ch) {

@@ -609,7 +609,9 @@ Set mesh type in Mesh Cue modal, adjust parameters.
 - If not present, rebuild `editor_app` and re-run Pack, Build and Run
 
 ### "Editor crashes on startup"
-- Confirm Windows 11 x64 and a working OpenGL driver.
+- Confirm Windows 10 or Windows 11 x64 and a working OpenGL driver. The current
+  local clean-machine release check targets Windows 10; Windows 11 remains the
+  competition-machine compatibility target.
 - Run `build\bin\Release\editor_app.exe`; the current editor is C++/ImGui and does not require Python or tkinter.
 - Look for corrupt project JSON (restore from backup)
 

@@ -43,7 +43,7 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
 - [ ] Verify ESC and Alt+F4 shutdown during loading, playback, and audio teardown.
 - [ ] Audit 2D/3D interleaving for VAO, depth-write, blend, and draw-order parity.
 - [ ] Validate opaque-before-transparent glTF material-slot rendering.
-- [ ] Resolve or document the libxm `xm_tick_envelope` return-path warning.
+- [x] Resolve the libxm `xm_tick_envelope` return-path warning.
 
 Exit criteria:
 
@@ -62,7 +62,8 @@ Goal: make size decisions evidence-based and repeatable.
 - [ ] Evaluate splitting monolithic library translation units only where measured
       dead-code retention justifies the complexity.
 - [ ] Document the final compressor workflow and verify the resulting executable
-      on a clean Windows 11 x64 machine.
+      on a clean Windows 10 x64 machine; retain Windows 11 x64 as the final
+      competition-machine compatibility check when that environment is available.
 
 Exit criteria:
 
