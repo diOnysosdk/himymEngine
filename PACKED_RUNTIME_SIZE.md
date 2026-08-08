@@ -57,6 +57,9 @@ comparable because embedded asset payloads differ.
 - `packed_feature_manifest_tests`: PASS for empty, shader-only, XM, pixel,
   particle, procedural-mesh, and glTF projects; both generated manifests are
   checked for identical feature selections.
+- `tools/test_packed_pipeline.ps1`: PASS for pack, configure, and Release link
+  across the same seven feature shapes. Missing required assets and deliberately
+  mismatched generated manifests fail as expected.
 
 Visual appearance was presented through the native Win32/OpenGL windows during
 the smoke runs. Automated pixel-diff capture is not currently part of the test

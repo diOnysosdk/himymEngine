@@ -76,6 +76,10 @@ before building `minimal_intro_packed`.
 See `PACKED_RUNTIME_SIZE.md` for the current feature mapping, validation
 evidence, and controlled raw executable size matrix.
 
+Run `.\tools\test_packed_pipeline.ps1` to exercise every packed feature shape
+through pack, configure, and Release build. The harness also verifies that a
+missing required asset and deliberately mismatched generated manifests fail.
+
 The compiler can then place the received files in the matching workspace,
 copy both generated manifests into that workspace's `build` directory if needed,
 repack, and run the normal `minimal_intro_packed` build. The editor stores its
