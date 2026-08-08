@@ -36,15 +36,17 @@ Exit criteria:
 
 Goal: make the editor-to-standalone handoff safe enough for competition use.
 
-- [ ] Create representative regression projects covering every cue type.
-- [ ] Automate save -> export -> pack -> build checks for those projects.
+- [x] Generate a representative regression project covering every cue type.
+- [x] Automate load -> save -> reload -> export -> pack -> configure -> build
+      checks for that project.
 - [x] Automate pack -> configure -> build checks for all packed-runtime feature shapes.
 - [x] Smoke-test representative shader/text, glTF, and XM/glTF packed projects.
 - [x] Add pipeline failure checks for missing required assets and mismatched manifests.
 - [x] Validate a transferred real project with stale absolute asset paths.
-- [ ] Verify ESC and Alt+F4 shutdown during loading, playback, and audio teardown.
-- [ ] Audit 2D/3D interleaving for VAO, depth-write, blend, and draw-order parity.
-- [ ] Validate opaque-before-transparent glTF material-slot rendering.
+- [x] Visually compare the `rectruitro` editor preview and packed standalone runtime.
+- [x] Verify ESC and Alt+F4 shutdown during loading, playback, and audio teardown.
+- [x] Audit 2D/3D interleaving for VAO, depth-write, blend, and draw-order parity.
+- [x] Validate opaque-before-transparent glTF material-slot rendering.
 - [x] Resolve the libxm `xm_tick_envelope` return-path warning.
 - [x] Resolve the libxm `load.c` C4333 shift warnings exposed by clean XM builds.
 
@@ -103,6 +105,7 @@ cmake --build build --config Release --target gltf_import_tests
 cmake --build build --config Release --target particle_direction_tests
 cmake --build build --config Release --target packed_feature_manifest_tests
 .\tools\test_packed_pipeline.ps1
+.\tools\test_editor_pipeline.ps1
 ```
 
 Run the focused test executables after building them. Rebuild `pack_cli` or the

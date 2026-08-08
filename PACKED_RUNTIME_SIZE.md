@@ -63,6 +63,15 @@ comparable because embedded asset payloads differ.
 - Transferred `rectruitro` project: PASS with its original XM path changed to an
   unavailable drive. The packer resolved all 25 assets from the copied project,
   configured the XM-only optional runtime path, and produced a Release executable.
+- Windows 10 manual validation by the project author: PASS for `rectruitro`
+  editor/standalone visual parity, ESC and Alt+F4 shutdown during playback and
+  audio teardown, mixed 2D/3D GL-state and draw ordering, and opaque-before-
+  transparent glTF material-slot rendering.
+- `tools/test_editor_pipeline.ps1`: PASS for a generated all-cue regression
+  project. The headless editor loaded `Salute`, added the missing pixel,
+  particle, scroll-text, and post-effect families, saved, reloaded, exported,
+  packed 30 assets, enabled all optional feature groups, and linked a
+  1,716,736-byte Release runtime.
 
 Visual appearance was presented through the native Win32/OpenGL windows during
 the smoke runs. Automated pixel-diff capture is not currently part of the test

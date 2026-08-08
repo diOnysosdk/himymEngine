@@ -83,6 +83,11 @@ Run `.\tools\test_packed_pipeline.ps1` to exercise every packed feature shape
 through pack, configure, and Release build. The harness also verifies that a
 missing required asset and deliberately mismatched generated manifests fail.
 
+Run `.\tools\test_editor_pipeline.ps1` for the complete headless editor
+round trip: load a real project, add any missing cue families, save, reload,
+export, pack, configure, and build. Pass `-KeepArtifacts` to retain the
+generated all-cue regression project under `build/editor_pipeline_test`.
+
 The compiler can then place the received files in the matching workspace,
 copy both generated manifests into that workspace's `build` directory if needed,
 repack, and run the normal `minimal_intro_packed` build. The editor stores its

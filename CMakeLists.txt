@@ -87,3 +87,12 @@ if(MSVC)
         LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup"
     )
 endif()
+
+# Headless editor persistence/export driver used by the full pipeline regression.
+add_executable(editor_pipeline_cli tools/editor_pipeline_cli.cpp)
+target_link_libraries(editor_pipeline_cli PRIVATE rev_editor gdiplus)
+if(MSVC)
+    set_target_properties(editor_pipeline_cli PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup"
+    )
+endif()
