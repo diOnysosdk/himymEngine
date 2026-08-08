@@ -88,6 +88,11 @@ round trip: load a real project, add any missing cue families, save, reload,
 export, pack, configure, and build. Pass `-KeepArtifacts` to retain the
 generated all-cue regression project under `build/editor_pipeline_test`.
 
+Run `.\tools\report_packed_size.ps1` after packing to generate an MSVC linker
+map and `packed_size_report.txt`. Use `-BuildDirectory` for an isolated build,
+for example `build\editor_pipeline_test\cmake`. The report separates unique
+asset payload, embedded cues, and the remaining PE bytes.
+
 The compiler can then place the received files in the matching workspace,
 copy both generated manifests into that workspace's `build` directory if needed,
 repack, and run the normal `minimal_intro_packed` build. The editor stores its

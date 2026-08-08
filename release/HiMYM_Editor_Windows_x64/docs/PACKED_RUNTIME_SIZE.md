@@ -78,6 +78,29 @@ the smoke runs. Automated pixel-diff capture is not currently part of the test
 harness, so editor/runtime visual parity still requires human observation for
 release candidates.
 
+## Repeatable size report
+
+`tools/report_packed_size.ps1` reconfigures the selected build with an MSVC
+linker map, rebuilds `minimal_intro_packed`, and writes
+`packed_size_report.txt`. It separates unique embedded asset bytes, embedded
+cue bytes, and the remaining PE size. The remainder includes code, constants,
+imports, headers, alignment, and linker overhead; it is not presented as pure
+code size.
+
+All-cue regression baseline on August 8, 2026:
+
+| Measurement | Bytes |
+|---|---:|
+| Release executable | 1,716,736 |
+| Unique embedded assets | 1,340,986 |
+| Embedded cues | 12,424 |
+| Total embedded payload | 1,353,410 |
+| Non-asset EXE remainder | 363,326 |
+| MSVC linker map | 238,871 |
+
+All optional feature groups were enabled. Per-library symbol aggregation from
+the linker map remains a separate profiling task.
+
 ## Release procedure
 
 1. Export the current project to `cues.txt`.

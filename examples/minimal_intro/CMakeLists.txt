@@ -80,6 +80,13 @@ if(MSVC)
     set_target_properties(minimal_intro_packed PROPERTIES
         LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS"
     )
+    option(HIMYM_PACKED_LINK_MAPS "Generate an MSVC map for minimal_intro_packed" OFF)
+    if(HIMYM_PACKED_LINK_MAPS)
+        target_link_options(minimal_intro_packed PRIVATE
+            "/MAP:${CMAKE_BINARY_DIR}/bin/$<CONFIG>/minimal_intro_packed.map"
+            "/MAPINFO:EXPORTS"
+        )
+    endif()
 endif()
 
 # packed_assets.h is written by the editor (rev_pack) just before invoking

@@ -61,8 +61,10 @@ Exit criteria:
 
 Goal: make size decisions evidence-based and repeatable.
 
-- [ ] Produce linker maps and per-subsystem size reports.
-- [ ] Track packed asset bytes separately from executable code bytes.
+- [x] Produce repeatable linker maps and packed size reports.
+- [ ] Aggregate linker-map symbols into per-library/subsystem code attribution.
+- [x] Track unique packed-asset and embedded-cue bytes separately from the
+      non-asset executable remainder.
 - [ ] Establish checked Release profiles for general demos and size-limited intros.
 - [ ] Evaluate splitting monolithic library translation units only where measured
       dead-code retention justifies the complexity.
@@ -106,6 +108,7 @@ cmake --build build --config Release --target particle_direction_tests
 cmake --build build --config Release --target packed_feature_manifest_tests
 .\tools\test_packed_pipeline.ps1
 .\tools\test_editor_pipeline.ps1
+.\tools\report_packed_size.ps1 -BuildDirectory build\editor_pipeline_test\cmake
 ```
 
 Run the focused test executables after building them. Rebuild `pack_cli` or the
