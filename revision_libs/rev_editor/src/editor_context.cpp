@@ -4421,6 +4421,12 @@ void RenderMenuBar(EditorContext* editor) {
             "https://www.linkedin.com/in/dennis-kjaer-christensen/",
             "https://www.linkedin.com/in/dennis-kjaer-christensen/");
         ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Greetings to alpha testers");
+        ImGui::BulletText("M3RL0CKSH0LM3S");
+        ImGui::BulletText("m4v3d");
+        ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(100.0f, 0.0f))) {
             ImGui::CloseCurrentPopup();
         }
