@@ -139,6 +139,22 @@ The INTRO profile saved **54,272 bytes** (3.06% of the complete executable)
 for this fixture. This is a raw, uncompressed comparison; final compressor
 results remain project-specific.
 
+## Translation-unit retention audit
+
+The largest source files were checked before physically splitting them. Both
+Release profiles enable MSVC function-level linking (`/Gy`), whole-program
+optimization (`/GL`), and linker elimination (`/OPT:REF`). In the all-cue
+linker maps, `rev_gltf.cpp` retains packed playback entry points such as
+`LoadMeshFromMemory` and `BuildAnimatedNodeDeltaMatricesAll`, while the
+filesystem/editor-only `LoadMesh`, editor-only `ExtractTextures`, and the
+unused single-animation matrix variant are absent.
+
+Therefore the current monolithic glTF source file is not forcing those unused
+functions into the packed executable. A physical translation-unit split was
+rejected because it produced no additional dead-code boundary beyond the one
+already supplied by `/Gy`. Run `tools/audit_gltf_link_retention.ps1` after the
+profile harness to verify this assumption against the INTRO map.
+
 ## Release procedure
 
 1. Export the current project to `cues.txt`.

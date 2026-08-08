@@ -105,6 +105,11 @@ map and `packed_size_report.txt`. Use `-BuildDirectory` for an isolated build,
 for example `build\editor_pipeline_test\cmake`. The report separates unique
 asset payload, embedded cues, and the remaining PE bytes.
 
+Run `.\tools\test_release_profiles.ps1 -KeepArtifacts` to compare GENERAL and
+INTRO from identical all-cue manifests. Then run
+`.\tools\audit_gltf_link_retention.ps1` to confirm that editor/filesystem glTF
+entry points remain absent from the packed INTRO linker map.
+
 The compiler can then place the received files in the matching workspace,
 copy both generated manifests into that workspace's `build` directory if needed,
 repack, and run the normal `minimal_intro_packed` build. The editor stores its

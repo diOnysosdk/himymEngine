@@ -67,8 +67,9 @@ Goal: make size decisions evidence-based and repeatable.
       non-asset executable remainder.
 - [x] Establish checked `GENERAL` and `INTRO` Release profiles for normal demos
       and size-limited packed intros.
-- [ ] Evaluate splitting monolithic library translation units only where measured
-      dead-code retention justifies the complexity.
+- [x] Evaluate splitting monolithic library translation units. Linker-map
+      auditing confirmed `/Gy /GL /OPT:REF` already removes unused glTF
+      entry points, so a physical source split is not currently justified.
 - [ ] Document the final compressor workflow and verify the resulting executable
       on a clean Windows 10 x64 machine; retain Windows 11 x64 as the final
       competition-machine compatibility check when that environment is available.
@@ -111,6 +112,7 @@ cmake --build build --config Release --target packed_feature_manifest_tests
 .\tools\test_editor_pipeline.ps1
 .\tools\report_packed_size.ps1 -BuildDirectory build\editor_pipeline_test\cmake
 .\tools\test_release_profiles.ps1
+.\tools\audit_gltf_link_retention.ps1
 ```
 
 Run the focused test executables after building them. Rebuild `pack_cli` or the
