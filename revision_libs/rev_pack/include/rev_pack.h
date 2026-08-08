@@ -9,6 +9,8 @@
 //   PackAssets()  — reads cues.txt, finds referenced files, writes packed_assets.h
 //                   and a sibling packed_features.cmake dependency manifest
 //                   with CRC32 checksums; skips files unchanged since last pack.
+//                   Stale absolute paths fall back to same-named assets in the
+//                   transferred project's project_assets directory.
 //
 // Load side (runtime, when HIMYM_PACKED_ASSETS is defined):
 //   Use the PackedAsset table generated in packed_assets.h.

@@ -52,6 +52,9 @@ absolute asset paths to matching files in the opened project's asset folder.
 Open the project once with the current editor and save it before handing it
 off again. This is especially important for mesh cues whose old path may still
 contain another computer's drive and directory, such as `E:/Demos/boxshow`.
+As a packing safeguard, an unavailable absolute asset path also falls back to
+a same-named file in the transferred `project_assets` folder. Saving in the
+editor is still preferred because it repairs the authored project itself.
 
 Send the project folder to the person who will compile it, including:
 

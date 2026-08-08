@@ -60,9 +60,15 @@ void RunCase(const std::filesystem::path& root,
     const std::filesystem::path header_path = case_dir / "packed_assets.h";
     const std::filesystem::path cache_path = case_dir / "pack_cache.txt";
     Check(WriteText(cues_path, cues), case_name, "could not write cues.txt");
-    if (needs_asset)
+    if (needs_asset) {
         Check(WriteText(case_dir / "asset.bin", "test-asset"), case_name,
               "could not write test asset");
+        if (std::string(case_name) == "transferred_absolute_path") {
+            std::filesystem::create_directories(case_dir / "project_assets");
+            Check(WriteText(case_dir / "project_assets" / "asset.bin", "test-asset"),
+                  case_name, "could not write transferred test asset");
+        }
+    }
 
     const rev::pack::PackResult result = rev::pack::PackAssets(
         cues_path.string().c_str(), header_path.string().c_str(),
@@ -93,6 +99,23 @@ void RunCase(const std::filesystem::path& root,
     }
 }
 
+void RunMissingAfterDuplicateCase(const std::filesystem::path& root) {
+    const char* case_name = "missing_after_duplicate";
+    const std::filesystem::path case_dir = root / case_name;
+    std::filesystem::create_directories(case_dir);
+    Check(WriteText(case_dir / "asset.bin", "same-payload"), case_name,
+          "could not write duplicate asset");
+    Check(WriteText(case_dir / "cues.txt",
+                    "[image_cues]\na|asset.bin\nb|asset.bin\nc|missing.bin\n"),
+          case_name, "could not write cues.txt");
+    const rev::pack::PackResult result = rev::pack::PackAssets(
+        (case_dir / "cues.txt").string().c_str(),
+        (case_dir / "packed_assets.h").string().c_str(),
+        (case_dir / "pack_cache.txt").string().c_str(),
+        case_dir.string().c_str());
+    Check(!result.ok, case_name, "missing required asset should fail cleanly");
+}
+
 }  // namespace
 
 int main() {
@@ -115,6 +138,10 @@ int main() {
             {false, false, false, true, false}, false);
     RunCase(root, "gltf", "[mesh_cues]\nmodel|asset.bin|4\n",
             {false, false, false, true, true}, true);
+    RunCase(root, "transferred_absolute_path",
+            "[music_cues]\nmusic|Z:\\OldMachine\\project_assets\\asset.bin\n",
+            {true, false, false, false, false}, true);
+    RunMissingAfterDuplicateCase(root);
 
     std::error_code cleanup_error;
     std::filesystem::remove_all(root, cleanup_error);

@@ -41,7 +41,7 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
 - [x] Automate pack -> configure -> build checks for all packed-runtime feature shapes.
 - [x] Smoke-test representative shader/text, glTF, and XM/glTF packed projects.
 - [x] Add pipeline failure checks for missing required assets and mismatched manifests.
-- [ ] Add smoke checks for transferred projects.
+- [x] Validate a transferred real project with stale absolute asset paths.
 - [ ] Verify ESC and Alt+F4 shutdown during loading, playback, and audio teardown.
 - [ ] Audit 2D/3D interleaving for VAO, depth-write, blend, and draw-order parity.
 - [ ] Validate opaque-before-transparent glTF material-slot rendering.

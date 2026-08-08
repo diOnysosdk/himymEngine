@@ -586,6 +586,35 @@ PackResult PackAssets(const char* cues_path,
 
         size_t sz = 0;
         unsigned char* data = ReadFile(full_path, &sz);
+        if (!data && IsAbsolutePath(refs[i].path)) {
+            // A transferred project may retain an absolute path from the
+            // authoring machine. Resolve the same leaf name from the copied
+            // project_assets folder before treating the asset as missing.
+            const char* filename = strrchr(refs[i].path, '\\');
+            const char* forward = strrchr(refs[i].path, '/');
+            if (forward && (!filename || forward > filename)) filename = forward;
+            filename = filename ? filename + 1 : refs[i].path;
+            char try_path[640] = {};
+
+            if (workspace_root && workspace_root[0] && filename[0]) {
+                snprintf(try_path, sizeof(try_path), "%s\\project_assets\\%s",
+                         workspace_root, filename);
+                data = ReadFile(try_path, &sz);
+                if (data) strncpy_s(full_path, sizeof(full_path), try_path, _TRUNCATE);
+            }
+            if (!data && cues_dir[0] && filename[0]) {
+                snprintf(try_path, sizeof(try_path), "%s\\project_assets\\%s",
+                         cues_dir, filename);
+                data = ReadFile(try_path, &sz);
+                if (data) strncpy_s(full_path, sizeof(full_path), try_path, _TRUNCATE);
+            }
+            if (!data && cues_dir[0] && cues_leaf_assets[0] && filename[0]) {
+                snprintf(try_path, sizeof(try_path), "%s\\%s\\%s",
+                         cues_dir, cues_leaf_assets, filename);
+                data = ReadFile(try_path, &sz);
+                if (data) strncpy_s(full_path, sizeof(full_path), try_path, _TRUNCATE);
+            }
+        }
         if (!data && !IsAbsolutePath(refs[i].path)) {
             // Fallbacks for relative asset paths (common for frame filenames in animated sprites).
             char try_path[640] = {};
@@ -639,7 +668,8 @@ PackResult PackAssets(const char* cues_path,
                 continue;
             }
             snprintf(result.error, sizeof(result.error), "Cannot read asset: %s", full_path);
-            for (int j = 0; j < loaded_count; ++j) free(loaded[j].data);
+            for (int j = 0; j < loaded_count; ++j)
+                if (loaded[j].data_owner == j) free(loaded[j].data);
             free(loaded);
             return result;
         }
@@ -678,7 +708,8 @@ PackResult PackAssets(const char* cues_path,
     fopen_s(&hdr, output_header, "w");
     if (!hdr) {
         snprintf(result.error, sizeof(result.error), "Cannot write: %s", output_header);
-        for (int i = 0; i < loaded_count; ++i) free(loaded[i].data);
+        for (int i = 0; i < loaded_count; ++i)
+            if (loaded[i].data_owner == i) free(loaded[i].data);
         free(loaded);
         return result;
     }

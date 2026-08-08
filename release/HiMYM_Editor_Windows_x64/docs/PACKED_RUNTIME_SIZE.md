@@ -60,6 +60,9 @@ comparable because embedded asset payloads differ.
 - `tools/test_packed_pipeline.ps1`: PASS for pack, configure, and Release link
   across the same seven feature shapes. Missing required assets and deliberately
   mismatched generated manifests fail as expected.
+- Transferred `rectruitro` project: PASS with its original XM path changed to an
+  unavailable drive. The packer resolved all 25 assets from the copied project,
+  configured the XM-only optional runtime path, and produced a Release executable.
 
 Visual appearance was presented through the native Win32/OpenGL windows during
 the smoke runs. Automated pixel-diff capture is not currently part of the test
