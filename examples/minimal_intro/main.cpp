@@ -23,6 +23,12 @@
 #ifndef HIMYM_USE_GLTF
 #define HIMYM_USE_GLTF 1
 #endif
+#ifndef HIMYM_USE_ANIMATED_SPRITE
+#define HIMYM_USE_ANIMATED_SPRITE 1
+#endif
+#ifndef HIMYM_USE_SCROLL_TEXT
+#define HIMYM_USE_SCROLL_TEXT 1
+#endif
 
 #include "rev_platform.h"
 #include "rev_shader.h"
@@ -49,8 +55,7 @@
 #include <vector>
 #include <atomic>
 
-// Keep runtime shader GLSL in lockstep with editor preview presets.
-#include "../../revision_libs/rev_editor/src/shader_presets.cpp"
+#include "rev_shader_presets.h"
 
 // Pull shared types into the global scope for this file.
 using rev::runtime::ColorRGB;
@@ -2180,11 +2185,22 @@ static void AttachmentAxisVector(int axis, float out[3]) {
 
 // Fragment shaders - synchronized with rev_editor shader_presets.cpp
 static const char* GetRuntimeShaderSourceById(int shader_id) {
+#if defined(HIMYM_PACKED_ASSETS) && defined(HIMYM_PACKED_SHADER_FORMAT_VERSION)
+    for (int i = 0; i < kPackedShaderSourceCount; ++i) {
+        if (kPackedShaderSources[i].id == shader_id) return kPackedShaderSources[i].source;
+    }
+    return nullptr;
+#else
     return rev::editor::GetShaderSourceById(shader_id);
+#endif
 }
 
 static int GetRuntimeShaderCount() {
+#if defined(HIMYM_PACKED_ASSETS) && defined(HIMYM_PACKED_SHADER_FORMAT_VERSION)
+    return 64;
+#else
     return rev::editor::g_shader_preset_count;
+#endif
 }
 
 static bool RuntimeFileExists(const char* path) {
@@ -2561,9 +2577,13 @@ int main(int argc, char* argv[]) {
              i, image_cues[i].asset_key, image_cues[i].cue_start, image_cues[i].cue_end);
     }
 
-    const int kMaxAnimatedSpriteCues = 32;
-    AnimatedSpriteCue animated_sprite_cues[kMaxAnimatedSpriteCues] = {};
-    int animated_sprite_cue_count = LoadAllAnimatedSpriteCues(cues_path, animated_sprite_cues, kMaxAnimatedSpriteCues);
+    const int kMaxAnimatedSpriteCues = HIMYM_USE_ANIMATED_SPRITE ? 32 : 0;
+    AnimatedSpriteCue animated_sprite_cues[HIMYM_USE_ANIMATED_SPRITE ? kMaxAnimatedSpriteCues : 1] = {};
+#if HIMYM_USE_ANIMATED_SPRITE
+    const int animated_sprite_cue_count = LoadAllAnimatedSpriteCues(cues_path, animated_sprite_cues, kMaxAnimatedSpriteCues);
+#else
+    const int animated_sprite_cue_count = 0;
+#endif
     LOGV("Animated sprite cues loaded: %d\n", animated_sprite_cue_count);
     if (g_logfile) fflush(g_logfile);
 
@@ -2638,13 +2658,17 @@ int main(int argc, char* argv[]) {
     bool text_force_baked[kMaxTextCues] = {};
     int text_cue_count = LoadAllTextCues(cues_path, text_cues, kMaxTextCues);
 
-    const int kMaxScrollTextCues = 64;
-    static ScrollTextCue scroll_text_cues[kMaxScrollTextCues] = {};
-    static TextTexture scroll_text_texes[kMaxScrollTextCues] = {};
-    static TextGlyphAtlas scroll_text_atlases[kMaxScrollTextCues] = {};
-    static bool scroll_text_loaded[kMaxScrollTextCues] = {};
-    static bool scroll_text_force_baked[kMaxScrollTextCues] = {};
-    int scroll_text_cue_count = LoadAllScrollTextCues(cues_path, scroll_text_cues, kMaxScrollTextCues);
+    const int kMaxScrollTextCues = HIMYM_USE_SCROLL_TEXT ? 64 : 0;
+    static ScrollTextCue scroll_text_cues[HIMYM_USE_SCROLL_TEXT ? kMaxScrollTextCues : 1] = {};
+    static TextTexture scroll_text_texes[HIMYM_USE_SCROLL_TEXT ? kMaxScrollTextCues : 1] = {};
+    static TextGlyphAtlas scroll_text_atlases[HIMYM_USE_SCROLL_TEXT ? kMaxScrollTextCues : 1] = {};
+    static bool scroll_text_loaded[HIMYM_USE_SCROLL_TEXT ? kMaxScrollTextCues : 1] = {};
+    static bool scroll_text_force_baked[HIMYM_USE_SCROLL_TEXT ? kMaxScrollTextCues : 1] = {};
+#if HIMYM_USE_SCROLL_TEXT
+    const int scroll_text_cue_count = LoadAllScrollTextCues(cues_path, scroll_text_cues, kMaxScrollTextCues);
+#else
+    const int scroll_text_cue_count = 0;
+#endif
 
     // Load mesh cues (multi-cue support)
     const int kMaxMeshCues = 32;
@@ -2931,10 +2955,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     };
     ShaderProgramState asset_shader_programs[64] = {};
     auto get_asset_shader_program = [&](int shader_id) -> ShaderProgramState* {
-        if (shader_id < 0 || shader_id >= rev::editor::g_shader_preset_count || shader_id >= 64) return nullptr;
+        if (shader_id < 0 || shader_id >= 64) return nullptr;
         ShaderProgramState& state = asset_shader_programs[shader_id];
         if (state.prog || state.compile_failed) return state.prog ? &state : nullptr;
-        const char* source = rev::editor::GetShaderSourceById(shader_id);
+        const char* source = GetRuntimeShaderSourceById(shader_id);
         if (source) {
             std::string asset_source(source);
             const size_t output_decl = asset_source.find("out vec4 fragColor;");

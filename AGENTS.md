@@ -35,7 +35,8 @@ Treat current code and CMake files as authoritative. Before relying on material 
 - Initialize every unassigned `curve_*` index to `-1`.
 - Preserve deterministic ordering in exports and rendering.
 - Keep packed/release assets embedded-first; filesystem fallback is explicit diagnostics/development behavior.
-- Packed builds derive `HIMYM_USE_*` macros and `packed_features.cmake` from exported cue rows. Reconfigure after packing so C++ guards and CMake dependencies stay aligned.
+- Packed builds derive `HIMYM_USE_*` macros and `packed_features.cmake` from exported cue rows. This includes code-only cue families such as animated sprites and scrolling text, even when they do not change target dependencies. Reconfigure after packing so C++ guards and CMake dependencies stay aligned.
+- Packed shader sources are project-specific: `rev_pack` emits only fullscreen and enabled asset-shader preset IDs referenced by the exported cues, plus preset 0 as the no-cue fallback. The editor and file-based runtime keep the universal preset registry.
 - Maintain editor/runtime OpenGL-state parity, especially VAO binding, depth writes, blending, and opaque/transparent ordering.
 - Load post-OpenGL-1.1 functions with `wglGetProcAddress`.
 - Initialize GDI+ before image/text loading and preserve its Windows path and stream-lifetime requirements.

@@ -18,6 +18,10 @@ project, while `minimal_intro` remains a universal external-cue player.
 - [x] Compile out particle simulation when no pixel-emitter cue is authored.
 - [x] Compile out glTF importing and animation when no external glTF mesh is authored.
 - [x] Compile out procedural mesh rendering when no mesh cue is authored.
+- [x] Pack only the fullscreen and enabled asset-shader GLSL presets referenced
+      by the project, retaining preset 0 solely as the no-cue fallback.
+- [x] Compile out animated-sprite and scrolling-text parsing/rendering when the
+      exported project contains no cues from those families.
 - [x] Generate matching CMake feature selections and reconfigure after packing
       so unused optional libraries are not packed-target dependencies.
 - [x] Add automated packer feature-manifest tests for empty, shader-only, XM,
@@ -126,4 +130,4 @@ cmake --build build --config Release --target packed_feature_manifest_tests
 Run the focused test executables after building them. Rebuild `pack_cli` or the
 editor before validating generated `packed_assets.h` after packer changes.
 
-Last reviewed: August 8, 2026.
+Last reviewed: August 9, 2026.

@@ -41,7 +41,6 @@ add_library(rev_editor STATIC
     src/editor_context.cpp
     src/editor_panels.cpp
     src/editor_modals.cpp
-    src/shader_presets.cpp
 )
 
 target_include_directories(rev_editor PUBLIC

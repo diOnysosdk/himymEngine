@@ -3,6 +3,7 @@ project(rev_shader)
 
 add_library(rev_shader STATIC
     src/shader.cpp
+    ../rev_editor/src/shader_presets.cpp
 )
 
 target_include_directories(rev_shader PUBLIC

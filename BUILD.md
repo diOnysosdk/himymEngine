@@ -80,7 +80,11 @@ Send the project folder to the person who will compile it, including:
 `packed_assets.h` also contains a deterministic feature manifest derived from
 the exported cue rows. `minimal_intro_packed` uses these `HIMYM_USE_*` macros
 to compile out optional runtime paths that the project cannot reach. The
-file-based `minimal_intro` remains a universal development player.
+header also contains only the fullscreen and enabled asset-shader GLSL presets
+referenced by the project (plus preset 0 as the empty-project fallback). The
+file-based `minimal_intro` and editor retain the universal preset registry.
+Animated-sprite and scrolling-text parsing/rendering are likewise removed from
+packed projects that contain no cues of those families.
 
 The packer also writes `packed_features.cmake` beside the generated header.
 The editor reconfigures the existing build after packing so the packed target

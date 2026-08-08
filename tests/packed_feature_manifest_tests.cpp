@@ -14,6 +14,8 @@ struct ExpectedFeatures {
     bool particles;
     bool mesh;
     bool gltf;
+    bool animated_sprite;
+    bool scroll_text;
 };
 
 int failures = 0;
@@ -53,7 +55,8 @@ void RunCase(const std::filesystem::path& root,
              const char* case_name,
              const char* cues,
              const ExpectedFeatures& expected,
-             bool needs_asset) {
+             bool needs_asset,
+             int expected_shader_id = 0) {
     const std::filesystem::path case_dir = root / case_name;
     std::filesystem::create_directories(case_dir);
     const std::filesystem::path cues_path = case_dir / "cues.txt";
@@ -80,6 +83,13 @@ void RunCase(const std::filesystem::path& root,
     const std::string cmake = ReadText(case_dir / "packed_features.cmake");
     Check(!header.empty(), case_name, "packed_assets.h was not generated");
     Check(!cmake.empty(), case_name, "packed_features.cmake was not generated");
+    const std::string expected_shader = "{ " + std::to_string(expected_shader_id) + ", \"";
+    Check(header.find(expected_shader) != std::string::npos,
+          case_name, "expected packed shader source is missing");
+    if (expected_shader_id != 46) {
+        Check(header.find("{ 46, \"") == std::string::npos,
+              case_name, "unused shader 46 should not be packed");
+    }
 
     const struct FeatureCheck {
         const char* name;
@@ -90,6 +100,8 @@ void RunCase(const std::filesystem::path& root,
         {"PARTICLES", expected.particles},
         {"MESH", expected.mesh},
         {"GLTF", expected.gltf},
+        {"ANIMATED_SPRITE", expected.animated_sprite},
+        {"SCROLL_TEXT", expected.scroll_text},
     };
     for (const FeatureCheck& feature : features) {
         CheckFlag(header, case_name, "#define HIMYM_USE_", feature.name,
@@ -127,7 +139,14 @@ int main() {
     std::filesystem::create_directories(root);
 
     RunCase(root, "empty", "[metadata]\n", {}, false);
-    RunCase(root, "shader", "[shader_cues]\n0|0|1\n", {}, false);
+    RunCase(root, "shader", "[shader_cues]\n18|0|1\n", {}, false, 18);
+    RunCase(root, "asset_shader",
+            "[image_cues]\nasset|asset.bin|0|0|1|1|0|1|0|0|0|0|0|0|-1|-1|-1|-1|0|0|-1|0|1|5,1\n",
+            {}, true, 5);
+    RunCase(root, "animated_sprite", "[animated_sprite_cues]\nasset|asset.bin\n",
+            {false, false, false, false, false, true, false}, true);
+    RunCase(root, "scroll_text", "[scroll_text_cues]\nscroll row\n",
+            {false, false, false, false, false, false, true}, false);
     RunCase(root, "xm", "[music_cues]\nmusic|asset.bin\n",
             {true, false, false, false, false}, true);
     RunCase(root, "pixel", "[pixel_cues]\npixels|asset.bin\n",

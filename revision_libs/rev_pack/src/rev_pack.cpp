@@ -1,4 +1,5 @@
 #include "rev_pack.h"
+#include "rev_shader_presets.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -231,6 +232,21 @@ static bool ParseMeshAssetLine(const char* line, char* key_out, char* path_out) 
     return key_out[0] != '\0' && path_out[0] != '\0';
 }
 
+static void WriteCString(FILE* f, const char* text) {
+    fputc('"', f);
+    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(text); p && *p; ++p) {
+        switch (*p) {
+            case '\\': fputs("\\\\", f); break;
+            case '"':  fputs("\\\"", f); break;
+            case '\n': fputs("\\n\"\n\"", f); break;
+            case '\r': break;
+            case '\t': fputs("\\t", f); break;
+            default: fputc(*p, f); break;
+        }
+    }
+    fputc('"', f);
+}
+
 static int ParseMeshType(const char* line) {
     if (!line) return -1;
     const char* first = strchr(line, '|');
@@ -244,6 +260,8 @@ struct ProjectFeatures {
     bool particles;
     bool mesh;
     bool gltf;
+    bool animated_sprite;
+    bool scroll_text;
 };
 
 static void WriteProjectFeatures(FILE* header, const ProjectFeatures& features) {
@@ -252,7 +270,9 @@ static void WriteProjectFeatures(FILE* header, const ProjectFeatures& features) 
     fprintf(header, "#define HIMYM_USE_PIXEL %d\n", features.pixel ? 1 : 0);
     fprintf(header, "#define HIMYM_USE_PARTICLES %d\n", features.particles ? 1 : 0);
     fprintf(header, "#define HIMYM_USE_MESH %d\n", features.mesh ? 1 : 0);
-    fprintf(header, "#define HIMYM_USE_GLTF %d\n\n", features.gltf ? 1 : 0);
+    fprintf(header, "#define HIMYM_USE_GLTF %d\n", features.gltf ? 1 : 0);
+    fprintf(header, "#define HIMYM_USE_ANIMATED_SPRITE %d\n", features.animated_sprite ? 1 : 0);
+    fprintf(header, "#define HIMYM_USE_SCROLL_TEXT %d\n\n", features.scroll_text ? 1 : 0);
 }
 
 static bool WriteProjectFeatureCMake(const char* output_header,
@@ -274,6 +294,8 @@ static bool WriteProjectFeatureCMake(const char* output_header,
     fprintf(feature_file, "set(HIMYM_PACKED_USE_PARTICLES %s)\n", features.particles ? "ON" : "OFF");
     fprintf(feature_file, "set(HIMYM_PACKED_USE_MESH %s)\n", features.mesh ? "ON" : "OFF");
     fprintf(feature_file, "set(HIMYM_PACKED_USE_GLTF %s)\n", features.gltf ? "ON" : "OFF");
+    fprintf(feature_file, "set(HIMYM_PACKED_USE_ANIMATED_SPRITE %s)\n", features.animated_sprite ? "ON" : "OFF");
+    fprintf(feature_file, "set(HIMYM_PACKED_USE_SCROLL_TEXT %s)\n", features.scroll_text ? "ON" : "OFF");
     fclose(feature_file);
     return true;
 }
@@ -389,6 +411,53 @@ static int ParseAnimatedSpriteAssetLine(const char* line, AssetRef* out_refs, in
     return count;
 }
 
+static void CollectAssetShaderIds(const char* line, int base_field_count,
+                                  bool shader_ids[64]) {
+    if (!line) return;
+    const char* field = line;
+    for (int i = 0; i < base_field_count; ++i) {
+        field = strchr(field, '|');
+        if (!field) return;
+        ++field;
+    }
+    int effect_count = atoi(field);
+    for (int i = 0; i < effect_count; ++i) {
+        field = strchr(field, '|');
+        if (!field) return;
+        ++field;
+    }
+    field = strchr(field, '|');
+    if (!field) return;
+    int shader_count = atoi(++field);
+    if (shader_count < 0) shader_count = 0;
+    if (shader_count > 4) shader_count = 4;
+    for (int i = 0; i < shader_count; ++i) {
+        field = strchr(field, '|');
+        if (!field) return;
+        int shader_id = atoi(++field);
+        const char* comma = strchr(field, ',');
+        int enabled = comma ? atoi(comma + 1) : 0;
+        if (enabled && shader_id >= 0 && shader_id < 64) shader_ids[shader_id] = true;
+    }
+}
+
+static void WritePackedShaders(FILE* header, const bool shader_ids[64]) {
+    fprintf(header, "struct HimymPackedShaderSource { int id; const char* source; };\n");
+    fprintf(header, "static const HimymPackedShaderSource kPackedShaderSources[] = {\n");
+    int count = 0;
+    for (int shader_id = 0; shader_id < 64; ++shader_id) {
+        if (!shader_ids[shader_id]) continue;
+        const char* source = rev::editor::GetShaderSourceById(shader_id);
+        if (!source) continue;
+        fprintf(header, "    { %d, ", shader_id);
+        WriteCString(header, source);
+        fprintf(header, " },\n");
+        ++count;
+    }
+    fprintf(header, "};\n");
+    fprintf(header, "static const int kPackedShaderSourceCount = %d;\n\n", count);
+}
+
 PackResult PackAssets(const char* cues_path,
                       const char* output_header,
                       const char* cache_path,
@@ -428,21 +497,24 @@ PackResult PackAssets(const char* cues_path,
     AssetRef refs[kMaxAssets];
     int ref_count = 0;
     ProjectFeatures features = {};
-    bool in_image = false, in_music = false, in_mesh = false, in_text = false, in_scroll_text = false, in_animated_sprite = false, in_pixel = false, in_pixel_emitter = false;
-    char line[1024];
+    bool in_shader = false, in_image = false, in_music = false, in_mesh = false, in_text = false, in_scroll_text = false, in_animated_sprite = false, in_pixel = false, in_pixel_emitter = false;
+    bool shader_ids[64] = {};
+    shader_ids[0] = true; // Runtime fallback when a project has no shader cue.
+    char line[8192];
 
     while (fgets(line, sizeof(line), cues)) {
         char* s = line;
         while (*s == ' ' || *s == '\t') s++;
-        if (strstr(s, "[image_cues]"))       { in_image = true;  in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
-        if (strstr(s, "[animated_sprite_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = true; in_pixel = false; in_pixel_emitter = false; continue; }
-        if (strstr(s, "[pixel_cues]"))       { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = true; in_pixel_emitter = false; continue; }
-        if (strstr(s, "[pixel_emitter_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = true; continue; }
-        if (strstr(s, "[music_cues]"))       { in_image = false; in_music = true;  in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
-        if (strstr(s, "[mesh_cues]"))        { in_image = false; in_music = false; in_mesh = true;  in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
-        if (strstr(s, "[text_cues]"))        { in_image = false; in_music = false; in_mesh = false; in_text = true;  in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
-        if (strstr(s, "[scroll_text_cues]")) { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = true;  in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
-        if (s[0] == '[') { in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[shader_cues]"))      { in_shader = true; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[image_cues]"))       { in_shader = false; in_image = true;  in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[animated_sprite_cues]")) { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = true; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[pixel_cues]"))       { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = true; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[pixel_emitter_cues]")) { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = true; continue; }
+        if (strstr(s, "[music_cues]"))       { in_shader = false; in_image = false; in_music = true;  in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[mesh_cues]"))        { in_shader = false; in_image = false; in_music = false; in_mesh = true;  in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[text_cues]"))        { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = true;  in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[scroll_text_cues]")) { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = true;  in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (s[0] == '[') { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (s[0] == '#' || s[0] == '\r' || s[0] == '\n' || s[0] == '\0') continue;
 
         if (in_music) features.xm = true;
@@ -454,6 +526,15 @@ PackResult PackAssets(const char* cues_path,
         if (in_pixel_emitter) {
             features.particles = true;
         }
+        if (in_animated_sprite) features.animated_sprite = true;
+        if (in_scroll_text) features.scroll_text = true;
+        if (in_shader) {
+            int shader_id = atoi(s);
+            if (shader_id >= 0 && shader_id < 64) shader_ids[shader_id] = true;
+        }
+        if (in_image) CollectAssetShaderIds(s, 21, shader_ids);
+        if (in_animated_sprite) CollectAssetShaderIds(s, 26, shader_ids);
+        if (in_pixel) CollectAssetShaderIds(s, 24, shader_ids);
 
         if ((in_image || in_music) && ref_count < kMaxAssets) {
             if (ParseAssetLine(s, refs[ref_count].key, refs[ref_count].path))
@@ -519,7 +600,9 @@ PackResult PackAssets(const char* cues_path,
             fprintf(hdr, "#pragma once\n");
             fprintf(hdr, "#include \"rev_pack.h\"\n\n");
             fprintf(hdr, "#define HIMYM_PACKED_ASSET_FORMAT_VERSION 2\n\n");
+            fprintf(hdr, "#define HIMYM_PACKED_SHADER_FORMAT_VERSION 1\n\n");
             WriteProjectFeatures(hdr, features);
+            WritePackedShaders(hdr, shader_ids);
             fprintf(hdr, "static const char* PACKED_CUES_PATH = \"%s\";\n\n", cues_fwd);
             fprintf(hdr, "static const rev::pack::PackedAsset kPackedAssets[] = { { nullptr, nullptr, 0, 0 } };\n");
             fprintf(hdr, "static const int kPackedAssetCount = 0;\n");
@@ -719,7 +802,9 @@ PackResult PackAssets(const char* cues_path,
     fprintf(hdr, "#pragma once\n");
     fprintf(hdr, "#include \"rev_pack.h\"\n\n");
     fprintf(hdr, "#define HIMYM_PACKED_ASSET_FORMAT_VERSION 2\n\n");
+    fprintf(hdr, "#define HIMYM_PACKED_SHADER_FORMAT_VERSION 1\n\n");
     WriteProjectFeatures(hdr, features);
+    WritePackedShaders(hdr, shader_ids);
 
     // Embed the cues path (kept for backward compat) and the full cues.txt content.
     {

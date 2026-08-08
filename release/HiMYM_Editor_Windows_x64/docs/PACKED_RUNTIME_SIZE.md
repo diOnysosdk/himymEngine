@@ -16,9 +16,18 @@ The external-cue `minimal_intro` target remains universal.
 | Pixel-emitter cue | `HIMYM_USE_PARTICLES` | `rev_particles` |
 | Any mesh cue | `HIMYM_USE_MESH` | `rev_mesh` |
 | External mesh with `mesh_type == 4` | `HIMYM_USE_GLTF` | `rev_gltf` and `rev_mesh` |
+| Animated-sprite cue | `HIMYM_USE_ANIMATED_SPRITE` | none; prunes runtime code |
+| Scrolling-text cue | `HIMYM_USE_SCROLL_TEXT` | none; prunes runtime code |
 
 Particle emitters do not enable mesh by themselves. Mesh attachment projection
 is compiled only when the same project also contains mesh cues.
+
+Shader source selection is finer grained than the subsystem flags. The packed
+header contains only preset IDs referenced by fullscreen shader cues and by
+enabled image, animated-sprite, or pixel asset shaders. Preset 0 is retained as
+the deterministic fallback when a project has no shader cue. The universal
+47-preset registry remains available to the editor and external-cue runtime,
+but is not linked into a current-format packed runtime.
 
 ## Controlled raw executable measurements
 
@@ -54,7 +63,7 @@ comparable because embedded asset payloads differ.
 - `text_animation_tests`: PASS.
 - `gltf_import_tests tests/fixtures/blender_axis_material.gltf`: PASS.
 - `particle_direction_tests`: PASS.
-- `packed_feature_manifest_tests`: PASS for empty, shader-only, XM, pixel,
+- `packed_feature_manifest_tests`: PASS for empty, shader-only, asset-shader, XM, pixel,
   particle, procedural-mesh, and glTF projects; both generated manifests are
   checked for identical feature selections.
 - `tools/test_packed_pipeline.ps1`: PASS for pack, configure, and Release link
@@ -172,19 +181,28 @@ profile harness to verify this assumption against the INTRO map.
 
 ## Compressor measurements
 
-Measured August 8, 2026 from the retained transferred `rectruitro` manifests.
-Both profiles used the identical XM-only packed assets. UPX 5.1.1 was invoked
-with `--best --lzma`, and each result passed `upx -t` integrity validation.
+Measured August 9, 2026 from the retained transferred `rectruitro` manifests.
+Both profiles used the identical XM-only packed assets and the same three
+referenced shader presets (IDs 0, 5, and 18). UPX 5.1.1 was invoked with
+`--best --lzma`, and each result passed `upx -t` integrity validation.
 
 | Profile | Raw EXE | UPX EXE | Bytes removed | Packed/raw |
 |---|---:|---:|---:|---:|
-| `GENERAL` | 417,792 | 182,272 | 235,520 | 43.63% |
-| `INTRO` | 396,288 | 176,128 | 220,160 | 44.44% |
+| `GENERAL` | 320,000 | 164,864 | 155,136 | 51.52% |
+| `INTRO` | 300,544 | 159,232 | 141,312 | 52.98% |
 
 INTRO remains the smaller result, saving 6,144 compressed bytes relative to
 GENERAL. Run `tools/test_compressor_profiles.ps1 -KeepArtifacts` to reproduce
 the builds, retain both raw and compressed executables, and write
 `build/compressor_profiles/compressor_size_report.txt`.
+
+Compared with the previous universal-preset baseline, project-specific shader
+packing removed 89,600 raw / 14,336 UPX bytes from GENERAL and 89,088 raw /
+14,336 UPX bytes from INTRO. Removing rectruitro's absent animated-sprite and
+scrolling-text paths then saved another 8,192 raw / 3,072 UPX bytes from
+GENERAL and 6,656 raw / 2,560 UPX bytes from INTRO. The retained executable
+contains only the three shader sources required by rectruitro rather than all
+47 presets.
 
 The project author completed a full Windows 10 playback of the compressed
 INTRO result and confirmed correct visuals, XM audio, ESC shutdown, and
