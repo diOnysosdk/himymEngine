@@ -1,63 +1,31 @@
-# Editor Application (Phase 3)
+# HiMYM Editor Application
 
-Basic editor application using the rev_editor library.
+This is the current native C++17/ImGui authoring application. It supports
+project JSON, the scene timeline, cue modals, curves, preview rendering,
+`cues.txt` export/import, asset packing, standalone builds, and screen-saver
+output.
 
-## Current Status
-
-**INFRASTRUCTURE READY**: The editor framework is implemented but requires Dear ImGui to be fully functional.
-
-### What Works Now
-- Window creation and OpenGL context
-- Editor context initialization
-- Project data structures
-- Frame lifecycle
-
-### What Needs ImGui
-- Menu bar
-- Timeline window
-- Curve editor panel
-- Shader modal dialog
-- All visual UI elements
-
-## Adding ImGui
-
-Follow instructions in [revision_libs/rev_editor/README.md](../../revision_libs/rev_editor/README.md) to:
-
-1. Download Dear ImGui
-2. Extract files to `revision_libs/rev_editor/third_party/imgui/`
-3. Uncomment ImGui sections in CMakeLists.txt
-4. Rebuild
-
-## Building (Current State)
+## Build and run
 
 ```powershell
-# Build (will create empty editor window)
-cmake --build build --config Release
-
-# Run
+cmake -S . -B build
+cmake --build build --config Release --target editor_app
 .\build\bin\Release\editor_app.exe
 ```
 
-Expected: Empty window with dark gray background. No UI yet (needs ImGui).
+Keep the executable under `build\bin\Release` when using integrated Build
+commands. The editor resolves the workspace by walking three directories up
+from its executable.
 
-## Building (After ImGui)
+## Packed workflow
 
-Once ImGui is added, the editor will show:
-- **Menu bar**: File, View, Build menus
-- **Timeline panel**: Scene cue visualization
-- **Curve editor**: Animation curve editing
-- **Shader modal**: Parameter controls
+`Build > Pack, Build and Run` performs:
 
-## Features (Planned)
+1. Save and export the current project.
+2. Generate `build/packed_assets.h` with referenced asset bytes and C++ feature flags.
+3. Generate `build/packed_features.cmake` with matching optional dependencies.
+4. Reconfigure CMake.
+5. Build and launch `minimal_intro_packed`.
 
-- Load/save JSON projects
-- Visual timeline editing with drag & drop
-- Curve editor with point manipulation
-- Shader parameter editing
-- Export to runtime format
-- Build and run integration
-- Live preview viewport
-
-## Size Target
-
-~200-300 KB executable (including ImGui)
+The editor is fully integrated; no Python, tkinter, or separate ImGui download
+is required. See `PR/guides/EDITOR_GUIDE.md` for authoring instructions.

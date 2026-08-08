@@ -7,6 +7,7 @@
 //
 // Pack side (editor):
 //   PackAssets()  — reads cues.txt, finds referenced files, writes packed_assets.h
+//                   and a sibling packed_features.cmake dependency manifest
 //                   with CRC32 checksums; skips files unchanged since last pack.
 //
 // Load side (runtime, when HIMYM_PACKED_ASSETS is defined):

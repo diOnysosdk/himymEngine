@@ -1,6 +1,12 @@
 # API Reference — revision2026
 
-All public APIs are in namespace `revision2026`. All source lives under `src/`.
+> **Status:** Mixed-generation reference. The opening HiMYM addenda describe
+> current contracts, but later `revision2026`, `src/`, `renderer/renderer.h`,
+> `scene3d.txt`, and `REV_ENABLE_3D` sections describe the retired prototype.
+> For exact current APIs, use the headers under `revision_libs/`; for packed
+> feature selection, use `BUILD.md` and `PACKED_RUNTIME_SIZE.md`.
+
+The historical API below used the `revision2026` namespace and `src/` layout.
 
 ---
 

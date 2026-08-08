@@ -35,6 +35,7 @@ Treat current code and CMake files as authoritative. Before relying on material 
 - Initialize every unassigned `curve_*` index to `-1`.
 - Preserve deterministic ordering in exports and rendering.
 - Keep packed/release assets embedded-first; filesystem fallback is explicit diagnostics/development behavior.
+- Packed builds derive `HIMYM_USE_*` macros and `packed_features.cmake` from exported cue rows. Reconfigure after packing so C++ guards and CMake dependencies stay aligned.
 - Maintain editor/runtime OpenGL-state parity, especially VAO binding, depth writes, blending, and opaque/transparent ordering.
 - Load post-OpenGL-1.1 functions with `wglGetProcAddress`.
 - Initialize GDI+ before image/text loading and preserve its Windows path and stream-lifetime requirements.
@@ -77,7 +78,7 @@ cmake --build build --config Release --target minimal_intro_packed
 cmake --build build --config Release --target text_animation_tests
 ```
 
-Run `build\bin\Release\text_animation_tests.exe` for text-animation changes. If `rev_pack` changes, rebuild the editor or `pack_cli` before validating packed output. Validate optional 3D changes with `REV_ENABLE_3D=ON` when supported by the active configuration.
+Run `build\bin\Release\text_animation_tests.exe` for text-animation changes. If `rev_pack` changes, rebuild the editor or `pack_cli` before validating packed output. For current `minimal_intro_packed`, validate generated mesh/glTF selection through `HIMYM_USE_MESH`, `HIMYM_USE_GLTF`, and `build/packed_features.cmake`; the live target no longer uses the historical `REV_ENABLE_3D` option.
 
 Report exact commands and distinguish new failures from stale or environmental failures.
 

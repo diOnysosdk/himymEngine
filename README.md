@@ -26,7 +26,7 @@ A comprehensive framework for creating demoscene intros and interactive demos. B
 
 ### Example Applications
 
-- ✅ `minimal_intro` - Phase 1 integration test (pulsing gradient)
+- ✅ `minimal_intro` - Universal external-cue and specialized packed runtime
 - ✅ `animated_intro` - Phase 2 animation demo (curves + timeline)
 - ✅ `demo_intro` - Full-featured demo with shaders and sequences
 - ✅ `editor_app` - ImGui-based scene editor
@@ -81,18 +81,18 @@ himym/
 │   │   └── CONTROLS_KNOBS.md      # Runtime parameters
 │   └── context/                    # AI customization
 ├── revision_libs/                   # Core libraries
-│   ├── rev_platform/               # Win32/WGL/timing (~15 KB)
-│   ├── rev_shader/                 # GLSL compilation (~10 KB)
-│   ├── rev_xm/                     # XM music playback (~30 KB)
-│   ├── rev_curve/                  # Animation curves (~8 KB)
-│   ├── rev_sequence/               # Timeline + cues (~12 KB)
-│   ├── rev_mesh/                   # 3D mesh rendering (~20 KB)
-│   ├── rev_gltf/                   # glTF 2.0 parser (~25 KB)
-│   ├── rev_editor/                 # ImGui editor (~150 KB)
-│   ├── rev_pack/                   # Asset packing (~5 KB)
-│   └── rev_runtime/                # Shared runtime (~50 KB)
+│   ├── rev_platform/               # Win32/WGL/timing
+│   ├── rev_shader/                 # GLSL compilation
+│   ├── rev_xm/                     # XM music playback
+│   ├── rev_curve/                  # Animation curves
+│   ├── rev_sequence/               # Timeline + cues
+│   ├── rev_mesh/                   # Procedural/imported mesh rendering
+│   ├── rev_gltf/                   # glTF 2.0 parser
+│   ├── rev_editor/                 # Native ImGui editor
+│   ├── rev_pack/                   # Assets + packed feature manifests
+│   └── rev_runtime/                # Shared cues, parsing, images, text, matrices
 ├── examples/
-│   ├── minimal_intro/              # Phase 1 test
+│   ├── minimal_intro/              # Universal and project-specialized playback
 │   ├── animated_intro/             # Phase 2 test
 │   ├── demo_intro/                 # Full-featured demo
 │   ├── editor_app/                 # Editor application
@@ -100,7 +100,7 @@ himym/
 │   └── (other test apps)
 ├── assets/                          # Project content
 │   ├── textures/                   # Image files
-│   ├── meshes/                     # 3D models (.meshbin, .mtl)
+│   ├── meshes/                     # 3D models (glTF/GLB)
 │   ├── music/                      # Audio tracks (.xm, .mod)
 │   ├── shader/                     # GLSL shader sources
 │   ├── fonts/                      # Text rendering
@@ -114,51 +114,43 @@ himym/
 
 ### rev_platform
 Cross-platform window creation with OpenGL 3.3 context, high-precision timing, and input handling.
-**Size**: ~15 KB | **Dependencies**: Win32 API, WGL
 
 ### rev_shader
 GLSL vertex/fragment shader compilation, linking, and uniform management (float, vec2/3/4, mat4, int).
-**Size**: ~10 KB | **Dependencies**: OpenGL 3.3
 
 ### rev_xm
 XM module music playback with integration for timeline synchronization.
-**Size**: ~30 KB | **Dependencies**: libxm (embedded)
 
 ### rev_curve
 Parametric time-value curves with 6 easing modes (Linear, EaseIn/Out, EaseInOut, Smoothstep, Hold).
-**Size**: ~8 KB | **Dependencies**: None
 
 ### rev_sequence
 Timeline management with cue-based sequencing, fade transitions, and opacity control.
-**Size**: ~12 KB | **Dependencies**: None
 
 ### rev_mesh
 3D mesh loading and rendering with per-material texture support, Phong shading, and transparency handling.
-**Size**: ~20 KB | **Dependencies**: OpenGL 3.3, GLM
 
 ### rev_gltf
 Full glTF 2.0 parser supporting geometry, materials, textures, skeletal animation, and multiple mesh nodes.
-**Size**: ~25 KB | **Dependencies**: None
 
 ### rev_editor
 ImGui-based scene authoring with project management, timeline editing, shader modal, curve editor, and export pipeline.
-**Size**: ~150 KB | **Dependencies**: Dear ImGui 1.89+
 
 ### rev_pack
-Asset packing and embedding system for bundling textures, meshes, audio, and shaders into compact format.
-**Size**: ~5 KB | **Dependencies**: None
+Asset packing and embedding system. It generates `packed_assets.h` with only
+referenced asset bytes plus `HIMYM_USE_*` flags, and `packed_features.cmake`
+with matching optional target dependencies.
 
 ### rev_runtime
-Shared runtime core providing unified app lifecycle, sequence management, content loading, and frame rendering.
-**Size**: ~50 KB | **Dependencies**: All core libraries
+Shared cue contracts, parsers, texture/text helpers, animation evaluation, and
+matrix utilities used by editor preview and standalone playback.
 
 ## Minimum Runtime
 
-**Smallest buildable intro** (shader + timeline):
-- rev_platform + rev_shader + rev_xm + rev_sequence = ~67 KB
-
-**Full-featured intro** (with 3D + animations):
-- All runtime libraries = ~170 KB
+Packed runtime size depends on authored cues and embedded assets. Optional XM,
+pixel, particle, procedural-mesh, and glTF code is selected per project. See
+`PACKED_RUNTIME_SIZE.md` for controlled measurements; do not use old static
+per-library estimates for release planning.
 
 ## Key Features
 
@@ -224,22 +216,9 @@ Comprehensive guides are in the `PR/` folder:
 
 ### Minimal Example
 
-Create a simple shader intro in `examples/my_intro/`:
-
-```cpp
-#include "rev_runtime.h"
-
-extern const char* default_shader_glsl;
-
-int main() {
-    auto ctx = rev::CreateContext(1920, 1080, false, "My Intro");
-    // ... main loop using rev::runtime APIs
-    rev::DestroyContext(ctx);
-    return 0;
-}
-```
-
-See `examples/minimal_intro/` for complete example.
+See `examples/minimal_intro/` for the current universal and packed runtime
+targets. New authored productions normally use the editor rather than creating
+a separate runtime entry point.
 
 ## Design Principles
 
@@ -251,14 +230,9 @@ See `examples/minimal_intro/` for complete example.
 
 ## Customization
 
-The workspace is configured with AI agent specializations in `.github/`:
-
-- `@runtime-dev` - Runtime code and core systems
-- `@editor-dev` - Editor UI and workflows
-- `@mesh-graphics` - 3D rendering and geometry
-- `@shader-author` - GLSL effects and shading
-- `@build-system` - CMake configuration
-- `@director` - Multi-domain coordination
+Repository instructions live in `AGENTS.md`; current Codex workflows and agent
+definitions live under `.agents/skills/` and `.codex/agents/`. The `.github/`
+tree is tool-specific context and does not override these files.
 
 ## License
 

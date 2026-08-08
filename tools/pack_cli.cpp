@@ -27,5 +27,6 @@ int main(int argc, char* argv[]) {
 
     std::printf("Pack ok: total=%d packed=%d skipped=%d optional_skipped=%d\n",
                 result.total, result.packed, result.skipped, result.optional_skipped);
+    std::printf("Generated %s and sibling packed_features.cmake\n", argv[2]);
     return 0;
 }

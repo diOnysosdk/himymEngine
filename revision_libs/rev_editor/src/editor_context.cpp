@@ -5978,7 +5978,8 @@ bool PackProject(EditorContext* editor) {
         return false;
     }
 
-    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Project packed. Send the project folder and packed_assets.h.", _TRUNCATE);
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+              "Project packed. Send the project folder and both packed manifests.", _TRUNCATE);
     editor->build_status_timer = 10.0f;
     printf("Pack complete: %d total, %d packed, %d skipped.\n",
            pack_result.total, pack_result.packed, pack_result.skipped);

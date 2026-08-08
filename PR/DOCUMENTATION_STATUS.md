@@ -24,13 +24,10 @@ These are the preferred documentation entry points. They can still drift, so ver
 | `../PACKED_RUNTIME_SIZE.md` | Current packed-runtime feature mapping, validation evidence, and size measurements. |
 | `../README.md` | Current high-level C++ framework overview and repository entry point. |
 | `../BUILD.md` | Current build and authoring-handoff workflow. |
-| `architecture/ARCHITECTURE.md` | Current architectural concepts and cross-layer contracts. |
-| `architecture/API-REFERENCE.md` | Preferred API/format reference; verify exact signatures and field counts in headers/parsers. |
 | `context/CODE_STYLE.md` | Current coding, build-profile, and completion rules. |
 | `guides/EDITOR_GUIDE.md` | Current C++/ImGui editor workflow. |
 | `guides/BLENDER_GLTF_GUIDE.md` | Current Blender 5.2/glTF axis and compact procedural-material contract. |
 | `CURVES_RUNTIME_USAGE.md` | Current curve consumption patterns. |
-| `QUICK_START.md` | Useful current quick-start material, subject to code/build verification. |
 
 For Codex behavior, use the root `AGENTS.md`, `.agents/skills/`, and `.codex/agents/`.
 
@@ -40,6 +37,9 @@ These contain useful principles or subsystem explanations alongside outdated lay
 
 | Document | Keep | Verify or ignore |
 |---|---|---|
+| `architecture/ARCHITECTURE.md` | Some current cue, layering, and OpenGL-state contracts. | Large retained sections describe the retired `src/app`, Python editor, `scene3d.txt`, `.meshbin`, and `REV_ENABLE_3D` design. Prefer live code, `BUILD.md`, and `PACKED_RUNTIME_SIZE.md`. |
+| `architecture/API-REFERENCE.md` | Current runtime/editor addenda at the top. | Most sections describe the retired `revision2026`, `src/`, renderer, `scene3d.txt`, and `REV_ENABLE_3D` APIs. Prefer live headers for exact contracts. |
+| `QUICK_START.md` | General authoring sequence. | Python/tkinter commands, old paths, retired tools, and old UI terminology. Prefer `BUILD.md` and `guides/EDITOR_GUIDE.md`. |
 | `architecture/API_REFERENCE.md` | Additional API notes. | Duplicate of the hyphenated API reference; prefer `API-REFERENCE.md`. |
 | `architecture/TECH-STACK.md` | Platform/dependency background. | Current library list, versions, profiles, and asset pipeline. |
 | `guides/MESH_GUIDE.md` | Mesh/glTF authoring concepts. | Current material-slot, transparency, animation, and import behavior. |

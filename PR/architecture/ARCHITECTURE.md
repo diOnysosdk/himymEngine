@@ -1,5 +1,11 @@
 # Architecture Overview — revision2026
 
+> **Status note:** This document contains current cue/rendering contracts mixed
+> with retained descriptions of the retired `src/app`, Python editor,
+> `scene3d.txt`, `.meshbin`, and `REV_ENABLE_3D` architecture. For the current
+> packed build and repository layout, use `AGENTS.md`, `BUILD.md`,
+> `PACKED_RUNTIME_SIZE.md`, and the live CMake/code first.
+
 ## Authored timeline loop boundary
 
 When `[metadata] total_duration` is present, it is the authoritative intro timeline and loop boundary. Runtime cue ends may extend beyond that value for persistent overlays or authoring convenience, but they do not lengthen the loop. When `intro_loop=1`, runtime and editor preview wrap time into `[0, total_duration)`, so shader, text, image, mesh, pixel, particle, and scroll cue activation is evaluated again from the beginning. If metadata has no positive duration, runtime infers a fallback duration from cue ends.

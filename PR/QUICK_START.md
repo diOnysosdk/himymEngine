@@ -1,5 +1,10 @@
 # Quick Start Guide
 
+> **Mixed-generation guide:** portions of this file describe the retired
+> Python/tkinter editor and old asset paths. The current editor is
+> `build\bin\Release\editor_app.exe`. Prefer `BUILD.md` and
+> `PR/guides/EDITOR_GUIDE.md` for the current workflow.
+
 **Get HowIMetYourMod running in 5 minutes**
 
 ## Prerequisites

@@ -4,15 +4,15 @@ Text cues expose an **Alignment** selector with Left, Center, and Right options.
 
 When **Loop Intro** is enabled, preview and exported runtime wrap at the project's total scene duration. Cue end times beyond that duration do not extend the loop; they are useful for persistent layers but cannot prevent text or shader cues from restarting on the next pass.
 
-**Complete walkthrough of the Python/tkinter scene authoring tool**
+**Walkthrough of the native C++17/ImGui scene authoring tool**
 
 ## Overview
 
-The Scene Block Editor is a monolithic Python/tkinter application (8000+ lines) for authoring intro/demo timelines. It manages:
+The HiMYM editor is the native `editor_app.exe` authoring application. It manages:
 - Scene blocks (timing, shaders, effects)
 - Asset references (images, text, music, 3D meshes)
 - Shader curves (animated parameters)
-- Export to runtime format (`assets/cues.txt`)
+- Export to the project-local runtime format (`cues.txt`)
 - Build integration (CMake, run intro)
 
 **Philosophy**: All complexity lives in the editor, runtime stays simple.
@@ -340,9 +340,10 @@ evaluating the stack belonging to the active scene interval.
 
 **Pack, Build and Run** — creates the standalone redistributable exe:
 1. **Save + Export** (same as above)
-2. **Pack**: Rev_pack embeds all assets + cues into `build/packed_assets.h`
-3. **Build**: Compiles `minimal_intro_packed` (PRE_BUILD touches `main.cpp` to force fresh include)
-4. **Run**: Launch `build\bin\Release\minimal_intro_packed.exe`
+2. **Pack**: `rev_pack` embeds referenced assets + cues into `build/packed_assets.h` and writes `build/packed_features.cmake`
+3. **Configure**: CMake reloads the feature manifest and removes unused XM, pixel, particle, mesh, and glTF target dependencies
+4. **Build**: Compiles `minimal_intro_packed` (PRE_BUILD touches `main.cpp` to force the fresh packed header include)
+5. **Run**: Launch `build\bin\Release\minimal_intro_packed.exe`
 
 > **Note**: If `minimal_intro_packed.exe` shows stale content, rebuild `editor_app` first — it may be using an outdated packer.
 
@@ -369,6 +370,9 @@ cmake --build build --config Release
 # Run packed (standalone) intro
 .\build\bin\Release\minimal_intro_packed.exe
 ```
+
+When using `pack_cli` rather than the editor, re-run `cmake -S . -B build`
+after packing. This loads `build/packed_features.cmake` before the packed build.
 
 ### Build Diagnostics
 
@@ -600,11 +604,13 @@ Set mesh type in Mesh Cue modal, adjust parameters.
 - Ensure `cue_end > cue_start` and both are within the scene duration
 - For the packed exe: check that `build/packed_assets.h` contains `HIMYM_HAS_PACKED_CUES`  
   (`Select-String "HIMYM_HAS_PACKED_CUES" build/packed_assets.h`)
+- Check `build/packed_features.cmake` for the expected `HIMYM_PACKED_USE_*`
+  selections and the generated header for matching `HIMYM_USE_*` macros.
 - If not present, rebuild `editor_app` and re-run Pack, Build and Run
 
 ### "Editor crashes on startup"
-- Check Python version: `python --version` (need 3.11+)
-- Verify tkinter: `python -m tkinter` (should open window)
+- Confirm Windows 11 x64 and a working OpenGL driver.
+- Run `build\bin\Release\editor_app.exe`; the current editor is C++/ImGui and does not require Python or tkinter.
 - Look for corrupt project JSON (restore from backup)
 
 ---
