@@ -66,6 +66,15 @@ the exported cue rows. `minimal_intro_packed` uses these `HIMYM_USE_*` macros
 to compile out optional runtime paths that the project cannot reach. The
 file-based `minimal_intro` remains a universal development player.
 
+The packer also writes `packed_features.cmake` beside the generated header.
+The editor reconfigures the existing build after packing so the packed target
+does not depend on unused XM, pixel, particle, mesh, or glTF libraries. When
+using `pack_cli` directly, run `cmake -S . -B build` once after packing and
+before building `minimal_intro_packed`.
+
+See `PACKED_RUNTIME_SIZE.md` for the current feature mapping, validation
+evidence, and controlled raw executable size matrix.
+
 The compiler can then place the received files in the matching workspace,
 copy the generated header into that workspace's `build` directory if needed,
 repack, and run the normal `minimal_intro_packed` build. The editor stores its

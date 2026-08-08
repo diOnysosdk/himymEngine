@@ -5756,6 +5756,22 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     return true;
 }
 
+static bool ConfigurePackedRuntime(EditorContext* editor) {
+    if (!editor || !editor->startup_dir[0]) return false;
+    char configure_cmd[1536] = {};
+    snprintf(configure_cmd, sizeof(configure_cmd),
+             "cmake -S \"%s\" -B \"%s\\build\"",
+             editor->startup_dir, editor->startup_dir);
+    printf("Configuring packed runtime feature dependencies...\n");
+    int configure_result = system(configure_cmd);
+    if (configure_result != 0) {
+        printf("ERROR: Packed runtime configure failed with exit code %d\n",
+               configure_result);
+        return false;
+    }
+    return true;
+}
+
 bool BuildAndRun(EditorContext* editor) {
     if (!editor) return false;
 
@@ -5836,6 +5852,13 @@ bool BuildAndRun(EditorContext* editor) {
            pack_result.total, pack_result.packed, pack_result.skipped);
     if (pack_result.optional_skipped > 0) {
         printf("[Pack] Warning: %d optional baked text asset(s) were skipped.\n", pack_result.optional_skipped);
+    }
+
+    if (!ConfigurePackedRuntime(editor)) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                  "Packed runtime configure failed! Check console for errors.", _TRUNCATE);
+        editor->build_status_timer = 10.0f;
+        return false;
     }
 
     printf("Step 2c: Building minimal_intro_packed...\n");
@@ -6030,6 +6053,13 @@ bool PackBuildAndRun(EditorContext* editor) {
            pack_result.total, pack_result.packed, pack_result.skipped);
     if (pack_result.optional_skipped > 0) {
         printf("[Pack] Warning: %d optional baked text asset(s) were skipped.\n", pack_result.optional_skipped);
+    }
+
+    if (!ConfigurePackedRuntime(editor)) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                  "Packed runtime configure failed! Check console for errors.", _TRUNCATE);
+        editor->build_status_timer = 10.0f;
+        return false;
     }
 
     // Step 3: Build the packed target — absolute build dir

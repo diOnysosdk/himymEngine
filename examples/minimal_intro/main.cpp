@@ -1462,6 +1462,7 @@ int LoadAllPixelEmitterCues(const char* path, PixelEmitterCue* cues, int max_cue
     fclose(f);
     return count;
 }
+#endif
 
 #if HIMYM_USE_PIXEL
 static bool UploadPixelFrame(const PixelAnimation* animation, int frame_index,
@@ -1499,6 +1500,7 @@ static bool UploadPixelFrame(const PixelAnimation* animation, int frame_index,
 }
 #endif
 
+#if HIMYM_USE_PARTICLES
 static bool UploadPrimitiveEmitterTexture(const PixelEmitterCue* cue, unsigned int* out_texture) {
     if (!cue || !out_texture) return false;
     const int size = 16;
@@ -4913,6 +4915,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float spray_direction_x = cue.direction_x;
                     float spray_direction_y = cue.direction_y;
 
+#if HIMYM_USE_MESH
                     if (cue.attachment_enabled && cue.attachment_mesh_key[0] &&
                         cue.attachment_node_name[0]) {
                         int attached_mesh_index = -1;
@@ -5043,6 +5046,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             }
                         }
                     }
+#endif
                     settings.seed = cue.seed;
                     settings.visual_source = cue.visual_source == 0
                         ? rev::particles::VisualSourceAsset : rev::particles::VisualSourcePrimitive;
@@ -5483,7 +5487,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         glDeleteTextures(1, &frame_text_tex.texture_id);
                     }
 
-                } else {
+                }
+#if HIMYM_USE_MESH
+                else {
                     // 3D mesh
                     int mesh_idx = entries[ei].cue_idx;
                     MeshCue& mesh_cue = mesh_cues[mesh_idx];
@@ -5901,6 +5907,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     delete[] node_delta_mats;
                     glDisable(GL_CULL_FACE);
                 }
+#endif
             }
 
             if (blend_on) glDisable(GL_BLEND);
@@ -6261,6 +6268,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     for (int ti = 0; ti < text_cue_count; ++ti) {
         DestroyTextGlyphAtlas(&text_atlases[ti]);
     }
+#if HIMYM_USE_MESH
     if (mesh_shader) {
         rev::shader::DestroyProgram(mesh_shader);
     }
@@ -6270,6 +6278,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             mesh_objs[mi] = nullptr;
         }
     }
+#endif
     for (int i = 0; i < num_shaders; ++i) {
         if (shader_programs[i].prog) {
             rev::shader::DestroyProgram(shader_programs[i].prog);

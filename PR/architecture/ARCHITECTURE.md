@@ -162,6 +162,9 @@ Runtime timing model:
   `HIMYM_USE_GLTF` feature macros. Packed runtime code may use these flags to
   remove unreachable subsystem paths at compile time; the external-cue runtime
   deliberately retains all supported paths.
+  `rev_pack` writes the matching `packed_features.cmake` file beside the packed
+  header. After packing, the editor reconfigures CMake so the packed target's
+  static-library dependencies match the generated C++ feature manifest.
 - `text_cue_loader`: scene-authored text objects with active/effect timing and text effect parameters.
 - `music_cue_loader`: music cue metadata for runtime.
 - `shader_pipeline_loader`: authored pass-graph metadata exported by the Python editor and validated at load time before the runtime accepts the shader pipeline bundle. The editor now validates shader pipeline dependency chains before export. The loader topologically orders passes and rejects missing, disabled, or cyclic dependencies. The runtime builds a typed active-pass plan per scene/time, uses authored `material` passes to preblend scene visuals, uses the overlay bucket plus scene-pass resolution ahead of legacy `shader_cues`, and executes authored `postfx` / `output` passes as final fullscreen composition layers.

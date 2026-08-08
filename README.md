@@ -188,6 +188,7 @@ Shared runtime core providing unified app lifecycle, sequence management, conten
 Comprehensive guides are in the `PR/` folder:
 
 - **[ROADMAP.md](ROADMAP.md)** - Current priorities, milestones, and exit criteria
+- **[PACKED_RUNTIME_SIZE.md](PACKED_RUNTIME_SIZE.md)** - Project feature pruning, validation, and measured size matrix
 - **[DOCUMENTATION_STATUS.md](PR/DOCUMENTATION_STATUS.md)** - Authority and relevance map; read this before older documentation
 - **[QUICK_START.md](PR/QUICK_START.md)** - Setup in 5 minutes
 - **[FROM_SCRATCH_V2.md](PR/FROM_SCRATCH_V2.md)** - Architecture & design philosophy

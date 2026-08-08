@@ -40,6 +40,8 @@ workspace and choose **Run Script**. The **HiMYM** panel then appears in the
 ## Documentation
 
 - `docs\EDITOR_GUIDE.md`: editor authoring workflow and controls.
+- `docs\PACKED_RUNTIME_SIZE.md`: project-aware runtime pruning and measured sizes.
+- `docs\ROADMAP.md`: current development priorities and completion criteria.
 - `blender\BLENDER_GLTF_GUIDE.md`: Blender and glTF workflow.
 
 ## Building standalone intros
@@ -59,4 +61,3 @@ The editor may create `imgui.ini`, project JSON, `cues.txt`, project asset
 folders, pack caches, and project-local output directories. Store each
 production in its own writable folder and keep its JSON, `cues.txt`, and
 project-assets folder together when transferring it.
-

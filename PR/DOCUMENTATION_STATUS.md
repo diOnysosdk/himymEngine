@@ -21,6 +21,7 @@ These are the preferred documentation entry points. They can still drift, so ver
 | Document | Use |
 |---|---|
 | `../ROADMAP.md` | Current priorities, milestones, validation expectations, and exit criteria. |
+| `../PACKED_RUNTIME_SIZE.md` | Current packed-runtime feature mapping, validation evidence, and size measurements. |
 | `../README.md` | Current high-level C++ framework overview and repository entry point. |
 | `../BUILD.md` | Current build and authoring-handoff workflow. |
 | `architecture/ARCHITECTURE.md` | Current architectural concepts and cross-layer contracts. |
