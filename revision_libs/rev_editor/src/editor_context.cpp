@@ -4249,6 +4249,7 @@ void CleanupDeletedCueResources(EditorContext* editor) {
 
 void RenderMenuBar(EditorContext* editor) {
     if (!editor) return;
+    bool open_about = false;
     
     // ImGui menu bar
     if (ImGui::BeginMainMenuBar()) {
@@ -4399,8 +4400,31 @@ void RenderMenuBar(EditorContext* editor) {
             }
             ImGui::EndMenu();
         }
+
+        if (ImGui::BeginMenu("Help")) {
+            if (ImGui::MenuItem("About")) {
+                open_about = true;
+            }
+            ImGui::EndMenu();
+        }
         
         ImGui::EndMainMenuBar();
+    }
+
+    if (open_about) {
+        ImGui::OpenPopup("About HiMYM");
+    }
+    if (ImGui::BeginPopupModal("About HiMYM", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Created by Dennis \"diOnysos/TiTAN/Equinox\" Kjaer");
+        ImGui::Spacing();
+        ImGui::TextLinkOpenURL(
+            "https://www.linkedin.com/in/dennis-kjaer-christensen/",
+            "https://www.linkedin.com/in/dennis-kjaer-christensen/");
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(100.0f, 0.0f))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }
 

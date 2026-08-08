@@ -1,0 +1,103 @@
+# HiMYM Roadmap
+
+This is the current delivery roadmap for HiMYM. It tracks work against the
+live C++ editor, packed runtime, and CMake targets. Historical implementation
+plans remain under `PR/` and are not completion checklists for current code.
+
+Priorities are ordered by competition reliability, executable size,
+determinism, rendering capability, and then maintainability.
+
+## Now: project-specialized packed runtime
+
+Goal: packed releases contain only the runtime systems used by the exported
+project, while `minimal_intro` remains a universal external-cue player.
+
+- [x] Generate deterministic `HIMYM_USE_*` feature flags from packed cue rows.
+- [x] Compile out XM playback when no music cue is authored.
+- [x] Compile out pixel animation when no pixel cue is authored.
+- [x] Compile out particle simulation when no pixel-emitter cue is authored.
+- [x] Compile out glTF importing and animation when no external glTF mesh is authored.
+- [ ] Compile out procedural mesh rendering when no mesh cue is authored.
+- [ ] Decide whether configure-time target pruning provides useful build-time
+      savings beyond the linker already omitting unreferenced static objects.
+- [ ] Add automated packer feature-manifest tests for empty, shader-only, XM,
+      pixel, particle, procedural-mesh, and glTF projects.
+- [ ] Record uncompressed and compressed size deltas for each optional system.
+
+Exit criteria:
+
+- Every supported feature combination builds in Release.
+- Projects with a feature enabled retain editor/runtime visual and timing parity.
+- Disabled systems contribute no code or unwanted Windows imports to the final executable.
+- Packed asset discovery remains deterministic and embedded-first.
+
+## Next: release reliability and parity
+
+Goal: make the editor-to-standalone handoff safe enough for competition use.
+
+- [ ] Create representative regression projects covering every cue type.
+- [ ] Automate save -> export -> pack -> build checks for those projects.
+- [ ] Add smoke checks for missing assets, stale packed headers, and transferred projects.
+- [ ] Verify ESC and Alt+F4 shutdown during loading, playback, and audio teardown.
+- [ ] Audit 2D/3D interleaving for VAO, depth-write, blend, and draw-order parity.
+- [ ] Validate opaque-before-transparent glTF material-slot rendering.
+- [ ] Resolve or document the libxm `xm_tick_envelope` return-path warning.
+
+Exit criteria:
+
+- `editor_app`, `minimal_intro`, and `minimal_intro_packed` build in Release.
+- Focused text, glTF, and particle tests pass.
+- Representative projects render equivalently in editor preview and standalone playback.
+- No stale or filesystem-only asset is required by a packed release.
+
+## Then: size measurement and release profiles
+
+Goal: make size decisions evidence-based and repeatable.
+
+- [ ] Produce linker maps and per-subsystem size reports.
+- [ ] Track packed asset bytes separately from executable code bytes.
+- [ ] Establish checked Release profiles for general demos and size-limited intros.
+- [ ] Evaluate splitting monolithic library translation units only where measured
+      dead-code retention justifies the complexity.
+- [ ] Document the final compressor workflow and verify the resulting executable
+      on a clean Windows 11 x64 machine.
+
+Exit criteria:
+
+- A repeatable command reports raw EXE size, embedded asset size, and compressed size.
+- Each release profile has a documented feature set and validation command.
+- Size regressions are visible before a competition build is handed off.
+
+## Later: authoring workflow improvements
+
+Goal: improve iteration without expanding the runtime architecture.
+
+- [ ] Improve build/pack progress and error presentation inside the editor.
+- [ ] Finish or remove inactive asset-browser actions marked TODO in the current UI.
+- [ ] Add clearer packed-feature and estimated-size information to the Build UI.
+- [ ] Add project validation that reports unsupported cue combinations before compiling.
+- [ ] Keep project JSON, `cues.txt`, preview, runtime parsing, and packing round trips covered.
+
+## Continuing maintenance
+
+- Keep shared cue contracts in `revision_libs/rev_runtime/include/rev_runtime.h`.
+- Update current documentation whenever a durable contract changes.
+- Preserve deterministic export and render ordering.
+- Avoid runtime plugins, scripting, reflection, discovery layers, and unnecessary dependencies.
+- Treat `PR/ROADMAP.md` as historical architecture material only.
+
+## Validation commands
+
+```powershell
+cmake --build build --config Release --target editor_app
+cmake --build build --config Release --target minimal_intro
+cmake --build build --config Release --target minimal_intro_packed
+cmake --build build --config Release --target text_animation_tests
+cmake --build build --config Release --target gltf_import_tests
+cmake --build build --config Release --target particle_direction_tests
+```
+
+Run the focused test executables after building them. Rebuild `pack_cli` or the
+editor before validating generated `packed_assets.h` after packer changes.
+
+Last reviewed: August 8, 2026.

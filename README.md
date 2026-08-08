@@ -187,11 +187,12 @@ Shared runtime core providing unified app lifecycle, sequence management, conten
 
 Comprehensive guides are in the `PR/` folder:
 
+- **[ROADMAP.md](ROADMAP.md)** - Current priorities, milestones, and exit criteria
 - **[DOCUMENTATION_STATUS.md](PR/DOCUMENTATION_STATUS.md)** - Authority and relevance map; read this before older documentation
 - **[QUICK_START.md](PR/QUICK_START.md)** - Setup in 5 minutes
 - **[FROM_SCRATCH_V2.md](PR/FROM_SCRATCH_V2.md)** - Architecture & design philosophy
 - **[LIBRARY_DESIGN.md](PR/LIBRARY_DESIGN.md)** - Complete API reference
-- **[ROADMAP.md](PR/ROADMAP.md)** - Implementation milestones
+- **[Historical ROADMAP.md](PR/ROADMAP.md)** - Original implementation milestones; retained for design history
 - **[guides/EDITOR_GUIDE.md](PR/guides/EDITOR_GUIDE.md)** - Scene authoring walkthrough
 - **[guides/SHADER_GUIDE.md](PR/guides/SHADER_GUIDE.md)** - GLSL effect patterns
 - **[guides/MESH_GUIDE.md](PR/guides/MESH_GUIDE.md)** - 3D model integration

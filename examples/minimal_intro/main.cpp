@@ -36,7 +36,9 @@
 #if HIMYM_USE_PARTICLES
 #include "rev_particles.h"
 #endif
+#if HIMYM_USE_MESH
 #include "rev_mesh.h"
+#endif
 #if HIMYM_USE_GLTF && defined(REV_GLTF_AVAILABLE)
 #include "rev_gltf.h"
 #endif
@@ -658,6 +660,7 @@ int LoadAllShaderCues(const char* path, ShaderCue* cues, int max_cues) {
 }
 
 // Load ALL mesh cues from cues.txt (supports multiple 3D assets)
+#if HIMYM_USE_MESH
 int LoadAllMeshCues(const char* path, MeshCue* cues, int max_cues) {
     FILE* f = nullptr;
     fopen_s(&f, path, "r");
@@ -743,6 +746,7 @@ int LoadAllMeshCues(const char* path, MeshCue* cues, int max_cues) {
     fclose(f);
     return count;
 }
+#endif
 
 static void ParseScrollGlyphAssetRefs(const char* fields, ScrollTextCue* cue)
 {
@@ -1988,6 +1992,7 @@ void main() {
 }
 )";
 // Mesh (3D Phong) shaders
+#if HIMYM_USE_MESH
 const char* mesh_vertex_shader_src = R"(
 #version 330 core
 layout(location = 0) in vec3 a_pos;
@@ -2169,6 +2174,7 @@ static void AttachmentAxisVector(int axis, float out[3]) {
         default: out[0] = 1.0f; break;
     }
 }
+#endif
 
 // Fragment shaders - synchronized with rev_editor shader_presets.cpp
 static const char* GetRuntimeShaderSourceById(int shader_id) {
@@ -2640,15 +2646,19 @@ int main(int argc, char* argv[]) {
 
     // Load mesh cues (multi-cue support)
     const int kMaxMeshCues = 32;
+    int mesh_cue_count = 0;
+    bool has_mesh = false;
+#if HIMYM_USE_MESH
     MeshCue mesh_cues[kMaxMeshCues] = {};
-    int mesh_cue_count = LoadAllMeshCues(cues_path, mesh_cues, kMaxMeshCues);
-    bool has_mesh = (mesh_cue_count > 0);
+    mesh_cue_count = LoadAllMeshCues(cues_path, mesh_cues, kMaxMeshCues);
+    has_mesh = (mesh_cue_count > 0);
     LOGV("Mesh cues loaded: %d\n", mesh_cue_count);
     for (int i = 0; i < mesh_cue_count; ++i) {
         LOGV("  [%d] Key: %s, Type: %d, Size: %.2f, Time: %.1f-%.1f\n",
                i, mesh_cues[i].asset_key, mesh_cues[i].mesh_type,
                mesh_cues[i].mesh_size, mesh_cues[i].cue_start, mesh_cues[i].cue_end);
     }
+#endif
     
     LOGV("Text cues loaded: %d\n", text_cue_count);
     for (int i = 0; i < text_cue_count; ++i) {
@@ -2683,9 +2693,11 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < scroll_text_cue_count; ++i) {
         if (scroll_text_cues[i].cue_end > total_duration) total_duration = scroll_text_cues[i].cue_end;
     }
+#if HIMYM_USE_MESH
     for (int i = 0; i < mesh_cue_count; ++i) {
         if (mesh_cues[i].cue_end > total_duration) total_duration = mesh_cues[i].cue_end;
     }
+#endif
     for (int i = 0; i < music_cue_count; ++i) {
         float music_end = ResolveCueEnd(music_cues[i].cue_end, playback_settings.total_duration > 0.0f ? playback_settings.total_duration : total_duration);
         if (music_end > total_duration) total_duration = music_end;
@@ -2977,6 +2989,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     }
 
     // Compile mesh shader
+#if HIMYM_USE_MESH
     rev::shader::Program* mesh_shader = nullptr;
     rev::mesh::Mesh* mesh_objs[kMaxMeshCues] = {};
     if (has_mesh) {
@@ -3171,6 +3184,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
         }
     }
+#endif
     
 #if HIMYM_USE_XM
     struct LoadedMusicPlayer {
@@ -3533,6 +3547,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
 
             // Warm mesh path (including per-slot materials/textures).
+#if HIMYM_USE_MESH
             if (mesh_shader && has_mesh) {
                 glEnable(GL_DEPTH_TEST);
                 glDepthMask(GL_TRUE);
@@ -3755,6 +3770,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 glDisable(GL_DEPTH_TEST);
                 glDepthMask(GL_FALSE);
             }
+#endif
 
             rev::platform::SwapBuffers(window);
             rev::platform::PollEvents(window);
@@ -4264,12 +4280,14 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                   && time >= scroll_cue.cue_start && time <= scroll_cue.cue_end;
                 if (scr_active) entries[ne++] = {3, scroll_cue.layer_order, si};
             }
+#if HIMYM_USE_MESH
             for (int mi = 0; mi < mesh_cue_count; ++mi) {
                 MeshCue& mesh_cue = mesh_cues[mi];
                 bool msh_active = mesh_shader && mesh_objs[mi] && has_mesh
                                   && time >= mesh_cue.cue_start && time <= mesh_cue.cue_end;
                 if (msh_active) entries[ne++] = {2, mesh_cue.layer_order, mi};
             }
+#endif
 
             // Bubble sort ascending (lower layer_order draws first = further back)
             // Tie-break rule for same layer: mesh behind image behind text/scroll.
