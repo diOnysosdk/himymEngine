@@ -165,7 +165,7 @@ struct ShaderCue {
     // Layer controls
     int layer_role;             // 0=background, 1=overlay
     float opacity;
-    int blend_mode;             // 0=alpha, 1=additive, 2=multiply, 3=screen
+    int blend_mode;             // 0=alpha, 1=additive, 2=multiply, 3=screen, 4=dst-src, 5=src-dst
     int layer_order;            // Draw order (lower first)
     
     // Curve assignments (-1 = no curve)

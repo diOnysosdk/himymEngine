@@ -692,7 +692,17 @@ static void JsonEscapeString(const char* src, char* dst, size_t dst_size) {
     dst[di] = '\0';
 }
 
+typedef void (APIENTRY *PFNGLBLENDEQUATIONPROC_LOCAL)(GLenum mode);
+
+static PFNGLBLENDEQUATIONPROC_LOCAL GetBlendEquationFunction() {
+    static PFNGLBLENDEQUATIONPROC_LOCAL function =
+        (PFNGLBLENDEQUATIONPROC_LOCAL)wglGetProcAddress("glBlendEquation");
+    return function;
+}
+
 static void ApplySpriteBlendMode(int blend_mode) {
+    const PFNGLBLENDEQUATIONPROC_LOCAL blend_equation = GetBlendEquationFunction();
+    if (blend_equation) blend_equation(0x8006); // GL_FUNC_ADD
     switch (blend_mode) {
         case 1: // Additive
             glBlendFunc(GL_SRC_ALPHA, GL_ONE);
@@ -728,6 +738,9 @@ static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
         glBlendColor_fn(0.0f, 0.0f, 0.0f, a);
     }
 
+    const PFNGLBLENDEQUATIONPROC_LOCAL blend_equation = GetBlendEquationFunction();
+    if (blend_equation) blend_equation(0x8006); // GL_FUNC_ADD
+
     switch (blend_mode) {
         case 1: // Additive
             glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE);
@@ -737,6 +750,22 @@ static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
             break;
         case 3: // Screen
             glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_SRC_COLOR);
+            break;
+        case 4: // Subtract: destination - source
+            if (blend_equation) {
+                blend_equation(0x800B); // GL_FUNC_REVERSE_SUBTRACT
+                glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE);
+            } else {
+                glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+            }
+            break;
+        case 5: // Reverse subtract: source - destination
+            if (blend_equation) {
+                blend_equation(0x800A); // GL_FUNC_SUBTRACT
+                glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE);
+            } else {
+                glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+            }
             break;
         case 0:
         default: // Alpha

@@ -512,8 +512,11 @@ static void RenderAssetShaders(EditorContext* editor, AssetShader* shaders, int*
             ImGui::PopID();
             break;
         }
-        const char* blend_modes[] = {"Alpha", "Additive", "Multiply", "Screen"};
-        if (ImGui::Combo("Blend Mode", &shader.blend_mode, blend_modes, 4) && modified) *modified = true;
+        const char* blend_modes[] = {
+            "Alpha", "Additive", "Multiply", "Screen",
+            "Subtract (Dst - Src)", "Reverse Subtract (Src - Dst)"
+        };
+        if (ImGui::Combo("Blend Mode", &shader.blend_mode, blend_modes, 6) && modified) *modified = true;
         if (ImGui::SliderFloat("Opacity", &shader.opacity, 0.0f, 1.0f) && modified) *modified = true;
         DrawCurveRecordButton(editor, &shader.curve_opacity, "Shader Opacity", modified, "asset_shader_opacity");
         if (ImGui::SliderFloat("Speed", &shader.speed, 0.0f, 4.0f) && modified) *modified = true;
@@ -1906,26 +1909,36 @@ void RenderShaderModal(EditorContext* editor) {
         ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "%s", cue->shader_name);
         
         const char* current_preset_name = "Unknown";
+        const char* current_preset_description = "The selected shader is not available in this build.";
         for (int i = 0; i < g_shader_preset_count; ++i) {
             if (g_shader_presets[i].id == cue->shader_scene_id) {
                 current_preset_name = g_shader_presets[i].name;
+                current_preset_description = g_shader_presets[i].description;
                 break;
             }
         }
         
         if (ImGui::BeginCombo("Select Shader", current_preset_name)) {
-            for (int i = 0; i < g_shader_preset_count; ++i) {
-                bool is_selected = (g_shader_presets[i].id == cue->shader_scene_id);
-                if (ImGui::Selectable(g_shader_presets[i].name, is_selected)) {
-                    LoadShaderPreset(cue, g_shader_presets[i].id);
-                    AutoSave();
+            for (int category_index = 0; category_index < ShaderCategoryCount; ++category_index) {
+                const ShaderCategory category = static_cast<ShaderCategory>(category_index);
+                if (!ImGui::BeginMenu(GetShaderCategoryName(category))) continue;
+                for (int i = 0; i < g_shader_preset_count; ++i) {
+                    if (GetShaderCategory(g_shader_presets[i].id) != category) continue;
+                    const bool is_selected = g_shader_presets[i].id == cue->shader_scene_id;
+                    if (ImGui::Selectable(g_shader_presets[i].name, is_selected)) {
+                        LoadShaderPreset(cue, g_shader_presets[i].id);
+                        AutoSave();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", g_shader_presets[i].description);
+                    }
+                    if (is_selected) ImGui::SetItemDefaultFocus();
                 }
-                if (is_selected) {
-                    ImGui::SetItemDefaultFocus();
-                }
+                ImGui::EndMenu();
             }
             ImGui::EndCombo();
         }
+        ImGui::TextDisabled("%s", current_preset_description);
         
         ImGui::Separator();
         
@@ -2160,8 +2173,11 @@ void RenderShaderModal(EditorContext* editor) {
             OpenShaderCurve(cue->curve_opacity, "Shader Opacity", cue->opacity);
         }
         
-        const char* blend_modes[] = {"Alpha", "Add", "Multiply", "Screen"};
-        if (ImGui::Combo("Blend", &cue->blend_mode, blend_modes, 4)) AutoSave();
+        const char* blend_modes[] = {
+            "Alpha", "Add", "Multiply", "Screen",
+            "Subtract (Dst - Src)", "Reverse Subtract (Src - Dst)"
+        };
+        if (ImGui::Combo("Blend", &cue->blend_mode, blend_modes, 6)) AutoSave();
         if (ImGui::InputInt("Order", &cue->layer_order)) AutoSave();
         }
 

@@ -166,7 +166,9 @@ checkbox must be enabled for its animated values to affect the music.
 ### Sections
 
 **1. Shader Preset Dropdown**
-- Lists all shaders with friendly names
+- Groups shaders by visual purpose: Foundations, Space & Tunnels, Organic & Atmospheric,
+  Geometric & Fractal, Retro & Glitch, and Noise & Materials
+- Lists shaders with friendly names and shows a short description on hover and below the picker
 - Shows shader_scene_id in gray text
 - Changing dropdown updates all parameters
 
@@ -198,7 +200,8 @@ checkbox must be enabled for its animated values to affect the music.
 **6. Layer Controls**
 - **Role**: `background` or `overlay`
 - **Opacity**: 0.0 (transparent) to 1.0 (opaque)
-- **Blend Mode**: `alpha`, `additive`, `multiply`, `screen`
+- **Blend Mode**: `alpha`, `additive`, `multiply`, `screen`, `subtract` (destination minus source),
+  or `reverse subtract` (source minus destination). Subtractive modes preserve shader opacity and cue fades.
 - **Layer Order**: Controls draw order (z-depth). Lower values = background, higher values = foreground. Works across all asset types (shaders, images, text, 3D meshes). For example: shader at layer 0, mesh at layer 1, text at layer 2 draws mesh on top of shader, text on top of mesh.
 
 **7. Shader Curves**

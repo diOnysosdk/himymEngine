@@ -2387,6 +2387,209 @@ float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}float n(vec
 float mapNoise(vec2 p){if(u_noise_map_count<=0)return 0.;float v=texture(u_noise_map_0,p).r;if(u_noise_map_count>1)v=mix(v,texture(u_noise_map_1,p*1.37).r,.35);if(u_noise_map_count>2)v=mix(v,texture(u_noise_map_2,p*2.11).r,.25);if(u_noise_map_count>3)v=mix(v,texture(u_noise_map_3,p*3.73).r,.20);return v;}
 void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.);float t=u_time*u_speed;p+=vec2(0.,t*.04);float h0=f(p),hx=f(p+vec2(.015,0)),hy=f(p+vec2(0,.015));if(u_noise_map_count>0)h0=mix(h0,mapNoise(uv),.4);vec3 normal=normalize(vec3(h0-hx,h0-hy,.06));float light=max(dot(normal,normalize(vec3(-.5,.7,1.))),0.);float ridge=1.-abs(h0*2.-1.);vec3 col=mix(u_palette_low,u_palette_mid,smoothstep(.25,.65,h0));col=mix(col,u_palette_high,ridge*.45);col*=.35+light*.85*u_intensity;fragColor=vec4(col,1.);}
 )"
+    },
+
+    {
+        31,
+        "Aurora Curtains",
+        "Layered polar-light ribbons with drifting stars and soft atmospheric glow",
+        R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor;
+uniform float u_time; uniform vec2 u_resolution;
+uniform vec3 u_palette_low, u_palette_mid, u_palette_high;
+uniform float u_speed, u_intensity, u_warp; uniform vec3 u_motion;
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
+void main(){
+    vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.); float t=u_time*u_speed;
+    float sky=smoothstep(-.9,.9,p.y); vec3 col=mix(u_palette_low*.08,u_palette_low*.35,sky);
+    float stars=step(.996,hash(floor(uv*u_resolution/3.)))*( .35+.65*sin(t+hash(floor(uv*u_resolution/3.))*6.283));
+    col+=u_palette_high*stars*smoothstep(-.2,.9,p.y);
+    for(int i=0;i<4;i++){
+        float fi=float(i); float x=p.x*(1.1+fi*.16)+u_motion.x*.2;
+        float wave=sin(x*(1.7+fi*.43)+t*(.20+fi*.07)+noise(vec2(x*.7,t*.05+fi))*3.)*(.13+u_warp*.035);
+        float center=-.05+fi*.10+wave+u_motion.y*.1;
+        float ribbon=exp(-abs(p.y-center)*(11.+fi*2.));
+        vec3 ribbon_col=mix(u_palette_mid,u_palette_high,.25*fi);
+        col+=ribbon_col*ribbon*(.22+u_intensity*.28);
+    }
+    col*=.72+.28*smoothstep(1.25,.15,length(p)); fragColor=vec4(max(col,vec3(0)),1.);
+}
+)"
+    },
+
+    {
+        32,
+        "Circuit Pulse",
+        "Scrolling circuit traces and luminous signal nodes for technical transitions",
+        R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor;
+uniform float u_time; uniform vec2 u_resolution;
+uniform vec3 u_palette_low, u_palette_mid, u_palette_high;
+uniform float u_speed, u_intensity, u_warp; uniform vec3 u_motion;
+float hash(vec2 p){return fract(sin(dot(p,vec2(41.3,289.1)))*43758.5);}
+void main(){
+    vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.); float t=u_time*u_speed;
+    p+=u_motion.xy*.15; float scale=8.+u_warp*3.; vec2 cell=floor(p*scale), q=fract(p*scale)-.5;
+    float seed=hash(cell); bool horizontal=seed>.5;
+    float trace=horizontal?smoothstep(.075,.018,abs(q.y)):smoothstep(.075,.018,abs(q.x));
+    float junction=smoothstep(.17,.045,length(q));
+    float phase=fract((horizontal?cell.x:cell.y)*.09-t*.45+seed);
+    float pulse=smoothstep(.22,0.,abs((horizontal?q.x:q.y)-phase+.5));
+    float grid=smoothstep(.025,.0,min(abs(q.x),abs(q.y))-.48);
+    vec3 col=u_palette_low*(.08+grid*.08);
+    col+=u_palette_mid*trace*(.22+u_intensity*.25);
+    col+=u_palette_high*(junction*.35+trace*pulse*(1.+u_intensity));
+    fragColor=vec4(max(col,vec3(0)),1.);
+}
+)"
+    },
+
+    {
+        33,
+        "Retro Sun Grid",
+        "Synthwave horizon with a striped sun, perspective grid, and animated glow",
+        R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor;
+uniform float u_time; uniform vec2 u_resolution;
+uniform vec3 u_palette_low, u_palette_mid, u_palette_high;
+uniform float u_speed, u_intensity, u_warp; uniform vec3 u_motion;
+void main(){
+    vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.); float t=u_time*u_speed; float horizon=-.05+u_motion.y*.08;
+    vec3 col=mix(u_palette_low*.08,u_palette_mid*.16,smoothstep(-.1,1.,p.y));
+    vec2 sun_p=p-vec2(u_motion.x*.12,.38); float sun=1.-smoothstep(.28,.30,length(sun_p));
+    float stripes=step(.42,fract((sun_p.y+t*.035)*18.)); col+=mix(u_palette_mid,u_palette_high,sun_p.y+.5)*sun*stripes*(.7+u_intensity*.3);
+    if(p.y<horizon){
+        float depth=.11/max(horizon-p.y,.015); float gx=abs(fract((p.x*depth+t*.12)*3.)-.5); float gy=abs(fract(depth*1.7-t*.65)-.5);
+        float grid=1.-smoothstep(.035,.075,min(gx,gy)); col+=u_palette_high*grid*(.28+u_intensity*.3)*smoothstep(-1.,horizon,p.y);
+    }
+    float glow=exp(-abs(p.y-horizon)*(18.-min(u_warp,4.)*2.)); col+=u_palette_mid*glow*.45;
+    fragColor=vec4(max(col,vec3(0)),1.);
+}
+)"
+    },
+
+    {
+        34,
+        "Ink Bloom",
+        "Soft cellular ink clouds that expand, fold, and blend through the authored palette",
+        R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor;
+uniform float u_time; uniform vec2 u_resolution;
+uniform vec3 u_palette_low, u_palette_mid, u_palette_high;
+uniform float u_speed, u_intensity, u_warp; uniform vec3 u_motion;
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
+float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<5;i++){v+=a*noise(p);p=mat2(.8,-.6,.6,.8)*p*2.03;a*=.5;}return v;}
+void main(){
+    vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.)+u_motion.xy*.18; float t=u_time*u_speed*.15;
+    vec2 warp=vec2(fbm(p*1.4+t),fbm(p*1.4-t+4.7))-.5; p+=warp*(.45+u_warp*.18);
+    float a=fbm(p*2.+vec2(t,-t)); float b=fbm(p*3.1+vec2(-t*1.3,t*.7)+8.);
+    float bloom=smoothstep(.28,.76,a+b*.42); float edge=smoothstep(.03,.0,abs(a+b*.22-.53));
+    vec3 col=mix(u_palette_low,u_palette_mid,bloom); col=mix(col,u_palette_high,edge*(.55+u_intensity*.35));
+    col*=.6+u_intensity*.4; fragColor=vec4(max(col,vec3(0)),1.);
+}
+)"
+    },
+
+    {
+        35, "Palette Wash", "Clean animated palette wash for foundations, fades, masks, and color grading layers", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+void main(){vec2 p=uv+u_motion.xy*.1;float t=u_time*u_speed*.12;float v=p.y+sin(p.x*6.283+t)*(.04+u_warp*.025);float m=smoothstep(.05,.55,v),h=smoothstep(.45,.95,v);vec3 col=mix(mix(u_palette_low,u_palette_mid,m),u_palette_high,h);col*=.65+u_intensity*.35;fragColor=vec4(max(col,vec3(0)),1.);}
+)"
+    },
+
+    {
+        36, "Radial Veil", "Soft moving radial falloff useful as a vignette, spotlight, or screen-blended glow", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.);float t=u_time*u_speed*.25;p-=u_motion.xy*.25+vec2(sin(t*.7),cos(t*.9))*.12;float r=length(p);float rings=.5+.5*cos(r*(8.+u_warp*5.)-t);float veil=exp(-r*(1.8+u_warp*.2));vec3 col=mix(u_palette_low,u_palette_mid,veil);col=mix(col,u_palette_high,rings*veil*.45);fragColor=vec4(max(col*(.55+u_intensity*.45),vec3(0)),1.);}
+)"
+    },
+
+    {
+        37, "Hyperspace Streaks", "Radial star streaks for speed ramps, transitions, and additive space layers", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.)-u_motion.xy*.15;float r=length(p),a=atan(p.y,p.x);float sectors=96.+u_warp*48.;vec2 id=vec2(floor(a/6.283*sectors),floor((1./max(r,.02)+u_time*u_speed)*3.));float rnd=h(id);float ray=pow(max(0.,cos(a*sectors+6.283*rnd)),36.);float travel=pow(fract(1./max(r,.03)-u_time*u_speed*.8+rnd),8.);float streak=ray*travel*smoothstep(1.2,.05,r);vec3 col=u_palette_low*.04+mix(u_palette_mid,u_palette_high,rnd)*streak*(1.+u_intensity*1.5);fragColor=vec4(max(col,vec3(0)),1.);}
+)"
+    },
+
+    {
+        38, "Event Horizon", "Lensed accretion ring and dark singularity for cinematic space compositions", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+float h(float x){return fract(sin(x*91.73)*43758.5);}void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.)-u_motion.xy*.2;float t=u_time*u_speed*.25;float r=length(p),a=atan(p.y,p.x);float disk=exp(-abs(r-(.38+.025*sin(a*3.-t)))*(22.+u_warp*5.));float bands=.45+.55*sin(a*13.-t*5.+r*35.);float lens=exp(-abs(r-.28)*35.);vec3 col=u_palette_low*.035+mix(u_palette_mid,u_palette_high,bands)*disk*(.7+u_intensity*.65)+u_palette_high*lens*.18;col*=smoothstep(.19,.27,r);fragColor=vec4(max(col,vec3(0)),1.);}
+)"
+    },
+
+    {
+        39, "Liquid Caustics", "Refracted water-light network for organic overlays and luminous material blends", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.)+u_motion.xy*.2;float t=u_time*u_speed*.35;float v=0.;for(int i=0;i<4;i++){float f=float(i)+1.;vec2 q=p*mat2(cos(f),-sin(f),sin(f),cos(f));v+=abs(sin(q.x*(3.+f)+t*f)+cos(q.y*(4.+f)-t*(1.+f*.2)))/(f+1.);}float c=pow(clamp(1.-abs(v-1.25-u_warp*.08),0.,1.),5.);vec3 col=mix(u_palette_low,u_palette_mid,clamp(v*.45,0.,1.));col=mix(col,u_palette_high,c*(.65+u_intensity*.35));fragColor=vec4(max(col,vec3(0)),1.);}
+)"
+    },
+
+    {
+        40, "Smoke Wisps", "Slow domain-warped smoke ribbons for depth, atmosphere, and multiply blending", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}float f(vec2 p){float v=0.,a=.5;for(int i=0;i<5;i++){v+=n(p)*a;p=mat2(.8,-.6,.6,.8)*p*2.03;a*=.5;}return v;}void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.)+u_motion.xy*.2;float t=u_time*u_speed*.1;vec2 w=vec2(f(p*1.2+t),f(p*1.2-t+5.))-.5;float d=f(p*2.+w*(1.+u_warp*.35)+vec2(0,-t*2.));float wisps=smoothstep(.38,.78,d)*smoothstep(1.25,.1,length(p));vec3 col=mix(u_palette_low*.12,u_palette_mid,wisps);col=mix(col,u_palette_high,pow(wisps,3.)*.4*u_intensity);fragColor=vec4(max(col,vec3(0)),1.);}
+)"
+    },
+
+    {
+        41, "Hex Pulse Grid", "Hexagonal cells with traveling highlights for rhythmic geometric layering", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+float hex(vec2 p){p=abs(p);return max(dot(p,normalize(vec2(1.,1.732))),p.x);}void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.)+u_motion.xy*.15;float s=5.+u_warp*2.;p*=s;vec2 r=vec2(1.,1.732),h=.5*r;vec2 a=mod(p,r)-h,b=mod(p-h,r)-h;vec2 q=dot(a,a)<dot(b,b)?a:b;float edge=smoothstep(.48,.42,hex(q))-smoothstep(.36,.30,hex(q));float pulse=.5+.5*sin(u_time*u_speed*3.-length(p)*.8);vec3 col=u_palette_low*.08+u_palette_mid*edge*.35+u_palette_high*edge*pulse*(.45+u_intensity*.55);fragColor=vec4(max(col,vec3(0)),1.);}
+)"
+    },
+
+    {
+        42, "Lissajous Loom", "Interwoven oscillating line field for elegant overlays and screen blends", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.)+u_motion.xy*.15;float t=u_time*u_speed;float lines=0.,crossing=0.;for(int i=0;i<7;i++){float fi=float(i)-3.;float y=sin(p.x*(2.4+u_warp*.5)+t*.7+fi)*.35+fi*.13;float l=exp(-abs(p.y-y)*90.);lines+=l;crossing=max(crossing,l*(.5+.5*sin(p.x*8.-t+fi)));}vec3 col=u_palette_low*.05+u_palette_mid*lines*.22+u_palette_high*crossing*(.35+u_intensity*.55);fragColor=vec4(max(col,vec3(0)),1.);}
+)"
+    },
+
+    {
+        43, "Raster Bars", "Classic demoscene raster bars with curved motion and palette-controlled glow", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+void main(){vec2 p=uv*2.-1.;float t=u_time*u_speed;vec3 col=u_palette_low*.05;for(int i=0;i<8;i++){float fi=float(i);float y=sin(t*(.45+fi*.025)+fi*.8+p.x*(1.+u_warp*.3))*.62+u_motion.y*.1;float bar=exp(-abs(p.y-y)*(28.+fi));vec3 c=mix(u_palette_mid,u_palette_high,fi/7.);col+=c*bar*(.16+u_intensity*.09);}float scan=.88+.12*sin(uv.y*u_resolution.y*3.14159);fragColor=vec4(max(col*scan,vec3(0)),1.);}
+)"
+    },
+
+    {
+        44, "VHS Tracking", "Tape noise, tracking bands, chroma drift, and dropouts for glitch overlays", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+float h(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5);}void main(){float t=u_time*u_speed;float line=floor(uv.y*u_resolution.y*.35);float jitter=(h(vec2(line,floor(t*18.)))-.5)*(.02+u_warp*.012);float tracking=exp(-abs(fract(uv.y*.7-t*.11)-.5)*45.);float snow=step(.82-u_intensity*.08,h(floor((uv+vec2(jitter,0))*u_resolution*.45)+floor(t*24.)));float bars=.5+.5*sin((uv.y+jitter)*u_resolution.y*.55);vec3 col=mix(u_palette_low,u_palette_mid,tracking*.55);col+=mix(u_palette_mid,u_palette_high,bars)*snow*(.2+u_intensity*.35);col.r+=tracking*jitter*8.;col.b-=tracking*jitter*5.;fragColor=vec4(max(col,vec3(0)),1.);}
+)"
+    },
+
+    {
+        45, "Topographic Contours", "Animated contour map for masks, terrain styling, and graphic overlays", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}float f(vec2 p){float v=0.,a=.5;for(int i=0;i<5;i++){v+=n(p)*a;p*=2.07;a*=.5;}return v;}void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.)+u_motion.xy*.2;float v=f(p*(2.+u_warp*.4)+u_time*u_speed*.05);float band=abs(fract(v*(10.+u_warp*2.))-.5);float line=smoothstep(.09,.02,band);vec3 col=mix(u_palette_low,u_palette_mid,v);col=mix(col,u_palette_high,line*(.45+u_intensity*.45));fragColor=vec4(max(col,vec3(0)),1.);}
+)"
+    },
+
+    {
+        46, "Crystalline Facets", "Angular crystalline cells with shifting normals and specular palette highlights", R"(
+#version 330 core
+in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
+float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.)+u_motion.xy*.15;p*=4.+u_warp;vec2 id=floor(p),q=fract(p)-.5;float best=9.,second=9.,seed=0.;for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec2 o=vec2(x,y),pt=o+vec2(h(id+o),h(id+o+17.))-q;float d=dot(pt,pt);if(d<best){second=best;best=d;seed=h(id+o+31.);}else if(d<second)second=d;}float edge=smoothstep(.16,.01,second-best);float shine=pow(.5+.5*sin(seed*19.+u_time*u_speed+sqrt(best)*12.),6.);vec3 col=mix(u_palette_low,u_palette_mid,seed);col=mix(col,u_palette_high,max(edge*.35,shine*(.35+u_intensity*.45)));fragColor=vec4(max(col,vec3(0)),1.);}
+)"
     }
 };
 
@@ -2573,6 +2776,34 @@ const ShaderPreset* GetPresetById(int shader_id) {
         }
     }
     return nullptr;
+}
+
+ShaderCategory GetShaderCategory(int shader_id) {
+    switch (shader_id) {
+        case 0: case 35: case 36: return ShaderCategoryFoundation;
+        case 2: case 8: case 11: case 12: case 18: case 21: case 25: case 37: case 38:
+            return ShaderCategorySpaceAndTunnels;
+        case 1: case 5: case 9: case 14: case 16: case 17: case 22: case 24: case 31: case 34: case 39: case 40:
+            return ShaderCategoryOrganicAndAtmospheric;
+        case 3: case 4: case 6: case 7: case 13: case 15: case 23: case 32: case 41: case 42:
+            return ShaderCategoryGeometricAndFractal;
+        case 10: case 19: case 20: case 33: case 43: case 44:
+            return ShaderCategoryRetroAndGlitch;
+        default:
+            return ShaderCategoryNoiseAndMaterials;
+    }
+}
+
+const char* GetShaderCategoryName(ShaderCategory category) {
+    static const char* names[ShaderCategoryCount] = {
+        "Foundations",
+        "Space & Tunnels",
+        "Organic & Atmospheric",
+        "Geometric & Fractal",
+        "Retro & Glitch",
+        "Noise & Materials"
+    };
+    return category >= 0 && category < ShaderCategoryCount ? names[category] : "Other";
 }
 
 } // namespace editor

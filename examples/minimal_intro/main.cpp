@@ -230,19 +230,31 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
 #ifndef GL_ONE_MINUS_CONSTANT_ALPHA
 #define GL_ONE_MINUS_CONSTANT_ALPHA 0x8004
 #endif
+#ifndef GL_FUNC_ADD
+#define GL_FUNC_ADD 0x8006
+#endif
+#ifndef GL_FUNC_SUBTRACT
+#define GL_FUNC_SUBTRACT 0x800A
+#endif
+#ifndef GL_FUNC_REVERSE_SUBTRACT
+#define GL_FUNC_REVERSE_SUBTRACT 0x800B
+#endif
 
 // GL 3.3 function pointers (VAO support required for core profile)
 typedef void (APIENTRY *PFNGLGENVERTEXARRAYSPROC)(GLsizei n, GLuint* arrays);
 typedef void (APIENTRY *PFNGLBINDVERTEXARRAYPROC)(GLuint array);
 typedef void (APIENTRY *PFNGLACTIVETEXTUREPROC)(GLenum texture);
 typedef void (APIENTRY *PFNGLBLENDCOLORPROC)(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
+typedef void (APIENTRY *PFNGLBLENDEQUATIONPROC)(GLenum mode);
 
 static PFNGLGENVERTEXARRAYSPROC glGenVertexArrays = nullptr;
 static PFNGLBINDVERTEXARRAYPROC glBindVertexArray = nullptr;
 static PFNGLACTIVETEXTUREPROC glActiveTexture = nullptr;
 static PFNGLBLENDCOLORPROC glBlendColor = nullptr;
+static PFNGLBLENDEQUATIONPROC glBlendEquation_rt = nullptr;
 
 static void ApplySpriteBlendMode(int blend_mode) {
+    if (glBlendEquation_rt) glBlendEquation_rt(GL_FUNC_ADD);
     switch (blend_mode) {
         case 1: // Additive
             glBlendFunc(GL_SRC_ALPHA, GL_ONE);
@@ -263,6 +275,7 @@ static void ApplySpriteBlendMode(int blend_mode) {
 static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
     float clamped_opacity = opacity < 0.0f ? 0.0f : (opacity > 1.0f ? 1.0f : opacity);
     if (glBlendColor) glBlendColor(0.0f, 0.0f, 0.0f, clamped_opacity);
+    if (glBlendEquation_rt) glBlendEquation_rt(GL_FUNC_ADD);
     switch (blend_mode) {
         case 1: // Additive
             glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE);
@@ -272,6 +285,22 @@ static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
             break;
         case 3: // Screen
             glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_SRC_COLOR);
+            break;
+        case 4: // Subtract: destination - source
+            if (glBlendEquation_rt) {
+                glBlendEquation_rt(GL_FUNC_REVERSE_SUBTRACT);
+                glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE);
+            } else {
+                glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+            }
+            break;
+        case 5: // Reverse subtract: source - destination
+            if (glBlendEquation_rt) {
+                glBlendEquation_rt(GL_FUNC_SUBTRACT);
+                glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE);
+            } else {
+                glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+            }
             break;
         case 0:
         default: // Alpha
@@ -2672,6 +2701,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)rev::platform::GetProcAddress("glBindVertexArray");
     glActiveTexture = (PFNGLACTIVETEXTUREPROC)rev::platform::GetProcAddress("glActiveTexture");
     glBlendColor = (PFNGLBLENDCOLORPROC)rev::platform::GetProcAddress("glBlendColor");
+    glBlendEquation_rt = (PFNGLBLENDEQUATIONPROC)rev::platform::GetProcAddress("glBlendEquation");
     
     // Create and bind VAO (required for OpenGL 3.3 core)
     GLuint vao;

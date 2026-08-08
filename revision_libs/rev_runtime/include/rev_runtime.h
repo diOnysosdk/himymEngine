@@ -100,7 +100,7 @@ struct AssetShader {
     int shader_id;
     bool enabled;
     int order;
-    int blend_mode;  // 0=alpha, 1=additive, 2=multiply, 3=screen
+    int blend_mode;  // 0=alpha, 1=additive, 2=multiply, 3=screen, 4=dst-src, 5=src-dst
     float opacity;
     float speed;
     float intensity;
