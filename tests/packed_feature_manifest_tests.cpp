@@ -1,0 +1,126 @@
+#include "rev_pack.h"
+
+#include <chrono>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <string>
+
+namespace {
+
+struct ExpectedFeatures {
+    bool xm;
+    bool pixel;
+    bool particles;
+    bool mesh;
+    bool gltf;
+};
+
+int failures = 0;
+
+void Check(bool condition, const char* case_name, const char* message) {
+    if (condition) return;
+    std::fprintf(stderr, "[packed_feature_manifest_tests] %s: %s\n", case_name, message);
+    ++failures;
+}
+
+bool WriteText(const std::filesystem::path& path, const std::string& content) {
+    std::ofstream file(path, std::ios::binary);
+    file.write(content.data(), static_cast<std::streamsize>(content.size()));
+    return file.good();
+}
+
+std::string ReadText(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(file),
+                       std::istreambuf_iterator<char>());
+}
+
+void CheckFlag(const std::string& content,
+               const char* case_name,
+               const char* prefix,
+               const char* name,
+               bool expected,
+               const char* enabled,
+               const char* disabled) {
+    const std::string expected_line = std::string(prefix) + name +
+                                      (expected ? enabled : disabled);
+    Check(content.find(expected_line) != std::string::npos,
+          case_name, expected_line.c_str());
+}
+
+void RunCase(const std::filesystem::path& root,
+             const char* case_name,
+             const char* cues,
+             const ExpectedFeatures& expected,
+             bool needs_asset) {
+    const std::filesystem::path case_dir = root / case_name;
+    std::filesystem::create_directories(case_dir);
+    const std::filesystem::path cues_path = case_dir / "cues.txt";
+    const std::filesystem::path header_path = case_dir / "packed_assets.h";
+    const std::filesystem::path cache_path = case_dir / "pack_cache.txt";
+    Check(WriteText(cues_path, cues), case_name, "could not write cues.txt");
+    if (needs_asset)
+        Check(WriteText(case_dir / "asset.bin", "test-asset"), case_name,
+              "could not write test asset");
+
+    const rev::pack::PackResult result = rev::pack::PackAssets(
+        cues_path.string().c_str(), header_path.string().c_str(),
+        cache_path.string().c_str(), case_dir.string().c_str());
+    Check(result.ok, case_name, result.error[0] ? result.error : "PackAssets failed");
+    if (!result.ok) return;
+
+    const std::string header = ReadText(header_path);
+    const std::string cmake = ReadText(case_dir / "packed_features.cmake");
+    Check(!header.empty(), case_name, "packed_assets.h was not generated");
+    Check(!cmake.empty(), case_name, "packed_features.cmake was not generated");
+
+    const struct FeatureCheck {
+        const char* name;
+        bool expected;
+    } features[] = {
+        {"XM", expected.xm},
+        {"PIXEL", expected.pixel},
+        {"PARTICLES", expected.particles},
+        {"MESH", expected.mesh},
+        {"GLTF", expected.gltf},
+    };
+    for (const FeatureCheck& feature : features) {
+        CheckFlag(header, case_name, "#define HIMYM_USE_", feature.name,
+                  feature.expected, " 1", " 0");
+        CheckFlag(cmake, case_name, "set(HIMYM_PACKED_USE_", feature.name,
+                  feature.expected, " ON)", " OFF)");
+    }
+}
+
+}  // namespace
+
+int main() {
+    const auto unique = std::chrono::high_resolution_clock::now()
+                            .time_since_epoch().count();
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        ("himym_packed_feature_tests_" + std::to_string(unique));
+    std::filesystem::create_directories(root);
+
+    RunCase(root, "empty", "[metadata]\n", {}, false);
+    RunCase(root, "shader", "[shader_cues]\n0|0|1\n", {}, false);
+    RunCase(root, "xm", "[music_cues]\nmusic|asset.bin\n",
+            {true, false, false, false, false}, true);
+    RunCase(root, "pixel", "[pixel_cues]\npixels|asset.bin\n",
+            {false, true, false, false, false}, true);
+    RunCase(root, "particle", "[pixel_emitter_cues]\nnone|unused|1\n",
+            {false, false, true, false, false}, false);
+    RunCase(root, "procedural_mesh", "[mesh_cues]\nmesh||0\n",
+            {false, false, false, true, false}, false);
+    RunCase(root, "gltf", "[mesh_cues]\nmodel|asset.bin|4\n",
+            {false, false, false, true, true}, true);
+
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(root, cleanup_error);
+    Check(!cleanup_error, "cleanup", "could not remove temporary test directory");
+
+    if (failures != 0) return 1;
+    std::printf("[packed_feature_manifest_tests] PASS\n");
+    return 0;
+}

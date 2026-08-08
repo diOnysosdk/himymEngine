@@ -20,7 +20,7 @@ project, while `minimal_intro` remains a universal external-cue player.
 - [x] Compile out procedural mesh rendering when no mesh cue is authored.
 - [x] Generate matching CMake feature selections and reconfigure after packing
       so unused optional libraries are not packed-target dependencies.
-- [ ] Add automated packer feature-manifest tests for empty, shader-only, XM,
+- [x] Add automated packer feature-manifest tests for empty, shader-only, XM,
       pixel, particle, procedural-mesh, and glTF projects.
 - [x] Record controlled uncompressed size deltas in `PACKED_RUNTIME_SIZE.md`.
 - [ ] Record compressor-specific output sizes for a final competition project.
@@ -98,6 +98,7 @@ cmake --build build --config Release --target minimal_intro_packed
 cmake --build build --config Release --target text_animation_tests
 cmake --build build --config Release --target gltf_import_tests
 cmake --build build --config Release --target particle_direction_tests
+cmake --build build --config Release --target packed_feature_manifest_tests
 ```
 
 Run the focused test executables after building them. Rebuild `pack_cli` or the

@@ -54,6 +54,9 @@ comparable because embedded asset payloads differ.
 - `text_animation_tests`: PASS.
 - `gltf_import_tests tests/fixtures/blender_axis_material.gltf`: PASS.
 - `particle_direction_tests`: PASS.
+- `packed_feature_manifest_tests`: PASS for empty, shader-only, XM, pixel,
+  particle, procedural-mesh, and glTF projects; both generated manifests are
+  checked for identical feature selections.
 
 Visual appearance was presented through the native Win32/OpenGL windows during
 the smoke runs. Automated pixel-diff capture is not currently part of the test
@@ -69,4 +72,3 @@ release candidates.
 5. Check the dependency list in build output and record the raw EXE size.
 6. Run the complete packed production and visually verify it.
 7. Apply the chosen executable compressor and record compressed size separately.
-

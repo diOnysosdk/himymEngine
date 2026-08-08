@@ -70,6 +70,15 @@ if(MSVC)
     )
 endif()
 
+# Packer contract tests for project-derived C++ and CMake feature manifests.
+add_executable(packed_feature_manifest_tests tests/packed_feature_manifest_tests.cpp)
+target_link_libraries(packed_feature_manifest_tests PRIVATE rev_pack)
+if(MSVC)
+    set_target_properties(packed_feature_manifest_tests PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup"
+    )
+endif()
+
 # Utility CLI: generate build/packed_assets.h without launching editor UI.
 add_executable(pack_cli tools/pack_cli.cpp)
 target_link_libraries(pack_cli PRIVATE rev_pack)

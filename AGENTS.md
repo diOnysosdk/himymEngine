@@ -76,6 +76,7 @@ cmake --build build --config Release --target editor_app
 cmake --build build --config Release --target minimal_intro
 cmake --build build --config Release --target minimal_intro_packed
 cmake --build build --config Release --target text_animation_tests
+cmake --build build --config Release --target packed_feature_manifest_tests
 ```
 
 Run `build\bin\Release\text_animation_tests.exe` for text-animation changes. If `rev_pack` changes, rebuild the editor or `pack_cli` before validating packed output. For current `minimal_intro_packed`, validate generated mesh/glTF selection through `HIMYM_USE_MESH`, `HIMYM_USE_GLTF`, and `build/packed_features.cmake`; the live target no longer uses the historical `REV_ENABLE_3D` option.
