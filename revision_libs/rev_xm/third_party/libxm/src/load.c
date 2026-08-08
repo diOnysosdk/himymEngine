@@ -883,9 +883,9 @@ uint32_t xm_save_size(const xm_context_t* ctx) {
 _XM_STATIC_ASSERT_GLOBAL(sizeof(float) == 4, "Nonstandard floating point representation type used");
 #define WRITE_U8(buf, val) *(uint8_t*)(buf) = (uint8_t)(val)
 #define WRITE_U16(buf, val) do { WRITE_U8(buf, val); \
-        WRITE_U8((buf) + 1, (val) >> 8); } while(0)
+        WRITE_U8((buf) + 1, (uint16_t)(val) >> 8); } while(0)
 #define WRITE_U32(buf, val) do { WRITE_U16(buf, val); \
-        WRITE_U16((buf) + 2, (val) >> 16); } while(0)
+        WRITE_U16((buf) + 2, (uint32_t)(val) >> 16); } while(0)
 
 void xm_save_context(const xm_context_t* ctx, char* out) {
     

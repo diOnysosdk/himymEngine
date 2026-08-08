@@ -46,7 +46,7 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
 - [ ] Audit 2D/3D interleaving for VAO, depth-write, blend, and draw-order parity.
 - [ ] Validate opaque-before-transparent glTF material-slot rendering.
 - [x] Resolve the libxm `xm_tick_envelope` return-path warning.
-- [ ] Review the libxm `load.c` C4333 shift warnings exposed by clean XM builds.
+- [x] Resolve the libxm `load.c` C4333 shift warnings exposed by clean XM builds.
 
 Exit criteria:
 

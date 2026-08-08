@@ -85,3 +85,4 @@ Invoke-ExpectedFailure cmake @("--build", $pipeline_build, "--config", $Configur
 
 if (-not $KeepArtifacts) { Remove-Item -LiteralPath $test_root -Recurse -Force }
 Write-Host "[packed_pipeline_test] PASS"
+exit 0
