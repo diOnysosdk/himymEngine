@@ -85,6 +85,8 @@ referenced by the project (plus preset 0 as the empty-project fallback). The
 file-based `minimal_intro` and editor retain the universal preset registry.
 Animated-sprite and scrolling-text parsing/rendering are likewise removed from
 packed projects that contain no cues of those families.
+The packed post-effect fragment shader contains only enabled effect branches
+referenced globally, by a scene-layer stack, or by an image/sprite/pixel cue.
 
 The packer also writes `packed_features.cmake` beside the generated header.
 The editor reconfigures the existing build after packing so the packed target

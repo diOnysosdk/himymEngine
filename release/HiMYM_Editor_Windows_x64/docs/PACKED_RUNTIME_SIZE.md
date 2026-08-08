@@ -29,6 +29,12 @@ the deterministic fallback when a project has no shader cue. The universal
 47-preset registry remains available to the editor and external-cue runtime,
 but is not linked into a current-format packed runtime.
 
+Post-effect GLSL is specialized independently. The packer collects enabled
+effect types from global post-effect rows, scene-layer stacks, and image,
+animated-sprite, and pixel cue stacks, then removes every unreferenced
+`u_enabled[]` branch from the generated fragment source. Older generated
+headers and the universal editor/file runtime continue to use the full shader.
+
 ## Controlled raw executable measurements
 
 Measured August 8, 2026 with MSVC Release (`/O1 /GL`, `/LTCG /OPT:REF
@@ -188,8 +194,8 @@ referenced shader presets (IDs 0, 5, and 18). UPX 5.1.1 was invoked with
 
 | Profile | Raw EXE | UPX EXE | Bytes removed | Packed/raw |
 |---|---:|---:|---:|---:|
-| `GENERAL` | 320,000 | 164,864 | 155,136 | 51.52% |
-| `INTRO` | 300,544 | 159,232 | 141,312 | 52.98% |
+| `GENERAL` | 314,368 | 163,840 | 150,528 | 52.12% |
+| `INTRO` | 294,400 | 158,208 | 136,192 | 53.74% |
 
 INTRO remains the smaller result, saving 6,144 compressed bytes relative to
 GENERAL. Run `tools/test_compressor_profiles.ps1 -KeepArtifacts` to reproduce
@@ -202,7 +208,9 @@ packing removed 89,600 raw / 14,336 UPX bytes from GENERAL and 89,088 raw /
 scrolling-text paths then saved another 8,192 raw / 3,072 UPX bytes from
 GENERAL and 6,656 raw / 2,560 UPX bytes from INTRO. The retained executable
 contains only the three shader sources required by rectruitro rather than all
-47 presets.
+47 presets. Specializing the post-effect shader to rectruitro's sole fade
+branch (effect 12) then saved another 5,632 raw / 1,024 UPX bytes from GENERAL
+and 6,144 raw / 1,024 UPX bytes from INTRO.
 
 The project author completed a full Windows 10 playback of the compressed
 INTRO result and confirmed correct visuals, XM audio, ESC shutdown, and

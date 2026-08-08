@@ -340,7 +340,7 @@ evaluating the stack belonging to the active scene interval.
 
 **Pack, Build and Run** — creates the standalone redistributable exe:
 1. **Save + Export** (same as above)
-2. **Pack**: `rev_pack` embeds referenced assets, cues, and only the referenced fullscreen/enabled asset-shader preset sources into `build/packed_assets.h`, then writes `build/packed_features.cmake`
+2. **Pack**: `rev_pack` embeds referenced assets, cues, only the referenced fullscreen/enabled asset-shader preset sources, and a post-effect shader reduced to the enabled global/scene/asset effect types into `build/packed_assets.h`, then writes `build/packed_features.cmake`
 3. **Configure**: CMake reloads the feature manifest, removes unused XM, pixel, particle, mesh, and glTF target dependencies, and compiles out absent animated-sprite and scrolling-text runtime paths
 4. **Build**: Compiles `minimal_intro_packed` (PRE_BUILD touches `main.cpp` to force the fresh packed header include)
 5. **Run**: Launch `build\bin\Release\minimal_intro_packed.exe`

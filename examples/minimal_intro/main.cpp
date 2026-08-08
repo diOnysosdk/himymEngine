@@ -2203,6 +2203,14 @@ static int GetRuntimeShaderCount() {
 #endif
 }
 
+static const char* GetRuntimePostEffectFragmentSource() {
+#if defined(HIMYM_PACKED_ASSETS) && defined(HIMYM_PACKED_SHADER_FORMAT_VERSION) && HIMYM_PACKED_SHADER_FORMAT_VERSION >= 2
+    return kPackedPostEffectFragmentSource;
+#else
+    return rev::editor::GetPostEffectFragmentSource();
+#endif
+}
+
 static bool RuntimeFileExists(const char* path) {
     if (!path || !path[0]) return false;
     DWORD attr = GetFileAttributesA(path);
@@ -3008,7 +3016,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
     rev::shader::Program* post_shader = nullptr;
     if (scene_fbo_ready) {
-        post_shader = rev::shader::CompileFromSource(vertex_shader, rev::editor::GetPostEffectFragmentSource());
+        post_shader = rev::shader::CompileFromSource(vertex_shader, GetRuntimePostEffectFragmentSource());
         if (!post_shader) {
             printf("WARNING: Post shader failed to compile; effects disabled\n");
         }

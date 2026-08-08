@@ -56,7 +56,8 @@ void RunCase(const std::filesystem::path& root,
              const char* cues,
              const ExpectedFeatures& expected,
              bool needs_asset,
-             int expected_shader_id = 0) {
+             int expected_shader_id = 0,
+             int expected_post_effect_id = -1) {
     const std::filesystem::path case_dir = root / case_name;
     std::filesystem::create_directories(case_dir);
     const std::filesystem::path cues_path = case_dir / "cues.txt";
@@ -89,6 +90,16 @@ void RunCase(const std::filesystem::path& root,
     if (expected_shader_id != 46) {
         Check(header.find("{ 46, \"") == std::string::npos,
               case_name, "unused shader 46 should not be packed");
+    }
+    if (expected_post_effect_id >= 0) {
+        const std::string expected_effect = "if (u_enabled[" +
+                                            std::to_string(expected_post_effect_id) + "]";
+        Check(header.find(expected_effect) != std::string::npos,
+              case_name, "expected packed post-effect branch is missing");
+    }
+    if (expected_post_effect_id != 22) {
+        Check(header.find("if (u_enabled[22]") == std::string::npos,
+              case_name, "unused post-effect branch 22 should not be packed");
     }
 
     const struct FeatureCheck {
@@ -143,6 +154,12 @@ int main() {
     RunCase(root, "asset_shader",
             "[image_cues]\nasset|asset.bin|0|0|1|1|0|1|0|0|0|0|0|0|-1|-1|-1|-1|0|0|-1|0|1|5,1\n",
             {}, true, 5);
+    RunCase(root, "scene_post_effect",
+            "[scene_layer_post_effects]\n0|10|1|12,1\n",
+            {}, false, 0, 12);
+    RunCase(root, "asset_post_effect",
+            "[image_cues]\nasset|asset.bin|0|0|1|1|0|1|0|0|0|0|0|0|-1|-1|-1|-1|0|0|-1|1|3,1|0\n",
+            {}, true, 0, 3);
     RunCase(root, "animated_sprite", "[animated_sprite_cues]\nasset|asset.bin\n",
             {false, false, false, false, false, true, false}, true);
     RunCase(root, "scroll_text", "[scroll_text_cues]\nscroll row\n",

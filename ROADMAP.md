@@ -22,6 +22,8 @@ project, while `minimal_intro` remains a universal external-cue player.
       by the project, retaining preset 0 solely as the no-cue fallback.
 - [x] Compile out animated-sprite and scrolling-text parsing/rendering when the
       exported project contains no cues from those families.
+- [x] Generate packed post-effect GLSL containing only effect branches enabled
+      by global, scene-layer, or asset cue stacks.
 - [x] Generate matching CMake feature selections and reconfigure after packing
       so unused optional libraries are not packed-target dependencies.
 - [x] Add automated packer feature-manifest tests for empty, shader-only, XM,

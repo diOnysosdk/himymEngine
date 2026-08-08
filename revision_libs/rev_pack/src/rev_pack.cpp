@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <mutex>
+#include <string>
 #include <windows.h>
 
 namespace rev {
@@ -411,8 +412,9 @@ static int ParseAnimatedSpriteAssetLine(const char* line, AssetRef* out_refs, in
     return count;
 }
 
-static void CollectAssetShaderIds(const char* line, int base_field_count,
-                                  bool shader_ids[64]) {
+static void CollectAssetEffectsAndShaderIds(const char* line, int base_field_count,
+                                            bool post_effect_ids[23],
+                                            bool shader_ids[64]) {
     if (!line) return;
     const char* field = line;
     for (int i = 0; i < base_field_count; ++i) {
@@ -424,7 +426,10 @@ static void CollectAssetShaderIds(const char* line, int base_field_count,
     for (int i = 0; i < effect_count; ++i) {
         field = strchr(field, '|');
         if (!field) return;
-        ++field;
+        int effect_type = atoi(++field);
+        const char* comma = strchr(field, ',');
+        int enabled = comma ? atoi(comma + 1) : 0;
+        if (enabled && effect_type >= 0 && effect_type < 23) post_effect_ids[effect_type] = true;
     }
     field = strchr(field, '|');
     if (!field) return;
@@ -439,6 +444,71 @@ static void CollectAssetShaderIds(const char* line, int base_field_count,
         int enabled = comma ? atoi(comma + 1) : 0;
         if (enabled && shader_id >= 0 && shader_id < 64) shader_ids[shader_id] = true;
     }
+}
+
+static void CollectPostEffectList(const char* line, int base_field_count,
+                                  bool post_effect_ids[23]) {
+    if (!line) return;
+    const char* field = line;
+    for (int i = 0; i < base_field_count; ++i) {
+        field = strchr(field, '|');
+        if (!field) return;
+        ++field;
+    }
+    int effect_count = atoi(field);
+    for (int i = 0; i < effect_count; ++i) {
+        field = strchr(field, '|');
+        if (!field) return;
+        int effect_type = atoi(++field);
+        const char* comma = strchr(field, ',');
+        int enabled = comma ? atoi(comma + 1) : 0;
+        if (enabled && effect_type >= 0 && effect_type < 23) post_effect_ids[effect_type] = true;
+    }
+}
+
+static std::string BuildPackedPostEffectSource(const bool post_effect_ids[23]) {
+    const char* source = rev::editor::GetPostEffectFragmentSource();
+    std::string packed;
+    const char* line = source;
+    while (line && *line) {
+        const char* next = strchr(line, '\n');
+        const char* line_end = next ? next + 1 : line + strlen(line);
+        const char* trimmed = line;
+        while (trimmed < line_end && (*trimmed == ' ' || *trimmed == '\t')) ++trimmed;
+        bool effect_branch = strncmp(trimmed, "if (u_enabled[", 14) == 0;
+        bool keep_branch = false;
+        if (effect_branch) {
+            const char* id_at = trimmed;
+            while ((id_at = strstr(id_at, "u_enabled[")) != nullptr && id_at < line_end) {
+                int effect_type = atoi(id_at + 10);
+                if (effect_type >= 0 && effect_type < 23 && post_effect_ids[effect_type]) {
+                    keep_branch = true;
+                }
+                id_at += 10;
+            }
+        }
+        if (effect_branch && !keep_branch) {
+            int brace_depth = 0;
+            for (const char* p = line; p < line_end; ++p) {
+                if (*p == '{') ++brace_depth;
+                else if (*p == '}') --brace_depth;
+            }
+            line = line_end;
+            while (brace_depth > 0 && *line) {
+                next = strchr(line, '\n');
+                line_end = next ? next + 1 : line + strlen(line);
+                for (const char* p = line; p < line_end; ++p) {
+                    if (*p == '{') ++brace_depth;
+                    else if (*p == '}') --brace_depth;
+                }
+                line = line_end;
+            }
+            continue;
+        }
+        packed.append(line, line_end);
+        line = line_end;
+    }
+    return packed;
 }
 
 static void WritePackedShaders(FILE* header, const bool shader_ids[64]) {
@@ -456,6 +526,13 @@ static void WritePackedShaders(FILE* header, const bool shader_ids[64]) {
     }
     fprintf(header, "};\n");
     fprintf(header, "static const int kPackedShaderSourceCount = %d;\n\n", count);
+}
+
+static void WritePackedPostEffectShader(FILE* header, const bool post_effect_ids[23]) {
+    const std::string source = BuildPackedPostEffectSource(post_effect_ids);
+    fprintf(header, "static const char kPackedPostEffectFragmentSource[] = ");
+    WriteCString(header, source.c_str());
+    fprintf(header, ";\n\n");
 }
 
 PackResult PackAssets(const char* cues_path,
@@ -497,15 +574,23 @@ PackResult PackAssets(const char* cues_path,
     AssetRef refs[kMaxAssets];
     int ref_count = 0;
     ProjectFeatures features = {};
-    bool in_shader = false, in_image = false, in_music = false, in_mesh = false, in_text = false, in_scroll_text = false, in_animated_sprite = false, in_pixel = false, in_pixel_emitter = false;
+    bool in_shader = false, in_post_effect = false, in_scene_post_effect = false, in_image = false, in_music = false, in_mesh = false, in_text = false, in_scroll_text = false, in_animated_sprite = false, in_pixel = false, in_pixel_emitter = false;
     bool shader_ids[64] = {};
+    bool post_effect_ids[23] = {};
     shader_ids[0] = true; // Runtime fallback when a project has no shader cue.
     char line[8192];
 
     while (fgets(line, sizeof(line), cues)) {
         char* s = line;
         while (*s == ' ' || *s == '\t') s++;
-        if (strstr(s, "[shader_cues]"))      { in_shader = true; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (s[0] == '[') {
+            in_shader = in_post_effect = in_scene_post_effect = false;
+            in_image = in_music = in_mesh = in_text = in_scroll_text = false;
+            in_animated_sprite = in_pixel = in_pixel_emitter = false;
+        }
+        if (strstr(s, "[shader_cues]"))      { in_shader = true; in_post_effect = false; in_scene_post_effect = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[post_effects]"))     { in_shader = false; in_post_effect = true; in_scene_post_effect = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[scene_layer_post_effects]")) { in_shader = false; in_post_effect = false; in_scene_post_effect = true; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (strstr(s, "[image_cues]"))       { in_shader = false; in_image = true;  in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (strstr(s, "[animated_sprite_cues]")) { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = true; in_pixel = false; in_pixel_emitter = false; continue; }
         if (strstr(s, "[pixel_cues]"))       { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = true; in_pixel_emitter = false; continue; }
@@ -514,7 +599,7 @@ PackResult PackAssets(const char* cues_path,
         if (strstr(s, "[mesh_cues]"))        { in_shader = false; in_image = false; in_music = false; in_mesh = true;  in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (strstr(s, "[text_cues]"))        { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = true;  in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (strstr(s, "[scroll_text_cues]")) { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = true;  in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
-        if (s[0] == '[') { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (s[0] == '[') { in_shader = false; in_post_effect = false; in_scene_post_effect = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (s[0] == '#' || s[0] == '\r' || s[0] == '\n' || s[0] == '\0') continue;
 
         if (in_music) features.xm = true;
@@ -532,9 +617,16 @@ PackResult PackAssets(const char* cues_path,
             int shader_id = atoi(s);
             if (shader_id >= 0 && shader_id < 64) shader_ids[shader_id] = true;
         }
-        if (in_image) CollectAssetShaderIds(s, 21, shader_ids);
-        if (in_animated_sprite) CollectAssetShaderIds(s, 26, shader_ids);
-        if (in_pixel) CollectAssetShaderIds(s, 24, shader_ids);
+        if (in_post_effect) {
+            int effect_type = atoi(s);
+            const char* comma_or_pipe = strchr(s, '|');
+            int enabled = comma_or_pipe ? atoi(comma_or_pipe + 1) : 0;
+            if (enabled && effect_type >= 0 && effect_type < 23) post_effect_ids[effect_type] = true;
+        }
+        if (in_scene_post_effect) CollectPostEffectList(s, 2, post_effect_ids);
+        if (in_image) CollectAssetEffectsAndShaderIds(s, 21, post_effect_ids, shader_ids);
+        if (in_animated_sprite) CollectAssetEffectsAndShaderIds(s, 26, post_effect_ids, shader_ids);
+        if (in_pixel) CollectAssetEffectsAndShaderIds(s, 24, post_effect_ids, shader_ids);
 
         if ((in_image || in_music) && ref_count < kMaxAssets) {
             if (ParseAssetLine(s, refs[ref_count].key, refs[ref_count].path))
@@ -600,9 +692,10 @@ PackResult PackAssets(const char* cues_path,
             fprintf(hdr, "#pragma once\n");
             fprintf(hdr, "#include \"rev_pack.h\"\n\n");
             fprintf(hdr, "#define HIMYM_PACKED_ASSET_FORMAT_VERSION 2\n\n");
-            fprintf(hdr, "#define HIMYM_PACKED_SHADER_FORMAT_VERSION 1\n\n");
+            fprintf(hdr, "#define HIMYM_PACKED_SHADER_FORMAT_VERSION 2\n\n");
             WriteProjectFeatures(hdr, features);
             WritePackedShaders(hdr, shader_ids);
+            WritePackedPostEffectShader(hdr, post_effect_ids);
             fprintf(hdr, "static const char* PACKED_CUES_PATH = \"%s\";\n\n", cues_fwd);
             fprintf(hdr, "static const rev::pack::PackedAsset kPackedAssets[] = { { nullptr, nullptr, 0, 0 } };\n");
             fprintf(hdr, "static const int kPackedAssetCount = 0;\n");
@@ -802,9 +895,10 @@ PackResult PackAssets(const char* cues_path,
     fprintf(hdr, "#pragma once\n");
     fprintf(hdr, "#include \"rev_pack.h\"\n\n");
     fprintf(hdr, "#define HIMYM_PACKED_ASSET_FORMAT_VERSION 2\n\n");
-    fprintf(hdr, "#define HIMYM_PACKED_SHADER_FORMAT_VERSION 1\n\n");
+    fprintf(hdr, "#define HIMYM_PACKED_SHADER_FORMAT_VERSION 2\n\n");
     WriteProjectFeatures(hdr, features);
     WritePackedShaders(hdr, shader_ids);
+    WritePackedPostEffectShader(hdr, post_effect_ids);
 
     // Embed the cues path (kept for backward compat) and the full cues.txt content.
     {
