@@ -4418,8 +4418,12 @@ void RenderMenuBar(EditorContext* editor) {
         ImGui::TextUnformatted("Created by Dennis \"diOnysos/TiTAN/Equinox\" Kjaer");
         ImGui::Spacing();
         ImGui::TextLinkOpenURL(
-            "https://www.linkedin.com/in/dennis-kjaer-christensen/",
+            "Linkedin",
             "https://www.linkedin.com/in/dennis-kjaer-christensen/");
+        ImGui::Spacing();
+        ImGui::TextLinkOpenURL(
+            "Discord",
+            "https://discord.gg/A5awRJxnde");
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
