@@ -116,7 +116,8 @@ himym/
 Cross-platform window creation with OpenGL 3.3 context, high-precision timing, and input handling.
 
 ### rev_shader
-GLSL vertex/fragment shader compilation, linking, and uniform management (float, vec2/3/4, mat4, int).
+GLSL 330 vertex/fragment compilation, Shadertoy `mainImage` adaptation and
+version normalization, linking, and uniform management.
 
 ### rev_xm
 XM module music playback with integration for timeline synchronization.
@@ -156,7 +157,7 @@ per-library estimates for release planning.
 
 ### Runtime Capabilities
 - **Scene Timeline**: Cue-based sequencing with precise timing
-- **Shader Effects**: GLSL vertex/fragment shaders with curve-driven parameters
+- **Shader Effects**: Built-in GLSL presets plus project-owned Shadertoy Image/Buffer A-D pipelines with textures, feedback, and XM audio channels
 - **3D Rendering**: glTF mesh support with Phong lighting and material slots
 - **Animated Sprites**: Frame-sequence image cues with FPS, loop/once/pingpong playback, and curve-driven frame selection
 - **Text Rendering**: TTF font rendering with fade/animation curves
@@ -167,7 +168,7 @@ per-library estimates for release planning.
 
 ### Editor Features
 - **Scene Authoring**: Timeline-based scene composition
-- **Shader Modal**: Interactive shader parameter tuning with randomization
+- **Shader Modal**: Preset tuning and validated Shadertoy multipass graph authoring with portable project assets
 - **Animated Sprite Modal**: Frame list authoring with playback controls (FPS, mode, start frame) and per-parameter curves
 - **Curve Editor**: Visual animation curve creation and manipulation
 - **Asset Browser**: Browse and organize meshes, textures, and audio

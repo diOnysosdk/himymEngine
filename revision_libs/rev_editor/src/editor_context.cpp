@@ -71,6 +71,8 @@ struct EditorAudioState {
     std::atomic<bool> playing{false};
     std::atomic<unsigned int> generation{0};
     std::mutex player_mutex;
+    std::mutex shader_audio_mutex;
+    float shader_audio_samples[rev::runtime::kShaderAudioSampleFrames * 2] = {};
     rev::xm::Player* player = nullptr;
     char cue_key[512] = {};
     float cue_start = 0.0f;
@@ -252,10 +254,18 @@ static void ParseShaderNoiseMapPaths(const char* line, char paths[4][512]) {
 
 static void FillEditorAudioBuffer(EditorAudioState* state, float* output, int frame_count) {
     memset(output, 0, (size_t)frame_count * 2 * sizeof(float));
-    if (!state->playing.load(std::memory_order_acquire)) return;
-
-    std::lock_guard<std::mutex> lock(state->player_mutex);
-    if (state->player) rev::xm::Update(state->player, output, frame_count);
+    if (state->playing.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lock(state->player_mutex);
+        if (state->player) rev::xm::Update(state->player, output, frame_count);
+    }
+    const int captured_frames = frame_count < rev::runtime::kShaderAudioSampleFrames
+        ? frame_count : rev::runtime::kShaderAudioSampleFrames;
+    const int first_frame = frame_count - captured_frames;
+    std::lock_guard<std::mutex> audio_lock(state->shader_audio_mutex);
+    memset(state->shader_audio_samples, 0, sizeof(state->shader_audio_samples));
+    memcpy(state->shader_audio_samples,
+           output + (size_t)first_frame * 2,
+           (size_t)captured_frames * 2 * sizeof(float));
 }
 
 void UpdateEditorAudioEffects(EditorContext* editor) {
@@ -1300,6 +1310,9 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     }
     editor->project->curve_count = 0;
     editor->project->trigger_track_count = 0;
+    editor->project->shader_pipeline_count = 0;
+    for (int i = 0; i < rev::runtime::kMaxShaderPipelines; ++i)
+        rev::runtime::InitializeShaderPipeline(&editor->project->shader_pipelines[i]);
     
     editor->project->modified = false;
     editor->project->total_duration = 0.0f;
@@ -1476,8 +1489,12 @@ bool LoadProject(EditorContext* editor, const char* path) {
     bool in_trigger_tracks = false;
     bool in_trigger_events = false;
     TriggerTrack* current_trigger_track = nullptr;
+    rev::runtime::ShaderPipeline* current_shader_pipeline = nullptr;
+    rev::runtime::ShaderPass* current_shader_pass = nullptr;
+    rev::runtime::ShaderChannel* current_shader_channel = nullptr;
     
     ShaderCue current_shader_cue = {};
+    current_shader_cue.shader_pipeline_index = -1;
     // Initialize shader curve fields to -1 (no curve)
     current_shader_cue.curve_speed = current_shader_cue.curve_intensity = current_shader_cue.curve_warp = -1;
     current_shader_cue.curve_exposure = current_shader_cue.curve_fade = -1;
@@ -1630,6 +1647,42 @@ bool LoadProject(EditorContext* editor, const char* path) {
         if (strstr(start, "\"runtime_title\":")) {
             ParseJsonStringValue(start, editor->project->runtime_title,
                                  sizeof(editor->project->runtime_title));
+            continue;
+        }
+        if (strstr(start, "\"pipeline_name\":")) {
+            if (editor->project->shader_pipeline_count < rev::runtime::kMaxShaderPipelines) {
+                current_shader_pipeline = &editor->project->shader_pipelines[editor->project->shader_pipeline_count++];
+                rev::runtime::InitializeShaderPipeline(current_shader_pipeline);
+                ParseJsonStringValue(start, current_shader_pipeline->name, sizeof(current_shader_pipeline->name));
+                current_shader_pass = nullptr;
+                current_shader_channel = nullptr;
+            }
+            continue;
+        }
+        int pipeline_value = 0;
+        if (current_shader_pipeline && sscanf_s(start, "\"pass_kind\": %d", &pipeline_value) == 1) {
+            current_shader_pass = (pipeline_value >= 0 && pipeline_value < rev::runtime::kMaxShaderPasses)
+                ? &current_shader_pipeline->passes[pipeline_value] : nullptr;
+            current_shader_channel = nullptr;
+            continue;
+        }
+        if (current_shader_pass && sscanf_s(start, "\"pass_enabled\": %d", &pipeline_value) == 1) {
+            current_shader_pass->enabled = pipeline_value != 0;
+            continue;
+        }
+        if (current_shader_pass && sscanf_s(start, "\"pass_resolution_scale\": %f", &current_shader_pass->resolution_scale) == 1) continue;
+        if (current_shader_pass && strstr(start, "\"pass_source_path\":")) {
+            ParseJsonStringValue(start, current_shader_pass->source_path, sizeof(current_shader_pass->source_path));
+            continue;
+        }
+        if (current_shader_pass && sscanf_s(start, "\"channel_index\": %d", &pipeline_value) == 1) {
+            current_shader_channel = (pipeline_value >= 0 && pipeline_value < rev::runtime::kMaxShaderChannels)
+                ? &current_shader_pass->channels[pipeline_value] : nullptr;
+            continue;
+        }
+        if (current_shader_channel && sscanf_s(start, "\"channel_kind\": %d", &current_shader_channel->kind) == 1) continue;
+        if (current_shader_channel && strstr(start, "\"channel_asset_path\":")) {
+            ParseJsonStringValue(start, current_shader_channel->asset_path, sizeof(current_shader_channel->asset_path));
             continue;
         }
         if (sscanf_s(start, "\"audio_gain_enabled\": %d", &bool_value) == 1) {
@@ -2069,6 +2122,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 ParseJsonStringValue(start, current_shader_cue.shader_name, sizeof(current_shader_cue.shader_name));
             } else if (strstr(start, "\"shader_scene_id\":")) {
                 sscanf_s(start, "\"shader_scene_id\": %d", &current_shader_cue.shader_scene_id);
+            } else if (strstr(start, "\"shader_pipeline_index\":")) {
+                sscanf_s(start, "\"shader_pipeline_index\": %d", &current_shader_cue.shader_pipeline_index);
             } else if (strstr(start, "\"palette_low\":")) {
                 sscanf_s(start, "\"palette_low\": [%f, %f, %f]",
                     &current_shader_cue.palette_low.r,
@@ -3167,6 +3222,31 @@ bool SaveProject(EditorContext* editor, const char* path) {
     fprintf(f, "  \"audio_curve_eq_low_db\": %d,\n", editor->project->audio_effects.curve_eq_low_db);
     fprintf(f, "  \"audio_curve_eq_mid_db\": %d,\n", editor->project->audio_effects.curve_eq_mid_db);
     fprintf(f, "  \"audio_curve_eq_high_db\": %d,\n", editor->project->audio_effects.curve_eq_high_db);
+    fprintf(f, "  \"shader_pipelines\": [\n");
+    for (int pipeline_index = 0; pipeline_index < editor->project->shader_pipeline_count; ++pipeline_index) {
+        const rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+        char escaped_pipeline_name[128] = {};
+        JsonEscapeString(pipeline.name, escaped_pipeline_name, sizeof(escaped_pipeline_name));
+        fprintf(f, "    {\n      \"pipeline_name\": \"%s\",\n      \"passes\": [\n", escaped_pipeline_name);
+        for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+            const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+            char escaped_source[1024] = {};
+            JsonEscapeString(pass.source_path, escaped_source, sizeof(escaped_source));
+            fprintf(f, "        {\n          \"pass_kind\": %d,\n          \"pass_enabled\": %d,\n          \"pass_resolution_scale\": %.3f,\n          \"pass_source_path\": \"%s\",\n          \"channels\": [\n",
+                    pass.kind, pass.enabled ? 1 : 0, pass.resolution_scale, escaped_source);
+            for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                const rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+                char escaped_asset[1024] = {};
+                JsonEscapeString(channel.asset_path, escaped_asset, sizeof(escaped_asset));
+                fprintf(f, "            {\n              \"channel_index\": %d,\n              \"channel_kind\": %d,\n              \"channel_asset_path\": \"%s\"\n            }%s\n",
+                        channel_index, channel.kind, escaped_asset,
+                        channel_index + 1 < rev::runtime::kMaxShaderChannels ? "," : "");
+            }
+            fprintf(f, "          ]\n        }%s\n", pass_index + 1 < rev::runtime::kMaxShaderPasses ? "," : "");
+        }
+        fprintf(f, "      ]\n    }%s\n", pipeline_index + 1 < editor->project->shader_pipeline_count ? "," : "");
+    }
+    fprintf(f, "  ],\n");
     fprintf(f, "  \"scenes\": [\n");
     
     // Save scenes
@@ -3187,6 +3267,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "        {\n");
             fprintf(f, "          \"shader_name\": \"%s\",\n", escaped_shader_name);
             fprintf(f, "          \"shader_scene_id\": %d,\n", cue->shader_scene_id);
+            fprintf(f, "          \"shader_pipeline_index\": %d,\n", cue->shader_pipeline_index);
             fprintf(f, "          \"palette_low\": [%.3f, %.3f, %.3f],\n", 
                 cue->palette_low.r, cue->palette_low.g, cue->palette_low.b);
             fprintf(f, "          \"palette_mid\": [%.3f, %.3f, %.3f],\n",
@@ -3803,6 +3884,9 @@ bool NewProject(EditorContext* editor) {
         editor->project->curve_count = 0;
     }
     editor->project->trigger_track_count = 0;
+    editor->project->shader_pipeline_count = 0;
+    for (int i = 0; i < rev::runtime::kMaxShaderPipelines; ++i)
+        rev::runtime::InitializeShaderPipeline(&editor->project->shader_pipelines[i]);
     
     editor->project->total_duration = 0.0f;  // Will be updated as scenes are added
     editor->project->loop_intro = false;
@@ -4125,6 +4209,19 @@ static bool ProjectMeshUsesAssetFile(const ProjectData* project, const MeshCue* 
 
 static bool ProjectUsesAssetFile(const ProjectData* project, const char* file_name) {
     if (!project || !file_name || !file_name[0]) return false;
+
+    for (int pipeline_index = 0; pipeline_index < project->shader_pipeline_count; ++pipeline_index) {
+        const rev::runtime::ShaderPipeline& pipeline = project->shader_pipelines[pipeline_index];
+        for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+            const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+            if (AssetNameMatches(file_name, pass.source_path)) return true;
+            for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                const rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+                if (channel.kind == rev::runtime::ShaderChannelTexture &&
+                    AssetNameMatches(file_name, channel.asset_path)) return true;
+            }
+        }
+    }
 
     for (int scene_index = 0; scene_index < project->scene_count; ++scene_index) {
         const SceneBlock* scene = &project->scenes[scene_index];
@@ -4453,7 +4550,10 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     NewProject(editor);
     
     char line[1024];
-    enum Section { NONE, SHADER_CUES, IMAGE_CUES, ANIMATED_SPRITE_CUES, PIXEL_CUES, PIXEL_EMITTER_CUES, TEXT_CUES, SCROLL_TEXT_CUES, MUSIC_CUES, POST_EFFECTS, CURVES, METADATA };
+    enum Section { NONE, SHADER_CUES, SHADER_PIPELINE_CUES, SHADER_PIPELINES,
+        SHADER_PIPELINE_PASSES, SHADER_PIPELINE_CHANNELS, IMAGE_CUES,
+        ANIMATED_SPRITE_CUES, PIXEL_CUES, PIXEL_EMITTER_CUES, TEXT_CUES,
+        SCROLL_TEXT_CUES, MUSIC_CUES, POST_EFFECTS, CURVES, METADATA };
     Section current_section = NONE;
     
     float total_duration = 10.0f; // Default
@@ -4473,6 +4573,10 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         
         // Section detection
         if (strstr(start, "[shader_cues]")) { current_section = SHADER_CUES; continue; }
+        if (strstr(start, "[shader_pipeline_cues]")) { current_section = SHADER_PIPELINE_CUES; continue; }
+        if (strstr(start, "[shader_pipelines]")) { current_section = SHADER_PIPELINES; continue; }
+        if (strstr(start, "[shader_pipeline_passes]")) { current_section = SHADER_PIPELINE_PASSES; continue; }
+        if (strstr(start, "[shader_pipeline_channels]")) { current_section = SHADER_PIPELINE_CHANNELS; continue; }
         if (strstr(start, "[image_cues]")) { current_section = IMAGE_CUES; continue; }
         if (strstr(start, "[animated_sprite_cues]")) { current_section = ANIMATED_SPRITE_CUES; continue; }
         if (strstr(start, "[pixel_cues]")) { current_section = PIXEL_CUES; continue; }
@@ -4593,6 +4697,59 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
                 
                 printf("[ImportFromCues] Imported shader cue: id=%d name='%s' %.2f-%.2f\n",
                        shader_id, cue.shader_name, abs_start, abs_end);
+            }
+            continue;
+        }
+
+        if (current_section == SHADER_PIPELINE_CUES) {
+            int cue_index = -1, pipeline_index = -1;
+            if (sscanf_s(start, "%d|%d", &cue_index, &pipeline_index) == 2 &&
+                editor->project->scene_count > 0 && cue_index >= 0 &&
+                cue_index < editor->project->scenes[0].shader_cue_count) {
+                editor->project->scenes[0].shader_cues[cue_index].shader_pipeline_index = pipeline_index;
+            }
+            continue;
+        }
+        if (current_section == SHADER_PIPELINES) {
+            int pipeline_index = -1;
+            char name[64] = {};
+            if (sscanf_s(start, "%d|%63[^\r\n]", &pipeline_index, name, (unsigned)_countof(name)) == 2 &&
+                pipeline_index >= 0 && pipeline_index < rev::runtime::kMaxShaderPipelines) {
+                rev::runtime::InitializeShaderPipeline(&editor->project->shader_pipelines[pipeline_index]);
+                strncpy_s(editor->project->shader_pipelines[pipeline_index].name, name, _TRUNCATE);
+                if (editor->project->shader_pipeline_count <= pipeline_index)
+                    editor->project->shader_pipeline_count = pipeline_index + 1;
+            }
+            continue;
+        }
+        if (current_section == SHADER_PIPELINE_PASSES) {
+            int pipeline_index = -1, pass_index = -1, enabled = 0;
+            float scale = 1.0f;
+            char source[512] = {};
+            if (sscanf_s(start, "%d|%d|%d|%f|%511[^\r\n]", &pipeline_index, &pass_index,
+                         &enabled, &scale, source, (unsigned)_countof(source)) == 5 &&
+                pipeline_index >= 0 && pipeline_index < rev::runtime::kMaxShaderPipelines &&
+                pass_index >= 0 && pass_index < rev::runtime::kMaxShaderPasses) {
+                rev::runtime::ShaderPass& pass = editor->project->shader_pipelines[pipeline_index].passes[pass_index];
+                pass.kind = pass_index;
+                pass.enabled = enabled != 0;
+                pass.resolution_scale = scale;
+                if (strcmp(source, "-") != 0) strncpy_s(pass.source_path, source, _TRUNCATE);
+            }
+            continue;
+        }
+        if (current_section == SHADER_PIPELINE_CHANNELS) {
+            int pipeline_index = -1, pass_index = -1, channel_index = -1, kind = 0;
+            char asset[512] = {};
+            if (sscanf_s(start, "%d|%d|%d|%d|%511[^\r\n]", &pipeline_index, &pass_index,
+                         &channel_index, &kind, asset, (unsigned)_countof(asset)) == 5 &&
+                pipeline_index >= 0 && pipeline_index < rev::runtime::kMaxShaderPipelines &&
+                pass_index >= 0 && pass_index < rev::runtime::kMaxShaderPasses &&
+                channel_index >= 0 && channel_index < rev::runtime::kMaxShaderChannels) {
+                rev::runtime::ShaderChannel& channel = editor->project->shader_pipelines[pipeline_index]
+                    .passes[pass_index].channels[channel_index];
+                channel.kind = kind;
+                if (strcmp(asset, "-") != 0) strncpy_s(channel.asset_path, asset, _TRUNCATE);
             }
             continue;
         }
@@ -5157,6 +5314,47 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
         }
     }
     
+    fprintf(f, "\n");
+
+    fprintf(f, "[shader_pipeline_cues]\n");
+    fprintf(f, "# shader_cue_index|shader_pipeline_index\n");
+    shader_cue_id = 0;
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        SceneBlock* scene = &editor->project->scenes[scene_idx];
+        for (int cue_idx = 0; cue_idx < scene->shader_cue_count; ++cue_idx, ++shader_cue_id) {
+            if (scene->shader_cues[cue_idx].shader_pipeline_index >= 0)
+                fprintf(f, "%d|%d\n", shader_cue_id, scene->shader_cues[cue_idx].shader_pipeline_index);
+        }
+    }
+    fprintf(f, "\n[shader_pipelines]\n");
+    fprintf(f, "# pipeline_index|name\n");
+    for (int pipeline_index = 0; pipeline_index < editor->project->shader_pipeline_count; ++pipeline_index)
+        fprintf(f, "%d|%s\n", pipeline_index, editor->project->shader_pipelines[pipeline_index].name);
+
+    fprintf(f, "\n[shader_pipeline_passes]\n");
+    fprintf(f, "# pipeline_index|pass_kind|enabled|resolution_scale|source_path\n");
+    for (int pipeline_index = 0; pipeline_index < editor->project->shader_pipeline_count; ++pipeline_index) {
+        const rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+        for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+            const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+            fprintf(f, "%d|%d|%d|%.3f|%s\n", pipeline_index, pass_index,
+                    pass.enabled ? 1 : 0, pass.resolution_scale,
+                    pass.source_path[0] ? pass.source_path : "-");
+        }
+    }
+
+    fprintf(f, "\n[shader_pipeline_channels]\n");
+    fprintf(f, "# pipeline_index|pass_kind|channel_index|channel_kind|asset_path\n");
+    for (int pipeline_index = 0; pipeline_index < editor->project->shader_pipeline_count; ++pipeline_index) {
+        const rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+        for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+            for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                const rev::runtime::ShaderChannel& channel = pipeline.passes[pass_index].channels[channel_index];
+                fprintf(f, "%d|%d|%d|%d|%s\n", pipeline_index, pass_index, channel_index,
+                        channel.kind, channel.asset_path[0] ? channel.asset_path : "-");
+            }
+        }
+    }
     fprintf(f, "\n");
 
     // [post_effects] section. Times are absolute in the exported timeline.
@@ -5848,7 +6046,8 @@ bool BuildAndRun(EditorContext* editor) {
         cues_path,
         packed_header_path,
         pack_cache_path,
-        editor->startup_dir
+        editor->project->workspace_path[0] ? editor->project->workspace_path
+                                           : editor->startup_dir
     );
     if (!pack_result.ok) {
         printf("ERROR: Packing failed: %s\n", pack_result.error);
@@ -6049,7 +6248,8 @@ bool PackBuildAndRun(EditorContext* editor) {
         cues_path,              // cues source (project-relative)
         packed_header_path,     // output header (absolute path to build dir)
         pack_cache_path,        // checksum cache next to project
-        editor->startup_dir     // exported cue asset paths are workspace-root-relative
+        editor->project->workspace_path[0] ? editor->project->workspace_path
+                                           : editor->startup_dir
     );
 
     if (!pack_result.ok) {
@@ -6920,10 +7120,12 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
     int u_col = rev::shader::GetUniformLocation(program, "u_color_tint");
     int u_rot = rev::shader::GetUniformLocation(program, "u_rotation");
     int u_uv = rev::shader::GetUniformLocation(program, "u_uv_rect");
+    int u_flip_v = rev::shader::GetUniformLocation(program, "u_flip_v");
     if (u_tex >= 0) rev::shader::SetInt(program, u_tex, 0);
     if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity);
     if (u_col >= 0) rev::shader::SetVec3(program, u_col, r, g, b);
     if (u_rot >= 0) rev::shader::SetFloat(program, u_rot, rotation);
+    if (u_flip_v >= 0) rev::shader::SetFloat(program, u_flip_v, 1.0f);
     if (spacing < 0.01f) spacing = 0.01f;
     auto MeasureLineWidth = [&](const unsigned char* line_start) {
         float width = 0.0f;
@@ -7161,6 +7363,252 @@ void main() {
 
 static rev::shader::Program* g_preview_shader_cache[128] = {};
 static rev::shader::Program* g_asset_shader_cache[128] = {};
+
+struct PreviewPipelinePassState {
+    rev::shader::Program* program;
+    unsigned int fbos[2];
+    unsigned int textures[2];
+    int width;
+    int height;
+    int front;
+};
+
+struct PreviewPipelineState {
+    bool initialized;
+    bool valid;
+    uint32_t fingerprint;
+    int order[rev::runtime::kMaxShaderPasses];
+    int order_count;
+    PreviewPipelinePassState passes[rev::runtime::kMaxShaderPasses];
+};
+
+static PreviewPipelineState g_preview_pipeline_cache[rev::runtime::kMaxShaderPipelines] = {};
+static unsigned int g_preview_shader_audio_texture = 0;
+static int g_preview_shader_audio_frame = -1;
+
+static unsigned int UpdatePreviewShaderAudioTexture(EditorContext* editor, int frame) {
+    if (g_preview_shader_audio_texture && g_preview_shader_audio_frame == frame)
+        return g_preview_shader_audio_texture;
+    float samples[rev::runtime::kShaderAudioSampleFrames * 2] = {};
+    EditorAudioState* audio = editor ? (EditorAudioState*)editor->audio_state : nullptr;
+    if (audio) {
+        std::lock_guard<std::mutex> lock(audio->shader_audio_mutex);
+        memcpy(samples, audio->shader_audio_samples, sizeof(samples));
+    }
+    unsigned char pixels[rev::runtime::kShaderAudioTextureWidth * 2] = {};
+    rev::runtime::BuildShaderAudioTexture(samples, rev::runtime::kShaderAudioSampleFrames, pixels);
+    if (!g_preview_shader_audio_texture) {
+        glGenTextures(1, &g_preview_shader_audio_texture);
+        glBindTexture(GL_TEXTURE_2D, g_preview_shader_audio_texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, 0x8229, rev::runtime::kShaderAudioTextureWidth, 2,
+                     0, 0x1903, GL_UNSIGNED_BYTE, pixels);
+    } else {
+        glBindTexture(GL_TEXTURE_2D, g_preview_shader_audio_texture);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, rev::runtime::kShaderAudioTextureWidth, 2,
+                        0x1903, GL_UNSIGNED_BYTE, pixels);
+    }
+    g_preview_shader_audio_frame = frame;
+    return g_preview_shader_audio_texture;
+}
+
+static uint32_t HashPreviewPipeline(const rev::runtime::ShaderPipeline& pipeline, int width, int height) {
+    uint32_t hash = 2166136261u;
+    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&pipeline);
+    for (size_t i = 0; i < sizeof(pipeline); ++i) {
+        hash ^= bytes[i];
+        hash *= 16777619u;
+    }
+    hash ^= (uint32_t)width;
+    hash *= 16777619u;
+    hash ^= (uint32_t)height;
+    hash *= 16777619u;
+    return hash;
+}
+
+static void DestroyPreviewPipelineState(PreviewPipelineState* state) {
+    if (!state) return;
+    typedef void (*PFNGLDELETEFRAMEBUFFERSPROC)(int, const unsigned int*);
+    auto glDeleteFramebuffers =
+        (PFNGLDELETEFRAMEBUFFERSPROC)wglGetProcAddress("glDeleteFramebuffers");
+    for (PreviewPipelinePassState& pass : state->passes) {
+        if (pass.program) rev::shader::DestroyProgram(pass.program);
+        if (pass.textures[0] || pass.textures[1]) glDeleteTextures(2, pass.textures);
+        if (glDeleteFramebuffers && (pass.fbos[0] || pass.fbos[1]))
+            glDeleteFramebuffers(2, pass.fbos);
+    }
+    *state = {};
+}
+
+static bool LoadPreviewPipelineSource(EditorContext* editor, const char* declared_path,
+                                      std::string* source) {
+    if (!editor || !editor->project || !declared_path || !declared_path[0] || !source) return false;
+    char resolved[640] = {};
+    if (strchr(declared_path, ':') || declared_path[0] == '\\' || declared_path[0] == '/') {
+        strncpy_s(resolved, declared_path, _TRUNCATE);
+    } else {
+        if (editor->project->workspace_path[0])
+            snprintf(resolved, sizeof(resolved), "%s\\%s", editor->project->workspace_path, declared_path);
+        if (!FileExists(resolved) && editor->project->assets_path[0])
+            snprintf(resolved, sizeof(resolved), "%s\\%s", editor->project->assets_path, declared_path);
+    }
+    if (!resolved[0] || !FileExists(resolved)) return false;
+    FILE* file = nullptr;
+    fopen_s(&file, resolved, "rb");
+    if (!file) return false;
+    fseek(file, 0, SEEK_END);
+    const long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    if (size <= 0) { fclose(file); return false; }
+    source->resize((size_t)size);
+    const bool ok = fread(&(*source)[0], 1, (size_t)size, file) == (size_t)size;
+    fclose(file);
+    return ok;
+}
+
+static bool EnsurePreviewPipeline(EditorContext* editor, int pipeline_index) {
+    if (!editor || !editor->project || pipeline_index < 0 ||
+        pipeline_index >= editor->project->shader_pipeline_count ||
+        pipeline_index >= rev::runtime::kMaxShaderPipelines) return false;
+    const rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+    PreviewPipelineState& state = g_preview_pipeline_cache[pipeline_index];
+    const uint32_t fingerprint = HashPreviewPipeline(pipeline, editor->preview_width, editor->preview_height);
+    if (state.initialized && state.fingerprint == fingerprint) return state.valid;
+    DestroyPreviewPipelineState(&state);
+    state.initialized = true;
+    state.fingerprint = fingerprint;
+
+    typedef void (*PFNGLGENFRAMEBUFFERSPROC)(int, unsigned int*);
+    typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int, unsigned int);
+    typedef void (*PFNGLFRAMEBUFFERTEXTURE2DPROC)(unsigned int, unsigned int, unsigned int, unsigned int, int);
+    typedef unsigned int (*PFNGLCHECKFRAMEBUFFERSTATUSPROC)(unsigned int);
+    auto glGenFramebuffers = (PFNGLGENFRAMEBUFFERSPROC)wglGetProcAddress("glGenFramebuffers");
+    auto glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)wglGetProcAddress("glBindFramebuffer");
+    auto glFramebufferTexture2D = (PFNGLFRAMEBUFFERTEXTURE2DPROC)wglGetProcAddress("glFramebufferTexture2D");
+    auto glCheckFramebufferStatus = (PFNGLCHECKFRAMEBUFFERSTATUSPROC)wglGetProcAddress("glCheckFramebufferStatus");
+    if (!glGenFramebuffers || !glBindFramebuffer || !glFramebufferTexture2D || !glCheckFramebufferStatus)
+        return false;
+
+    char error[256] = {};
+    state.order_count = rev::runtime::BuildShaderPassOrder(&pipeline, state.order, error, sizeof(error));
+    if (state.order_count <= 0) return false;
+    state.valid = true;
+    for (int order_index = 0; state.valid && order_index < state.order_count; ++order_index) {
+        const int pass_index = state.order[order_index];
+        const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+        PreviewPipelinePassState& target = state.passes[pass_index];
+        std::string source;
+        if (!LoadPreviewPipelineSource(editor, pass.source_path, &source)) { state.valid = false; break; }
+        target.program = rev::shader::CompileFromSource(preview_vertex_shader, source.c_str());
+        if (!target.program) { state.valid = false; break; }
+        target.width = (int)(editor->preview_width * pass.resolution_scale);
+        target.height = (int)(editor->preview_height * pass.resolution_scale);
+        if (target.width < 1) target.width = 1;
+        if (target.height < 1) target.height = 1;
+        glGenFramebuffers(2, target.fbos);
+        glGenTextures(2, target.textures);
+        for (int buffer = 0; buffer < 2; ++buffer) {
+            glBindTexture(GL_TEXTURE_2D, target.textures[buffer]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, target.width, target.height,
+                         0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glBindFramebuffer(0x8D40, target.fbos[buffer]);
+            glFramebufferTexture2D(0x8D40, 0x8CE0, GL_TEXTURE_2D, target.textures[buffer], 0);
+            if (glCheckFramebufferStatus(0x8D40) != 0x8CD5) state.valid = false;
+            glClearColor(0, 0, 0, 0);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
+    }
+    glBindFramebuffer(0x8D40, editor->preview_fbo);
+    glViewport(0, 0, editor->preview_width, editor->preview_height);
+    return state.valid;
+}
+
+static bool RenderPreviewPipeline(EditorContext* editor, int pipeline_index, float time,
+                                  float time_delta, int frame, bool blend_layer,
+                                  int blend_mode, float opacity) {
+    if (!EnsurePreviewPipeline(editor, pipeline_index) || !editor->sprite_shader) return false;
+    typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int, unsigned int);
+    typedef void (*PFNGLACTIVETEXTUREPROC)(unsigned int);
+    auto glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)wglGetProcAddress("glBindFramebuffer");
+    auto glActiveTexture = (PFNGLACTIVETEXTUREPROC)wglGetProcAddress("glActiveTexture");
+    if (!glBindFramebuffer || !glActiveTexture) return false;
+    PreviewPipelineState& state = g_preview_pipeline_cache[pipeline_index];
+    const rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+    for (int order_index = 0; order_index < state.order_count; ++order_index) {
+        const int pass_index = state.order[order_index];
+        const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+        PreviewPipelinePassState& target = state.passes[pass_index];
+        const int previous = target.front;
+        const int destination = 1 - previous;
+        glBindFramebuffer(0x8D40, target.fbos[destination]);
+        glViewport(0, 0, target.width, target.height);
+        glDisable(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        rev::shader::Use(target.program);
+        rev::shader::SetVec3(target.program, rev::shader::GetUniformLocation(target.program, "iResolution"),
+                             (float)target.width, (float)target.height, 1.0f);
+        rev::shader::SetFloat(target.program, rev::shader::GetUniformLocation(target.program, "iTime"), time);
+        rev::shader::SetFloat(target.program, rev::shader::GetUniformLocation(target.program, "iTimeDelta"), time_delta);
+        rev::shader::SetInt(target.program, rev::shader::GetUniformLocation(target.program, "iFrame"), frame);
+        rev::shader::SetVec4(target.program, rev::shader::GetUniformLocation(target.program, "iMouse"), 0, 0, 0, 0);
+        for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+            const rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+            unsigned int texture = 0;
+            if (channel.kind == rev::runtime::ShaderChannelTexture)
+                texture = GetEditorNoiseTexture(editor, channel.asset_path);
+            else if (channel.kind >= rev::runtime::ShaderChannelBufferA &&
+                     channel.kind <= rev::runtime::ShaderChannelBufferD) {
+                const int source_index = channel.kind - rev::runtime::ShaderChannelBufferA + rev::runtime::ShaderPassBufferA;
+                PreviewPipelinePassState& source = state.passes[source_index];
+                texture = source.textures[source.front];
+            } else if (channel.kind == rev::runtime::ShaderChannelSelfPreviousFrame) {
+                texture = target.textures[previous];
+            } else if (channel.kind == rev::runtime::ShaderChannelAudioSpectrum) {
+                texture = UpdatePreviewShaderAudioTexture(editor, frame);
+            }
+            glActiveTexture(0x84C0u + (unsigned int)channel_index);
+            glBindTexture(GL_TEXTURE_2D, texture);
+            char uniform_name[24] = {};
+            snprintf(uniform_name, sizeof(uniform_name), "iChannel%d", channel_index);
+            rev::shader::SetInt(target.program,
+                                rev::shader::GetUniformLocation(target.program, uniform_name), channel_index);
+        }
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        target.front = destination;
+    }
+
+    PreviewPipelinePassState& image = state.passes[rev::runtime::ShaderPassImage];
+    glBindFramebuffer(0x8D40, editor->preview_fbo);
+    glViewport(0, 0, editor->preview_width, editor->preview_height);
+    if (blend_layer) { glEnable(GL_BLEND); ApplyShaderLayerBlendMode(blend_mode, opacity); }
+    else glDisable(GL_BLEND);
+    rev::shader::Program* sprite = (rev::shader::Program*)editor->sprite_shader;
+    rev::shader::Use(sprite);
+    rev::shader::SetVec2(sprite, rev::shader::GetUniformLocation(sprite, "u_position"), 0, 0);
+    rev::shader::SetVec2(sprite, rev::shader::GetUniformLocation(sprite, "u_size"), 1, 1);
+    rev::shader::SetFloat(sprite, rev::shader::GetUniformLocation(sprite, "u_rotation"), 0);
+    rev::shader::SetFloat(sprite, rev::shader::GetUniformLocation(sprite, "u_opacity"), opacity);
+    rev::shader::SetVec3(sprite, rev::shader::GetUniformLocation(sprite, "u_color_tint"), 1, 1, 1);
+    rev::shader::SetVec4(sprite, rev::shader::GetUniformLocation(sprite, "u_uv_rect"), 0, 0, 1, 1);
+    rev::shader::SetFloat(sprite, rev::shader::GetUniformLocation(sprite, "u_flip_v"), 0);
+    glActiveTexture(0x84C0);
+    glBindTexture(GL_TEXTURE_2D, image.textures[image.front]);
+    rev::shader::SetInt(sprite, rev::shader::GetUniformLocation(sprite, "u_texture"), 0);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    // The shared sprite shader expects normal image/text atlas orientation
+    // outside this FBO composite. Do not leak the pipeline's render-target flip.
+    rev::shader::SetFloat(sprite, rev::shader::GetUniformLocation(sprite, "u_flip_v"), 1.0f);
+    return true;
+}
 
 static rev::shader::Program* GetOrCompilePreviewShaderProgram(int shader_id) {
     if (shader_id < 0 || shader_id >= g_shader_preset_count) return nullptr;
@@ -7505,6 +7953,13 @@ void CleanupPreview(EditorContext* editor) {
             g_preview_shader_cache[i] = nullptr;
         }
     }
+    for (PreviewPipelineState& state : g_preview_pipeline_cache)
+        DestroyPreviewPipelineState(&state);
+    if (g_preview_shader_audio_texture) {
+        glDeleteTextures(1, &g_preview_shader_audio_texture);
+        g_preview_shader_audio_texture = 0;
+    }
+    g_preview_shader_audio_frame = -1;
 
     editor->preview_initialized = false;
 }
@@ -7614,8 +8069,10 @@ void RenderPreviewFrame(EditorContext* editor) {
             ShaderCue* cue = layers[li].cue;
             if (!cue) continue;
 
-            rev::shader::Program* prog = GetOrCompilePreviewShaderProgram(cue->shader_scene_id);
-            if (!prog) continue;
+            rev::shader::Program* prog = nullptr;
+            if (cue->shader_pipeline_index < 0)
+                prog = GetOrCompilePreviewShaderProgram(cue->shader_scene_id);
+            if (cue->shader_pipeline_index < 0 && !prog) continue;
 
             float speed = cue->speed;
             float intensity = cue->intensity;
@@ -7726,10 +8183,28 @@ void RenderPreviewFrame(EditorContext* editor) {
             // Fold layer opacity into fade for shaders that use fade as alpha/intensity.
             fade *= opacity;
 
+            if (cue->shader_pipeline_index >= 0 &&
+                RenderPreviewPipeline(editor, cue->shader_pipeline_index, editor->current_time,
+                                      1.0f / 60.0f, (int)(editor->current_time * 60.0f),
+                                      li != 0, cue->blend_mode, opacity)) {
+                continue;
+            }
+
+            if (!prog) prog = GetOrCompilePreviewShaderProgram(cue->shader_scene_id);
+            if (!prog) continue;
+
             rev::shader::Use(prog);
             rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_time"), editor->current_time);
             rev::shader::SetVec2(prog, rev::shader::GetUniformLocation(prog, "u_resolution"),
                                  (float)editor->preview_width, (float)editor->preview_height);
+            rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "iResolution"),
+                                 (float)editor->preview_width, (float)editor->preview_height, 1.0f);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "iTime"), editor->current_time);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "iTimeDelta"), 1.0f / 60.0f);
+            rev::shader::SetInt(prog, rev::shader::GetUniformLocation(prog, "iFrame"),
+                                (int)(editor->current_time * 60.0f));
+            rev::shader::SetVec4(prog, rev::shader::GetUniformLocation(prog, "iMouse"),
+                                 0.0f, 0.0f, 0.0f, 0.0f);
             rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_low"),
                                  palette_low[0], palette_low[1], palette_low[2]);
             rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_mid"),
@@ -7768,6 +8243,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                     glBindTexture(GL_TEXTURE_2D, texture_id);
                     char uniform_name[32] = {};
                     snprintf(uniform_name, sizeof(uniform_name), "u_noise_map_%d", map_index);
+                    rev::shader::SetTextureUnit(prog,
+                        rev::shader::GetUniformLocation(prog, uniform_name), 4 + map_index);
+                    snprintf(uniform_name, sizeof(uniform_name), "iChannel%d", map_index);
                     rev::shader::SetTextureUnit(prog,
                         rev::shader::GetUniformLocation(prog, uniform_name), 4 + map_index);
                 }
@@ -8710,7 +9188,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float travel = rev::runtime::ComputeScrollTextTravel(
                         atlas, cue->text, cue->direction, size_scale, cue->spacing,
                         cue->wrap_gap, (float)editor->preview_width,
-                        (float)editor->preview_height);
+                        (float)editor->preview_height, anim_x, anim_y, cue->loop_mode);
                     float wrapped = elapsed_time * anim_speed;
                     if (cue->loop_mode == 0) {
                         float speed_abs = fabsf(anim_speed);
@@ -8749,7 +9227,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (effective_size < 4.0f) effective_size = 4.0f;
 
                     char scroll_text_buffer[512] = {};
-                    if (cue->direction <= 1) {
+                    if (cue->direction <= 1 && cue->loop_mode == 0) {
                         snprintf(scroll_text_buffer, sizeof(scroll_text_buffer), "%s   %s", cue->text, cue->text);
                     } else {
                         strncpy_s(scroll_text_buffer, sizeof(scroll_text_buffer), cue->text, _TRUNCATE);
@@ -10328,6 +10806,7 @@ void RandomizeShaderValues(ShaderCue* cue) {
 
 void ResetShaderValues(ShaderCue* cue) {
     if (!cue) return;
+    cue->shader_pipeline_index = -1;
     
     // Default palette - visible colors (shader ID 0 can be set to black for fades)
     cue->palette_low = {0.1f, 0.3f, 0.8f};    // Blue

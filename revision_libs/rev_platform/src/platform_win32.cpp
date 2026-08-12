@@ -142,8 +142,6 @@ Window* CreateIntroWindow(const WindowConfig& config) {
         delete window;
         return nullptr;
     }
-    SetPixelFormat(hdc, pixel_format, &pfd);
-    
     // Create temporary context to load WGL extensions
     HGLRC temp_context = wglCreateContext(hdc);
     if (!temp_context || !wglMakeCurrent(hdc, temp_context)) {
@@ -170,13 +168,29 @@ Window* CreateIntroWindow(const WindowConfig& config) {
         hglrc = wglCreateContextAttribsARB(hdc, nullptr, attribs);
     }
     if (hglrc) {
-        wglMakeCurrent(hdc, hglrc);
-        wglDeleteContext(temp_context);
+        if (!wglMakeCurrent(hdc, hglrc)) {
+            wglDeleteContext(hglrc);
+            wglMakeCurrent(hdc, temp_context);
+            hglrc = temp_context;
+        } else {
+            wglDeleteContext(temp_context);
+        }
     } else {
         // Some drivers expose only the legacy WGL context creation path.
         // Keep the temporary context alive so startup fails gracefully instead
         // of calling a missing extension function.
         hglrc = temp_context;
+    }
+
+    OpenGLInfo gl_info = {};
+    if (!GetOpenGLInfo(&gl_info) || gl_info.major < 3 ||
+        (gl_info.major == 3 && gl_info.minor < 3)) {
+        wglMakeCurrent(nullptr, nullptr);
+        wglDeleteContext(hglrc);
+        ReleaseDC(hwnd, hdc);
+        DestroyWindow(hwnd);
+        delete window;
+        return nullptr;
     }
     
     window->hglrc = hglrc;

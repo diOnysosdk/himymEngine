@@ -17,6 +17,139 @@
 namespace rev {
 namespace runtime {
 
+void InitializeShaderPipeline(ShaderPipeline* pipeline) {
+    if (!pipeline) return;
+    memset(pipeline, 0, sizeof(*pipeline));
+    for (int pass_index = 0; pass_index < kMaxShaderPasses; ++pass_index) {
+        pipeline->passes[pass_index].kind = pass_index;
+        pipeline->passes[pass_index].resolution_scale = 1.0f;
+    }
+}
+
+static int ChannelBufferPass(int channel_kind) {
+    if (channel_kind >= ShaderChannelBufferA && channel_kind <= ShaderChannelBufferD)
+        return channel_kind - ShaderChannelBufferA + ShaderPassBufferA;
+    return -1;
+}
+
+int BuildShaderPassOrder(const ShaderPipeline* pipeline,
+                         int order[kMaxShaderPasses],
+                         char* error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (!pipeline || !order) return -1;
+
+    int indegree[kMaxShaderPasses] = {};
+    bool edge[kMaxShaderPasses][kMaxShaderPasses] = {};
+    int enabled_count = 0;
+    for (int pass_index = 0; pass_index < kMaxShaderPasses; ++pass_index) {
+        const ShaderPass& pass = pipeline->passes[pass_index];
+        if (!pass.enabled) continue;
+        ++enabled_count;
+        if (!pass.source_path[0] || pass.resolution_scale <= 0.0f || pass.resolution_scale > 1.0f) {
+            if (error && error_size)
+                snprintf(error, error_size, "Pass %d needs source and resolution scale in (0, 1]", pass_index);
+            return -1;
+        }
+        for (int channel = 0; channel < kMaxShaderChannels; ++channel) {
+            const ShaderChannel& input = pass.channels[channel];
+            const int dependency = ChannelBufferPass(input.kind);
+            if (input.kind == ShaderChannelTexture && !input.asset_path[0]) {
+                if (error && error_size) snprintf(error, error_size, "Pass %d channel %d has no texture", pass_index, channel);
+                return -1;
+            }
+            if (dependency >= 0) {
+                if (!pipeline->passes[dependency].enabled) {
+                    if (error && error_size) snprintf(error, error_size, "Pass %d depends on disabled buffer %d", pass_index, dependency);
+                    return -1;
+                }
+                if (dependency == pass_index) {
+                    if (error && error_size) snprintf(error, error_size, "Pass %d must use self-feedback, not a direct self dependency", pass_index);
+                    return -1;
+                }
+                if (!edge[dependency][pass_index]) {
+                    edge[dependency][pass_index] = true;
+                    ++indegree[pass_index];
+                }
+            }
+        }
+    }
+
+    int written = 0;
+    bool emitted[kMaxShaderPasses] = {};
+    while (written < enabled_count) {
+        int next = -1;
+        for (int pass_index = ShaderPassBufferA; pass_index < kMaxShaderPasses; ++pass_index) {
+            if (pipeline->passes[pass_index].enabled && !emitted[pass_index] && indegree[pass_index] == 0) {
+                next = pass_index;
+                break;
+            }
+        }
+        if (next < 0 && pipeline->passes[ShaderPassImage].enabled &&
+            !emitted[ShaderPassImage] && indegree[ShaderPassImage] == 0)
+            next = ShaderPassImage;
+        if (next < 0) {
+            if (error && error_size) snprintf(error, error_size, "Shader pass dependency cycle");
+            return -1;
+        }
+        order[written++] = next;
+        emitted[next] = true;
+        for (int consumer = 0; consumer < kMaxShaderPasses; ++consumer)
+            if (edge[next][consumer]) --indegree[consumer];
+    }
+    return written;
+}
+
+void BuildShaderAudioTexture(const float* stereo_samples, int frame_count,
+                             unsigned char output[kShaderAudioTextureWidth * 2]) {
+    if (!output) return;
+    memset(output, 0, kShaderAudioTextureWidth * 2);
+    if (!stereo_samples || frame_count <= 0) return;
+
+    const int sample_frames = frame_count < kShaderAudioSampleFrames
+        ? frame_count : kShaderAudioSampleFrames;
+    float mono[kShaderAudioSampleFrames] = {};
+    for (int i = 0; i < sample_frames; ++i)
+        mono[i] = 0.5f * (stereo_samples[i * 2] + stereo_samples[i * 2 + 1]);
+
+    constexpr float kTwoPi = 6.2831853071795864769f;
+    float windowed[kShaderAudioSampleFrames] = {};
+    for (int i = 0; i < sample_frames; ++i) {
+        const float window = sample_frames > 1
+            ? 0.5f - 0.5f * cosf(kTwoPi * (float)i / (float)(sample_frames - 1)) : 1.0f;
+        windowed[i] = mono[i] * window;
+    }
+    for (int bin = 0; bin < kShaderAudioTextureWidth; ++bin) {
+        const float step = kTwoPi * (float)bin / (float)kShaderAudioSampleFrames;
+        const float rotation_cos = cosf(step);
+        const float rotation_sin = sinf(step);
+        float oscillator_cos = 1.0f;
+        float oscillator_sin = 0.0f;
+        float real = 0.0f;
+        float imaginary = 0.0f;
+        for (int i = 0; i < sample_frames; ++i) {
+            const float sample = windowed[i];
+            real += sample * oscillator_cos;
+            imaginary -= sample * oscillator_sin;
+            const float next_cos = oscillator_cos * rotation_cos - oscillator_sin * rotation_sin;
+            oscillator_sin = oscillator_sin * rotation_cos + oscillator_cos * rotation_sin;
+            oscillator_cos = next_cos;
+        }
+        float magnitude = sqrtf(real * real + imaginary * imaginary) * (2.0f / (float)sample_frames);
+        magnitude = sqrtf(magnitude * 4.0f);
+        if (magnitude > 1.0f) magnitude = 1.0f;
+        output[bin] = (unsigned char)(magnitude * 255.0f + 0.5f);
+    }
+
+    for (int x = 0; x < kShaderAudioTextureWidth; ++x) {
+        const int source_index = sample_frames > 1
+            ? (x * (sample_frames - 1)) / (kShaderAudioTextureWidth - 1) : 0;
+        float waveform = mono[source_index] * 0.5f + 0.5f;
+        if (waveform < 0.0f) waveform = 0.0f;
+        if (waveform > 1.0f) waveform = 1.0f;
+        output[kShaderAudioTextureWidth + x] = (unsigned char)(waveform * 255.0f + 0.5f);
+    }
+}
+
 void InitializeAudioEffects(AudioEffects* effects)
 {
     if (!effects) return;
@@ -1109,7 +1242,8 @@ bool CreateTextGlyphAtlas(const char* font_name, float size, TextGlyphAtlas* atl
 float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
                               int direction, float size_scale, float spacing,
                               float wrap_gap, float viewport_width,
-                              float viewport_height)
+                              float viewport_height, float start_x,
+                              float start_y, int loop_mode)
 {
     if (!atlas || !text || viewport_width <= 0.0f || viewport_height <= 0.0f) {
         return 1.0f + wrap_gap;
@@ -1119,21 +1253,28 @@ float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
     if (spacing < 0.01f) spacing = 0.01f;
     if (wrap_gap < 0.0f) wrap_gap = 0.0f;
 
-    float travel = 0.0f;
+    float extent = 0.0f;
     if (direction <= 1) {
         for (const unsigned char* p = (const unsigned char*)text; *p && *p != '\n'; ++p) {
             const TextGlyph* glyph = FindTextGlyph(atlas, *p);
-            if (glyph) travel += glyph->advance * spacing * size_scale;
+            if (glyph) extent += glyph->advance * spacing * size_scale;
         }
-        const TextGlyph* space = FindTextGlyph(atlas, ' ');
-        if (space) travel += space->advance * spacing * size_scale * 3.0f;
-        travel = travel * 2.0f / viewport_width + wrap_gap;
+        extent = extent * 2.0f / viewport_width;
     } else {
         int line_count = 1;
         for (const char* p = text; *p; ++p) {
             if (*p == '\n') ++line_count;
         }
-        travel = (float)line_count * atlas->line_height * size_scale * 2.0f / viewport_height + wrap_gap;
+        extent = (float)line_count * atlas->line_height * size_scale * 2.0f / viewport_height;
+    }
+
+    float travel = extent + wrap_gap;
+    if (loop_mode != 0) {
+        const float half_extent = extent * 0.5f;
+        if (direction == 0) travel = start_x + half_extent + 1.0f + wrap_gap;
+        else if (direction == 1) travel = 1.0f - start_x + half_extent + wrap_gap;
+        else if (direction == 2) travel = start_y + half_extent + 1.0f + wrap_gap;
+        else travel = 1.0f - start_y + half_extent + wrap_gap;
     }
 
     return travel < 0.001f ? 0.001f : travel;

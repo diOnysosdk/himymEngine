@@ -105,6 +105,14 @@ if(MSVC)
     )
 endif()
 
+add_executable(shader_pipeline_tests tests/shader_pipeline_tests.cpp)
+target_link_libraries(shader_pipeline_tests PRIVATE rev_runtime)
+if(MSVC)
+    set_target_properties(shader_pipeline_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+endif()
+
 # Utility CLI: generate build/packed_assets.h without launching editor UI.
 add_executable(pack_cli tools/pack_cli.cpp)
 target_link_libraries(pack_cli PRIVATE rev_pack)

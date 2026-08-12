@@ -1,5 +1,8 @@
 # Shader System - Modular Architecture
 
+For the user-facing authoring workflow and GLSL examples, see
+[`PR/guides/SHADER_GUIDE.md`](../../PR/guides/SHADER_GUIDE.md).
+
 The shader system uses a single authoritative shader registry in the editor presets, and runtime compiles from that same source.
 
 ## Architecture
@@ -10,6 +13,63 @@ The shader system uses a single authoritative shader registry in the editor pres
 - **`examples/minimal_intro/main.cpp`** - runtime compiles via `GetShaderSourceById()` and `g_shader_preset_count`
 
 The previous duplicated runtime `fragment_shaders[]` array has been removed to prevent drift.
+
+## Shadertoy Compatibility
+
+`rev_shader` accepts fragment sources that define Shadertoy's
+`mainImage(out vec4, in vec2)` entry point without a `main()` function. It
+normalizes missing or different version directives to `#version 330 core` in
+memory, then injects the GLSL 330 declarations and a normalized-UV bridge for:
+
+- `iResolution`, `iTime`, `iTimeDelta`, `iFrame`, and `iMouse`
+- `iChannel0` through `iChannel3`
+
+The four channels currently alias the shader cue's four optional noise-map
+textures. Editor preview uses deterministic 60 Hz frame values and a zero mouse
+until preview-relative pointer input is authored. Standalone playback supplies
+measured frame delta and window-relative mouse coordinates.
+
+Preset 47, **Shadertoy Neon Lattice**, is the single-pass compatibility
+reference shader. Project pipelines extend that contract with Buffer A-D,
+texture inputs, explicit previous-frame feedback, and live audio input.
+
+The shared runtime contract now reserves project-level pipelines containing an
+Image pass and Buffer A-D. Each pass has four typed channels, an authored GLSL
+source path, and a resolution scale in `(0, 1]`. Channel types cover textures,
+Buffer A-D outputs, explicit previous-frame self-feedback, and an audio-spectrum
+source. `BuildShaderPassOrder` validates missing inputs, disabled dependencies,
+direct self-dependencies, and cycles while producing deterministic buffer-first,
+Image-last execution order. Project JSON persists the complete pipeline registry
+and shader cues persist a `shader_pipeline_index` reference; `-1` keeps the
+existing preset-only behavior. Flat export uses separate
+`[shader_pipeline_cues]`, `[shader_pipelines]`, `[shader_pipeline_passes]`, and
+`[shader_pipeline_channels]` sections so legacy shader-row offsets remain
+unchanged. The packer discovers enabled GLSL pass sources and texture-channel
+assets from those sections. The Shader Parameters modal can create and assign
+pipelines, edit Image/Buffer A-D sources and resolution scales, configure all
+four channels, and reports graph validation errors live. GLSL sources and
+texture channels have browse controls that copy selected files into the project
+assets directory and store portable `project_assets/...` paths.
+
+Editor preview, standalone playback, and packed playback compile enabled pass
+sources, allocate two scaled RGBA targets per pass, bind texture/current-buffer/
+previous-frame channels, execute the validated order, swap feedback targets,
+and composite the Image pass through the existing shader-layer blend path. The
+editor invalidates cached pass resources when the authored graph or preview
+resolution changes. `Audio Spectrum` binds a Shadertoy-compatible 512x2 R8
+texture built from the active XM output: spectrum magnitudes occupy row 0 and
+the normalized waveform occupies row 1. With no active audio both rows receive
+the deterministic silent representation. A missing or invalid pipeline
+continues through its preset fallback.
+
+## OpenGL Runtime Requirement
+
+The platform requests an OpenGL 3.3 core context and now verifies that the
+active context is at least version 3.3 before returning a window. A legacy WGL
+fallback is accepted only when the driver still supplies OpenGL 3.3 or newer.
+Standalone verbose logging reports the GL version, GLSL version, vendor, and
+renderer. Required shader and baseline rendering entry points are validated
+before use so an unsupported driver fails at startup instead of crashing later.
 
 ## How to Add a New Shader
 
@@ -154,7 +214,7 @@ void main() {
 }
 ```
 
-## Current Shader List (IDs 0-30)
+## Shader Registry
 
 0. **Horizontal Gradient Bands** - Black default with three horizontal fade bands
 1. **Plasma Vibrant** - Classic plasma effect
@@ -183,7 +243,8 @@ void main() {
 29. **Noise Flow Map** - Iterated gradient-driven flow ribbons
 30. **Noise Terrain Relief** - Height-field relief with procedural lighting
 
-**Next available ID: 31**
+The registry is authoritative; inspect `g_shader_presets` for the current IDs
+rather than relying on a duplicated count in this document.
 
 ### Noise Texture Slots
 
@@ -211,15 +272,12 @@ Older project JSON and cues exports default these optional fields to zero.
 
 ## Limitations
 
-⚠️ **Manual Synchronization Required** - Editor and runtime registries must be updated separately  
 ⚠️ **ID Conflicts** - If IDs don't match, runtime displays wrong shader  
 ⚠️ **Rebuild Required** - Changes require full recompilation  
 
 ## Future Enhancements
 
 Possible improvements to consider:
-- **Unified shader registry** - Single source of truth shared by editor and runtime
-- **Runtime uses `GetShaderSourceById()`** - Eliminate duplicate `fragment_shaders[]` array
 - Hot-reload shader source files from disk
 - Shader validation on load
 - Shader categories/tags for organization

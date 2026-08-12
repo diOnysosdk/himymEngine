@@ -32,6 +32,23 @@ int main()
     passed &= Check(NearlyEqual(ComputePostFadeIntensity(1.0f, 9.0f, 0.0f, 10.0f, 2.0f, 2.0f), 0.5f),
                     "post fade-out interpolates");
 
+    TextGlyphAtlas scroll_atlas = {};
+    scroll_atlas.line_height = 50.0f;
+    scroll_atlas.glyphs['A'].codepoint = 'A';
+    scroll_atlas.glyphs['A'].advance = 100.0f;
+    passed &= Check(NearlyEqual(ComputeScrollTextTravel(
+                        &scroll_atlas, "AA", 0, 1.0f, 1.0f, 0.2f,
+                        1000.0f, 500.0f, 2.0f, 0.0f, 1), 3.4f),
+                    "clamped left scroll clears the viewport from authored start");
+    passed &= Check(NearlyEqual(ComputeScrollTextTravel(
+                        &scroll_atlas, "AA", 1, 1.0f, 1.0f, 0.2f,
+                        1000.0f, 500.0f, -2.0f, 0.0f, 1), 3.4f),
+                    "clamped right scroll clears the viewport from authored start");
+    passed &= Check(NearlyEqual(ComputeScrollTextTravel(
+                        &scroll_atlas, "AA", 0, 1.0f, 1.0f, 0.2f,
+                        1000.0f, 500.0f, 2.0f, 0.0f, 0), 0.6f),
+                    "looping scroll travel remains one text extent plus gap");
+
     AudioEffects authored_audio = {};
     InitializeAudioEffects(&authored_audio);
     passed &= Check(authored_audio.curve_gain_db == -1 &&

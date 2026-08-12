@@ -46,6 +46,59 @@ constexpr int kMaxLayerPostEffects = 8;
 constexpr int kMaxAssetShaders = 4;
 constexpr int kMaxTriggerEvents = 4096;
 constexpr int kMaxTriggerTracks = 32;
+constexpr int kMaxShaderPipelines = 16;
+constexpr int kMaxShaderPasses = 5;
+constexpr int kMaxShaderChannels = 4;
+constexpr int kShaderAudioTextureWidth = 512;
+constexpr int kShaderAudioSampleFrames = 1024;
+
+enum ShaderPassKind {
+    ShaderPassImage = 0,
+    ShaderPassBufferA = 1,
+    ShaderPassBufferB = 2,
+    ShaderPassBufferC = 3,
+    ShaderPassBufferD = 4
+};
+
+enum ShaderChannelKind {
+    ShaderChannelNone = 0,
+    ShaderChannelTexture = 1,
+    ShaderChannelBufferA = 2,
+    ShaderChannelBufferB = 3,
+    ShaderChannelBufferC = 4,
+    ShaderChannelBufferD = 5,
+    ShaderChannelSelfPreviousFrame = 6,
+    ShaderChannelAudioSpectrum = 7
+};
+
+struct ShaderChannel {
+    int kind;
+    char asset_path[512];
+};
+
+struct ShaderPass {
+    int kind;
+    bool enabled;
+    float resolution_scale;
+    char source_path[512];
+    ShaderChannel channels[kMaxShaderChannels];
+};
+
+struct ShaderPipeline {
+    char name[64];
+    ShaderPass passes[kMaxShaderPasses];
+};
+
+void InitializeShaderPipeline(ShaderPipeline* pipeline);
+// Returns the enabled pass count, or -1 when the graph is invalid. Image is
+// always ordered last; buffer dependencies are ordered before their consumers.
+int BuildShaderPassOrder(const ShaderPipeline* pipeline,
+                         int order[kMaxShaderPasses],
+                         char* error, size_t error_size);
+// Builds a Shadertoy-compatible 512x2 R8 texture payload from interleaved
+// stereo samples: spectrum in row 0, waveform in row 1.
+void BuildShaderAudioTexture(const float* stereo_samples, int frame_count,
+                             unsigned char output[kShaderAudioTextureWidth * 2]);
 
 // Beat timing uses a quarter note as one beat. Trigger intervals are expressed
 // in quarter-note beats, so an eighth note is 0.5 and an eight-beat phrase is 8.
@@ -726,7 +779,8 @@ bool CreateTextGlyphAtlas(const char* font_name, float size, TextGlyphAtlas* atl
 float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
                               int direction, float size_scale, float spacing,
                               float wrap_gap, float viewport_width,
-                              float viewport_height);
+                              float viewport_height, float start_x,
+                              float start_y, int loop_mode);
 bool SaveTextGlyphAtlas(const char* font_name, float size,
                         const char* image_path, const char* metadata_path);
 bool LoadTextGlyphAtlasFromMemory(const unsigned char* image_data, size_t image_size,

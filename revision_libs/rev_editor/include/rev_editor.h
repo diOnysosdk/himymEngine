@@ -126,6 +126,7 @@ struct NoiseTextureSettings {
 // Shader cue data (per shader instance)
 struct ShaderCue {
     int shader_scene_id;           // Shader preset ID
+    int shader_pipeline_index = -1; // -1 = preset-only, otherwise project pipeline
     char shader_name[64];          // Friendly name
     
     // Palette colors
@@ -251,6 +252,11 @@ struct ProjectData {
     rev::curve::Curve* curves;
     int curve_count;
     char curve_names[rev::runtime::kMaxCurves][128];
+
+    // Project-level Shadertoy pipelines. Shader cues will reference these by
+    // stable array index once authored persistence is enabled.
+    rev::runtime::ShaderPipeline shader_pipelines[rev::runtime::kMaxShaderPipelines];
+    int shader_pipeline_count;
 
     // Project-level music-synchronised trigger tracks.
     TriggerTrack trigger_tracks[kMaxTriggerTracks];

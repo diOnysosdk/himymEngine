@@ -83,6 +83,10 @@ to compile out optional runtime paths that the project cannot reach. The
 header also contains only the fullscreen and enabled asset-shader GLSL presets
 referenced by the project (plus preset 0 as the empty-project fallback). The
 file-based `minimal_intro` and editor retain the universal preset registry.
+Project-owned Shadertoy pipelines are packed separately: only enabled pass
+sources and referenced texture channels are embedded. Their paths are resolved
+from the saved project workspace, and editor unused-asset cleanup treats those
+GLSL and texture files as live project assets.
 Animated-sprite and scrolling-text parsing/rendering are likewise removed from
 packed projects that contain no cues of those families.
 The packed post-effect fragment shader contains only enabled effect branches

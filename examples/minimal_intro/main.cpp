@@ -54,6 +54,7 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <mutex>
 
 #include "rev_shader_presets.h"
 
@@ -184,8 +185,23 @@ struct AudioState {
     WAVEHDR          headers[kAudioBufCount];
     int16_t*         pcm[kAudioBufCount];
     float            fbuf[kAudioFrames * kAudioChannels];
+    std::mutex       shader_audio_mutex;
+    float            shader_audio_samples[rev::runtime::kShaderAudioSampleFrames * 2];
     std::atomic<bool> stop;
 };
+
+static AudioState* g_shader_audio_state = nullptr;
+
+static void CaptureShaderAudioSamples(AudioState* state, const float* samples, int frame_count) {
+    if (!state || !samples) return;
+    const int captured_frames = frame_count < rev::runtime::kShaderAudioSampleFrames
+        ? frame_count : rev::runtime::kShaderAudioSampleFrames;
+    const int first_frame = frame_count - captured_frames;
+    std::lock_guard<std::mutex> lock(state->shader_audio_mutex);
+    memset(state->shader_audio_samples, 0, sizeof(state->shader_audio_samples));
+    memcpy(state->shader_audio_samples, samples + (size_t)first_frame * 2,
+           (size_t)captured_frames * 2 * sizeof(float));
+}
 
 static void FillAudioBufferFromPlayer(rev::xm::Player* player,
                                       float* fbuf,
@@ -220,6 +236,7 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
     // Pre-fill and submit all buffers before entering the loop
     for (int i = 0; i < kAudioBufCount; ++i) {
         FillAudioBufferFromPlayer(a->player.load(std::memory_order_acquire), a->fbuf, a->pcm[i], kAudioFrames);
+        CaptureShaderAudioSamples(a, a->fbuf, kAudioFrames);
         waveOutWrite(a->wave_out, &a->headers[i], sizeof(WAVEHDR));
     }
 
@@ -228,6 +245,7 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
             if (a->headers[i].dwFlags & WHDR_DONE) {
                 a->headers[i].dwFlags &= ~WHDR_DONE;
                 FillAudioBufferFromPlayer(a->player.load(std::memory_order_acquire), a->fbuf, a->pcm[i], kAudioFrames);
+                CaptureShaderAudioSamples(a, a->fbuf, kAudioFrames);
                 waveOutWrite(a->wave_out, &a->headers[i], sizeof(WAVEHDR));
             }
         }
@@ -387,6 +405,7 @@ struct NoiseTextureSettings {
 // Shader cue data structure (runtime-local; editor uses its own ShaderCue with more fields)
 struct ShaderCue {
     int shader_scene_id;
+    int shader_pipeline_index;
     float palette_low[3];
     float palette_mid[3];
     float palette_high[3];
@@ -466,7 +485,91 @@ struct ShaderProgramState {
     int u_noise_contrast;
     int u_noise_maps[4];
     int u_noise_map_count;
+    int i_resolution;
+    int i_time;
+    int i_time_delta;
+    int i_frame;
+    int i_mouse;
+    int i_channels[4];
 };
+
+static int LoadShaderPipelines(const char* path,
+                               rev::runtime::ShaderPipeline* pipelines,
+                               int max_pipelines) {
+    if (!path || !pipelines || max_pipelines <= 0) return 0;
+    for (int i = 0; i < max_pipelines; ++i) rev::runtime::InitializeShaderPipeline(&pipelines[i]);
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+    enum Section { None, Pipelines, Passes, Channels } section = None;
+    int count = 0;
+    char line[1024] = {};
+    while (fgets(line, sizeof(line), f)) {
+        char* start = line;
+        while (*start == ' ' || *start == '\t') ++start;
+        if (strstr(start, "[shader_pipelines]")) { section = Pipelines; continue; }
+        if (strstr(start, "[shader_pipeline_passes]")) { section = Passes; continue; }
+        if (strstr(start, "[shader_pipeline_channels]")) { section = Channels; continue; }
+        if (*start == '[') { section = None; continue; }
+        if (*start == '#' || *start == '\r' || *start == '\n' || !*start) continue;
+        if (section == Pipelines) {
+            int pipeline_index = -1;
+            char name[64] = {};
+            if (sscanf_s(start, "%d|%63[^\r\n]", &pipeline_index, name, (unsigned)_countof(name)) == 2 &&
+                pipeline_index >= 0 && pipeline_index < max_pipelines) {
+                strncpy_s(pipelines[pipeline_index].name, name, _TRUNCATE);
+                if (count <= pipeline_index) count = pipeline_index + 1;
+            }
+        } else if (section == Passes) {
+            int pipeline_index = -1, pass_index = -1, enabled = 0;
+            float scale = 1.0f;
+            char source[512] = {};
+            if (sscanf_s(start, "%d|%d|%d|%f|%511[^\r\n]", &pipeline_index, &pass_index,
+                         &enabled, &scale, source, (unsigned)_countof(source)) == 5 &&
+                pipeline_index >= 0 && pipeline_index < max_pipelines && pass_index >= 0 &&
+                pass_index < rev::runtime::kMaxShaderPasses) {
+                rev::runtime::ShaderPass& pass = pipelines[pipeline_index].passes[pass_index];
+                pass.enabled = enabled != 0;
+                pass.resolution_scale = scale;
+                if (strcmp(source, "-") != 0) strncpy_s(pass.source_path, source, _TRUNCATE);
+            }
+        } else if (section == Channels) {
+            int pipeline_index = -1, pass_index = -1, channel_index = -1, kind = 0;
+            char asset[512] = {};
+            if (sscanf_s(start, "%d|%d|%d|%d|%511[^\r\n]", &pipeline_index, &pass_index,
+                         &channel_index, &kind, asset, (unsigned)_countof(asset)) == 5 &&
+                pipeline_index >= 0 && pipeline_index < max_pipelines && pass_index >= 0 &&
+                pass_index < rev::runtime::kMaxShaderPasses && channel_index >= 0 &&
+                channel_index < rev::runtime::kMaxShaderChannels) {
+                rev::runtime::ShaderChannel& channel = pipelines[pipeline_index].passes[pass_index].channels[channel_index];
+                channel.kind = kind;
+                if (strcmp(asset, "-") != 0) strncpy_s(channel.asset_path, asset, _TRUNCATE);
+            }
+        }
+    }
+    fclose(f);
+    return count;
+}
+
+static void LoadShaderPipelineCueRefs(const char* path, ShaderCue* cues, int cue_count) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return;
+    bool in_section = false;
+    char line[256] = {};
+    while (fgets(line, sizeof(line), f)) {
+        char* start = line;
+        while (*start == ' ' || *start == '\t') ++start;
+        if (strstr(start, "[shader_pipeline_cues]")) { in_section = true; continue; }
+        if (*start == '[' && in_section) break;
+        if (!in_section || *start == '#' || *start == '\r' || *start == '\n') continue;
+        int cue_index = -1, pipeline_index = -1;
+        if (sscanf_s(start, "%d|%d", &cue_index, &pipeline_index) == 2 &&
+            cue_index >= 0 && cue_index < cue_count)
+            cues[cue_index].shader_pipeline_index = pipeline_index;
+    }
+    fclose(f);
+}
 
 // Music cue data structure — provided by rev_runtime (MusicCue using above)
 // Image cue data structure — provided by rev_runtime (ImageCue using above)
@@ -1861,10 +1964,12 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
     int u_col = uniforms.color;
     int u_uv = uniforms.uv_rect;
     int u_rot = uniforms.rotation;
+    int u_flip_v = rev::shader::GetUniformLocation(program, "u_flip_v");
     if (u_tex >= 0) rev::shader::SetInt(program, u_tex, 0);
     if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity);
     if (u_col >= 0) rev::shader::SetVec3(program, u_col, r, g, b);
     if (u_rot >= 0) rev::shader::SetFloat(program, u_rot, rotation);
+    if (u_flip_v >= 0) rev::shader::SetFloat(program, u_flip_v, 1.0f);
     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, atlas->texture_id);
 
@@ -2501,6 +2606,19 @@ int main(int argc, char* argv[]) {
     // Load ALL shader cues (multi-scene support)
     ShaderCue shader_cues[16];  // Support up to 16 shader cues
     int shader_cue_count = LoadAllShaderCues(cues_path, shader_cues, 16);
+    for (int i = 0; i < shader_cue_count; ++i) shader_cues[i].shader_pipeline_index = -1;
+    LoadShaderPipelineCueRefs(cues_path, shader_cues, shader_cue_count);
+    rev::runtime::ShaderPipeline shader_pipelines[rev::runtime::kMaxShaderPipelines];
+    const int shader_pipeline_count = LoadShaderPipelines(
+        cues_path, shader_pipelines, rev::runtime::kMaxShaderPipelines);
+    for (int pipeline_index = 0; pipeline_index < shader_pipeline_count; ++pipeline_index) {
+        int pass_order[rev::runtime::kMaxShaderPasses] = {};
+        char pipeline_error[256] = {};
+        if (rev::runtime::BuildShaderPassOrder(&shader_pipelines[pipeline_index], pass_order,
+                                               pipeline_error, sizeof(pipeline_error)) < 0) {
+            printf("WARNING: Shader pipeline %d is invalid: %s\n", pipeline_index, pipeline_error);
+        }
+    }
     LOGV("Loaded %d shader cue(s)\n", shader_cue_count);
 
     ImageTexture shader_noise_textures[16][4] = {};
@@ -2776,6 +2894,17 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     
     // Load OpenGL functions
     rev::platform::LoadGLFunctions();
+    rev::platform::OpenGLInfo gl_info = {};
+    if (!rev::platform::GetOpenGLInfo(&gl_info)) {
+        printf("ERROR: Unable to query the active OpenGL context\n");
+        rev::platform::DestroyIntroWindow(window);
+        return -1;
+    }
+    LOGV("OpenGL: %s | GLSL: %s | %s | %s\n",
+         gl_info.version ? gl_info.version : "unknown",
+         gl_info.glsl_version ? gl_info.glsl_version : "unknown",
+         gl_info.vendor ? gl_info.vendor : "unknown",
+         gl_info.renderer ? gl_info.renderer : "unknown");
     
     // Initialize GDI+
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
@@ -2788,6 +2917,12 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     glActiveTexture = (PFNGLACTIVETEXTUREPROC)rev::platform::GetProcAddress("glActiveTexture");
     glBlendColor = (PFNGLBLENDCOLORPROC)rev::platform::GetProcAddress("glBlendColor");
     glBlendEquation_rt = (PFNGLBLENDEQUATIONPROC)rev::platform::GetProcAddress("glBlendEquation");
+    if (!glGenVertexArrays || !glBindVertexArray || !glActiveTexture ||
+        !glBlendColor || !glBlendEquation_rt) {
+        printf("ERROR: Required OpenGL 3.3 rendering functions are unavailable\n");
+        rev::platform::DestroyIntroWindow(window);
+        return -1;
+    }
     
     // Create and bind VAO (required for OpenGL 3.3 core)
     GLuint vao;
@@ -2959,6 +3094,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             state.u_noise_maps[map_index] = rev::shader::GetUniformLocation(state.prog, uniform_name);
         }
         state.u_noise_map_count = rev::shader::GetUniformLocation(state.prog, "u_noise_map_count");
+        state.i_resolution = rev::shader::GetUniformLocation(state.prog, "iResolution");
+        state.i_time = rev::shader::GetUniformLocation(state.prog, "iTime");
+        state.i_time_delta = rev::shader::GetUniformLocation(state.prog, "iTimeDelta");
+        state.i_frame = rev::shader::GetUniformLocation(state.prog, "iFrame");
+        state.i_mouse = rev::shader::GetUniformLocation(state.prog, "iMouse");
+        for (int channel = 0; channel < 4; ++channel) {
+            char uniform_name[24] = {};
+            snprintf(uniform_name, sizeof(uniform_name), "iChannel%d", channel);
+            state.i_channels[channel] = rev::shader::GetUniformLocation(state.prog, uniform_name);
+        }
         return &state;
     };
     ShaderProgramState asset_shader_programs[64] = {};
@@ -3013,6 +3158,225 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         rev::shader::SetVec4(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect"), 0.0f, 0.0f, 1.0f, 1.0f);
         LOGV("Sprite shader OK\n");
     }
+
+    unsigned int runtime_shader_audio_texture = 0;
+    int runtime_shader_audio_frame = -1;
+    auto update_runtime_shader_audio_texture = [&](int frame) -> unsigned int {
+        if (runtime_shader_audio_texture && runtime_shader_audio_frame == frame)
+            return runtime_shader_audio_texture;
+        float samples[rev::runtime::kShaderAudioSampleFrames * 2] = {};
+#if HIMYM_USE_XM
+        if (g_shader_audio_state) {
+            std::lock_guard<std::mutex> lock(g_shader_audio_state->shader_audio_mutex);
+            memcpy(samples, g_shader_audio_state->shader_audio_samples, sizeof(samples));
+        }
+#endif
+        unsigned char pixels[rev::runtime::kShaderAudioTextureWidth * 2] = {};
+        rev::runtime::BuildShaderAudioTexture(samples, rev::runtime::kShaderAudioSampleFrames, pixels);
+        if (!runtime_shader_audio_texture) {
+            glGenTextures(1, &runtime_shader_audio_texture);
+            glBindTexture(GL_TEXTURE_2D, runtime_shader_audio_texture);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D, 0, 0x8229, rev::runtime::kShaderAudioTextureWidth, 2,
+                         0, 0x1903, GL_UNSIGNED_BYTE, pixels);
+        } else {
+            glBindTexture(GL_TEXTURE_2D, runtime_shader_audio_texture);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, rev::runtime::kShaderAudioTextureWidth, 2,
+                            0x1903, GL_UNSIGNED_BYTE, pixels);
+        }
+        runtime_shader_audio_frame = frame;
+        return runtime_shader_audio_texture;
+    };
+
+    struct RuntimePipelinePassState {
+        rev::shader::Program* program;
+        unsigned int fbos[2];
+        unsigned int textures[2];
+        int width;
+        int height;
+        int front;
+        ImageTexture channel_textures[rev::runtime::kMaxShaderChannels];
+    };
+    struct RuntimePipelineState {
+        bool valid;
+        int order[rev::runtime::kMaxShaderPasses];
+        int order_count;
+        RuntimePipelinePassState passes[rev::runtime::kMaxShaderPasses];
+    };
+    RuntimePipelineState runtime_pipelines[rev::runtime::kMaxShaderPipelines] = {};
+
+    auto load_pipeline_source = [&](int pipeline_index, int pass_index,
+                                    const char* declared_path, std::string* source) -> bool {
+        if (!source) return false;
+#if defined(HIMYM_PACKED_ASSETS)
+        char key[128] = {};
+        snprintf(key, sizeof(key), "shader_pipeline_%d_pass_%d_source", pipeline_index, pass_index);
+        const rev::pack::PackedAsset* asset = rev::pack::GetPackedAsset(key, kPackedAssets, kPackedAssetCount);
+        if (asset && asset->data && asset->size) {
+            source->assign(reinterpret_cast<const char*>(asset->data), asset->size);
+            return true;
+        }
+#endif
+        char resolved[640] = {};
+        if (!ResolveRuntimeAssetPath(declared_path, cues_path, resolved, sizeof(resolved))) return false;
+        FILE* source_file = nullptr;
+        fopen_s(&source_file, resolved, "rb");
+        if (!source_file) return false;
+        fseek(source_file, 0, SEEK_END);
+        long size = ftell(source_file);
+        fseek(source_file, 0, SEEK_SET);
+        if (size <= 0) { fclose(source_file); return false; }
+        source->resize((size_t)size);
+        const bool ok = fread(&(*source)[0], 1, (size_t)size, source_file) == (size_t)size;
+        fclose(source_file);
+        return ok;
+    };
+
+    if (scene_fbo_ready) {
+        for (int pipeline_index = 0; pipeline_index < shader_pipeline_count; ++pipeline_index) {
+            RuntimePipelineState& state = runtime_pipelines[pipeline_index];
+            char error[256] = {};
+            state.order_count = rev::runtime::BuildShaderPassOrder(
+                &shader_pipelines[pipeline_index], state.order, error, sizeof(error));
+            state.valid = state.order_count > 0;
+            for (int order_index = 0; state.valid && order_index < state.order_count; ++order_index) {
+                const int pass_index = state.order[order_index];
+                const rev::runtime::ShaderPass& pass = shader_pipelines[pipeline_index].passes[pass_index];
+                RuntimePipelinePassState& pass_state = state.passes[pass_index];
+                std::string source;
+                if (!load_pipeline_source(pipeline_index, pass_index, pass.source_path, &source)) {
+                    printf("WARNING: Cannot load shader pipeline %d pass %d: %s\n",
+                           pipeline_index, pass_index, pass.source_path);
+                    state.valid = false;
+                    break;
+                }
+                pass_state.program = rev::shader::CompileFromSource(vertex_shader, source.c_str());
+                if (!pass_state.program) { state.valid = false; break; }
+                pass_state.width = (int)(config.width * pass.resolution_scale);
+                pass_state.height = (int)(config.height * pass.resolution_scale);
+                if (pass_state.width < 1) pass_state.width = 1;
+                if (pass_state.height < 1) pass_state.height = 1;
+                glGenFramebuffers_rt(2, pass_state.fbos);
+                glGenTextures(2, pass_state.textures);
+                for (int target = 0; target < 2; ++target) {
+                    glBindTexture(GL_TEXTURE_2D, pass_state.textures[target]);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pass_state.width, pass_state.height,
+                                 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, 0x812F);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, 0x812F);
+                    glBindFramebuffer_rt(0x8D40, pass_state.fbos[target]);
+                    glFramebufferTexture2D_rt(0x8D40, 0x8CE0, GL_TEXTURE_2D, pass_state.textures[target], 0);
+                    if (glCheckFramebufferStatus_rt(0x8D40) != 0x8CD5) state.valid = false;
+                    glClearColor(0, 0, 0, 0);
+                    glClear(GL_COLOR_BUFFER_BIT);
+                }
+                for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                    const rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+                    if (channel.kind != rev::runtime::ShaderChannelTexture) continue;
+#if defined(HIMYM_PACKED_ASSETS)
+                    char key[128] = {};
+                    snprintf(key, sizeof(key), "shader_pipeline_%d_pass_%d_channel_%d",
+                             pipeline_index, pass_index, channel_index);
+                    const rev::pack::PackedAsset* asset = rev::pack::GetPackedAsset(key, kPackedAssets, kPackedAssetCount);
+                    if (asset) LoadImageTextureFromMemory(asset->data, asset->size,
+                                                          &pass_state.channel_textures[channel_index]);
+#else
+                    char resolved[640] = {};
+                    if (ResolveRuntimeAssetPath(channel.asset_path, cues_path, resolved, sizeof(resolved)))
+                        LoadImageTexture(resolved, &pass_state.channel_textures[channel_index]);
+#endif
+                }
+            }
+        }
+        glBindFramebuffer_rt(0x8D40, scene_fbo);
+        glViewport(0, 0, config.width, config.height);
+    }
+
+    auto render_shader_pipeline = [&](int pipeline_index, float pipeline_time,
+                                      float pipeline_dt, int pipeline_frame,
+                                      bool blend_layer, int blend_mode, float opacity) -> bool {
+        if (pipeline_index < 0 || pipeline_index >= shader_pipeline_count || !sprite_shader) return false;
+        RuntimePipelineState& state = runtime_pipelines[pipeline_index];
+        if (!state.valid) return false;
+        const rev::runtime::ShaderPipeline& pipeline = shader_pipelines[pipeline_index];
+        for (int order_index = 0; order_index < state.order_count; ++order_index) {
+            const int pass_index = state.order[order_index];
+            const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+            RuntimePipelinePassState& pass_state = state.passes[pass_index];
+            const int previous = pass_state.front;
+            const int destination = 1 - previous;
+            glBindFramebuffer_rt(0x8D40, pass_state.fbos[destination]);
+            glViewport(0, 0, pass_state.width, pass_state.height);
+            glDisable(GL_BLEND);
+            glDisable(GL_DEPTH_TEST);
+            glDepthMask(GL_FALSE);
+            glClearColor(0, 0, 0, 0);
+            glClear(GL_COLOR_BUFFER_BIT);
+            rev::shader::Use(pass_state.program);
+            rev::shader::SetVec3(pass_state.program, rev::shader::GetUniformLocation(pass_state.program, "iResolution"),
+                                 (float)pass_state.width, (float)pass_state.height, 1.0f);
+            rev::shader::SetFloat(pass_state.program, rev::shader::GetUniformLocation(pass_state.program, "iTime"), pipeline_time);
+            rev::shader::SetFloat(pass_state.program, rev::shader::GetUniformLocation(pass_state.program, "iTimeDelta"), pipeline_dt);
+            rev::shader::SetInt(pass_state.program, rev::shader::GetUniformLocation(pass_state.program, "iFrame"), pipeline_frame);
+            for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                const rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+                unsigned int texture = 0;
+                if (channel.kind == rev::runtime::ShaderChannelTexture)
+                    texture = pass_state.channel_textures[channel_index].texture_id;
+                else if (channel.kind >= rev::runtime::ShaderChannelBufferA &&
+                         channel.kind <= rev::runtime::ShaderChannelBufferD) {
+                    const int source_pass = channel.kind - rev::runtime::ShaderChannelBufferA + rev::runtime::ShaderPassBufferA;
+                    RuntimePipelinePassState& source = state.passes[source_pass];
+                    texture = source.textures[source.front];
+                } else if (channel.kind == rev::runtime::ShaderChannelSelfPreviousFrame)
+                    texture = pass_state.textures[previous];
+                else if (channel.kind == rev::runtime::ShaderChannelAudioSpectrum)
+                    texture = update_runtime_shader_audio_texture(pipeline_frame);
+                glActiveTexture(GL_TEXTURE0 + channel_index);
+                glBindTexture(GL_TEXTURE_2D, texture);
+                char uniform_name[24] = {};
+                snprintf(uniform_name, sizeof(uniform_name), "iChannel%d", channel_index);
+                rev::shader::SetInt(pass_state.program,
+                                    rev::shader::GetUniformLocation(pass_state.program, uniform_name), channel_index);
+            }
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            pass_state.front = destination;
+        }
+
+        RuntimePipelinePassState& image = state.passes[rev::runtime::ShaderPassImage];
+        if (!pipeline.passes[rev::runtime::ShaderPassImage].enabled) return false;
+        glBindFramebuffer_rt(0x8D40, scene_fbo_ready ? scene_fbo : 0);
+        glViewport(0, 0, config.width, config.height);
+        if (blend_layer) {
+            glEnable(GL_BLEND);
+            ApplyShaderLayerBlendMode(blend_mode, opacity);
+        } else {
+            glDisable(GL_BLEND);
+        }
+        rev::shader::Use(sprite_shader);
+        const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
+        rev::shader::SetVec2(sprite_shader, uniforms.position, 0.0f, 0.0f);
+        rev::shader::SetVec2(sprite_shader, uniforms.size, 1.0f, 1.0f);
+        rev::shader::SetFloat(sprite_shader, uniforms.rotation, 0.0f);
+        rev::shader::SetFloat(sprite_shader, uniforms.opacity, opacity);
+        rev::shader::SetVec3(sprite_shader, uniforms.color, 1.0f, 1.0f, 1.0f);
+        rev::shader::SetVec4(sprite_shader, uniforms.uv_rect, 0.0f, 0.0f, 1.0f, 1.0f);
+        rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_flip_v"), 0.0f);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, image.textures[image.front]);
+        rev::shader::SetInt(sprite_shader, uniforms.texture, 0);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        // Restore the shared sprite shader's atlas/image convention after
+        // sampling the pipeline render target with inverted V coordinates.
+        rev::shader::SetFloat(sprite_shader,
+                              rev::shader::GetUniformLocation(sprite_shader, "u_flip_v"), 1.0f);
+        return true;
+    };
 
     rev::shader::Program* post_shader = nullptr;
     if (scene_fbo_ready) {
@@ -3528,6 +3892,25 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                          static_cast<float>(config.width),
                                          static_cast<float>(config.height));
                 }
+                if (shader_state->i_resolution >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->i_resolution,
+                                         static_cast<float>(config.width),
+                                         static_cast<float>(config.height), 1.0f);
+                }
+                if (shader_state->i_time >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->i_time, 0.0f);
+                if (shader_state->i_time_delta >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->i_time_delta, 0.0f);
+                if (shader_state->i_frame >= 0) rev::shader::SetInt(shader_state->prog, shader_state->i_frame, 0);
+                if (shader_state->i_mouse >= 0) {
+                    int mouse_x = 0, mouse_y = 0;
+                    rev::platform::GetMousePosition(window, &mouse_x, &mouse_y);
+                    rev::shader::SetVec4(shader_state->prog, shader_state->i_mouse,
+                                         static_cast<float>(mouse_x),
+                                         static_cast<float>(config.height - mouse_y), 0.0f, 0.0f);
+                }
+                for (int channel = 0; channel < 4; ++channel) {
+                    if (shader_state->i_channels[channel] >= 0)
+                        rev::shader::SetInt(shader_state->prog, shader_state->i_channels[channel], 4 + channel);
+                }
                 if (shader_state->u_palette_low >= 0) {
                     rev::shader::SetVec3(shader_state->prog, shader_state->u_palette_low,
                                          shader_cues[si].palette_low[0], shader_cues[si].palette_low[1], shader_cues[si].palette_low[2]);
@@ -3861,6 +4244,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         audio_state->stop.store(false, std::memory_order_release);
 
         if (waveOutOpen(&audio_state->wave_out, WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL) == MMSYSERR_NOERROR) {
+            g_shader_audio_state = audio_state;
             audio_thread = CreateThread(nullptr, 0, AudioThreadProc, audio_state, 0, nullptr);
             LOGV("Audio started: %d Hz stereo\n", kAudioSampleRate);
         } else {
@@ -3875,6 +4259,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     double start_time = rev::platform::GetTime();
     double prev_time = start_time;
     int debug_frame = 0;
+    int shader_frame = 0;
 
     while (rev::platform::PollEvents(window) && !window->should_close) {
         double current_time = rev::platform::GetTime();
@@ -4185,7 +4570,32 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     ApplyShaderLayerBlendMode(cue.blend_mode, anim_opacity);
                 }
 
+                if (cue.shader_pipeline_index >= 0 &&
+                    render_shader_pipeline(cue.shader_pipeline_index, time, dt, shader_frame,
+                                           li != 0, cue.blend_mode, anim_opacity)) {
+                    continue;
+                }
+
                 rev::shader::Use(shader_state->prog);
+                if (shader_state->i_resolution >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->i_resolution,
+                                         static_cast<float>(config.width),
+                                         static_cast<float>(config.height), 1.0f);
+                }
+                if (shader_state->i_time >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->i_time, time);
+                if (shader_state->i_time_delta >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->i_time_delta, dt);
+                if (shader_state->i_frame >= 0) rev::shader::SetInt(shader_state->prog, shader_state->i_frame, shader_frame);
+                if (shader_state->i_mouse >= 0) {
+                    int mouse_x = 0, mouse_y = 0;
+                    rev::platform::GetMousePosition(window, &mouse_x, &mouse_y);
+                    rev::shader::SetVec4(shader_state->prog, shader_state->i_mouse,
+                                         static_cast<float>(mouse_x),
+                                         static_cast<float>(config.height - mouse_y), 0.0f, 0.0f);
+                }
+                for (int channel = 0; channel < 4; ++channel) {
+                    if (shader_state->i_channels[channel] >= 0)
+                        rev::shader::SetInt(shader_state->prog, shader_state->i_channels[channel], 4 + channel);
+                }
                 if (shader_state->u_time >= 0) {
                     rev::shader::SetFloat(shader_state->prog, shader_state->u_time, time);
                 }
@@ -5404,7 +5814,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float travel = rev::runtime::ComputeScrollTextTravel(
                         &scroll_text_atlases[scroll_idx], cue.text, cue.direction,
                         size_scale, cue.spacing, cue.wrap_gap,
-                        (float)config.width, (float)config.height);
+                        (float)config.width, (float)config.height,
+                        anim_x, anim_y, cue.loop_mode);
                     float wrapped = elapsed_time * anim_speed;
                     if (cue.loop_mode == 0) {
                         float speed_abs = fabsf(anim_speed);
@@ -5443,7 +5854,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (effective_size < 4.0f) effective_size = 4.0f;
 
                     char glyph_scroll_text[512] = {};
-                    if (cue.direction <= 1) {
+                    if (cue.direction <= 1 && cue.loop_mode == 0) {
                         snprintf(glyph_scroll_text, sizeof(glyph_scroll_text), "%s   %s", cue.text, cue.text);
                     } else {
                         strncpy_s(glyph_scroll_text, sizeof(glyph_scroll_text), cue.text, _TRUNCATE);
@@ -6228,6 +6639,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
         // Swap buffers
         rev::platform::SwapBuffers(window);
+        ++shader_frame;
         
         // Exit on ESC. On duration end, either loop or stop based on metadata.
         if (rev::platform::IsKeyPressed(window, VK_ESCAPE)) {
@@ -6243,6 +6655,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     // Cleanup audio
 #if HIMYM_USE_XM
     if (audio_state) {
+        g_shader_audio_state = nullptr;
         audio_state->stop.store(true, std::memory_order_release);
         if (audio_thread) {
             WaitForSingleObject(audio_thread, 2000);
@@ -6258,6 +6671,20 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         }
     }
 #endif
+    if (runtime_shader_audio_texture)
+        glDeleteTextures(1, &runtime_shader_audio_texture);
+    for (int pipeline_index = 0; pipeline_index < shader_pipeline_count; ++pipeline_index) {
+        for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+            RuntimePipelinePassState& pass = runtime_pipelines[pipeline_index].passes[pass_index];
+            if (pass.program) rev::shader::DestroyProgram(pass.program);
+            if (pass.textures[0] || pass.textures[1]) glDeleteTextures(2, pass.textures);
+            if ((pass.fbos[0] || pass.fbos[1]) && glDeleteFramebuffers_rt)
+                glDeleteFramebuffers_rt(2, pass.fbos);
+            for (int channel = 0; channel < rev::runtime::kMaxShaderChannels; ++channel)
+                if (pass.channel_textures[channel].texture_id)
+                    glDeleteTextures(1, &pass.channel_textures[channel].texture_id);
+        }
+    }
     if (sprite_shader) {
         rev::shader::DestroyProgram(sprite_shader);
     }

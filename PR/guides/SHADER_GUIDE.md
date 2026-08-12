@@ -1,611 +1,342 @@
-# Shader Authoring Guide
+# HiMYM Shader Authoring Guide
 
-**Write your own GLSL shader scenes for HowIMetYourMod**
+This is the current guide for using fullscreen shaders and Shadertoy-style
+multipass pipelines in the C++/ImGui editor, standalone runtime, and packed
+runtime.
 
-## Overview
+HiMYM requires OpenGL 3.3 or newer and uses GLSL 330 core. There are two shader
+workflows:
 
-HowIMetYourMod uses a **scene-based shader dispatch** system: one massive fragment shader with 38+ scene branches. Each scene is authored in a separate `.glsl` file and concatenated at build time.
+1. **Preset shaders** are built into HiMYM and expose the editor's palette,
+   speed, intensity, warp, noise, transform, fade, and curve controls.
+2. **Shadertoy pipelines** load project-owned GLSL files and support Image,
+   Buffer A-D, four channels per pass, texture inputs, feedback, and live XM
+   audio data.
 
-**Key concepts**:
-- **Split shader files**: One file per scene (`assets/shader/scenes/*.glsl`)
-- **Scene dispatch**: Runtime switches on `u_scene_id` uniform
-- **Shared helpers**: Common functions in `shader_common.glsl`
-- **CMake build**: Concatenates split files → `fragment.glsl` → embedded in runtime
-- **Curve-driven**: Animate parameters with editor curves (no hardcoded values)
+Both workflows use a normal shader cue for timing, ordering, blending, and
+opacity. A pipeline is assigned to that cue; if it is missing or invalid, HiMYM
+uses the cue's selected preset as a fallback.
 
----
+## Quick Start: Built-In Preset
 
-## Shader Pipeline Flow
+1. Select a scene in the timeline.
+2. Add a shader cue with the shader **+ Cue** button.
+3. In **Shader Parameters**, choose a shader under **Select Shader**.
+4. Set the cue start/end, layer order, blend mode, fades, and opacity.
+5. Adjust palette, speed, intensity, warp, noise, position, rotation, or motion.
+6. Close the modal and preview the scene.
+7. Use **Do It All** when ready to save, export, pack, build, and run.
 
-```
-Editor (Python)
-    ↓ Export
-assets/cues.txt (shader_cues, curves, pipeline)
-    ↓ CMake Read
+Preset 47, **Shadertoy Neon Lattice**, is a useful single-pass compatibility
+example.
 
-CMake Build:
-  1. Read shader_common.glsl (helpers)
-  2. Glob & sort assets/shader/scenes/*.glsl
-  3. Strip @editor_* metadata
-  4. Concatenate all → fragment.glsl
-  5. Append shader_footer.glsl (main function close)
-    ↓ Embed
+## Quick Start: Custom GLSL Pipeline
 
-embedded_assets.h (fragment_shader string)
-    ↓ Runtime Load
+1. Add or edit a shader cue and open **Shadertoy Pipeline**.
+2. Click **Create Pipeline**. The new pipeline is assigned to the cue and its
+   Image pass is enabled.
+3. Open **Image**, click **Browse GLSL**, and select a `.glsl`, `.frag`, or `.fs`
+   fragment shader.
+4. Confirm the modal reports **Valid pipeline: 1 enabled pass(es)**.
+5. Preview, then use **Do It All** to validate the packed runtime.
 
-OpenGL Shader Compilation
-    ↓ Render
+The browse button copies the source into the project's `project_assets`
+directory and stores a portable `project_assets/...` path. Keep project shader
+and texture assets there so another machine and the packer can resolve them.
 
-Fullscreen Quad (immediate mode)
-```
+## Writing a Single-Pass Shader
 
----
-
-## File Structure
-
-```
-assets/shader/
-├── shader_common.glsl       # Shared helpers (palette, vignette, etc.)
-├── shader_footer.glsl        # Main function close (gl_FragColor assignment)
-├── fragment.glsl             # Generated (gitignore)
-├── presets.json              # Shader preset library
-└── scenes/
-    ├── 00_plasma.glsl        # Scene 0: Plasma effect
-    ├── 01_tunnel.glsl        # Scene 1: Tunnel
-    ├── 02_starfield.glsl     # Scene 2: Starfield
-    ├── ...
-    ├── 36_rasterbars_classic.glsl
-    ├── 37_rasterbars_plasma.glsl
-    └── 38_rasterbars_metaballs.glsl
-```
-
-**Naming convention**: `<id>_<name>.glsl`  
-- `<id>`: Two-digit scene ID (00-99)
-- `<name>`: Descriptive name (lowercase, underscores)
-
----
-
-## Shader Scene Template
-
-### Basic Scene Structure
+The easiest portable format is a Shadertoy-style `mainImage` function:
 
 ```glsl
-// @shader_id 42
-// @name my_effect
-// @editor_dyn dyn0 | Speed multiplier for animation.
-// @editor_dyn dyn1 | Zoom level or depth amount.
-// @editor_dyn dyn2 | Color cycle rate.
-// @editor_dyn dyn3 | Distortion intensity.
+#version 330 core
 
-if (id == 42) {
-    // Convert normalized dyn values [-1, 1] to usable ranges
-    float anim_speed = mix(0.5, 3.0, (dyn.x + 1.0) * 0.5);
-    float zoom = mix(0.5, 2.0, (dyn.y + 1.0) * 0.5);
-    float color_rate = mix(0.1, 5.0, (dyn.z + 1.0) * 0.5);
-    float distort = mix(0.0, 0.5, (dyn.w + 1.0) * 0.5);
-    
-    // Time with speed multiplier
-    float t = st * anim_speed;
-    
-    // Your effect logic here
-    vec2 p = uv * 2.0 - 1.0;
-    p *= zoom;
-    
-    // Example: Simple plasma
-    float v = sin(p.x * 10.0 + t) + sin(p.y * 10.0 + t * 0.7);
-    v += sin((p.x + p.y) * 5.0 + t * 0.5);
-    v *= 0.25;
-    
-    // Map to palette
-    col = palette(v * color_rate);
-    
-    // Apply distortion
-    col = mix(col, vec3(dot(col, vec3(0.33))), distort);
-    
-    // Apply intensity
-    col *= ins;
-    
-    // Vignette
-    col *= vignette(uv);
-}
-```
-
-### Metadata Comments
-
-```glsl
-// @shader_id 42
-// Unique ID (0-99), must match filename
-// Used by runtime to dispatch to this scene
-
-// @name my_effect
-// Friendly name for editor dropdown
-// Shows as "my_effect" in shader preset list
-
-// @editor_dyn dyn0 | Description of dynamic parameter 0.
-// Documents what dyn0-dyn3 control
-// Shows in editor curve UI as tooltip/label
-```
-
-**Critical**: `@shader_id` must be unique and match filename!
-
----
-
-## Available Uniforms
-
-### Standard Uniforms
-
-```glsl
-uniform float u_time;          // Global time in seconds (0.0 at intro start)
-uniform vec2 u_resolution;     // Screen resolution (usually 1920x1080)
-uniform int u_scene_id;        // Active scene ID for dispatch
-
-// Shader-specific parameters
-uniform vec3 u_palette_low;    // Color triplet (0.0-1.0 RGB)
-uniform vec3 u_palette_mid;
-uniform vec3 u_palette_high;
-
-uniform float u_speed;         // Time multiplier (1.0 = normal)
-uniform float u_intensity;     // Effect strength (1.0 = normal)
-uniform float u_warp;          // Distortion amount (0.5 = default)
-
-uniform vec4 u_dyn;            // Dynamic parameters (dyn0, dyn1, dyn2, dyn3)
-                               // Range: [-1.0, +1.0] (0.0 = neutral)
-
-uniform float u_exposure;      // Brightness/exposure (0.76 = default)
-uniform float u_fade;          // Overall fade amount (0.0-1.0)
-```
-
-### Optional Uniforms (3D Stage)
-
-```glsl
-#ifdef REV_ENABLE_3D
-uniform mat4 u_model_matrix;   // Per-mesh transform
-uniform mat4 u_view_matrix;    // Camera view
-uniform mat4 u_proj_matrix;    // Projection
-uniform vec3 u_light_dir;      // Directional light
-uniform vec3 u_light_color;
-uniform vec3 u_ambient_color;
-#endif
-```
-
----
-
-## Shared Helpers (shader_common.glsl)
-
-### Palette Function
-
-```glsl
-vec3 palette(float t) {
-    // Cosine palette (Inigo Quilez style)
-    vec3 a = u_palette_low;
-    vec3 b = u_palette_mid - u_palette_low;
-    vec3 c = vec3(1.0, 1.0, 1.0);
-    vec3 d = u_palette_high;
-    return a + b * cos(6.28318 * (c * t + d));
-}
-```
-
-**Usage**: `vec3 color = palette(time_or_value);`
-
-### Vignette
-
-```glsl
-float vignette(vec2 uv) {
-    vec2 d = abs(uv - 0.5) * 2.0;
-    return 1.0 - dot(d, d) * 0.5;
-}
-```
-
-**Usage**: `col *= vignette(uv);` (darkens edges)
-
-### Dynamic Parameter Helpers
-
-```glsl
-// Convert bipolar [-1, 1] to unipolar [0, 1]
-float dynUni(float v) { return (clamp(v, -1.0, 1.0) + 1.0) * 0.5; }
-
-// Convert bipolar with dead zone (values near 0 stay 0)
-float dynBiDZ(float v, float dz) {
-    float a = abs(v);
-    if (a < dz) return 0.0;
-    return sign(v) * ((a - dz) / (1.0 - dz));
-}
-
-// Scale value to range [min, max]
-float dynMul(float v, float vmin, float vmax) {
-    return vmin + v * (vmax - vmin);
-}
-```
-
-**Usage**:
-```glsl
-float speed = dynMul(dynUni(dyn.x), 0.5, 3.0);  // Map dyn0 to [0.5, 3.0]
-float zoom = dynMul(dynUni(dyn.y), 0.8, 2.0);   // Map dyn1 to [0.8, 2.0]
-```
-
-### Noise Functions
-
-```glsl
-float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);  // Smoothstep
-    
-    float a = hash(i);
-    float b = hash(i + vec2(1.0, 0.0));
-    float c = hash(i + vec2(0.0, 1.0));
-    float d = hash(i + vec2(1.0, 1.0));
-    
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-```
-
-**Usage**: `float n = noise(uv * 10.0 + time);`
-
----
-
-## Effect Patterns
-
-### Pattern 1: Plasma
-
-```glsl
-if (id == 0) {
-    float speed = mix(0.5, 2.0, dynUni(dyn.x));
-    float complexity = mix(5.0, 20.0, dynUni(dyn.y));
-    float t = st * speed;
-    
-    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
-    
-    float v = 0.0;
-    v += sin(p.x * complexity + t);
-    v += sin(p.y * complexity + t * 0.7);
-    v += sin((p.x + p.y) * complexity * 0.5 + t * 0.5);
-    v += sin(length(p) * complexity + t * 0.3);
-    v *= 0.25;
-    
-    col = palette(v + t * 0.1);
-    col *= ins * vignette(uv);
-}
-```
-
-### Pattern 2: Tunnel
-
-```glsl
-if (id == 1) {
-    float speed = mix(0.3, 2.0, dynUni(dyn.x));
-    float twist = mix(0.0, 3.0, dynUni(dyn.y));
-    float t = st * speed;
-    
-    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
-    float r = length(p);
-    float a = atan(p.y, p.x);
-    
-    // Tunnel depth
-    float depth = 1.0 / (r + 0.1) + t;
-    
-    // Twist angle over depth
-    a += depth * twist;
-    
-    // UV for tunnel texture
-    vec2 tunnel_uv = vec2(a / 6.28318, depth);
-    
-    // Pattern
-    float pattern = sin(tunnel_uv.x * 10.0) * sin(tunnel_uv.y * 10.0);
-    
-    col = palette(pattern * 0.5 + 0.5);
-    col *= ins * (1.0 - r * 0.5);  // Center bright, edges dark
-}
-```
-
-### Pattern 3: Starfield
-
-```glsl
-if (id == 2) {
-    float speed = mix(0.1, 1.0, dynUni(dyn.x));
-    float density = mix(10.0, 50.0, dynUni(dyn.y));
-    float t = st * speed;
-    
-    vec2 p = (uv * 2.0 - 1.0) * vec2(u_resolution.x / u_resolution.y, 1.0);
-    
-    // Layer parallax stars
-    vec3 star_col = vec3(0.0);
-    for (float layer = 1.0; layer <= 3.0; layer += 1.0) {
-        vec2 layer_p = p * density / layer + t * layer * 0.1;
-        vec2 cell = floor(layer_p);
-        vec2 frac_p = fract(layer_p) - 0.5;
-        
-        float star = hash(cell);
-        if (star > 0.95) {
-            float brightness = 1.0 - length(frac_p) * 10.0;
-            brightness = max(0.0, brightness);
-            star_col += vec3(brightness) * palette(star) / layer;
-        }
-    }
-    
-    col = star_col * ins;
-}
-```
-
-### Pattern 4: Rasterbars
-
-```glsl
-if (id == 36) {
-    float scroll_speed = mix(0.5, 2.5, dynUni(dyn.x));
-    float bar_freq = mix(8.0, 24.0, dynUni(dyn.y));
-    float wave_amp = mix(0.0, 0.3, dynUni(dyn.z));
-    float bar_width = mix(0.5, 3.0, dynUni(dyn.w));
-    
-    float t = st * scroll_speed;
-    
-    // Horizontal sine wave displacement
-    float wave = sin(uv.y * 15.0 + t * 2.0) * wave_amp;
-    
-    // Vertical bars with motion
-    float bar = sin((uv.y + t) * bar_freq);
-    bar = smoothstep(0.0, bar_width * 0.1, abs(bar));
-    bar = 1.0 - bar;
-    
-    // Color cycle
-    float hue = fract(uv.y * 3.0 + t * 0.5);
-    col = palette(hue) * bar * ins * vignette(uv);
-}
-```
-
----
-
-## Curve Integration
-
-### Curve-Driven Parameters
-
-**Editor workflow**:
-1. Open "Shader Curves" modal
-2. Select target: `shader_id:42` (your shader)
-3. Select parameter: `dyn0`, `speed`, `intensity`, etc.
-4. Add curve points, adjust easing
-5. Export → Build → Test
-
-**Runtime evaluation**:
-- Curves are evaluated per-frame based on global time
-- Results are passed to shader as uniforms (`u_dyn`, `u_speed`, etc.)
-- Shader sees final value, no interpolation needed
-
-**Conversion pattern** (0.0-centered to range):
-```glsl
-// dyn.x is in [-1, 1] from curve (neutral = 0.0)
-float speed = mix(0.5, 3.0, (dyn.x + 1.0) * 0.5);  // Map to [0.5, 3.0]
-```
-
----
-
-## Advanced Techniques
-
-### Multi-Pass Composition
-
-**Layer stacking** (via shader_pipeline in editor):
-1. Scene 1: Background plasma (layer_role=background, opacity=1.0)
-2. Scene 2: Tunnel overlay (layer_role=overlay, opacity=0.7, blend=additive)
-3. Scene 3: Text glow (layer_role=overlay, opacity=0.5, blend=screen)
-
-**Runtime** blends layers in order (lower layer_order draws first).
-
-### Reaction to Music
-
-**Use `dyn0`-`dyn3` for reactive animation**:
-- Editor curves can be authored to match music beats
-- Example: `dyn0` pulses on kick drum (curve: 0.0 → 1.0 → 0.0 over beat)
-
-```glsl
-float bass_impact = max(0.0, dyn.x);  // Only positive values
-float scale = 1.0 + bass_impact * 0.5;  // Scale up on beat
-p *= scale;
-```
-
-### Shader Forking with Duplicator
-
-**Duplicate existing shader**:
-```powershell
-python tools/shader_scene_duplicator.py \
-    --source 0_plasma.glsl \
-    --name plasma_aggressive \
-    --speed 2.5 \
-    --intensity 1.8 \
-    --palette_low 0.8 0.1 0.1 \
-    --palette_mid 1.0 0.5 0.3 \
-    --palette_high 1.0 0.9 0.2
-```
-
-**Result**: New file `39_plasma_aggressive.glsl` with overrides.
-
----
-
-## Debugging Shaders
-
-### Runtime Diagnostics
-
-```powershell
-# Build with diagnostics
-cmake -S . -B build_diagnostics -DREV_DIAGNOSTICS=ON
-cmake --build build_diagnostics --config Release
-.\build_diagnostics\Release\intro.exe
-```
-
-**Logs**: `build_diagnostics/runtime_startup.log`
-
-### Shader Compilation Errors
-
-**CMake output** shows GLSL errors:
-```
-ERROR: 0:123: 'foo' : undeclared identifier
-ERROR: 0:124: 'vec4' : syntax error
-```
-
-**Common errors**:
-- Missing semicolon
-- Undeclared variable
-- Type mismatch (vec3 vs. float)
-- Wrong uniform name (check `shader_common.glsl`)
-
-### Visual Debugging
-
-**Color-code parts of your shader**:
-```glsl
-// Debug: Show UV coordinates as color
-col = vec3(uv, 0.0);  // Red=X, Green=Y
-
-// Debug: Show dyn values
-col = vec3((dyn.x + 1.0) * 0.5, (dyn.y + 1.0) * 0.5, 0.0);
-
-// Debug: Show time
-col = vec3(fract(t * 0.1));  // Cycles every 10 seconds
-```
-
----
-
-## Optimization Tips
-
-### Minimize Branching
-
-**Bad**:
-```glsl
-if (some_condition) {
-    col = expensive_calculation();
-} else {
-    col = another_expensive_calculation();
-}
-```
-
-**Good**:
-```glsl
-float factor = step(0.5, some_value);  // 0 or 1
-col = mix(calculation_a(), calculation_b(), factor);
-```
-
-### Reduce Texture Lookups
-
-**Texture lookups are expensive**:
-- Reuse sampled values when possible
-- Batch lookups (sample once, use multiple times)
-
-### Use Built-in Functions
-
-**Prefer** `smoothstep`, `mix`, `clamp` over manual math.
-
-**Example**:
-```glsl
-// Bad
-float fade = min(1.0, max(0.0, (value - 0.2) / 0.6));
-
-// Good
-float fade = smoothstep(0.2, 0.8, value);
-```
-
----
-
-## Shader Scene Checklist
-
-Before adding a new shader:
-
-- [ ] **Unique ID**: Check with `python tools/shader_id_finder.py --next`
-- [ ] **Filename**: `<id>_<name>.glsl` matches `@shader_id`
-- [ ] **Metadata**: `@shader_id`, `@name`, `@editor_dyn` comments present
-- [ ] **Dispatch**: `if (id == <your_id>) { ... }` in shader code
-- [ ] **Uniforms**: Only use declared uniforms (no `u_custom_param`)
-- [ ] **Helpers**: Use functions from `shader_common.glsl`
-- [ ] **Curves**: Map dyn0-dyn3 to meaningful controls
-- [ ] **Intensity**: Multiply final color by `ins`
-- [ ] **Vignette**: Apply `vignette(uv)` for polish
-- [ ] **Preset**: Add entry to `assets/shader/presets.json`
-- [ ] **Test**: Build and run with "Do It All"
-
----
-
-## Example: Complete Shader Scene
-
-**File**: `assets/shader/scenes/99_example_complete.glsl`
-
-```glsl
-// @shader_id 99
-// @name example_complete
-// @editor_dyn dyn0 | Rotation speed.
-// @editor_dyn dyn1 | Scale pulsation amount.
-// @editor_dyn dyn2 | Color shift rate.
-// @editor_dyn dyn3 | Noise intensity.
-
-if (id == 99) {
-    // Map dynamics to ranges
-    float rot_speed = mix(0.0, 3.0, (dyn.x + 1.0) * 0.5);
-    float scale_amount = mix(0.8, 1.5, (dyn.y + 1.0) * 0.5);
-    float color_rate = mix(0.5, 2.0, (dyn.z + 1.0) * 0.5);
-    float noise_ins = max(0.0, dyn.w);  // Only positive
-    
-    // Time with speed
-    float t = st * u_speed;
-    
-    // Centered coordinates
-    vec2 p = (uv * 2.0 - 1.0);
-    p.x *= u_resolution.x / u_resolution.y;
-    
-    // Rotation
-    float angle = t * rot_speed;
-    float c = cos(angle);
-    float s = sin(angle);
-    p = mat2(c, -s, s, c) * p;
-    
-    // Scale pulsation
-    float scale = scale_amount + sin(t * 2.0) * 0.2;
-    p *= scale;
-    
-    // Pattern
-    float pattern = sin(p.x * 10.0) * sin(p.y * 10.0);
-    pattern += sin(length(p) * 5.0 + t);
-    pattern *= 0.5;
-    
-    // Noise overlay
-    float n = noise(p * 5.0 + t);
-    pattern = mix(pattern, n, noise_ins * 0.3);
-    
-    // Color mapping
-    vec3 base_col = palette(pattern * color_rate + t * 0.1);
-    
-    // Apply intensity and vignette
-    col = base_col * ins * vignette(uv);
-    
-    // Optional: Add glow at center
-    float glow = 1.0 / (length(p) + 1.0);
-    col += u_palette_high * glow * 0.2;
-}
-```
-
-**Preset** (`assets/shader/presets.json`):
-```json
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
 {
-  "example_complete_default": {
-    "shader_scene_id": 99,
-    "speed": 1.0,
-    "intensity": 1.2,
-    "warp": 0.5,
-    "palette_low": [0.1, 0.2, 0.5],
-    "palette_mid": [0.5, 0.3, 0.8],
-    "palette_high": [0.9, 0.7, 1.0]
-  }
+    vec2 p = (2.0 * fragCoord - iResolution.xy) / iResolution.y;
+    float glow = 0.03 / max(abs(length(p) - 0.45), 0.003);
+    vec3 color = glow * (0.5 + 0.5 * cos(iTime + vec3(0.0, 2.0, 4.0)));
+    fragColor = vec4(color, 1.0);
 }
 ```
 
----
+Do not add `main()` when using this form. HiMYM detects `mainImage`, injects the
+supported uniforms and output declarations, and creates the GLSL `main()`
+bridge. Use `#version 330 core` as the first line. If a source omits the version
+or uses a common Shadertoy ES version, HiMYM normalizes it to `#version 330 core`
+in memory without modifying the project file; the pipeline modal reports when
+this happens. GLSL features that are genuinely incompatible with 330 still
+need to be ported manually.
 
-## Next Steps
+You can instead write a native GLSL fragment shader:
 
-- **[Curve System Guide](CURVE_SYSTEM_GUIDE.md)** - Animate shader parameters
-- **[Editor Guide](EDITOR_GUIDE.md)** - Use shader scenes in timeline
-- **[Tools Reference](../tools/SHADER_TOOLS.md)** - Duplicator and ID finder
-- **[API Reference](../architecture/API_REFERENCE.md)** - Runtime shader API
+```glsl
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform float iTime;
+uniform vec3 iResolution;
 
----
+void main()
+{
+    vec2 p = (uv * 2.0 - 1.0) *
+             vec2(iResolution.x / iResolution.y, 1.0);
+    fragColor = vec4(0.5 + 0.5 * cos(iTime + p.xyx + vec3(0, 2, 4)), 1.0);
+}
+```
 
-**Last Updated**: May 30, 2026  
-**Version**: 1.0
+Native shaders must declare every input they use. HiMYM supplies the same
+runtime values whether the declarations came from the adapter or the source.
+
+## Supported Shadertoy Uniforms
+
+| Uniform | Meaning |
+|---|---|
+| `vec3 iResolution` | Current pass width, height, and `1.0` |
+| `float iTime` | Timeline time in seconds |
+| `float iTimeDelta` | Frame delta; editor preview uses deterministic `1/60` |
+| `int iFrame` | Rendered frame counter |
+| `vec4 iMouse` | Standalone window-relative mouse; editor currently supplies zero |
+| `sampler2D iChannel0..3` | The four inputs configured for this pass |
+
+Not currently supplied: `iDate`, `iChannelResolution`, `iChannelTime`,
+`iSampleRate`, cubemaps, volume textures, video, webcam, microphone, and
+keyboard textures. Replace their uses or declare your own constants when
+porting a shader that depends on them.
+
+## Building a Multipass Effect
+
+A pipeline contains five fixed pass slots:
+
+- **Image**: required final result, always executed last.
+- **Buffer A-D**: optional intermediate or persistent passes.
+
+For every enabled pass:
+
+1. Enable the pass.
+2. Select its GLSL source.
+3. Choose a **Resolution Scale** from `0.125` to `1.0`.
+4. Configure Channel 0-3.
+
+HiMYM validates dependencies and calculates a deterministic order. A buffer is
+rendered before any pass that reads it. Cycles and references to disabled
+buffers are rejected and shown in red in the modal.
+
+### Example: Buffer A Feeding Image
+
+Configure **Buffer A** with this source:
+
+```glsl
+#version 330 core
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    vec2 uv = fragCoord / iResolution.xy;
+    float rings = 0.5 + 0.5 * sin(length(uv - 0.5) * 80.0 - iTime * 5.0);
+    fragColor = vec4(vec3(rings), 1.0);
+}
+```
+
+Then set **Image → Channel 0 → Buffer A** and use:
+
+```glsl
+#version 330 core
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    vec2 uv = fragCoord / iResolution.xy;
+    float field = texture(iChannel0, uv).r;
+    vec3 color = mix(vec3(0.01, 0.02, 0.08), vec3(0.2, 0.8, 1.0), field);
+    fragColor = vec4(color, 1.0);
+}
+```
+
+## Channel Types
+
+Each pass has four independently configured channels:
+
+| Type | Data bound to `iChannelN` |
+|---|---|
+| **None** | Texture 0; sampling result is undefined/black depending on driver |
+| **Texture** | An imported 2D image |
+| **Buffer A-D** | That buffer's latest output from the current frame |
+| **Self Previous Frame** | This pass's output from the previous frame |
+| **Audio Spectrum** | Live Shadertoy-style XM audio texture |
+
+Use **Browse Texture** for texture inputs. HiMYM copies supported images into
+`project_assets`, loads them in the editor and standalone runtime, and embeds
+only referenced channel textures in packed builds.
+
+### Previous-Frame Feedback
+
+To make trails, fluid-like accumulation, or temporal distortion:
+
+1. Enable a Buffer pass.
+2. Set one of its channels to **Self Previous Frame**.
+3. Sample that channel in the same pass.
+4. Feed the buffer into Image or another buffer.
+
+```glsl
+#version 330 core
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    vec2 uv = fragCoord / iResolution.xy;
+    vec2 drift = vec2(0.0015, 0.0);
+    vec3 history = texture(iChannel0, uv - drift).rgb * 0.985;
+    float pulse = exp(-80.0 * dot(uv - 0.5, uv - 0.5));
+    fragColor = vec4(history + pulse * vec3(0.1, 0.4, 1.0), 1.0);
+}
+```
+
+Feedback uses two textures per enabled pass and swaps them after rendering.
+Initial feedback is cleared to transparent black. Seeking or looping does not
+currently reset feedback history; reopening/resizing the preview or rebuilding
+the pipeline resources does.
+
+### Audio Spectrum and Waveform
+
+**Audio Spectrum** binds a `512 × 2` single-channel texture generated from the
+latest 1024 decoded stereo XM frames:
+
+- Row 0: frequency magnitude in `[0,1]`.
+- Row 1: waveform mapped from `[-1,1]` to `[0,1]`.
+
+Sample the center of each row:
+
+```glsl
+float spectrum = texture(iChannel0, vec2(frequency, 0.25)).r;
+float waveform = texture(iChannel0, vec2(position, 0.75)).r * 2.0 - 1.0;
+```
+
+Example audio bars:
+
+```glsl
+#version 330 core
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    vec2 uv = fragCoord / iResolution.xy;
+    float band = floor(uv.x * 64.0) / 64.0;
+    float level = texture(iChannel0, vec2(band, 0.25)).r;
+    float bar = step(uv.y, level);
+    vec3 color = mix(vec3(0.02), vec3(0.2, 0.7, 1.0), bar);
+    fragColor = vec4(color, 1.0);
+}
+```
+
+When no XM is active, the spectrum row is zero and the waveform row represents
+silence at `0.5`. Audio analysis and texture upload happen only when a pipeline
+actually uses the channel.
+
+## Resolution and Performance
+
+Resolution scale applies independently to every pass. Use it deliberately:
+
+- `1.0`: final Image, sharp patterns, text-like details.
+- `0.5`: raymarching, blur, clouds, fluid buffers.
+- `0.25` or `0.125`: broad bloom, feedback, displacement, cheap simulation.
+
+An enabled pass owns two RGBA render targets, so its approximate color-buffer
+memory is `width × height × 4 × 2` bytes. A 1920×1080 pass at full scale is
+about 16 MiB before driver overhead; half scale is about 4 MiB.
+
+For competition reliability:
+
+- Bound raymarch and loop iteration counts at compile time.
+- Avoid dynamic indexing patterns that vary across older 3.3 drivers.
+- Clamp denominators and ray distances to avoid NaNs and infinities.
+- Prefer a lower buffer resolution over a visually invisible loop reduction.
+- Test on the target Windows 11 machine and GPU when possible.
+
+## Layering, Timing, and Fallback
+
+The owning shader cue controls when and how the pipeline is composited:
+
+- Cue start/end and scene timing
+- Layer role and layer order
+- Blend mode and opacity
+- Fade-in and fade-out envelope
+
+Pipeline GLSL receives project timeline time, not time reset to the cue start.
+Use `iTime` directly for globally synchronized animation. Pipeline files do not
+automatically receive preset-only palette, noise, speed, warp, transform, or
+curve uniforms; encode controls in GLSL or use timing/layer controls on the cue.
+
+Keep a suitable preset selected on the cue. It is rendered when the assigned
+pipeline cannot be loaded, compiled, or validated.
+
+## Saving, Exporting, and Packing
+
+Pipeline data is saved in project JSON. Export writes these deterministic
+sections to `cues.txt`:
+
+- `[shader_pipeline_cues]`
+- `[shader_pipelines]`
+- `[shader_pipeline_passes]`
+- `[shader_pipeline_channels]`
+
+The packer scans enabled passes and embeds only referenced GLSL sources and
+texture channel assets. After changing exported pipeline data, re-export and
+repack before judging `minimal_intro_packed`; packed feature and asset manifests
+are generated from the exported cues.
+
+Recommended workflow:
+
+1. Save and preview in the editor.
+2. Confirm the pipeline is reported valid.
+3. Use **Do It All**, or explicitly Export → Pack → configure/build → Run.
+4. Compare editor preview with the standalone or packed runtime.
+
+## Adding a Built-In Preset
+
+Project pipelines need no C++ registry edit. To ship a reusable built-in preset,
+add one unique entry to `g_shader_presets` in
+`revision_libs/rev_editor/src/shader_presets.cpp`, then rebuild `editor_app` and
+`minimal_intro`. The registry is authoritative; never assume the IDs listed in
+older documentation are complete.
+
+## Troubleshooting
+
+### Pipeline is red or falls back to the preset
+
+- Ensure Image is enabled and has a source.
+- Ensure every enabled Buffer has a source.
+- Do not reference a disabled buffer.
+- Remove current-frame dependency cycles.
+- Use **Self Previous Frame**, not the same Buffer channel, for feedback.
+
+### Shader compiles on Shadertoy but not in HiMYM
+
+- Prefer `#version 330 core`. HiMYM repairs missing or different version
+  directives in memory, but it cannot translate incompatible GLSL features.
+- Remove unsupported uniforms and input types.
+- Remove Shadertoy Common-tab dependencies or copy the shared functions into
+  each source that uses them.
+- Supply each Buffer/Image tab as its own GLSL file.
+- Check the debugger/runtime shader compile log for the exact GLSL error.
+
+### Texture or GLSL works in editor but not packed runtime
+
+- Use **Browse GLSL** or **Browse Texture** so assets are copied into
+  `project_assets`.
+- Re-export and repack after changing a source path or channel.
+- Confirm the referenced file still exists at export time.
+
+### Audio shader is static
+
+- Confirm an XM music cue is active and playing.
+- Confirm the pass channel is **Audio Spectrum** and the shader samples the
+  correct row.
+- Remember that silence is spectrum `0.0` and waveform `0.5`.
+
+### Feedback behaves differently after seeking
+
+Feedback is render-history state, not timeline-derived state. Restart or resize
+the preview to clear it when evaluating from a clean initial frame.
+
+## Relevant Source Files
+
+- `revision_libs/rev_runtime/include/rev_runtime.h`: pipeline/channel contract
+- `revision_libs/rev_runtime/src/rev_runtime.cpp`: graph validation and audio texture
+- `revision_libs/rev_shader/src/shader.cpp`: GLSL compilation and `mainImage` adapter
+- `revision_libs/rev_editor/src/editor_modals.cpp`: pipeline authoring UI
+- `revision_libs/rev_editor/src/editor_context.cpp`: editor preview execution
+- `examples/minimal_intro/main.cpp`: standalone and packed execution
+- `revision_libs/rev_pack/src/rev_pack.cpp`: project-specific packed discovery

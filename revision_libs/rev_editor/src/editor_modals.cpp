@@ -8,12 +8,41 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <string>
 #include <windows.h>
 #include <gdiplus.h>
 #include "imgui.h"
 
 namespace rev {
 namespace editor {
+
+static bool InspectPipelineShaderVersion(const EditorContext* editor, const char* declared_path,
+                                         rev::shader::FragmentSourceVersionStatus* status) {
+    if (!editor || !editor->project || !declared_path || !declared_path[0] || !status) return false;
+    char resolved[640] = {};
+    if (strchr(declared_path, ':') || declared_path[0] == '\\' || declared_path[0] == '/') {
+        strncpy_s(resolved, declared_path, _TRUNCATE);
+    } else if (editor->project->workspace_path[0]) {
+        snprintf(resolved, sizeof(resolved), "%s\\%s", editor->project->workspace_path, declared_path);
+    }
+    FILE* file = nullptr;
+    fopen_s(&file, resolved, "rb");
+    if (!file && editor->project->assets_path[0]) {
+        snprintf(resolved, sizeof(resolved), "%s\\%s", editor->project->assets_path, declared_path);
+        fopen_s(&file, resolved, "rb");
+    }
+    if (!file) return false;
+    fseek(file, 0, SEEK_END);
+    const long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    if (size <= 0) { fclose(file); return false; }
+    std::string source((size_t)size, '\0');
+    const bool loaded = fread(&source[0], 1, (size_t)size, file) == (size_t)size;
+    fclose(file);
+    if (!loaded) return false;
+    *status = rev::shader::GetFragmentSourceVersionStatus(source.c_str());
+    return true;
+}
 
 static void CloseCueSettingsForRecording(EditorContext* editor)
 {
@@ -1939,6 +1968,141 @@ void RenderShaderModal(EditorContext* editor) {
             ImGui::EndCombo();
         }
         ImGui::TextDisabled("%s", current_preset_description);
+
+        if (!editor->shader_modal_asset_mode && ImGui::CollapsingHeader("Shadertoy Pipeline")) {
+            const char* pipeline_preview = "Preset only";
+            if (cue->shader_pipeline_index >= 0 &&
+                cue->shader_pipeline_index < editor->project->shader_pipeline_count)
+                pipeline_preview = editor->project->shader_pipelines[cue->shader_pipeline_index].name;
+            if (ImGui::BeginCombo("Pipeline", pipeline_preview)) {
+                if (ImGui::Selectable("Preset only", cue->shader_pipeline_index < 0)) {
+                    cue->shader_pipeline_index = -1;
+                    AutoSave();
+                }
+                for (int pipeline_index = 0; pipeline_index < editor->project->shader_pipeline_count; ++pipeline_index) {
+                    const bool selected = cue->shader_pipeline_index == pipeline_index;
+                    if (ImGui::Selectable(editor->project->shader_pipelines[pipeline_index].name, selected)) {
+                        cue->shader_pipeline_index = pipeline_index;
+                        AutoSave();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (editor->project->shader_pipeline_count < rev::runtime::kMaxShaderPipelines &&
+                ImGui::Button("Create Pipeline")) {
+                const int pipeline_index = editor->project->shader_pipeline_count++;
+                rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+                rev::runtime::InitializeShaderPipeline(&pipeline);
+                snprintf(pipeline.name, sizeof(pipeline.name), "Pipeline %d", pipeline_index + 1);
+                pipeline.passes[rev::runtime::ShaderPassImage].enabled = true;
+                cue->shader_pipeline_index = pipeline_index;
+                AutoSave();
+            }
+
+            if (cue->shader_pipeline_index >= 0 &&
+                cue->shader_pipeline_index < editor->project->shader_pipeline_count) {
+                rev::runtime::ShaderPipeline& pipeline =
+                    editor->project->shader_pipelines[cue->shader_pipeline_index];
+                auto BrowsePipelineAsset = [&](char* destination, size_t destination_size,
+                                               const char* filter) {
+                    OPENFILENAMEA ofn = {};
+                    char filepath[512] = {};
+                    ofn.lStructSize = sizeof(ofn);
+                    ofn.hwndOwner = (HWND)editor->window->hwnd;
+                    ofn.lpstrFile = filepath;
+                    ofn.nMaxFile = (DWORD)sizeof(filepath);
+                    ofn.lpstrFilter = filter;
+                    ofn.nFilterIndex = 1;
+                    ofn.lpstrInitialDir = editor->project->assets_path[0]
+                        ? editor->project->assets_path : editor->startup_dir;
+                    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+                    if (!GetOpenFileNameA(&ofn)) return;
+                    const char* filename = strrchr(filepath, '\\');
+                    if (!filename) filename = strrchr(filepath, '/');
+                    filename = filename ? filename + 1 : filepath;
+                    if (editor->project->assets_path[0]) {
+                        char copied_path[640] = {};
+                        snprintf(copied_path, sizeof(copied_path), "%s\\%s",
+                                 editor->project->assets_path, filename);
+                        if (_stricmp(filepath, copied_path) != 0 && !CopyFileA(filepath, copied_path, FALSE)) {
+                            printf("[SHADER PIPELINE] Could not copy %s (err=%lu)\n", filepath, GetLastError());
+                            return;
+                        }
+                        snprintf(destination, destination_size, "project_assets/%s", filename);
+                    } else {
+                        strncpy_s(destination, destination_size, filepath, _TRUNCATE);
+                        for (char* p = destination; *p; ++p) if (*p == '\\') *p = '/';
+                    }
+                    AutoSave();
+                };
+                if (ImGui::InputText("Pipeline Name", pipeline.name, sizeof(pipeline.name))) AutoSave();
+                static const char* pass_names[rev::runtime::kMaxShaderPasses] = {
+                    "Image", "Buffer A", "Buffer B", "Buffer C", "Buffer D"
+                };
+                static const char* channel_names[] = {
+                    "None", "Texture", "Buffer A", "Buffer B", "Buffer C", "Buffer D",
+                    "Self Previous Frame", "Audio Spectrum"
+                };
+                for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+                    rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+                    ImGui::PushID(pass_index);
+                    if (ImGui::TreeNode(pass_names[pass_index])) {
+                        if (ImGui::Checkbox("Enabled", &pass.enabled)) AutoSave();
+                        if (ImGui::SliderFloat("Resolution Scale", &pass.resolution_scale, 0.125f, 1.0f, "%.3f")) AutoSave();
+                        if (ImGui::InputText("GLSL Source", pass.source_path, sizeof(pass.source_path))) AutoSave();
+                        ImGui::SameLine();
+                        if (ImGui::Button("Browse GLSL"))
+                            BrowsePipelineAsset(pass.source_path, sizeof(pass.source_path),
+                                                "GLSL Fragment Shader\0*.glsl;*.frag;*.fs\0All Files\0*.*\0");
+                        if (pass.enabled && pass.source_path[0]) {
+                            rev::shader::FragmentSourceVersionStatus version_status =
+                                rev::shader::FragmentSourceVersionReady;
+                            if (!InspectPipelineShaderVersion(editor, pass.source_path, &version_status)) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.25f, 1.0f),
+                                                   "GLSL source cannot be read");
+                            } else if (version_status == rev::shader::FragmentSourceVersionMissing) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f),
+                                                   "Missing #version: HiMYM adds #version 330 core in memory");
+                            } else if (version_status == rev::shader::FragmentSourceVersionConverted) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f),
+                                                   "Version converted to #version 330 core in memory");
+                            } else {
+                                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, 1.0f),
+                                                   "GLSL version: #version 330 core");
+                            }
+                        }
+                        for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                            rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+                            ImGui::PushID(channel_index);
+                            char channel_label[32] = {};
+                            snprintf(channel_label, sizeof(channel_label), "Channel %d", channel_index);
+                            const int channel_count = (int)_countof(channel_names);
+                            if (channel.kind < 0 || channel.kind >= channel_count) channel.kind = 0;
+                            if (ImGui::Combo(channel_label, &channel.kind, channel_names, channel_count)) AutoSave();
+                            if (channel.kind == rev::runtime::ShaderChannelTexture &&
+                                ImGui::InputText("Texture Path", channel.asset_path, sizeof(channel.asset_path))) AutoSave();
+                            if (channel.kind == rev::runtime::ShaderChannelTexture) {
+                                ImGui::SameLine();
+                                if (ImGui::Button("Browse Texture"))
+                                    BrowsePipelineAsset(channel.asset_path, sizeof(channel.asset_path),
+                                                        "Images\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0All Files\0*.*\0");
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+                int pass_order[rev::runtime::kMaxShaderPasses] = {};
+                char pipeline_error[256] = {};
+                const int pass_count = rev::runtime::BuildShaderPassOrder(
+                    &pipeline, pass_order, pipeline_error, sizeof(pipeline_error));
+                if (pass_count < 0)
+                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.25f, 1.0f), "%s", pipeline_error);
+                else
+                    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, 1.0f), "Valid pipeline: %d enabled pass(es)", pass_count);
+            }
+        }
         
         ImGui::Separator();
         
