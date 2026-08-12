@@ -20,6 +20,10 @@ project, while `minimal_intro` remains a universal external-cue player.
 - [x] Compile out procedural mesh rendering when no mesh cue is authored.
 - [x] Pack only the fullscreen and enabled asset-shader GLSL presets referenced
       by the project, retaining preset 0 solely as the no-cue fallback.
+- [x] Author and execute Shadertoy-compatible Image/Buffer A-D pipelines with
+      scaled passes, texture inputs, previous-frame feedback, and XM audio data.
+- [x] Pack only enabled project-pipeline GLSL and texture channels, preserving
+      them during editor asset cleanup and resolving them from the project root.
 - [x] Compile out animated-sprite and scrolling-text parsing/rendering when the
       exported project contains no cues from those families.
 - [x] Generate packed post-effect GLSL containing only effect branches enabled
@@ -53,6 +57,10 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
 - [x] Visually compare the `rectruitro` editor preview and packed standalone runtime.
 - [x] Verify ESC and Alt+F4 shutdown during loading, playback, and audio teardown.
 - [x] Audit 2D/3D interleaving for VAO, depth-write, blend, and draw-order parity.
+- [x] Restore sprite UV state after pipeline compositing and keep text/scroll-text
+      atlas orientation identical in editor, standalone, and packed playback.
+- [x] Measure clamp-mode scroll travel from glyph extent and authored start so
+      text exits the viewport without whitespace padding.
 - [x] Validate opaque-before-transparent glTF material-slot rendering.
 - [x] Track the actual Win32 client size and use the centered
       letterbox/pillarbox output viewport for the authored 16:9 canvas.
