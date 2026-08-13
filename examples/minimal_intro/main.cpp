@@ -1616,9 +1616,18 @@ static int LoadSceneMenus(const char* path, RuntimeSceneMenu* menus, int max_men
         for (int i = 0; i < declared_count && i < rev::runtime::kMaxMenuItems; ++i) {
             field = strtok_s(nullptr, "|\r\n", &context); if (!field) break;
             rev::runtime::MenuItem& item = out.menu.items[out.menu.item_count];
-            if (sscanf_s(field, "%63[^,],%d,%f,%f,%f,%f", item.label,
+            item.animated_sprite_cue = -1;
+            int parsed = sscanf_s(field, "%63[^,],%d,%f,%f,%f,%f,%d,%d,%f,%f", item.label,
                          (unsigned)_countof(item.label), &item.target_scene, &item.x, &item.y,
-                         &item.width, &item.height) == 6) ++out.menu.item_count;
+                         &item.width, &item.height, &item.visual_type, &item.animated_sprite_cue,
+                         &item.image_x, &item.image_y);
+            if (parsed >= 6) {
+                if (parsed < 10) {
+                    item.image_x = item.x + item.width * 0.5f;
+                    item.image_y = item.y + item.height * 0.5f;
+                }
+                ++out.menu.item_count;
+            }
         }
         ++count;
     }
@@ -2694,11 +2703,11 @@ int main(int argc, char* argv[]) {
     int scene_layer_post_effect_count = LoadSceneLayerPostEffects(
         cues_path, scene_layer_post_effects, 64);
     LOGV("Loaded %d scene layer post-effect stack(s)\n", scene_layer_post_effect_count);
-    rev::runtime::SceneNavigation scene_navigation[64] = {};
+    static rev::runtime::SceneNavigation scene_navigation[64] = {};
     int scene_navigation_count = LoadSceneNavigation(cues_path, scene_navigation, 64);
-    RuntimeSceneMenu scene_menus[64] = {};
+    static RuntimeSceneMenu scene_menus[64] = {};
     int scene_menu_count = LoadSceneMenus(cues_path, scene_menus, 64);
-    TextTexture scene_menu_textures[64][rev::runtime::kMaxMenuItems] = {};
+    static TextTexture scene_menu_textures[64][rev::runtime::kMaxMenuItems] = {};
     LOGV("Loaded %d scene row(s), %d interactive menu(s)\n", scene_navigation_count, scene_menu_count);
     
     // Setup default fallback shader cue
@@ -3218,7 +3227,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         for (int menu_index = 0; menu_index < scene_menu_count; ++menu_index) {
             for (int item_index = 0; item_index < scene_menus[menu_index].menu.item_count; ++item_index) {
                 const char* label = scene_menus[menu_index].menu.items[item_index].label;
-                if (label[0]) RenderTextToTexture(label, "Segoe UI", 42.0f, 1.0f, 1.0f, 1.0f,
+                if (scene_menus[menu_index].menu.items[item_index].visual_type == 0 && label[0])
+                    RenderTextToTexture(label, "Segoe UI", 42.0f, 1.0f, 1.0f, 1.0f,
                                                   &scene_menu_textures[menu_index][item_index]);
             }
         }
@@ -5275,6 +5285,39 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         anim_frame = rev::curve::Evaluate(curves[cue.curve_frame], t);
                     }
 
+                    float instance_x[rev::runtime::kMaxMenuItems] = {};
+                    float instance_y[rev::runtime::kMaxMenuItems] = {};
+                    int instance_item[rev::runtime::kMaxMenuItems] = {};
+                    int instance_count = 0;
+                    int scene_sprite_index = -1;
+                    if (active_menu && current_scene_index >= 0 && current_scene_index < scene_navigation_count) {
+                        int ordinal = 0;
+                        const rev::runtime::SceneNavigation& active_scene = scene_navigation[current_scene_index];
+                        for (int candidate = 0; candidate < animated_sprite_cue_count; ++candidate) {
+                            if (animated_sprite_cues[candidate].cue_start >= active_scene.start_time &&
+                                animated_sprite_cues[candidate].cue_start < active_scene.end_time) {
+                                if (candidate == anim_idx) { scene_sprite_index = ordinal; break; }
+                                ++ordinal;
+                            }
+                        }
+                        for (int item_index = 0; item_index < active_menu->menu.item_count; ++item_index) {
+                            const rev::runtime::MenuItem& menu_item = active_menu->menu.items[item_index];
+                            if (menu_item.visual_type == 1 &&
+                                menu_item.animated_sprite_cue == scene_sprite_index) {
+                                instance_x[instance_count] = menu_item.image_x;
+                                instance_y[instance_count] = menu_item.image_y;
+                                instance_item[instance_count] = item_index;
+                                ++instance_count;
+                            }
+                        }
+                    }
+                    if (instance_count == 0) {
+                        instance_x[0] = anim_x;
+                        instance_y[0] = anim_y;
+                        instance_item[0] = -1;
+                        instance_count = 1;
+                    }
+
                     int frame_count = 0;
                     for (const char* p = cue.frame_keys_csv; *p; ++p) if (*p == ';') ++frame_count;
                     if (cue.frame_keys_csv[0]) ++frame_count;
@@ -5343,12 +5386,6 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
                     float w = (frame_tex.width * anim_scale) / (float)config.width * 2.0f;
                     float h = (frame_tex.height * anim_scale) / (float)config.height * 2.0f;
-                    float x = (anim_x * 2.0f - 1.0f);
-                    float y = -((anim_y * 2.0f) - 1.0f);
-                    if (!IsSpriteVisible(x, y, w, h)) {
-                        glDeleteTextures(1, &frame_tex.texture_id);
-                        continue;
-                    }
                     const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
                     int u_pos = uniforms.position;
                     int u_sz  = uniforms.size;
@@ -5356,7 +5393,6 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     int u_tex = uniforms.texture;
                     int u_opa = uniforms.opacity;
                     int u_col = uniforms.color;
-                    if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
                     if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
                     if (u_rot >= 0) rev::shader::SetFloat(sprite_shader, u_rot, anim_rotation);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
@@ -5364,18 +5400,32 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         anim_opacity * ComputeEffectOpacity(
                             cue.effect_type, cue.fade_in_start, cue.fade_in_end,
                             cue.fade_out_start, cue.fade_out_end, time));
-                    if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
-                    if (!render_layer_post(frame_tex.texture_id, x, y, w, h, anim_rotation,
-                                           anim_opacity * ComputeEffectOpacity(
-                                               cue.effect_type, cue.fade_in_start, cue.fade_in_end,
-                                               cue.fade_out_start, cue.fade_out_end, time),
-                                           cue.post_effects, cue.post_effect_count, elapsed_time)) {
-                        glBindTexture(GL_TEXTURE_2D, frame_tex.texture_id);
-                        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                    for (int instance = 0; instance < instance_count; ++instance) {
+                        float x = instance_x[instance] * 2.0f - 1.0f;
+                        float y = -(instance_y[instance] * 2.0f - 1.0f);
+                        if (!IsSpriteVisible(x, y, w, h)) continue;
+                        if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
+                        bool selected = active_menu && instance_item[instance] == menu_selection;
+                        if (u_col >= 0) {
+                            if (selected)
+                                rev::shader::SetVec3(sprite_shader, u_col,
+                                    active_menu->menu.highlight_color[0], active_menu->menu.highlight_color[1],
+                                    active_menu->menu.highlight_color[2]);
+                            else
+                                rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
+                        }
+                        if (!render_layer_post(frame_tex.texture_id, x, y, w, h, anim_rotation,
+                                               anim_opacity * ComputeEffectOpacity(
+                                                   cue.effect_type, cue.fade_in_start, cue.fade_in_end,
+                                                   cue.fade_out_start, cue.fade_out_end, time),
+                                               cue.post_effects, cue.post_effect_count, elapsed_time)) {
+                            glBindTexture(GL_TEXTURE_2D, frame_tex.texture_id);
+                            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                        }
+                        render_asset_shaders(x, y, w, h, anim_rotation, elapsed_time,
+                                             cue.shaders, cue.shader_count, frame_tex.texture_id);
                     }
-                    render_asset_shaders(x, y, w, h, anim_rotation, elapsed_time,
-                                         cue.shaders, cue.shader_count, frame_tex.texture_id);
                     glDeleteTextures(1, &frame_tex.texture_id);
 
                 }
@@ -6825,10 +6875,20 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 const rev::runtime::MenuItem& item = active_menu->menu.items[item_index];
                 const TextTexture& texture = scene_menu_textures[active_menu_index][item_index];
                 if (!texture.texture_id) continue;
-                float half_w = item.width;
-                float half_h = item.height;
-                float center_x = item.x * 2.0f - 1.0f + half_w;
-                float center_y = 1.0f - item.y * 2.0f - half_h;
+                // Button bounds control input/highlight. Fit the label inside
+                // them without stretching the rasterized text texture.
+                float label_width = item.width;
+                float label_height = item.height;
+                float texture_aspect = texture.height > 0 ? (float)texture.width / (float)texture.height : 1.0f;
+                float bounds_aspect = item.height > 0.0f ? item.width / item.height : texture_aspect;
+                if (texture_aspect > bounds_aspect) label_height = label_width / texture_aspect;
+                else label_width = label_height * texture_aspect;
+                float label_x = item.x + (item.width - label_width) * 0.5f;
+                float label_y = item.y + (item.height - label_height) * 0.5f;
+                float half_w = label_width;
+                float half_h = label_height;
+                float center_x = label_x * 2.0f - 1.0f + half_w;
+                float center_y = 1.0f - label_y * 2.0f - half_h;
                 rev::shader::SetVec2(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_position"), center_x, center_y);
                 rev::shader::SetVec2(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_size"), half_w, half_h);
                 glBindTexture(GL_TEXTURE_2D, texture.texture_id);
@@ -6836,7 +6896,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
             glDisable(GL_BLEND);
         }
-        if (active_menu && menu_selection >= 0 && menu_selection < active_menu->menu.item_count) {
+        if (active_menu && menu_selection >= 0 && menu_selection < active_menu->menu.item_count &&
+            active_menu->menu.items[menu_selection].visual_type == 0) {
             const rev::runtime::MenuItem& item = active_menu->menu.items[menu_selection];
             glEnable(GL_SCISSOR_TEST);
             glClearColor(active_menu->menu.highlight_color[0], active_menu->menu.highlight_color[1],

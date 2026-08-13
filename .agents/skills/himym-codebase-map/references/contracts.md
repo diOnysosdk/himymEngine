@@ -18,6 +18,8 @@ For every cue/property, locate its shared defaults, editor ownership, JSON save/
 - `curve_* == -1` means unassigned.
 - Asset paths must survive project transfer and packing.
 - Preview/runtime must agree on timing, fades, curves, triggers, alpha, layers, and materials.
+- Interactive menu scenes must hold until activation, and launched destinations must return to the originating menu on scene or non-looping music completion.
+- Menu sprite references are scene-local indices; shared-cue instances keep menu-owned position, hit bounds, destination, and selection state, and cue deletion must clear or reindex references.
 - Mixed glTF materials require per-slot behavior, texture alpha, and opaque-before-transparent rendering.
 - 2D/3D interleaving requires deliberate VAO, depth, and blend restoration.
 - GDI+ has initialization, separator, and stream-lifetime requirements.

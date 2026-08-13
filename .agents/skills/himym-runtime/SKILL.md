@@ -1,6 +1,6 @@
 ---
 name: himym-runtime
-description: Implement or review HiMYM playback/runtime behavior. Use for shared cue structs and parsers, minimal_intro, packed assets, Win32/WGL frame flow, GDI+ image/text loading, XM/WinMM playback, curves, triggers, runtime layering, timing, cursor lifecycle, or size-sensitive runtime fixes.
+description: Implement or review HiMYM playback/runtime behavior. Use for shared cue structs and parsers, minimal_intro, packed assets, scene wipes, interactive menu navigation, Win32/WGL frame flow, GDI+ image/text loading, XM/WinMM playback, curves, triggers, runtime layering, timing, cursor lifecycle, or size-sensitive runtime fixes.
 ---
 
 # HiMYM runtime
@@ -15,3 +15,9 @@ Read `AGENTS.md` and use `$himym-codebase-map` when ownership is unclear.
 6. Validate the smallest affected target, then packed/editor targets for cross-layer changes.
 
 Do not duplicate shared types or texture helpers. Preserve `curve_* == -1`, GDI+ requirements, modern GL loading through `wglGetProcAddress`, GL state restoration, and cue-driven XM startup. Avoid speculative abstractions and report meaningful binary/dependency costs.
+
+For interactive navigation, preserve the originating menu as explicit session
+state. Menu scenes loop until activation or exit; destinations return to that
+origin on authored scene expiry or non-looping XM completion. Treat sprite
+menu visuals as instances of scene-local animated-sprite cues with menu-owned
+position, hit bounds, target, and selection tint.

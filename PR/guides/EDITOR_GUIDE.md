@@ -102,6 +102,20 @@ The selected destination returns to that exact menu scene when either its author
 expires or its non-looping XM cue finishes. It never falls through into the following timeline
 scene. This works for a master menu at any scene index, not only scene zero.
 
+Each item has a **Visual** option. **Label button** uses the generated menu label texture.
+**Animated sprite** references an Animated Sprite cue owned by the same scene; the sprite itself is
+the visible button/icon, with selection indicated by its highlight tint rather than a box. The
+existing cue controls frames, FPS, playback mode, scale, curves, effects, and packing; the menu
+item's Image X/Y controls the position of that menu instance.
+The menu item retains invisible normalized input bounds and its destination. Deleting a referenced
+sprite cue clears the menu reference, and deleting an earlier sprite cue adjusts later indices.
+Sprite-mode items expose **Image X** and **Image Y** in the menu item itself. These values override
+the referenced cue's position in that interactive scene without modifying the reusable sprite cue;
+the invisible input bounds follow the menu-owned image centre.
+Several items may reference the same Animated Sprite cue. The runtime instances its current frame
+once per referencing item, so every item keeps independent Image X/Y, target, hit bounds, and
+selection tint without duplicating animation assets or authored cue data.
+
 Menu labels must not contain `|` or `,`, because those characters delimit the compact JSON/export
 rows. Scene indices follow the order shown in the scene list and are zero-based.
 
@@ -334,6 +348,15 @@ checkbox must be enabled for its animated values to affect the music.
 ### cues.txt Format (excerpt)
 
 ```
+[scenes]
+# name|start|end|wipe_type|wipe_duration|wipe_r|wipe_g|wipe_b
+Main Menu|0.000|12.000|1|0.500|0.000|0.000|0.000
+Track One|12.000|42.000|0|0.000|0.000|0.000|0.000
+
+[scene_menus]
+# scene_index|wrap|initial_item|highlight_rgba|item_count|label,target,x,y,w,h,visual_type,animated_sprite_cue,image_x,image_y...
+0|1|0|1.000,0.800,0.200,1.000|2|Track One,1,0.100,0.300,0.250,0.100,0,-1,0.225,0.350|Track Two,2,0.100,0.450,0.250,0.100,1,0,0.225,0.500
+
 [shader_cues]
 shader_scene_id|palette_low_r|...|shader_cue_start_s|shader_cue_end_s|...
 0|0.1|0.3|0.8|0.45|0.25|0.7|0.8|0.2|0.6|1.0|1.0|0.5|0.76|0.02|0.04|-0.04|0.0|10.0|0.5|0.5|0|1.0|0|0
@@ -357,6 +380,11 @@ logo_burst|frame_00.png;frame_01.png;frame_02.png|Salute_assets/frame_00.png;Sal
 # scene_start|scene_end|effect_count|type,enabled,order,intensity,threshold,radius,color_r,color_g,color_b,color_a,start_time,end_time,curve_intensity,curve_threshold,curve_radius,curve_color_r,curve_color_g,curve_color_b,curve_color_a,curve_amount,blend_mode...
 0.000|10.000|1|0,1,0,1.000,0.500,1.000,1.000,1.000,1.000,1.000,0.000,10.000,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0
 ```
+
+`wipe_type` is `0` for none and `1`-`4` for left, right, up, and down. Menu
+`visual_type` is `0` for a label button and `1` for an animated-sprite icon;
+`animated_sprite_cue` is a scene-local index. Older rows without these fields
+retain their defaults when imported.
 
 The row's `scene_start` and `scene_end` are absolute project times. Each packed effect's
 `start_time` and `end_time` remains scene-local, so the runtime subtracts `scene_start` before

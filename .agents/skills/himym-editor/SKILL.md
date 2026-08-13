@@ -1,6 +1,6 @@
 ---
 name: himym-editor
-description: Implement or review the HiMYM ImGui editor and authoring pipeline. Use for project JSON, scene/cue modals, timeline and curve UI, preview rendering, asset importing/copying, cues.txt export/import, project packing, Do It All, editor reliability, or authored data that must match runtime consumption.
+description: Implement or review the HiMYM ImGui editor and authoring pipeline. Use for project JSON, scene/cue modals, scene wipes, interactive menus, timeline and curve UI, preview rendering, asset importing/copying, cues.txt export/import, project packing, Do It All, editor reliability, or authored data that must match runtime consumption.
 ---
 
 # HiMYM editor
@@ -16,3 +16,8 @@ Read `AGENTS.md`, shared cue definitions, `rev_editor.h`, and the relevant edito
 7. Build `himym_editor`; test headless or round-trip paths when affected.
 
 Do not redefine shared cues. Initialize new fields deliberately, preserve copied-asset cleanup coverage, keep save -> export -> pack -> build -> launch explicit, and avoid generalized UI frameworks or new dependencies.
+
+For menu authoring, keep ImGui IDs stable while labels are edited. Preserve
+scene-local animated-sprite references across save/load/export/import and clear
+or reindex them when cues are deleted. Menu-owned image position and hit bounds
+must remain independent for every item, including items sharing one sprite cue.

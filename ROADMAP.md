@@ -68,6 +68,12 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
       and its non-16:9 display.
 - [x] Resolve the libxm `xm_tick_envelope` return-path warning.
 - [x] Resolve the libxm `load.c` C4333 shift warnings exposed by clean XM builds.
+- [x] Add directional scene-entry wipes and interactive music-disc/diskmag
+      menus with label or animated-sprite item visuals.
+- [x] Hold interactive scenes until selection and return a selected destination
+      to its originating menu on scene expiry or non-looping XM completion.
+- [x] Support several independently positioned menu items sharing one
+      animated-sprite cue without duplicating its frame assets.
 
 Exit criteria:
 
@@ -139,4 +145,4 @@ cmake --build build --config Release --target packed_feature_manifest_tests
 Run the focused test executables after building them. Rebuild `pack_cli` or the
 editor before validating generated `packed_assets.h` after packer changes.
 
-Last reviewed: August 9, 2026.
+Last reviewed: August 13, 2026.

@@ -887,10 +887,21 @@ void RenderProperties(EditorContext* editor) {
                         int item_index = scene->menu.item_count++;
                         rev::runtime::MenuItem& item = scene->menu.items[item_index];
                         item = {};
+                        item.animated_sprite_cue = -1;
+                        item.image_x = item.image_y = 0.5f;
                         snprintf(item.label, sizeof(item.label), "Scene %d", item_index + 1);
                         item.target_scene = editor->project->scene_count > 1 ? 1 : 0;
-                        item.x = 0.25f; item.y = 0.3f + item_index * 0.08f;
-                        item.width = 0.5f; item.height = 0.065f;
+                        if (item_index > 0) {
+                            const rev::runtime::MenuItem& previous = scene->menu.items[item_index - 1];
+                            item.x = previous.x;
+                            item.y = previous.y + previous.height + 0.02f;
+                            item.width = previous.width;
+                            item.height = previous.height;
+                        } else {
+                            item.x = 0.25f; item.y = 0.3f;
+                            item.width = 0.5f; item.height = 0.065f;
+                        }
+                        if (item.y + item.height > 1.0f) item.y = 1.0f - item.height;
                         editor->project->modified = true;
                     }
                     for (int menu_index = 0; menu_index < scene->menu.item_count; ++menu_index) {
@@ -899,8 +910,43 @@ void RenderProperties(EditorContext* editor) {
                         char item_header[96] = {};
                         snprintf(item_header, sizeof(item_header), "Item %d: %s", menu_index + 1,
                                  item.label[0] ? item.label : "(untitled)");
-                        if (ImGui::TreeNode(item_header)) {
+                        if (ImGui::TreeNodeEx("##menu_item", ImGuiTreeNodeFlags_None, "%s", item_header)) {
                             if (ImGui::InputText("Label", item.label, sizeof(item.label))) editor->project->modified = true;
+                            static const char* visual_names[] = { "Label button", "Animated sprite" };
+                            if (ImGui::Combo("Visual", &item.visual_type, visual_names, IM_ARRAYSIZE(visual_names)))
+                                editor->project->modified = true;
+                            if (item.visual_type == 1) {
+                                const char* sprite_name = "(select animated sprite cue)";
+                                if (item.animated_sprite_cue >= 0 &&
+                                    item.animated_sprite_cue < scene->animated_sprite_cue_count) {
+                                    const AnimatedSpriteCue& sprite = scene->animated_sprite_cues[item.animated_sprite_cue];
+                                    sprite_name = sprite.sprite_name[0] ? sprite.sprite_name : "Animated Sprite";
+                                }
+                                if (ImGui::BeginCombo("Sprite cue", sprite_name)) {
+                                    for (int sprite_index = 0; sprite_index < scene->animated_sprite_cue_count; ++sprite_index) {
+                                        const AnimatedSpriteCue& sprite = scene->animated_sprite_cues[sprite_index];
+                                        const char* name = sprite.sprite_name[0] ? sprite.sprite_name : "Animated Sprite";
+                                        if (ImGui::Selectable(name, sprite_index == item.animated_sprite_cue)) {
+                                            item.animated_sprite_cue = sprite_index;
+                                            item.image_x = sprite.x;
+                                            item.image_y = sprite.y;
+                                            item.x = item.image_x - item.width * 0.5f;
+                                            item.y = item.image_y - item.height * 0.5f;
+                                            editor->project->modified = true;
+                                        }
+                                    }
+                                    ImGui::EndCombo();
+                                }
+                                if (ImGui::SliderFloat("Image X", &item.image_x, 0.0f, 1.0f, "%.3f")) {
+                                    item.x = item.image_x - item.width * 0.5f;
+                                    editor->project->modified = true;
+                                }
+                                if (ImGui::SliderFloat("Image Y", &item.image_y, 0.0f, 1.0f, "%.3f")) {
+                                    item.y = item.image_y - item.height * 0.5f;
+                                    editor->project->modified = true;
+                                }
+                                ImGui::TextDisabled("The sprite is the button. Bounds are invisible mouse/selection geometry.");
+                            }
                             if (editor->project->scene_count > 0) {
                                 if (item.target_scene < 0) item.target_scene = 0;
                                 if (item.target_scene >= editor->project->scene_count)

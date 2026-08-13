@@ -1812,9 +1812,16 @@ bool LoadProject(EditorContext* editor, const char* path) {
             if (strstr(start, "\"menu_item\":") && current_scene->menu.item_count < rev::runtime::kMaxMenuItems) {
                 rev::runtime::MenuItem& item = current_scene->menu.items[current_scene->menu.item_count];
                 char encoded_label[128] = {};
-                if (sscanf_s(start, "\"menu_item\": \"%63[^|]|%d|%f|%f|%f|%f",
+                item.animated_sprite_cue = -1;
+                int parsed = sscanf_s(start, "\"menu_item\": \"%63[^|]|%d|%f|%f|%f|%f|%d|%d|%f|%f",
                              encoded_label, (unsigned)_countof(encoded_label), &item.target_scene,
-                             &item.x, &item.y, &item.width, &item.height) == 6) {
+                             &item.x, &item.y, &item.width, &item.height,
+                             &item.visual_type, &item.animated_sprite_cue, &item.image_x, &item.image_y);
+                if (parsed >= 6) {
+                    if (parsed < 10) {
+                        item.image_x = item.x + item.width * 0.5f;
+                        item.image_y = item.y + item.height * 0.5f;
+                    }
                     strncpy_s(item.label, sizeof(item.label), encoded_label, _TRUNCATE);
                     ++current_scene->menu.item_count;
                 }
@@ -3296,8 +3303,9 @@ bool SaveProject(EditorContext* editor, const char* path) {
             const rev::runtime::MenuItem& item = scene->menu.items[menu_index];
             char escaped_label[128] = {};
             JsonEscapeString(item.label, escaped_label, sizeof(escaped_label));
-            fprintf(f, "      \"menu_item\": \"%s|%d|%.3f|%.3f|%.3f|%.3f\",\n",
-                    escaped_label, item.target_scene, item.x, item.y, item.width, item.height);
+            fprintf(f, "      \"menu_item\": \"%s|%d|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f\",\n",
+                    escaped_label, item.target_scene, item.x, item.y, item.width, item.height,
+                    item.visual_type, item.animated_sprite_cue, item.image_x, item.image_y);
         }
         
         // Shader cues
@@ -5315,8 +5323,9 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
                 scene->menu.highlight_color[2], scene->menu.highlight_color[3], scene->menu.item_count);
         for (int item_idx = 0; item_idx < scene->menu.item_count; ++item_idx) {
             const rev::runtime::MenuItem& item = scene->menu.items[item_idx];
-            fprintf(f, "|%s,%d,%.3f,%.3f,%.3f,%.3f", item.label, item.target_scene,
-                    item.x, item.y, item.width, item.height);
+            fprintf(f, "|%s,%d,%.3f,%.3f,%.3f,%.3f,%d,%d,%.3f,%.3f", item.label, item.target_scene,
+                    item.x, item.y, item.width, item.height, item.visual_type,
+                    item.animated_sprite_cue, item.image_x, item.image_y);
         }
         fprintf(f, "\n");
     }
@@ -6796,6 +6805,12 @@ void DeleteImageCue(SceneBlock* scene, int cue_index) {
 
 void DeleteAnimatedSpriteCue(SceneBlock* scene, int cue_index) {
     if (!scene || cue_index < 0 || cue_index >= scene->animated_sprite_cue_count) return;
+
+    for (int menu_index = 0; menu_index < scene->menu.item_count; ++menu_index) {
+        rev::runtime::MenuItem& item = scene->menu.items[menu_index];
+        if (item.animated_sprite_cue == cue_index) item.animated_sprite_cue = -1;
+        else if (item.animated_sprite_cue > cue_index) --item.animated_sprite_cue;
+    }
 
     for (int i = cue_index; i < scene->animated_sprite_cue_count - 1; ++i) {
         scene->animated_sprite_cues[i] = scene->animated_sprite_cues[i + 1];
@@ -8948,6 +8963,24 @@ void RenderPreviewFrame(EditorContext* editor) {
                         }
                     }
 
+                    for (int scene_index = 0; scene_index < editor->project->scene_count; ++scene_index) {
+                        SceneBlock& owner = editor->project->scenes[scene_index];
+                        int sprite_index = -1;
+                        for (int candidate = 0; candidate < owner.animated_sprite_cue_count; ++candidate) {
+                            if (&owner.animated_sprite_cues[candidate] == cue) { sprite_index = candidate; break; }
+                        }
+                        if (sprite_index < 0 || !owner.menu.enabled) continue;
+                        for (int menu_index = 0; menu_index < owner.menu.item_count; ++menu_index) {
+                            const rev::runtime::MenuItem& menu_item = owner.menu.items[menu_index];
+                            if (menu_item.visual_type == 1 && menu_item.animated_sprite_cue == sprite_index) {
+                                anim_x = menu_item.image_x;
+                                anim_y = menu_item.image_y;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+
                     int frame_count = 0;
                     for (const char* p = cue->frame_keys_csv; *p; ++p) {
                         if (*p == ';') ++frame_count;
@@ -10914,8 +10947,10 @@ void RenderPreviewPanel(EditorContext* editor) {
                         const rev::runtime::MenuItem& item = scene.menu.items[item_index];
                         ImVec2 a(image_min.x + item.x * w, image_min.y + item.y * h);
                         ImVec2 b(a.x + item.width * w, a.y + item.height * h);
-                        draw_list->AddText(ImVec2(a.x + 8.0f, a.y + 5.0f), IM_COL32_WHITE, item.label);
-                        if (item_index == selected) draw_list->AddRect(a, b, color, 0.0f, 0, 3.0f);
+                        if (item.visual_type == 0)
+                            draw_list->AddText(ImVec2(a.x + 8.0f, a.y + 5.0f), IM_COL32_WHITE, item.label);
+                        if (item_index == selected && item.visual_type == 0)
+                            draw_list->AddRect(a, b, color, 0.0f, 0, 3.0f);
                     }
                 }
                 float elapsed = editor->current_time - scene_start;

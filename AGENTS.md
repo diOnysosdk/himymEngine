@@ -34,8 +34,10 @@ Treat current code and CMake files as authoritative. Before relying on material 
 - For a new cue type, follow: shared struct -> parser -> editor ownership/UI -> save/load/export/import -> preview -> runtime -> packer -> validation.
 - Initialize every unassigned `curve_*` index to `-1`.
 - Preserve deterministic ordering in exports and rendering.
+- Interactive menu scenes hold/loop locally until activation or exit. A launched destination returns to the exact originating menu when its scene duration or non-looping XM cue ends; ordinary linear playback remains unchanged.
+- Menu animated-sprite references are scene-local indices. Multiple items may instance one cue with independent menu-owned image positions, hit bounds, targets, and selection tint; deletion must clear or reindex references deterministically.
 - Keep packed/release assets embedded-first; filesystem fallback is explicit diagnostics/development behavior.
-- Packed builds derive `HIMYM_USE_*` macros and `packed_features.cmake` from exported cue rows. This includes code-only cue families such as animated sprites and scrolling text, even when they do not change target dependencies. Reconfigure after packing so C++ guards and CMake dependencies stay aligned.
+- Packed builds derive `HIMYM_USE_*` macros and `packed_features.cmake` from exported cue rows. This includes code-only cue families such as animated sprites and scrolling text; scene wipes and menus are code-only packed cue metadata with no optional dependency. Reconfigure after packing so C++ guards and CMake dependencies stay aligned.
 - Packed shader sources are project-specific: `rev_pack` emits only fullscreen and enabled asset-shader preset IDs referenced by the exported cues, plus preset 0 as the no-cue fallback. The editor and file-based runtime keep the universal preset registry.
 - Packed post-effect GLSL is also project-specific. Collect enabled effect types from global, scene-layer, image, animated-sprite, and pixel rows; preserve the universal shader only for editor/file playback and older packed shader manifests.
 - Maintain editor/runtime OpenGL-state parity, especially VAO binding, depth writes, blending, and opaque/transparent ordering.

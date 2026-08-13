@@ -19,6 +19,12 @@ The external-cue `minimal_intro` target remains universal.
 | Animated-sprite cue | `HIMYM_USE_ANIMATED_SPRITE` | none; prunes runtime code |
 | Scrolling-text cue | `HIMYM_USE_SCROLL_TEXT` | none; prunes runtime code |
 
+Scene metadata and interactive-menu rows are code-only packed cue data and do
+not select an optional library. A sprite-mode menu item references an existing
+scene-local animated-sprite cue; that cue selects
+`HIMYM_USE_ANIMATED_SPRITE` and supplies the packed frame assets. Reusing the
+same cue for several menu icons therefore adds item rows, not duplicate images.
+
 Particle emitters do not enable mesh by themselves. Mesh attachment projection
 is compiled only when the same project also contains mesh cues.
 

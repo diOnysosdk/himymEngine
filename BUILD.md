@@ -89,6 +89,10 @@ from the saved project workspace, and editor unused-asset cleanup treats those
 GLSL and texture files as live project assets.
 Animated-sprite and scrolling-text parsing/rendering are likewise removed from
 packed projects that contain no cues of those families.
+Scene wipes and interactive-menu rows are code-only authored data embedded in
+the packed cues. They add no target dependency. A sprite-mode menu item refers
+to a scene-local animated-sprite cue, so its frame assets and
+`HIMYM_USE_ANIMATED_SPRITE` selection come from that cue in the normal way.
 The packed post-effect fragment shader contains only enabled effect branches
 referenced globally, by a scene-layer stack, or by an image/sprite/pixel cue.
 

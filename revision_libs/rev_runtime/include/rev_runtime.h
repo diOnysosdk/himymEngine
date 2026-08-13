@@ -645,6 +645,10 @@ struct SceneNavigation {
 struct MenuItem {
     char label[64];
     int target_scene;
+    int visual_type;          // 0=label button, 1=existing animated-sprite cue
+    int animated_sprite_cue;  // scene-local cue index, -1 when unassigned
+    float image_x;            // sprite-mode centre position [0..1]
+    float image_y;
     float x;
     float y;
     float width;

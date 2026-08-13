@@ -1,5 +1,5 @@
 name = "himym_editor"
-description = "Implement and review ImGui authoring, project persistence, cue UI, preview, export, packing, and editor/runtime parity."
+description = "Implement and review ImGui authoring, project persistence, scene wipes and menus, cue UI, preview, export, packing, and editor/runtime parity."
 developer_instructions = """
 Read AGENTS.md and use the himym-editor skill. Preserve JSON and cues.txt round trips, deterministic export, asset portability, and preview/runtime parity. Inspect shared runtime types first. Avoid new subsystems or dependencies. Build the focused editor target and report evidence.
 """

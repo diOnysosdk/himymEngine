@@ -157,9 +157,11 @@ per-library estimates for release planning.
 
 ### Runtime Capabilities
 - **Scene Timeline**: Cue-based sequencing with precise timing
+- **Scene Navigation**: Directional entry wipes and interactive music-disc/diskmag menus with keyboard and mouse selection
 - **Shader Effects**: Built-in GLSL presets plus project-owned Shadertoy Image/Buffer A-D pipelines with textures, feedback, and XM audio channels
 - **3D Rendering**: glTF mesh support with Phong lighting and material slots
 - **Animated Sprites**: Frame-sequence image cues with FPS, loop/once/pingpong playback, and curve-driven frame selection
+- **Sprite Menu Icons**: Reuse one animated-sprite cue across independently positioned menu destinations
 - **Text Rendering**: TTF font rendering with fade/animation curves
 - **Audio Sync**: XM music playback with timeline markers
 - **Animation Curves**: 6 easing modes for smooth parameter interpolation
@@ -168,6 +170,7 @@ per-library estimates for release planning.
 
 ### Editor Features
 - **Scene Authoring**: Timeline-based scene composition
+- **Interactive Menus**: Label buttons or animated-sprite icons with per-item position, hit bounds, and destination scene
 - **Shader Modal**: Preset tuning and validated Shadertoy multipass graph authoring with portable project assets
 - **Animated Sprite Modal**: Frame list authoring with playback controls (FPS, mode, start frame) and per-parameter curves
 - **Curve Editor**: Visual animation curve creation and manipulation
@@ -205,6 +208,7 @@ Comprehensive guides are in the `PR/` folder:
 2. **Add Scenes**
    - Create timeline with scenes
    - Configure shader effects, meshes, text, and audio
+   - Optionally configure entry wipes and an interactive master menu
 
 3. **Author Content**
    - Adjust shader parameters with curves
