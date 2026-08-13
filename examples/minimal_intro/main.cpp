@@ -131,6 +131,7 @@ struct RuntimeSceneLayerPostEffects {
 struct RuntimeSceneMenu {
     int scene_index;
     rev::runtime::SceneMenu menu;
+    float sprite_animation_time[rev::runtime::kMaxMenuItems];
 };
 
 static const int kPostEffectCount = 23;
@@ -1609,8 +1610,8 @@ static int LoadSceneMenus(const char* path, RuntimeSceneMenu* menus, int max_men
         field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue; out.menu.wrap = atoi(field);
         field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue; out.menu.initial_item = atoi(field);
         field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue;
-        sscanf_s(field, "%f,%f,%f,%f", &out.menu.highlight_color[0], &out.menu.highlight_color[1],
-                 &out.menu.highlight_color[2], &out.menu.highlight_color[3]);
+        sscanf_s(field, "%f,%f,%f,%f,%d", &out.menu.highlight_color[0], &out.menu.highlight_color[1],
+                 &out.menu.highlight_color[2], &out.menu.highlight_color[3], &out.menu.mouse_enabled);
         field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue;
         int declared_count = atoi(field);
         for (int i = 0; i < declared_count && i < rev::runtime::kMaxMenuItems; ++i) {
@@ -2868,7 +2869,10 @@ int main(int argc, char* argv[]) {
     int mesh_cue_count = 0;
     bool has_mesh = false;
 #if HIMYM_USE_MESH
-    MeshCue mesh_cues[kMaxMeshCues] = {};
+    // Mesh support is feature-gated in packed builds. Keeping this array on the
+    // WinMain stack made enabling the feature push the already sizeable runtime
+    // frame over Windows' default 1 MiB stack while the next cue parser entered.
+    static MeshCue mesh_cues[kMaxMeshCues] = {};
     mesh_cue_count = LoadAllMeshCues(cues_path, mesh_cues, kMaxMeshCues);
     has_mesh = (mesh_cue_count > 0);
     LOGV("Mesh cues loaded: %d\n", mesh_cue_count);
@@ -4424,7 +4428,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         bool up = rev::platform::IsKeyPressed(window, VK_UP);
         bool down = rev::platform::IsKeyPressed(window, VK_DOWN);
         bool enter = rev::platform::IsKeyPressed(window, VK_RETURN);
-        bool mouse = rev::platform::IsMouseButtonPressed(window, 0);
+        bool mouse = active_menu && active_menu->menu.mouse_enabled
+            ? rev::platform::IsMouseButtonPressed(window, 0) : false;
         int activate_item = -1;
         if (active_menu && active_menu->menu.item_count > 0) {
             int item_count = active_menu->menu.item_count;
@@ -4432,15 +4437,21 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 ? (menu_selection + item_count - 1) % item_count : (menu_selection > 0 ? menu_selection - 1 : 0);
             if (down && !previous_down) menu_selection = active_menu->menu.wrap
                 ? (menu_selection + 1) % item_count : (menu_selection + 1 < item_count ? menu_selection + 1 : item_count - 1);
-            int mouse_x = 0, mouse_y = 0; rev::platform::GetMousePosition(window, &mouse_x, &mouse_y);
-            float nx = window->win_width > 0 ? (float)mouse_x / window->win_width : 0.0f;
-            float ny = window->win_height > 0 ? (float)mouse_y / window->win_height : 0.0f;
-            for (int i = 0; i < item_count; ++i) {
-                const rev::runtime::MenuItem& item = active_menu->menu.items[i];
-                if (nx >= item.x && nx <= item.x + item.width && ny >= item.y && ny <= item.y + item.height) {
-                    menu_selection = i;
-                    if (mouse && !previous_mouse) activate_item = i;
+            if (active_menu->menu.mouse_enabled) {
+                int mouse_x = 0, mouse_y = 0; rev::platform::GetMousePosition(window, &mouse_x, &mouse_y);
+                float nx = window->win_width > 0 ? (float)mouse_x / window->win_width : 0.0f;
+                float ny = window->win_height > 0 ? (float)mouse_y / window->win_height : 0.0f;
+                for (int i = 0; i < item_count; ++i) {
+                    const rev::runtime::MenuItem& item = active_menu->menu.items[i];
+                    if (nx >= item.x && nx <= item.x + item.width && ny >= item.y && ny <= item.y + item.height) {
+                        menu_selection = i;
+                        if (mouse && !previous_mouse) activate_item = i;
+                    }
                 }
+            }
+            if (menu_selection >= 0 && menu_selection < item_count &&
+                active_menu->menu.items[menu_selection].visual_type == 1) {
+                active_menu->sprite_animation_time[menu_selection] += dt;
             }
             if (enter && !previous_enter) activate_item = menu_selection;
             if (activate_item >= 0) {
@@ -5258,7 +5269,6 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float anim_scale = cue.scale;
                     float anim_rotation = cue.rotation;
                     float anim_opacity = cue.opacity;
-                    float anim_frame = (float)cue.start_frame;
 
                     if (cue.curve_x >= 0 && cue.curve_x < curve_count) {
                         float t = elapsed_time / curves[cue.curve_x].duration;
@@ -5280,13 +5290,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         float t = elapsed_time / curves[cue.curve_opacity].duration;
                         anim_opacity = rev::curve::Evaluate(curves[cue.curve_opacity], t);
                     }
-                    if (cue.curve_frame >= 0 && cue.curve_frame < curve_count) {
-                        float t = elapsed_time / curves[cue.curve_frame].duration;
-                        anim_frame = rev::curve::Evaluate(curves[cue.curve_frame], t);
-                    }
 
                     float instance_x[rev::runtime::kMaxMenuItems] = {};
                     float instance_y[rev::runtime::kMaxMenuItems] = {};
+                    float instance_elapsed[rev::runtime::kMaxMenuItems] = {};
                     int instance_item[rev::runtime::kMaxMenuItems] = {};
                     int instance_count = 0;
                     int scene_sprite_index = -1;
@@ -5306,6 +5313,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                 menu_item.animated_sprite_cue == scene_sprite_index) {
                                 instance_x[instance_count] = menu_item.image_x;
                                 instance_y[instance_count] = menu_item.image_y;
+                                instance_elapsed[instance_count] = active_menu->sprite_animation_time[item_index];
                                 instance_item[instance_count] = item_index;
                                 ++instance_count;
                             }
@@ -5314,6 +5322,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (instance_count == 0) {
                         instance_x[0] = anim_x;
                         instance_y[0] = anim_y;
+                        instance_elapsed[0] = elapsed_time;
                         instance_item[0] = -1;
                         instance_count = 1;
                     }
@@ -5323,69 +5332,6 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (cue.frame_keys_csv[0]) ++frame_count;
                     if (frame_count <= 0) continue;
 
-                    int frame_idx = cue.start_frame;
-                    if (cue.fps > 0.0f && elapsed_time > 0.0f) {
-                        float frame_f = elapsed_time * cue.fps;
-                        if (cue.playback_mode == 1) {
-                            frame_idx = (int)frame_f;
-                            if (frame_idx >= frame_count) frame_idx = frame_count - 1;
-                        } else if (cue.playback_mode == 2 && frame_count > 1) {
-                            int period = frame_count * 2 - 2;
-                            int ping_idx = ((int)frame_f) % period;
-                            if (ping_idx < 0) ping_idx += period;
-                            frame_idx = (ping_idx >= frame_count) ? (period - ping_idx) : ping_idx;
-                        } else {
-                            frame_idx = ((int)frame_f) % frame_count;
-                            if (frame_idx < 0) frame_idx += frame_count;
-                        }
-                    }
-                    if (cue.curve_frame >= 0 && cue.curve_frame < curve_count) {
-                        frame_idx = (int)anim_frame;
-                    }
-                    if (frame_idx < 0) frame_idx = 0;
-                    if (frame_idx >= frame_count) frame_idx = frame_count - 1;
-
-                    char selected_key[256] = {};
-                    char selected_path[512] = {};
-                    ExtractCsvItemByIndex(cue.frame_keys_csv, frame_idx, selected_key, sizeof(selected_key));
-                    ExtractCsvItemByIndex(cue.frame_paths_csv, frame_idx, selected_path, sizeof(selected_path));
-                    if (!selected_key[0]) continue;
-
-                    ImageTexture frame_tex = {};
-                    bool frame_loaded = false;
-                    int webp_frame_count = 1;
-#ifdef HIMYM_PACKED_ASSETS
-                    const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(selected_key, kPackedAssets, kPackedAssetCount);
-                    if (pa) {
-                        frame_loaded = LoadImageTextureFromMemory(pa->data, pa->size, &frame_tex);
-                        webp_frame_count = GetImageFrameCountFromMemory(pa->data, pa->size);
-                        if (webp_frame_count > 1) {
-                            int webp_frame = (int)(elapsed_time * (cue.fps > 0.0f ? cue.fps : 12.0f)) % webp_frame_count;
-                            if (frame_loaded) glDeleteTextures(1, &frame_tex.texture_id);
-                            frame_tex = {};
-                            frame_loaded = LoadImageTextureFrameFromMemory(pa->data, pa->size,
-                                                                            webp_frame, &frame_tex);
-                        }
-                    }
-#else
-                    char frame_path[512] = {};
-                    ResolveRuntimeAssetPath(selected_path[0] ? selected_path : selected_key,
-                                            cues_path,
-                                            frame_path,
-                                            sizeof(frame_path));
-                    frame_loaded = LoadImageTexture(frame_path, &frame_tex);
-                    webp_frame_count = GetImageFrameCount(frame_path);
-                    if (webp_frame_count > 1) {
-                        int webp_frame = (int)(elapsed_time * (cue.fps > 0.0f ? cue.fps : 12.0f)) % webp_frame_count;
-                        if (frame_loaded) glDeleteTextures(1, &frame_tex.texture_id);
-                        frame_tex = {};
-                        frame_loaded = LoadImageTextureFrame(frame_path, webp_frame, &frame_tex);
-                    }
-#endif
-                    if (!frame_loaded || frame_tex.texture_id == 0) continue;
-
-                    float w = (frame_tex.width * anim_scale) / (float)config.width * 2.0f;
-                    float h = (frame_tex.height * anim_scale) / (float)config.height * 2.0f;
                     const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
                     int u_pos = uniforms.position;
                     int u_sz  = uniforms.size;
@@ -5393,7 +5339,6 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     int u_tex = uniforms.texture;
                     int u_opa = uniforms.opacity;
                     int u_col = uniforms.color;
-                    if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
                     if (u_rot >= 0) rev::shader::SetFloat(sprite_shader, u_rot, anim_rotation);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa,
@@ -5401,10 +5346,76 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             cue.effect_type, cue.fade_in_start, cue.fade_in_end,
                             cue.fade_out_start, cue.fade_out_end, time));
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
+
                     for (int instance = 0; instance < instance_count; ++instance) {
+                        const float animation_elapsed = instance_elapsed[instance];
+                        int frame_idx = cue.start_frame;
+                        if (cue.fps > 0.0f && animation_elapsed > 0.0f) {
+                            float frame_f = animation_elapsed * cue.fps;
+                            if (cue.playback_mode == 1) {
+                                frame_idx = (int)frame_f;
+                                if (frame_idx >= frame_count) frame_idx = frame_count - 1;
+                            } else if (cue.playback_mode == 2 && frame_count > 1) {
+                                int period = frame_count * 2 - 2;
+                                int ping_idx = ((int)frame_f) % period;
+                                if (ping_idx < 0) ping_idx += period;
+                                frame_idx = (ping_idx >= frame_count) ? (period - ping_idx) : ping_idx;
+                            } else {
+                                frame_idx = ((int)frame_f) % frame_count;
+                                if (frame_idx < 0) frame_idx += frame_count;
+                            }
+                        }
+                        if (cue.curve_frame >= 0 && cue.curve_frame < curve_count) {
+                            const rev::curve::Curve& frame_curve = curves[cue.curve_frame];
+                            float curve_time = frame_curve.duration > 0.0f
+                                ? animation_elapsed / frame_curve.duration : 0.0f;
+                            frame_idx = (int)rev::curve::Evaluate(frame_curve, curve_time);
+                        }
+                        if (frame_idx < 0) frame_idx = 0;
+                        if (frame_idx >= frame_count) frame_idx = frame_count - 1;
+
+                        char selected_key[256] = {};
+                        char selected_path[512] = {};
+                        ExtractCsvItemByIndex(cue.frame_keys_csv, frame_idx, selected_key, sizeof(selected_key));
+                        ExtractCsvItemByIndex(cue.frame_paths_csv, frame_idx, selected_path, sizeof(selected_path));
+                        if (!selected_key[0]) continue;
+
+                        ImageTexture frame_tex = {};
+                        bool frame_loaded = false;
+                        int webp_frame_count = 1;
+#ifdef HIMYM_PACKED_ASSETS
+                        const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(selected_key, kPackedAssets, kPackedAssetCount);
+                        if (pa) {
+                            frame_loaded = LoadImageTextureFromMemory(pa->data, pa->size, &frame_tex);
+                            webp_frame_count = GetImageFrameCountFromMemory(pa->data, pa->size);
+                            if (webp_frame_count > 1) {
+                                int webp_frame = (int)(animation_elapsed * (cue.fps > 0.0f ? cue.fps : 12.0f)) % webp_frame_count;
+                                if (frame_loaded) glDeleteTextures(1, &frame_tex.texture_id);
+                                frame_tex = {};
+                                frame_loaded = LoadImageTextureFrameFromMemory(pa->data, pa->size, webp_frame, &frame_tex);
+                            }
+                        }
+#else
+                        char frame_path[512] = {};
+                        ResolveRuntimeAssetPath(selected_path[0] ? selected_path : selected_key,
+                                                cues_path, frame_path, sizeof(frame_path));
+                        frame_loaded = LoadImageTexture(frame_path, &frame_tex);
+                        webp_frame_count = GetImageFrameCount(frame_path);
+                        if (webp_frame_count > 1) {
+                            int webp_frame = (int)(animation_elapsed * (cue.fps > 0.0f ? cue.fps : 12.0f)) % webp_frame_count;
+                            if (frame_loaded) glDeleteTextures(1, &frame_tex.texture_id);
+                            frame_tex = {};
+                            frame_loaded = LoadImageTextureFrame(frame_path, webp_frame, &frame_tex);
+                        }
+#endif
+                        if (!frame_loaded || frame_tex.texture_id == 0) continue;
+
+                        float w = (frame_tex.width * anim_scale) / (float)config.width * 2.0f;
+                        float h = (frame_tex.height * anim_scale) / (float)config.height * 2.0f;
                         float x = instance_x[instance] * 2.0f - 1.0f;
                         float y = -(instance_y[instance] * 2.0f - 1.0f);
-                        if (!IsSpriteVisible(x, y, w, h)) continue;
+                        if (!IsSpriteVisible(x, y, w, h)) { glDeleteTextures(1, &frame_tex.texture_id); continue; }
+                        if (u_sz >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
                         if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
                         bool selected = active_menu && instance_item[instance] == menu_selection;
                         if (u_col >= 0) {
@@ -5419,14 +5430,14 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                                anim_opacity * ComputeEffectOpacity(
                                                    cue.effect_type, cue.fade_in_start, cue.fade_in_end,
                                                    cue.fade_out_start, cue.fade_out_end, time),
-                                               cue.post_effects, cue.post_effect_count, elapsed_time)) {
+                                               cue.post_effects, cue.post_effect_count, animation_elapsed)) {
                             glBindTexture(GL_TEXTURE_2D, frame_tex.texture_id);
                             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                         }
-                        render_asset_shaders(x, y, w, h, anim_rotation, elapsed_time,
+                        render_asset_shaders(x, y, w, h, anim_rotation, animation_elapsed,
                                              cue.shaders, cue.shader_count, frame_tex.texture_id);
+                        glDeleteTextures(1, &frame_tex.texture_id);
                     }
-                    glDeleteTextures(1, &frame_tex.texture_id);
 
                 }
 #if HIMYM_USE_PIXEL

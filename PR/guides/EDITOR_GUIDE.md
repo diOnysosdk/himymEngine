@@ -89,7 +89,8 @@ To turn a scene into a music-disc or diskmag menu, open **Interactive Menu**, en
 one item for each destination scene. Each item stores a target scene index and normalized
 `Position`/`Size` bounds. Every menu item renders its own label using the compact runtime text
 texture path; ordinary Text cues remain available for headings and decorative typography.
-The standalone runtime supports Up/Down, Enter, and left-click. Activating an item seeks to the
+The standalone runtime always supports Up/Down and Enter. **Enable mouse control** is a per-menu
+checkbox, off by default; when enabled, hover selects and left-click activates. Activating an item seeks to the
 target scene start, where normal scene cues and the target scene's Music cue take over. Enable an
 interactive menu on a destination scene as well when it needs a return/back entry.
 
@@ -115,6 +116,15 @@ the invisible input bounds follow the menu-owned image centre.
 Several items may reference the same Animated Sprite cue. The runtime instances its current frame
 once per referencing item, so every item keeps independent Image X/Y, target, hit bounds, and
 selection tint without duplicating animation assets or authored cue data.
+The editor preview also renders every shared-cue instance at its own Image X/Y and overlays its
+input rectangle plus a centre cross, so overlapping or not-yet-positioned items remain visible
+while authoring. Newly added items start at the centre of their staggered input bounds rather than
+all starting at the canvas centre.
+In runtime playback, only the currently selected sprite menu item advances its frame animation.
+Moving the selection away freezes that item on its current frame; selecting it again resumes from
+the same frame instead of restarting. Every item keeps its own animation clock even when several
+items reference the same Animated Sprite cue. The editor preview animates the configured initial
+selection and shows the other instances in their paused state.
 
 Menu labels must not contain `|` or `,`, because those characters delimit the compact JSON/export
 rows. Scene indices follow the order shown in the scene list and are zero-based.
@@ -185,7 +195,11 @@ axis; X/Y provide the starting position and cross-axis placement.
 2. **Click "+ Animated Sprite Cue"** in Properties
 3. In animated sprite modal:
    - **Sprite Name**: friendly label (e.g., `logo_burst`)
-   - **Frames**: add image frames (Browse copies files into `{project}_assets/`)
+   - **Add Frame**: select one image; the editor copies it into `{project}_assets/`
+   - **Add Numbered Sequence**: select any frame in a numbered series and the
+     editor discovers, numerically sorts, and copies the complete series. Names
+     must share an extension, prefix, and trailing digit width, for example
+     `0001.png` ... `0030.png` or `drop_0001.png` ... `drop_0030.png`
    - **Playback**: set `FPS`, `Mode` (`Loop` / `Once` / `PingPong`), and `Start Frame`
    - **Transform**: set X/Y/Scale/Opacity
    - **Timing**: set cue start/end and optional fade window
@@ -354,8 +368,8 @@ Main Menu|0.000|12.000|1|0.500|0.000|0.000|0.000
 Track One|12.000|42.000|0|0.000|0.000|0.000|0.000
 
 [scene_menus]
-# scene_index|wrap|initial_item|highlight_rgba|item_count|label,target,x,y,w,h,visual_type,animated_sprite_cue,image_x,image_y...
-0|1|0|1.000,0.800,0.200,1.000|2|Track One,1,0.100,0.300,0.250,0.100,0,-1,0.225,0.350|Track Two,2,0.100,0.450,0.250,0.100,1,0,0.225,0.500
+# scene_index|wrap|initial_item|highlight_rgba,mouse_enabled|item_count|label,target,x,y,w,h,visual_type,animated_sprite_cue,image_x,image_y...
+0|1|0|1.000,0.800,0.200,1.000,0|2|Track One,1,0.100,0.300,0.250,0.100,0,-1,0.225,0.350|Track Two,2,0.100,0.450,0.250,0.100,1,0,0.225,0.500
 
 [shader_cues]
 shader_scene_id|palette_low_r|...|shader_cue_start_s|shader_cue_end_s|...
@@ -384,7 +398,8 @@ logo_burst|frame_00.png;frame_01.png;frame_02.png|Salute_assets/frame_00.png;Sal
 `wipe_type` is `0` for none and `1`-`4` for left, right, up, and down. Menu
 `visual_type` is `0` for a label button and `1` for an animated-sprite icon;
 `animated_sprite_cue` is a scene-local index. Older rows without these fields
-retain their defaults when imported.
+retain their defaults when imported. `mouse_enabled` is `0` by default and `1`
+when hover/left-click navigation is explicitly enabled for that menu.
 
 The row's `scene_start` and `scene_end` are absolute project times. Each packed effect's
 `start_time` and `end_time` remains scene-local, so the runtime subtracts `scene_start` before

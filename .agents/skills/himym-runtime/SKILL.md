@@ -21,3 +21,8 @@ state. Menu scenes loop until activation or exit; destinations return to that
 origin on authored scene expiry or non-looping XM completion. Treat sprite
 menu visuals as instances of scene-local animated-sprite cues with menu-owned
 position, hit bounds, target, and selection tint.
+Keep a separate animation clock per sprite menu item. Advance only the selected
+item, freeze it when selection leaves, and resume its stored clock on re-entry;
+do not derive menu-instance frames from the looping scene clock.
+Gate hover and click handling on the authored per-menu mouse option. Keep that
+option disabled by default and do not gate keyboard navigation with it.

@@ -9,12 +9,101 @@
 #include <algorithm>
 #include <limits>
 #include <string>
+#include <vector>
 #include <windows.h>
 #include <gdiplus.h>
 #include "imgui.h"
 
 namespace rev {
 namespace editor {
+
+struct NumberedImageFrame {
+    std::string filename;
+    unsigned long long number;
+};
+
+static bool DiscoverNumberedImageSequence(const char* selected_path,
+                                          std::vector<NumberedImageFrame>* frames,
+                                          std::string* directory) {
+    if (!selected_path || !frames || !directory) return false;
+    const char* separator = strrchr(selected_path, '\\');
+    if (!separator) separator = strrchr(selected_path, '/');
+    const char* filename = separator ? separator + 1 : selected_path;
+
+    const char* extension = strrchr(filename, '.');
+    if (!extension || extension == filename) return false;
+    const char* digits_end = extension;
+    const char* digits_start = digits_end;
+    while (digits_start > filename && digits_start[-1] >= '0' && digits_start[-1] <= '9') --digits_start;
+    if (digits_start == digits_end) return false;
+
+    const size_t prefix_length = (size_t)(digits_start - filename);
+    const size_t digit_count = (size_t)(digits_end - digits_start);
+    if (separator) directory->assign(selected_path, (size_t)(separator - selected_path));
+    else *directory = ".";
+
+    std::string pattern = *directory + "\\*" + extension;
+    WIN32_FIND_DATAA found = {};
+    HANDLE find = FindFirstFileA(pattern.c_str(), &found);
+    if (find == INVALID_HANDLE_VALUE) return false;
+
+    do {
+        if (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        const char* candidate = found.cFileName;
+        const char* candidate_extension = strrchr(candidate, '.');
+        if (!candidate_extension || _stricmp(candidate_extension, extension) != 0) continue;
+        if ((size_t)(candidate_extension - candidate) != prefix_length + digit_count) continue;
+        if (_strnicmp(candidate, filename, prefix_length) != 0) continue;
+
+        bool numeric = true;
+        unsigned long long number = 0;
+        for (size_t i = 0; i < digit_count; ++i) {
+            const char value = candidate[prefix_length + i];
+            if (value < '0' || value > '9') { numeric = false; break; }
+            number = number * 10 + (unsigned long long)(value - '0');
+        }
+        if (numeric) frames->push_back({candidate, number});
+    } while (FindNextFileA(find, &found));
+    FindClose(find);
+
+    std::sort(frames->begin(), frames->end(), [](const NumberedImageFrame& a, const NumberedImageFrame& b) {
+        if (a.number != b.number) return a.number < b.number;
+        return _stricmp(a.filename.c_str(), b.filename.c_str()) < 0;
+    });
+    return !frames->empty();
+}
+
+static bool AppendAnimatedSpriteFrames(EditorContext* editor, AnimatedSpriteCue* cue,
+                                       const std::string& source_directory,
+                                       const std::vector<NumberedImageFrame>& frames) {
+    if (!editor || !editor->project || !cue || frames.empty()) return false;
+    std::string keys = cue->frame_keys_csv;
+    std::string paths = cue->frame_paths_csv;
+    for (const NumberedImageFrame& frame : frames) {
+        if (!keys.empty()) keys += ';';
+        if (!paths.empty()) paths += ';';
+        keys += frame.filename;
+        paths += frame.filename;
+    }
+    if (keys.size() >= sizeof(cue->frame_keys_csv) || paths.size() >= sizeof(cue->frame_paths_csv)) {
+        printf("[ANIM_SPRITE] Sequence has too many frames for the cue buffers.\n");
+        return false;
+    }
+
+    if (editor->project->assets_path[0]) {
+        for (const NumberedImageFrame& frame : frames) {
+            const std::string source_path = source_directory + "\\" + frame.filename;
+            char destination[640] = {};
+            snprintf(destination, sizeof(destination), "%s\\%s", editor->project->assets_path, frame.filename.c_str());
+            if (!CopyFileA(source_path.c_str(), destination, FALSE)) {
+                printf("[ANIM_SPRITE] Warning: could not copy %s (err=%lu)\n", source_path.c_str(), GetLastError());
+            }
+        }
+    }
+    strcpy_s(cue->frame_keys_csv, keys.c_str());
+    strcpy_s(cue->frame_paths_csv, paths.c_str());
+    return true;
+}
 
 static bool InspectPipelineShaderVersion(const EditorContext* editor, const char* declared_path,
                                          rev::shader::FragmentSourceVersionStatus* status) {
@@ -3098,6 +3187,31 @@ void RenderAnimatedSpriteModal(EditorContext* editor) {
                 AutoSave();
             }
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Add Numbered Sequence")) {
+            OPENFILENAMEA ofn = {};
+            char filepath[512] = {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = (HWND)editor->window->hwnd;
+            ofn.lpstrFile = filepath;
+            ofn.nMaxFile = sizeof(filepath);
+            ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0WebP\0*.webp\0All Files\0*.*\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrInitialDir = "assets";
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+            if (GetOpenFileNameA(&ofn)) {
+                std::vector<NumberedImageFrame> frames;
+                std::string source_directory;
+                if (!DiscoverNumberedImageSequence(filepath, &frames, &source_directory)) {
+                    printf("[ANIM_SPRITE] No numbered image sequence found for %s. Expected names such as 0001.png or drop_0001.png.\n", filepath);
+                } else if (AppendAnimatedSpriteFrames(editor, cue, source_directory, frames)) {
+                    printf("[ANIM_SPRITE] Added %zu numbered frames from %s.\n", frames.size(), source_directory.c_str());
+                    AutoSave();
+                }
+            }
+        }
+        ImGui::TextDisabled("Sequence: matching prefix + trailing digits + extension (for example 0001.png or drop_0001.png)");
 
         ImGui::Separator();
         ImGui::Text("Position (0.0-1.0):");

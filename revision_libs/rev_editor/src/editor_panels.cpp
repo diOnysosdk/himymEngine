@@ -882,13 +882,17 @@ void RenderProperties(EditorContext* editor) {
                         scene->menu.wrap = wrap ? 1 : 0;
                         editor->project->modified = true;
                     }
+                    bool mouse_enabled = scene->menu.mouse_enabled != 0;
+                    if (ImGui::Checkbox("Enable mouse control", &mouse_enabled)) {
+                        scene->menu.mouse_enabled = mouse_enabled ? 1 : 0;
+                        editor->project->modified = true;
+                    }
                     if (ImGui::ColorEdit4("Highlight", scene->menu.highlight_color)) editor->project->modified = true;
                     if (ImGui::Button("+ Add scene item") && scene->menu.item_count < rev::runtime::kMaxMenuItems) {
                         int item_index = scene->menu.item_count++;
                         rev::runtime::MenuItem& item = scene->menu.items[item_index];
                         item = {};
                         item.animated_sprite_cue = -1;
-                        item.image_x = item.image_y = 0.5f;
                         snprintf(item.label, sizeof(item.label), "Scene %d", item_index + 1);
                         item.target_scene = editor->project->scene_count > 1 ? 1 : 0;
                         if (item_index > 0) {
@@ -902,6 +906,8 @@ void RenderProperties(EditorContext* editor) {
                             item.width = 0.5f; item.height = 0.065f;
                         }
                         if (item.y + item.height > 1.0f) item.y = 1.0f - item.height;
+                        item.image_x = item.x + item.width * 0.5f;
+                        item.image_y = item.y + item.height * 0.5f;
                         editor->project->modified = true;
                     }
                     for (int menu_index = 0; menu_index < scene->menu.item_count; ++menu_index) {

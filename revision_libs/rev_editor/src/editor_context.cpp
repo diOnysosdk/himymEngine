@@ -1805,6 +1805,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
                          &current_scene->wipe_color[2]) == 3) continue;
             if (sscanf_s(start, "\"menu_enabled\": %d", &current_scene->menu.enabled) == 1) continue;
             if (sscanf_s(start, "\"menu_wrap\": %d", &current_scene->menu.wrap) == 1) continue;
+            if (sscanf_s(start, "\"menu_mouse_enabled\": %d", &current_scene->menu.mouse_enabled) == 1) continue;
             if (sscanf_s(start, "\"menu_initial_item\": %d", &current_scene->menu.initial_item) == 1) continue;
             if (sscanf_s(start, "\"menu_highlight_color\": [%f, %f, %f, %f]",
                          &current_scene->menu.highlight_color[0], &current_scene->menu.highlight_color[1],
@@ -3295,6 +3296,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
                 scene->wipe_color[0], scene->wipe_color[1], scene->wipe_color[2]);
         fprintf(f, "      \"menu_enabled\": %d,\n", scene->menu.enabled);
         fprintf(f, "      \"menu_wrap\": %d,\n", scene->menu.wrap);
+        fprintf(f, "      \"menu_mouse_enabled\": %d,\n", scene->menu.mouse_enabled);
         fprintf(f, "      \"menu_initial_item\": %d,\n", scene->menu.initial_item);
         fprintf(f, "      \"menu_highlight_color\": [%.3f, %.3f, %.3f, %.3f],\n",
                 scene->menu.highlight_color[0], scene->menu.highlight_color[1],
@@ -5314,13 +5316,14 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     }
 
     fprintf(f, "\n[scene_menus]\n");
-    fprintf(f, "# scene_index|wrap|initial_item|highlight_rgba|item_count|label,target,x,y,w,h...\n");
+    fprintf(f, "# scene_index|wrap|initial_item|highlight_rgba,mouse_enabled|item_count|label,target,x,y,w,h...\n");
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         const SceneBlock* scene = &editor->project->scenes[scene_idx];
         if (!scene->menu.enabled) continue;
-        fprintf(f, "%d|%d|%d|%.3f,%.3f,%.3f,%.3f|%d", scene_idx, scene->menu.wrap,
+        fprintf(f, "%d|%d|%d|%.3f,%.3f,%.3f,%.3f,%d|%d", scene_idx, scene->menu.wrap,
                 scene->menu.initial_item, scene->menu.highlight_color[0], scene->menu.highlight_color[1],
-                scene->menu.highlight_color[2], scene->menu.highlight_color[3], scene->menu.item_count);
+                scene->menu.highlight_color[2], scene->menu.highlight_color[3], scene->menu.mouse_enabled,
+                scene->menu.item_count);
         for (int item_idx = 0; item_idx < scene->menu.item_count; ++item_idx) {
             const rev::runtime::MenuItem& item = scene->menu.items[item_idx];
             fprintf(f, "|%s,%d,%.3f,%.3f,%.3f,%.3f,%d,%d,%.3f,%.3f", item.label, item.target_scene,
@@ -8431,7 +8434,15 @@ void RenderPreviewFrame(EditorContext* editor) {
         int sp_col = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_color_tint") : -1;
 
         // Build unified draw list: type 0=image 1=text 2=mesh 3=scroll text 4=animated sprite 5=pixel 6=emitter
-        struct DrawItem { int type; void* cue; int layer_order; float scene_start_time; };
+        struct DrawItem {
+            int type;
+            void* cue;
+            int layer_order;
+            float scene_start_time;
+            const rev::runtime::MenuItem* menu_item = nullptr;
+            int menu_item_index = -1;
+            const rev::runtime::SceneMenu* menu = nullptr;
+        };
         static const int kMaxItems = 512;
         DrawItem items[kMaxItems];
         int item_count = 0;
@@ -8461,8 +8472,20 @@ void RenderPreviewFrame(EditorContext* editor) {
                 bool time_in_range = is_last_scene
                     ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
                     : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
-                if (time_in_range && cue->frame_keys_csv[0])
-                    items[item_count++] = { 4, cue, cue->layer_order, item_scene_start };
+                if (time_in_range && cue->frame_keys_csv[0]) {
+                    int menu_instance_count = 0;
+                    if (scene->menu.enabled) {
+                        for (int menu_index = 0; menu_index < scene->menu.item_count && item_count < kMaxItems; ++menu_index) {
+                            const rev::runtime::MenuItem& menu_item = scene->menu.items[menu_index];
+                            if (menu_item.visual_type == 1 && menu_item.animated_sprite_cue == i) {
+                                items[item_count++] = { 4, cue, cue->layer_order, item_scene_start, &menu_item, menu_index, &scene->menu };
+                                ++menu_instance_count;
+                            }
+                        }
+                    }
+                    if (menu_instance_count == 0 && item_count < kMaxItems)
+                        items[item_count++] = { 4, cue, cue->layer_order, item_scene_start };
+                }
             }
             for (int i = 0; i < scene->pixel_cue_count && item_count < kMaxItems; i++) {
                 PixelCue* cue = &scene->pixel_cues[i];
@@ -8926,7 +8949,6 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float anim_scale = cue->scale;
                     float anim_rotation = cue->rotation;
                     float anim_opacity = cue->opacity;
-                    float anim_frame = (float)cue->start_frame;
 
                     float absolute_cue_start = item.scene_start_time + cue->cue_start;
                     float elapsed_time = editor->current_time - absolute_cue_start;
@@ -8956,29 +8978,18 @@ void RenderPreviewFrame(EditorContext* editor) {
                             float t = elapsed_time / curve->duration;
                             anim_opacity = rev::curve::Evaluate(*curve, t);
                         }
-                        if (cue->curve_frame >= 0 && cue->curve_frame < editor->project->curve_count) {
-                            rev::curve::Curve* curve = &editor->project->curves[cue->curve_frame];
-                            float t = elapsed_time / curve->duration;
-                            anim_frame = rev::curve::Evaluate(*curve, t);
-                        }
                     }
 
-                    for (int scene_index = 0; scene_index < editor->project->scene_count; ++scene_index) {
-                        SceneBlock& owner = editor->project->scenes[scene_index];
-                        int sprite_index = -1;
-                        for (int candidate = 0; candidate < owner.animated_sprite_cue_count; ++candidate) {
-                            if (&owner.animated_sprite_cues[candidate] == cue) { sprite_index = candidate; break; }
-                        }
-                        if (sprite_index < 0 || !owner.menu.enabled) continue;
-                        for (int menu_index = 0; menu_index < owner.menu.item_count; ++menu_index) {
-                            const rev::runtime::MenuItem& menu_item = owner.menu.items[menu_index];
-                            if (menu_item.visual_type == 1 && menu_item.animated_sprite_cue == sprite_index) {
-                                anim_x = menu_item.image_x;
-                                anim_y = menu_item.image_y;
-                                break;
-                            }
-                        }
-                        break;
+                    if (item.menu_item) {
+                        anim_x = item.menu_item->image_x;
+                        anim_y = item.menu_item->image_y;
+                    }
+
+                    float frame_elapsed_time = elapsed_time;
+                    if (item.menu) {
+                        int selected = item.menu->initial_item;
+                        if (selected < 0 || selected >= item.menu->item_count) selected = 0;
+                        if (item.menu_item_index != selected) frame_elapsed_time = 0.0f;
                     }
 
                     int frame_count = 0;
@@ -8989,8 +9000,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (frame_count <= 0) continue;
 
                     int frame_idx = cue->start_frame;
-                    if (cue->fps > 0.0f && elapsed_time > 0.0f) {
-                        float frame_f = elapsed_time * cue->fps;
+                    if (cue->fps > 0.0f && frame_elapsed_time > 0.0f) {
+                        float frame_f = frame_elapsed_time * cue->fps;
                         if (cue->playback_mode == 1) {
                             int once_idx = (int)frame_f;
                             if (once_idx >= frame_count) once_idx = frame_count - 1;
@@ -9009,7 +9020,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                         }
                     }
                     if (cue->curve_frame >= 0 && cue->curve_frame < editor->project->curve_count) {
-                        frame_idx = (int)anim_frame;
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_frame];
+                        float t = curve->duration > 0.0f ? frame_elapsed_time / curve->duration : 0.0f;
+                        frame_idx = (int)rev::curve::Evaluate(*curve, t);
                     }
                     if (frame_idx < 0) frame_idx = 0;
                     if (frame_idx >= frame_count) frame_idx = frame_count - 1;
@@ -9419,6 +9432,18 @@ void RenderPreviewFrame(EditorContext* editor) {
                     layer_effect_count = cue->post_effect_count;
                 }
 
+                if (sp_col >= 0) {
+                    int preview_menu_selection = item.menu ? item.menu->initial_item : -1;
+                    if (item.menu && (preview_menu_selection < 0 || preview_menu_selection >= item.menu->item_count))
+                        preview_menu_selection = 0;
+                    if (item.type == 4 && item.menu && item.menu_item_index == preview_menu_selection) {
+                        rev::shader::SetVec3(sprite_prog, sp_col, item.menu->highlight_color[0],
+                                             item.menu->highlight_color[1], item.menu->highlight_color[2]);
+                    } else {
+                        rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
+                    }
+                }
+
                 bool has_layer_post = editor->layer_fbo && editor->layer_texture && editor->post_shader &&
                     layer_effects && layer_effect_count > 0;
                 if (has_layer_post) {
@@ -9436,7 +9461,6 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
                     if (sp_rot >= 0) rev::shader::SetFloat(sprite_prog, sp_rot, rotation);
                     if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
-                    if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
                     int enabled[PostEffectCount] = {};
@@ -9620,7 +9644,6 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
                     if (sp_rot >= 0) rev::shader::SetFloat(sprite_prog, sp_rot, rotation);
                     if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
-                    if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 }
                 if (item.type == 0) {
@@ -10951,6 +10974,13 @@ void RenderPreviewPanel(EditorContext* editor) {
                             draw_list->AddText(ImVec2(a.x + 8.0f, a.y + 5.0f), IM_COL32_WHITE, item.label);
                         if (item_index == selected && item.visual_type == 0)
                             draw_list->AddRect(a, b, color, 0.0f, 0, 3.0f);
+                        if (item.visual_type == 1) {
+                            ImU32 guide_color = item_index == selected ? color : IM_COL32(255, 255, 255, 90);
+                            draw_list->AddRect(a, b, guide_color, 0.0f, 0, item_index == selected ? 2.0f : 1.0f);
+                            ImVec2 centre(image_min.x + item.image_x * w, image_min.y + item.image_y * h);
+                            draw_list->AddLine(ImVec2(centre.x - 6.0f, centre.y), ImVec2(centre.x + 6.0f, centre.y), guide_color);
+                            draw_list->AddLine(ImVec2(centre.x, centre.y - 6.0f), ImVec2(centre.x, centre.y + 6.0f), guide_color);
+                        }
                     }
                 }
                 float elapsed = editor->current_time - scene_start;

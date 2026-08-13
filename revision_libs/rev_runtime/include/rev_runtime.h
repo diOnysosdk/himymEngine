@@ -660,6 +660,7 @@ constexpr int kMaxMenuItems = 32;
 struct SceneMenu {
     int enabled;
     int wrap;
+    int mouse_enabled;
     int initial_item;
     float highlight_color[4];
     MenuItem items[kMaxMenuItems];
