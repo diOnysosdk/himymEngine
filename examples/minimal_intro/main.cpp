@@ -128,6 +128,11 @@ struct RuntimeSceneLayerPostEffects {
     int effect_count;
 };
 
+struct RuntimeSceneMenu {
+    int scene_index;
+    rev::runtime::SceneMenu menu;
+};
+
 static const int kPostEffectCount = 23;
 static const int kPostEffectFade = 12;
 
@@ -1570,8 +1575,55 @@ int LoadAllPixelEmitterCues(const char* path, PixelEmitterCue* cues, int max_cue
     fclose(f);
     return count;
 }
+
 #endif
 
+static int LoadSceneNavigation(const char* path, rev::runtime::SceneNavigation* scenes, int max_scenes) {
+    FILE* f = nullptr; fopen_s(&f, path, "r"); if (!f) return 0;
+    char line[2048]; bool in_section = false; int count = 0;
+    while (fgets(line, sizeof(line), f) && count < max_scenes) {
+        char* s = line; while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') ++s;
+        if (strstr(s, "[scenes]")) { in_section = true; continue; }
+        if (s[0] == '[' && in_section) break;
+        if (!in_section || s[0] == '#' || !s[0]) continue;
+        rev::runtime::SceneNavigation& scene = scenes[count];
+        if (sscanf_s(s, "%63[^|]|%f|%f|%d|%f|%f|%f|%f", scene.name,
+                     (unsigned)_countof(scene.name), &scene.start_time, &scene.end_time,
+                     &scene.wipe_type, &scene.wipe_duration, &scene.wipe_color[0],
+                     &scene.wipe_color[1], &scene.wipe_color[2]) == 8) ++count;
+    }
+    fclose(f); return count;
+}
+
+static int LoadSceneMenus(const char* path, RuntimeSceneMenu* menus, int max_menus) {
+    FILE* f = nullptr; fopen_s(&f, path, "r"); if (!f) return 0;
+    char line[4096]; bool in_section = false; int count = 0;
+    while (fgets(line, sizeof(line), f) && count < max_menus) {
+        char* s = line; while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') ++s;
+        if (strstr(s, "[scene_menus]")) { in_section = true; continue; }
+        if (s[0] == '[' && in_section) break;
+        if (!in_section || s[0] == '#' || !s[0]) continue;
+        RuntimeSceneMenu& out = menus[count]; out = {}; out.menu.enabled = 1;
+        char* context = nullptr; char* field = strtok_s(s, "|\r\n", &context);
+        if (!field) continue; out.scene_index = atoi(field);
+        field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue; out.menu.wrap = atoi(field);
+        field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue; out.menu.initial_item = atoi(field);
+        field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue;
+        sscanf_s(field, "%f,%f,%f,%f", &out.menu.highlight_color[0], &out.menu.highlight_color[1],
+                 &out.menu.highlight_color[2], &out.menu.highlight_color[3]);
+        field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue;
+        int declared_count = atoi(field);
+        for (int i = 0; i < declared_count && i < rev::runtime::kMaxMenuItems; ++i) {
+            field = strtok_s(nullptr, "|\r\n", &context); if (!field) break;
+            rev::runtime::MenuItem& item = out.menu.items[out.menu.item_count];
+            if (sscanf_s(field, "%63[^,],%d,%f,%f,%f,%f", item.label,
+                         (unsigned)_countof(item.label), &item.target_scene, &item.x, &item.y,
+                         &item.width, &item.height) == 6) ++out.menu.item_count;
+        }
+        ++count;
+    }
+    fclose(f); return count;
+}
 #if HIMYM_USE_PIXEL
 static bool UploadPixelFrame(const PixelAnimation* animation, int frame_index,
                              int palette_offset, unsigned int* out_texture) {
@@ -2642,6 +2694,12 @@ int main(int argc, char* argv[]) {
     int scene_layer_post_effect_count = LoadSceneLayerPostEffects(
         cues_path, scene_layer_post_effects, 64);
     LOGV("Loaded %d scene layer post-effect stack(s)\n", scene_layer_post_effect_count);
+    rev::runtime::SceneNavigation scene_navigation[64] = {};
+    int scene_navigation_count = LoadSceneNavigation(cues_path, scene_navigation, 64);
+    RuntimeSceneMenu scene_menus[64] = {};
+    int scene_menu_count = LoadSceneMenus(cues_path, scene_menus, 64);
+    TextTexture scene_menu_textures[64][rev::runtime::kMaxMenuItems] = {};
+    LOGV("Loaded %d scene row(s), %d interactive menu(s)\n", scene_navigation_count, scene_menu_count);
     
     // Setup default fallback shader cue
     ShaderCue fallback_cue = {};
@@ -3157,6 +3215,13 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_flip_v"), 1.0f);
         rev::shader::SetVec4(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect"), 0.0f, 0.0f, 1.0f, 1.0f);
         LOGV("Sprite shader OK\n");
+        for (int menu_index = 0; menu_index < scene_menu_count; ++menu_index) {
+            for (int item_index = 0; item_index < scene_menus[menu_index].menu.item_count; ++item_index) {
+                const char* label = scene_menus[menu_index].menu.items[item_index].label;
+                if (label[0]) RenderTextToTexture(label, "Segoe UI", 42.0f, 1.0f, 1.0f, 1.0f,
+                                                  &scene_menu_textures[menu_index][item_index]);
+            }
+        }
     }
 
     unsigned int runtime_shader_audio_texture = 0;
@@ -4260,12 +4325,52 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     double prev_time = start_time;
     int debug_frame = 0;
     int shader_frame = 0;
+    int menu_selection = 0;
+    int active_menu_scene = -1;
+    int menu_return_scene = -1;
+    int menu_destination_scene = -1;
+    bool previous_up = false, previous_down = false, previous_enter = false, previous_mouse = false;
 
     while (rev::platform::PollEvents(window) && !window->should_close) {
         double current_time = rev::platform::GetTime();
         float time = static_cast<float>(current_time - start_time);
         float dt = static_cast<float>(current_time - prev_time);
         prev_time = current_time;
+
+        // A scene entered from an interactive menu is a temporary destination,
+        // not the next step in the linear timeline. Return to its originating
+        // menu when its authored scene interval expires.
+        if (menu_return_scene >= 0 && menu_return_scene < scene_navigation_count &&
+            menu_destination_scene >= 0 && menu_destination_scene < scene_navigation_count) {
+            const rev::runtime::SceneNavigation& destination = scene_navigation[menu_destination_scene];
+            float previous_time = time - dt;
+            if (previous_time >= destination.start_time && previous_time < destination.end_time &&
+                time >= destination.end_time) {
+                time = scene_navigation[menu_return_scene].start_time;
+                start_time = current_time - time;
+                menu_return_scene = -1;
+                menu_destination_scene = -1;
+#if HIMYM_USE_XM
+                finished_music_index = -1;
+#endif
+            }
+        }
+
+        // Interactive menu scenes own the clock until the user activates an
+        // item. Wrap only that scene, preserving the rest of the timeline.
+        for (int menu_index = 0; menu_index < scene_menu_count; ++menu_index) {
+            int scene_index = scene_menus[menu_index].scene_index;
+            if (scene_index < 0 || scene_index >= scene_navigation_count) continue;
+            const rev::runtime::SceneNavigation& scene = scene_navigation[scene_index];
+            float duration = scene.end_time - scene.start_time;
+            float previous_time = time - dt;
+            if (duration > 0.0f && previous_time >= scene.start_time && previous_time < scene.end_time &&
+                time >= scene.end_time) {
+                time = scene.start_time + fmodf(time - scene.start_time, duration);
+                start_time = current_time - time;
+                break;
+            }
+        }
 
         // Wrap before cue selection and rendering. Rendering once at a time past
         // the final cue produces a blank frame at the loop boundary.
@@ -4291,6 +4396,59 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
 #endif
         }
+
+        int current_scene_index = -1;
+        for (int si = 0; si < scene_navigation_count; ++si) {
+            if (time >= scene_navigation[si].start_time && time < scene_navigation[si].end_time) {
+                current_scene_index = si; break;
+            }
+        }
+        RuntimeSceneMenu* active_menu = nullptr;
+        for (int mi = 0; mi < scene_menu_count; ++mi) {
+            if (scene_menus[mi].scene_index == current_scene_index) { active_menu = &scene_menus[mi]; break; }
+        }
+        if (current_scene_index != active_menu_scene) {
+            active_menu_scene = current_scene_index;
+            menu_selection = active_menu ? active_menu->menu.initial_item : 0;
+        }
+        bool up = rev::platform::IsKeyPressed(window, VK_UP);
+        bool down = rev::platform::IsKeyPressed(window, VK_DOWN);
+        bool enter = rev::platform::IsKeyPressed(window, VK_RETURN);
+        bool mouse = rev::platform::IsMouseButtonPressed(window, 0);
+        int activate_item = -1;
+        if (active_menu && active_menu->menu.item_count > 0) {
+            int item_count = active_menu->menu.item_count;
+            if (up && !previous_up) menu_selection = active_menu->menu.wrap
+                ? (menu_selection + item_count - 1) % item_count : (menu_selection > 0 ? menu_selection - 1 : 0);
+            if (down && !previous_down) menu_selection = active_menu->menu.wrap
+                ? (menu_selection + 1) % item_count : (menu_selection + 1 < item_count ? menu_selection + 1 : item_count - 1);
+            int mouse_x = 0, mouse_y = 0; rev::platform::GetMousePosition(window, &mouse_x, &mouse_y);
+            float nx = window->win_width > 0 ? (float)mouse_x / window->win_width : 0.0f;
+            float ny = window->win_height > 0 ? (float)mouse_y / window->win_height : 0.0f;
+            for (int i = 0; i < item_count; ++i) {
+                const rev::runtime::MenuItem& item = active_menu->menu.items[i];
+                if (nx >= item.x && nx <= item.x + item.width && ny >= item.y && ny <= item.y + item.height) {
+                    menu_selection = i;
+                    if (mouse && !previous_mouse) activate_item = i;
+                }
+            }
+            if (enter && !previous_enter) activate_item = menu_selection;
+            if (activate_item >= 0) {
+                int target = active_menu->menu.items[activate_item].target_scene;
+                if (target >= 0 && target < scene_navigation_count) {
+                    menu_return_scene = current_scene_index;
+                    menu_destination_scene = target;
+                    time = scene_navigation[target].start_time;
+                    start_time = current_time - time;
+                    current_scene_index = target;
+                    active_menu_scene = -1;
+#if HIMYM_USE_XM
+                    finished_music_index = -1;
+#endif
+                }
+            }
+        }
+        previous_up = up; previous_down = down; previous_enter = enter; previous_mouse = mouse;
 
 #if HIMYM_USE_XM
         if (audio_state && loaded_music_player_count > 0) {
@@ -4358,6 +4516,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             active_music_index = -1;
                             audio_state->player.store(nullptr, std::memory_order_release);
                             music_finish_latched = true;
+                            if (menu_return_scene >= 0 && menu_return_scene < scene_navigation_count &&
+                                current_scene_index == menu_destination_scene) {
+                                time = scene_navigation[menu_return_scene].start_time;
+                                start_time = current_time - time;
+                                current_scene_index = menu_return_scene;
+                                active_menu_scene = -1;
+                                menu_return_scene = -1;
+                                menu_destination_scene = -1;
+                                finished_music_index = -1;
+                            }
                         } else if (!music_finish_latched) {
                             rev::xm::SetPosition(selected_player, 0, 0);
                             music_finish_latched = true;
@@ -6637,6 +6805,70 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
         }
 
+        // Code-only menu highlight and scene-entry wipe are drawn last so they
+        // cover the complete composited frame without adding shader assets.
+        int overlay_w = window->win_width > 0 ? window->win_width : config.width;
+        int overlay_h = window->win_height > 0 ? window->win_height : config.height;
+        if (active_menu) {
+            int active_menu_index = (int)(active_menu - scene_menus);
+            glBindVertexArray(vao);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            rev::shader::Use(sprite_shader);
+            rev::shader::SetInt(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_texture"), 0);
+            rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_opacity"), 1.0f);
+            rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_rotation"), 0.0f);
+            rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_flip_v"), 1.0f);
+            rev::shader::SetVec4(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect"), 0, 0, 1, 1);
+            if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
+            for (int item_index = 0; item_index < active_menu->menu.item_count; ++item_index) {
+                const rev::runtime::MenuItem& item = active_menu->menu.items[item_index];
+                const TextTexture& texture = scene_menu_textures[active_menu_index][item_index];
+                if (!texture.texture_id) continue;
+                float half_w = item.width;
+                float half_h = item.height;
+                float center_x = item.x * 2.0f - 1.0f + half_w;
+                float center_y = 1.0f - item.y * 2.0f - half_h;
+                rev::shader::SetVec2(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_position"), center_x, center_y);
+                rev::shader::SetVec2(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_size"), half_w, half_h);
+                glBindTexture(GL_TEXTURE_2D, texture.texture_id);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            }
+            glDisable(GL_BLEND);
+        }
+        if (active_menu && menu_selection >= 0 && menu_selection < active_menu->menu.item_count) {
+            const rev::runtime::MenuItem& item = active_menu->menu.items[menu_selection];
+            glEnable(GL_SCISSOR_TEST);
+            glClearColor(active_menu->menu.highlight_color[0], active_menu->menu.highlight_color[1],
+                         active_menu->menu.highlight_color[2], 1.0f);
+            int hx = (int)(item.x * overlay_w), hy = (int)((1.0f - item.y - item.height) * overlay_h);
+            int hw = (int)(item.width * overlay_w), hh = (int)(item.height * overlay_h);
+            int border = 3;
+            const int rects[4][4] = {{hx, hy, hw, border}, {hx, hy + hh - border, hw, border},
+                                     {hx, hy, border, hh}, {hx + hw - border, hy, border, hh}};
+            for (int ri = 0; ri < 4; ++ri) {
+                glScissor(rects[ri][0], rects[ri][1], rects[ri][2], rects[ri][3]);
+                glClear(GL_COLOR_BUFFER_BIT);
+            }
+            glDisable(GL_SCISSOR_TEST);
+        }
+        if (current_scene_index >= 0 && current_scene_index < scene_navigation_count) {
+            const rev::runtime::SceneNavigation& scene = scene_navigation[current_scene_index];
+            float elapsed = time - scene.start_time;
+            if (scene.wipe_type != rev::runtime::SceneWipeNone && scene.wipe_duration > 0.0f &&
+                elapsed >= 0.0f && elapsed < scene.wipe_duration) {
+                float remaining = 1.0f - elapsed / scene.wipe_duration;
+                int x = 0, y = 0, w = overlay_w, h = overlay_h;
+                if (scene.wipe_type == rev::runtime::SceneWipeLeft) w = (int)(overlay_w * remaining);
+                else if (scene.wipe_type == rev::runtime::SceneWipeRight) { w = (int)(overlay_w * remaining); x = overlay_w - w; }
+                else if (scene.wipe_type == rev::runtime::SceneWipeUp) h = (int)(overlay_h * remaining);
+                else if (scene.wipe_type == rev::runtime::SceneWipeDown) { h = (int)(overlay_h * remaining); y = overlay_h - h; }
+                glEnable(GL_SCISSOR_TEST); glScissor(x, y, w, h);
+                glClearColor(scene.wipe_color[0], scene.wipe_color[1], scene.wipe_color[2], 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT); glDisable(GL_SCISSOR_TEST);
+            }
+        }
+
         // Swap buffers
         rev::platform::SwapBuffers(window);
         ++shader_frame;
@@ -6671,6 +6903,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         }
     }
 #endif
+    for (int menu_index = 0; menu_index < scene_menu_count; ++menu_index)
+        for (int item_index = 0; item_index < scene_menus[menu_index].menu.item_count; ++item_index)
+            if (scene_menu_textures[menu_index][item_index].texture_id)
+                glDeleteTextures(1, &scene_menu_textures[menu_index][item_index].texture_id);
     if (runtime_shader_audio_texture)
         glDeleteTextures(1, &runtime_shader_audio_texture);
     for (int pipeline_index = 0; pipeline_index < shader_pipeline_count; ++pipeline_index) {

@@ -79,6 +79,32 @@ for their authored scene window even if an individual cue ends. The next scene s
 own stack at the scene boundary; effects do not carry across scenes unless they are authored in
 both scene stacks.
 
+### Workflow 1c: Scene wipes and interactive disc menus
+
+Select a scene and use **Scene Transition** to choose an entry wipe (left, right, up, or down),
+its duration, and its solid wipe color. The wipe is evaluated from the scene's absolute start,
+so it runs during normal playback and after an interactive jump.
+
+To turn a scene into a music-disc or diskmag menu, open **Interactive Menu**, enable it, and add
+one item for each destination scene. Each item stores a target scene index and normalized
+`Position`/`Size` bounds. Every menu item renders its own label using the compact runtime text
+texture path; ordinary Text cues remain available for headings and decorative typography.
+The standalone runtime supports Up/Down, Enter, and left-click. Activating an item seeks to the
+target scene start, where normal scene cues and the target scene's Music cue take over. Enable an
+interactive menu on a destination scene as well when it needs a return/back entry.
+
+While an interactive menu scene is active, its local scene time loops automatically. The project
+does not advance to the following scene until the user activates a destination item; Escape still
+exits immediately. Editor playback uses the same scene-local looping rule.
+
+Activating an item starts a menu session and remembers the interactive scene that launched it.
+The selected destination returns to that exact menu scene when either its authored scene duration
+expires or its non-looping XM cue finishes. It never falls through into the following timeline
+scene. This works for a master menu at any scene index, not only scene zero.
+
+Menu labels must not contain `|` or `,`, because those characters delimit the compact JSON/export
+rows. Scene indices follow the order shown in the scene list and are zero-based.
+
 For **Fade In / Fade Out**, **Intensity** is the maximum black fade, while
 **Fade In Duration** and **Fade Out Duration** control the scene-local envelope.
 The scene remains fully visible between those two fades; adding the effect does

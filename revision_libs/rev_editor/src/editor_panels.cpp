@@ -858,6 +858,85 @@ void RenderProperties(EditorContext* editor) {
                 }
             }
 
+            ImGui::Separator();
+            if (ImGui::CollapsingHeader("Scene Transition", ImGuiTreeNodeFlags_DefaultOpen)) {
+                static const char* wipe_names[] = { "None", "Left", "Right", "Up", "Down" };
+                if (ImGui::Combo("Entry wipe", &scene->wipe_type, wipe_names, IM_ARRAYSIZE(wipe_names)))
+                    editor->project->modified = true;
+                if (scene->wipe_type != rev::runtime::SceneWipeNone) {
+                    if (ImGui::DragFloat("Wipe duration", &scene->wipe_duration, 0.05f, 0.05f, 10.0f, "%.2fs"))
+                        editor->project->modified = true;
+                    if (ImGui::ColorEdit3("Wipe color", scene->wipe_color)) editor->project->modified = true;
+                }
+            }
+
+            if (ImGui::CollapsingHeader("Interactive Menu", ImGuiTreeNodeFlags_DefaultOpen)) {
+                bool menu_enabled = scene->menu.enabled != 0;
+                if (ImGui::Checkbox("Enable menu", &menu_enabled)) {
+                    scene->menu.enabled = menu_enabled ? 1 : 0;
+                    editor->project->modified = true;
+                }
+                if (scene->menu.enabled) {
+                    bool wrap = scene->menu.wrap != 0;
+                    if (ImGui::Checkbox("Wrap selection", &wrap)) {
+                        scene->menu.wrap = wrap ? 1 : 0;
+                        editor->project->modified = true;
+                    }
+                    if (ImGui::ColorEdit4("Highlight", scene->menu.highlight_color)) editor->project->modified = true;
+                    if (ImGui::Button("+ Add scene item") && scene->menu.item_count < rev::runtime::kMaxMenuItems) {
+                        int item_index = scene->menu.item_count++;
+                        rev::runtime::MenuItem& item = scene->menu.items[item_index];
+                        item = {};
+                        snprintf(item.label, sizeof(item.label), "Scene %d", item_index + 1);
+                        item.target_scene = editor->project->scene_count > 1 ? 1 : 0;
+                        item.x = 0.25f; item.y = 0.3f + item_index * 0.08f;
+                        item.width = 0.5f; item.height = 0.065f;
+                        editor->project->modified = true;
+                    }
+                    for (int menu_index = 0; menu_index < scene->menu.item_count; ++menu_index) {
+                        rev::runtime::MenuItem& item = scene->menu.items[menu_index];
+                        ImGui::PushID(menu_index);
+                        char item_header[96] = {};
+                        snprintf(item_header, sizeof(item_header), "Item %d: %s", menu_index + 1,
+                                 item.label[0] ? item.label : "(untitled)");
+                        if (ImGui::TreeNode(item_header)) {
+                            if (ImGui::InputText("Label", item.label, sizeof(item.label))) editor->project->modified = true;
+                            if (editor->project->scene_count > 0) {
+                                if (item.target_scene < 0) item.target_scene = 0;
+                                if (item.target_scene >= editor->project->scene_count)
+                                    item.target_scene = editor->project->scene_count - 1;
+                                const char* target_name = editor->project->scenes[item.target_scene].name;
+                                if (ImGui::BeginCombo("Target scene", target_name)) {
+                                    for (int target = 0; target < editor->project->scene_count; ++target) {
+                                        if (ImGui::Selectable(editor->project->scenes[target].name,
+                                                              target == item.target_scene)) {
+                                            item.target_scene = target;
+                                            editor->project->modified = true;
+                                        }
+                                    }
+                                    ImGui::EndCombo();
+                                }
+                            }
+                            if (ImGui::SliderFloat("X", &item.x, 0.0f, 1.0f, "%.3f")) editor->project->modified = true;
+                            if (ImGui::SliderFloat("Y", &item.y, 0.0f, 1.0f, "%.3f")) editor->project->modified = true;
+                            if (ImGui::SliderFloat("Width", &item.width, 0.01f, 1.0f, "%.3f")) editor->project->modified = true;
+                            if (ImGui::SliderFloat("Height", &item.height, 0.01f, 1.0f, "%.3f")) editor->project->modified = true;
+                            if (ImGui::Button("Remove item")) {
+                                for (int j = menu_index; j + 1 < scene->menu.item_count; ++j)
+                                    scene->menu.items[j] = scene->menu.items[j + 1];
+                                --scene->menu.item_count;
+                                --menu_index;
+                                editor->project->modified = true;
+                            }
+                            ImGui::TreePop();
+                        }
+                        ImGui::Separator();
+                        ImGui::PopID();
+                    }
+                    ImGui::TextDisabled("Menu scenes loop until an item is activated or the runtime exits.");
+                }
+            }
+
             static const char* post_effect_names[] = {
                 "HDR Rendering", "ACES Tone Mapping", "Bloom", "Vignette",
                 "Color Grading", "Film Grain", "Blue Noise Dithering",

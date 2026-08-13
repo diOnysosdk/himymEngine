@@ -1796,6 +1796,31 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_post_effects = false;
             in_scene_layer_post_effects = false;
         }
+
+        if (in_scenes && current_scene && indent == 6) {
+            if (sscanf_s(start, "\"wipe_type\": %d", &current_scene->wipe_type) == 1) continue;
+            if (sscanf_s(start, "\"wipe_duration\": %f", &current_scene->wipe_duration) == 1) continue;
+            if (sscanf_s(start, "\"wipe_color\": [%f, %f, %f]",
+                         &current_scene->wipe_color[0], &current_scene->wipe_color[1],
+                         &current_scene->wipe_color[2]) == 3) continue;
+            if (sscanf_s(start, "\"menu_enabled\": %d", &current_scene->menu.enabled) == 1) continue;
+            if (sscanf_s(start, "\"menu_wrap\": %d", &current_scene->menu.wrap) == 1) continue;
+            if (sscanf_s(start, "\"menu_initial_item\": %d", &current_scene->menu.initial_item) == 1) continue;
+            if (sscanf_s(start, "\"menu_highlight_color\": [%f, %f, %f, %f]",
+                         &current_scene->menu.highlight_color[0], &current_scene->menu.highlight_color[1],
+                         &current_scene->menu.highlight_color[2], &current_scene->menu.highlight_color[3]) == 4) continue;
+            if (strstr(start, "\"menu_item\":") && current_scene->menu.item_count < rev::runtime::kMaxMenuItems) {
+                rev::runtime::MenuItem& item = current_scene->menu.items[current_scene->menu.item_count];
+                char encoded_label[128] = {};
+                if (sscanf_s(start, "\"menu_item\": \"%63[^|]|%d|%f|%f|%f|%f",
+                             encoded_label, (unsigned)_countof(encoded_label), &item.target_scene,
+                             &item.x, &item.y, &item.width, &item.height) == 6) {
+                    strncpy_s(item.label, sizeof(item.label), encoded_label, _TRUNCATE);
+                    ++current_scene->menu.item_count;
+                }
+                continue;
+            }
+        }
         
         // Section detection
         if (strstr(start, "\"shader_cues\":")) {
@@ -3257,6 +3282,23 @@ bool SaveProject(EditorContext* editor, const char* path) {
         fprintf(f, "    {\n");
         fprintf(f, "      \"name\": \"%s\",\n", escaped_scene_name);
         fprintf(f, "      \"duration\": %.3f,\n", scene->duration);
+        fprintf(f, "      \"wipe_type\": %d,\n", scene->wipe_type);
+        fprintf(f, "      \"wipe_duration\": %.3f,\n", scene->wipe_duration);
+        fprintf(f, "      \"wipe_color\": [%.3f, %.3f, %.3f],\n",
+                scene->wipe_color[0], scene->wipe_color[1], scene->wipe_color[2]);
+        fprintf(f, "      \"menu_enabled\": %d,\n", scene->menu.enabled);
+        fprintf(f, "      \"menu_wrap\": %d,\n", scene->menu.wrap);
+        fprintf(f, "      \"menu_initial_item\": %d,\n", scene->menu.initial_item);
+        fprintf(f, "      \"menu_highlight_color\": [%.3f, %.3f, %.3f, %.3f],\n",
+                scene->menu.highlight_color[0], scene->menu.highlight_color[1],
+                scene->menu.highlight_color[2], scene->menu.highlight_color[3]);
+        for (int menu_index = 0; menu_index < scene->menu.item_count; ++menu_index) {
+            const rev::runtime::MenuItem& item = scene->menu.items[menu_index];
+            char escaped_label[128] = {};
+            JsonEscapeString(item.label, escaped_label, sizeof(escaped_label));
+            fprintf(f, "      \"menu_item\": \"%s|%d|%.3f|%.3f|%.3f|%.3f\",\n",
+                    escaped_label, item.target_scene, item.x, item.y, item.width, item.height);
+        }
         
         // Shader cues
         fprintf(f, "      \"shader_cues\": [\n");
@@ -5251,6 +5293,35 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     fopen_s(&f, output_path, "w");
     if (!f) return false;
 
+    fprintf(f, "[scenes]\n");
+    fprintf(f, "# name|start|end|wipe_type|wipe_duration|wipe_r|wipe_g|wipe_b\n");
+    float exported_scene_start = 0.0f;
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        const SceneBlock* scene = &editor->project->scenes[scene_idx];
+        fprintf(f, "%s|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f\n", scene->name,
+                exported_scene_start, exported_scene_start + scene->duration,
+                scene->wipe_type, scene->wipe_duration, scene->wipe_color[0],
+                scene->wipe_color[1], scene->wipe_color[2]);
+        exported_scene_start += scene->duration;
+    }
+
+    fprintf(f, "\n[scene_menus]\n");
+    fprintf(f, "# scene_index|wrap|initial_item|highlight_rgba|item_count|label,target,x,y,w,h...\n");
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        const SceneBlock* scene = &editor->project->scenes[scene_idx];
+        if (!scene->menu.enabled) continue;
+        fprintf(f, "%d|%d|%d|%.3f,%.3f,%.3f,%.3f|%d", scene_idx, scene->menu.wrap,
+                scene->menu.initial_item, scene->menu.highlight_color[0], scene->menu.highlight_color[1],
+                scene->menu.highlight_color[2], scene->menu.highlight_color[3], scene->menu.item_count);
+        for (int item_idx = 0; item_idx < scene->menu.item_count; ++item_idx) {
+            const rev::runtime::MenuItem& item = scene->menu.items[item_idx];
+            fprintf(f, "|%s,%d,%.3f,%.3f,%.3f,%.3f", item.label, item.target_scene,
+                    item.x, item.y, item.width, item.height);
+        }
+        fprintf(f, "\n");
+    }
+    fprintf(f, "\n");
+
     // [shader_cues] section
     fprintf(f, "[shader_cues]\n");
     fprintf(f, "# shader_scene_id|palette_low_r|palette_low_g|palette_low_b|palette_mid_r|palette_mid_g|palette_mid_b|palette_high_r|palette_high_g|palette_high_b|speed|intensity|warp|exposure_base|exposure_ramp|fade_base|fade_ramp|cue_start|cue_end|fade_in|fade_out|layer_role|opacity|blend_mode|layer_order|curve_speed|curve_intensity|curve_warp|curve_exposure|curve_fade|curve_palette_low_r|curve_palette_low_g|curve_palette_low_b|curve_palette_mid_r|curve_palette_mid_g|curve_palette_mid_b|curve_palette_high_r|curve_palette_high_g|curve_palette_high_b|curve_opacity|curve_exposure_ramp|curve_fade_ramp|position_x|position_y|position_z|rotation_x|rotation_y|rotation_z|motion_x|motion_y|motion_z|noise_enabled|noise_type|noise_scale|noise_strength|noise_octaves|noise_lacunarity|noise_gain|noise_warp|noise_speed_x|noise_speed_y|noise_seed|noise_contrast|noise_map_0|noise_map_1|noise_map_2|noise_map_3\n");
@@ -6393,6 +6464,15 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
     
     strncpy_s(scene->name, sizeof(scene->name), name, _TRUNCATE);
     scene->duration = duration;
+    scene->wipe_type = rev::runtime::SceneWipeNone;
+    scene->wipe_duration = 0.5f;
+    scene->wipe_color[0] = scene->wipe_color[1] = scene->wipe_color[2] = 0.0f;
+    scene->menu = {};
+    scene->menu.wrap = 1;
+    scene->menu.highlight_color[0] = 1.0f;
+    scene->menu.highlight_color[1] = 0.8f;
+    scene->menu.highlight_color[2] = 0.1f;
+    scene->menu.highlight_color[3] = 0.35f;
     
     scene->shader_cues = nullptr;
     scene->shader_cue_count = 0;
@@ -6458,6 +6538,13 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
 void DeleteScene(EditorContext* editor, int scene_index) {
     if (!editor || scene_index < 0 || scene_index >= editor->project->scene_count) return;
     
+    for (int si = 0; si < editor->project->scene_count; ++si) {
+        SceneMenu& menu = editor->project->scenes[si].menu;
+        for (int mi = 0; mi < menu.item_count; ++mi) {
+            if (menu.items[mi].target_scene == scene_index) menu.items[mi].target_scene = 0;
+            else if (menu.items[mi].target_scene > scene_index) --menu.items[mi].target_scene;
+        }
+    }
     SceneBlock* scene = &editor->project->scenes[scene_index];
     
     // Update total duration
@@ -6505,6 +6592,15 @@ void MoveScene(EditorContext* editor, int from_index, int to_index) {
     }
     
     editor->project->scenes[to_index] = temp;
+    for (int si = 0; si < editor->project->scene_count; ++si) {
+        SceneMenu& menu = editor->project->scenes[si].menu;
+        for (int mi = 0; mi < menu.item_count; ++mi) {
+            int& target = menu.items[mi].target_scene;
+            if (target == from_index) target = to_index;
+            else if (from_index < to_index && target > from_index && target <= to_index) --target;
+            else if (from_index > to_index && target >= to_index && target < from_index) ++target;
+        }
+    }
     editor->project->modified = true;
 }
 
@@ -10628,6 +10724,19 @@ void UpdatePlayback(EditorContext* editor, float delta_time) {
 
     if (editor->playing) {
         editor->current_time += delta_time;
+        float scene_start = 0.0f;
+        for (int scene_index = 0; editor->project && scene_index < editor->project->scene_count; ++scene_index) {
+            const SceneBlock& scene = editor->project->scenes[scene_index];
+            float scene_end = scene_start + scene.duration;
+            float previous_time = editor->current_time - delta_time;
+            if (scene.menu.enabled && scene.duration > 0.0f &&
+                previous_time >= scene_start && previous_time < scene_end &&
+                editor->current_time >= scene_end) {
+                editor->current_time = scene_start + fmodf(editor->current_time - scene_start, scene.duration);
+                break;
+            }
+            scene_start = scene_end;
+        }
     }
     
     // Clamp to project duration (use 10s default if duration is 0)
@@ -10787,7 +10896,44 @@ void RenderPreviewPanel(EditorContext* editor) {
         // FBO stays at 1920x1080 — ImGui scales the texture to fit the panel.
         // All size formulas (tex_pixels / preview_width * 2) produce the same
         // proportional result as the final product at every panel size.
+        ImVec2 image_min = ImGui::GetCursorScreenPos();
         ImGui::Image((ImTextureID)(intptr_t)preview_display_texture, ImVec2(w, h), ImVec2(0, 1), ImVec2(1, 0));
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        float scene_start = 0.0f;
+        for (int scene_index = 0; scene_index < editor->project->scene_count; ++scene_index) {
+            const SceneBlock& scene = editor->project->scenes[scene_index];
+            float scene_end = scene_start + scene.duration;
+            if (editor->current_time >= scene_start && editor->current_time < scene_end) {
+                if (scene.menu.enabled && scene.menu.item_count > 0) {
+                    int selected = scene.menu.initial_item;
+                    if (selected < 0 || selected >= scene.menu.item_count) selected = 0;
+                    ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(
+                        scene.menu.highlight_color[0], scene.menu.highlight_color[1],
+                        scene.menu.highlight_color[2], 1.0f));
+                    for (int item_index = 0; item_index < scene.menu.item_count; ++item_index) {
+                        const rev::runtime::MenuItem& item = scene.menu.items[item_index];
+                        ImVec2 a(image_min.x + item.x * w, image_min.y + item.y * h);
+                        ImVec2 b(a.x + item.width * w, a.y + item.height * h);
+                        draw_list->AddText(ImVec2(a.x + 8.0f, a.y + 5.0f), IM_COL32_WHITE, item.label);
+                        if (item_index == selected) draw_list->AddRect(a, b, color, 0.0f, 0, 3.0f);
+                    }
+                }
+                float elapsed = editor->current_time - scene_start;
+                if (scene.wipe_type != rev::runtime::SceneWipeNone && scene.wipe_duration > 0.0f &&
+                    elapsed >= 0.0f && elapsed < scene.wipe_duration) {
+                    float remaining = 1.0f - elapsed / scene.wipe_duration;
+                    ImVec2 a = image_min, b(image_min.x + w, image_min.y + h);
+                    if (scene.wipe_type == rev::runtime::SceneWipeLeft) b.x = a.x + w * remaining;
+                    else if (scene.wipe_type == rev::runtime::SceneWipeRight) a.x = b.x - w * remaining;
+                    else if (scene.wipe_type == rev::runtime::SceneWipeUp) b.y = a.y + h * remaining;
+                    else if (scene.wipe_type == rev::runtime::SceneWipeDown) a.y = b.y - h * remaining;
+                    draw_list->AddRectFilled(a, b, ImGui::ColorConvertFloat4ToU32(ImVec4(
+                        scene.wipe_color[0], scene.wipe_color[1], scene.wipe_color[2], 1.0f)));
+                }
+                break;
+            }
+            scene_start = scene_end;
+        }
     } else {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Preview not initialized");
     }

@@ -26,6 +26,7 @@ using rev::runtime::TextAnimationUnitCharacter;
 using rev::runtime::TextStaggerOrderForward;
 using rev::runtime::TextEasingLinear;
 using rev::runtime::MusicCue;
+using rev::runtime::SceneMenu;
 using rev::runtime::AudioEffects;
 using rev::runtime::MeshCue;
 using rev::runtime::LayerPostEffect;
@@ -195,6 +196,10 @@ struct ShaderCue {
 struct SceneBlock {
     char name[64];              // Scene name (e.g., "Opening")
     float duration;             // Scene length in seconds
+    int wipe_type;              // SceneWipeType applied on entry
+    float wipe_duration;
+    float wipe_color[3];
+    SceneMenu menu;
     
     // Cue arrays
     ShaderCue* shader_cues;

@@ -624,6 +624,44 @@ struct MusicCue {
     float cue_end;
 };
 
+// Scene navigation metadata. These rows remain code-only in packed builds.
+enum SceneWipeType {
+    SceneWipeNone = 0,
+    SceneWipeLeft = 1,
+    SceneWipeRight = 2,
+    SceneWipeUp = 3,
+    SceneWipeDown = 4,
+};
+
+struct SceneNavigation {
+    char name[64];
+    float start_time;
+    float end_time;
+    int wipe_type;
+    float wipe_duration;
+    float wipe_color[3];
+};
+
+struct MenuItem {
+    char label[64];
+    int target_scene;
+    float x;
+    float y;
+    float width;
+    float height;
+};
+
+constexpr int kMaxMenuItems = 32;
+
+struct SceneMenu {
+    int enabled;
+    int wrap;
+    int initial_item;
+    float highlight_color[4];
+    MenuItem items[kMaxMenuItems];
+    int item_count;
+};
+
 // 3-D mesh cue
 // mesh_type: 0=cube  1=sphere  2=plane  3=torus
 // pos/rot/scale: world transform (rot in degrees, Euler XYZ)
