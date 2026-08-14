@@ -799,6 +799,7 @@ void EvaluateTextGlyphAnimation(const TextAnimationConfig* config,
 
 // Load an image file and upload it to an OpenGL texture.
 bool LoadImageTexture(const char* path, ImageTexture* tex);
+void SetImageTextureWrap(unsigned int texture_id, int wrap_s, int wrap_t);
 
 // Load an image from a memory buffer (for packed-asset builds).
 bool LoadImageTextureFromMemory(const unsigned char* data, size_t size,

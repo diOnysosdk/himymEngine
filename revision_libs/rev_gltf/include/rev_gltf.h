@@ -85,6 +85,8 @@ struct Material {
     char  normal_texture[512];
     char  metallic_roughness_texture[512];
     char  emissive_texture[512];
+    int   base_color_wrap_s; // glTF sampler wrapS (default REPEAT)
+    int   base_color_wrap_t; // glTF sampler wrapT (default REPEAT)
 };
 
 // ---------------------------------------------------------------------------

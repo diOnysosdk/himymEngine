@@ -3532,6 +3532,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                         if (tex_path[0] == '\0') continue;
                                         rev::runtime::ImageTexture tex{};
                                         if (rev::runtime::LoadImageTexture(tex_path, &tex)) {
+                                            rev::runtime::SetImageTextureWrap(tex.texture_id,
+                                                ir->materials[mat_i].base_color_wrap_s,
+                                                ir->materials[mat_i].base_color_wrap_t);
                                             material_textures[mat_i] = tex.texture_id;
                                         }
                                     }
@@ -3614,6 +3617,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                     if (tex_path[0] == '\0') continue;
                                     rev::runtime::ImageTexture tex{};
                                     if (rev::runtime::LoadImageTexture(tex_path, &tex)) {
+                                        rev::runtime::SetImageTextureWrap(tex.texture_id,
+                                            ir->materials[mat_i].base_color_wrap_s,
+                                            ir->materials[mat_i].base_color_wrap_t);
                                         material_textures[mat_i] = tex.texture_id;
                                     }
                                 }

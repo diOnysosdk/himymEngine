@@ -39,6 +39,8 @@ static void SetMaterialDefaults(Material* m) {
     m->noise_detail = 2.0f;
     m->noise_roughness = 0.5f;
     m->noise_strength = 1.0f;
+    m->base_color_wrap_s = 10497; // GL_REPEAT / glTF default
+    m->base_color_wrap_t = 10497;
 }
 
 static bool ReadExtrasFloat(const char* json, const char* name, float* value) {
@@ -283,6 +285,11 @@ static void FillMaterial(Material* out, const cgltf_material* mat,
         
         GLTF_LOGV("[glTF] PBR: base_color_texture.texture=%p\n", (void*)pbr.base_color_texture.texture);
         if (pbr.base_color_texture.texture) {
+            const cgltf_sampler* sampler = pbr.base_color_texture.texture->sampler;
+            if (sampler) {
+                out->base_color_wrap_s = sampler->wrap_s;
+                out->base_color_wrap_t = sampler->wrap_t;
+            }
             GLTF_LOGV("[glTF]      texture->image=%p\n", (void*)pbr.base_color_texture.texture->image);
         }
         GLTF_LOGV("[glTF] Total images in glTF: %zu\n", data->images_count);
@@ -1063,12 +1070,25 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
             const cgltf_accessor* norm_acc   = nullptr;
             const cgltf_accessor* uv_acc     = nullptr;
 
+            // The base-color texture view selects the UV set. A
+            // KHR_texture_transform texCoord override takes precedence.
+            int base_color_texcoord = 0;
+            const cgltf_texture_view* base_color_view = nullptr;
+            if (prim->material && prim->material->has_pbr_metallic_roughness) {
+                base_color_view = &prim->material->pbr_metallic_roughness.base_color_texture;
+                base_color_texcoord = base_color_view->texcoord;
+                if (base_color_view->has_transform &&
+                    base_color_view->transform.has_texcoord) {
+                    base_color_texcoord = base_color_view->transform.texcoord;
+                }
+            }
+
             for (cgltf_size ai = 0; ai < prim->attributes_count; ++ai) {
                 switch (prim->attributes[ai].type) {
                     case cgltf_attribute_type_position: pos_acc  = prim->attributes[ai].data; break;
                     case cgltf_attribute_type_normal:   norm_acc = prim->attributes[ai].data; break;
                     case cgltf_attribute_type_texcoord:
-                        if (prim->attributes[ai].index == 0) {
+                        if (prim->attributes[ai].index == base_color_texcoord) {
                             uv_acc = prim->attributes[ai].data;
                         }
                         break;
@@ -1091,7 +1111,18 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
                     ReadVec3(norm_acc, vi, local_nrm);
                     TransformNormal(node_world, local_nrm, v.normal);
                 }
-                if (uv_acc) ReadVec2(uv_acc, vi, v.uv);
+                if (uv_acc) {
+                    ReadVec2(uv_acc, vi, v.uv);
+                    if (base_color_view && base_color_view->has_transform) {
+                        const cgltf_texture_transform& transform = base_color_view->transform;
+                        const float scaled_u = v.uv[0] * transform.scale[0];
+                        const float scaled_v = v.uv[1] * transform.scale[1];
+                        const float cosine = cosf(transform.rotation);
+                        const float sine = sinf(transform.rotation);
+                        v.uv[0] = transform.offset[0] + cosine * scaled_u - sine * scaled_v;
+                        v.uv[1] = transform.offset[1] + sine * scaled_u + cosine * scaled_v;
+                    }
+                }
                 rev::mesh::SetVertex(mesh, vert_offset + vi, v);
             }
 

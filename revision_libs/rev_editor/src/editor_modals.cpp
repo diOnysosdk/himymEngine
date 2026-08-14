@@ -4379,6 +4379,9 @@ void RenderMeshModal(EditorContext* editor) {
                             if (!tex_path[0]) continue;
                             rev::runtime::ImageTexture tex = {};
                             if (rev::runtime::LoadImageTexture(tex_path, &tex)) {
+                                rev::runtime::SetImageTextureWrap(tex.texture_id,
+                                    ir->materials[mat_i].base_color_wrap_s,
+                                    ir->materials[mat_i].base_color_wrap_t);
                                 material_textures[mat_i] = tex.texture_id;
                             }
                         }

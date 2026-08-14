@@ -757,6 +757,19 @@ static bool UploadRgbaTexture(const unsigned char* pixels, int width, int height
     return true;
 }
 
+void SetImageTextureWrap(unsigned int texture_id, int wrap_s, int wrap_t)
+{
+    if (!texture_id) return;
+    const int repeat = 10497;
+    const int clamp = 33071;
+    const int mirror = 33648;
+    if (wrap_s != repeat && wrap_s != clamp && wrap_s != mirror) wrap_s = repeat;
+    if (wrap_t != repeat && wrap_t != clamp && wrap_t != mirror) wrap_t = repeat;
+    glBindTexture(GL_TEXTURE_2D, texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_s);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_t);
+}
+
 static bool LoadWicImageTextureFromStream(IStream* stream, int frame_index,
                                           ImageTexture* tex, int* out_frame_count)
 {

@@ -64,6 +64,13 @@ HiMYM bakes each imported mesh node's glTF world transform into its vertices.
 Normals are transformed with the inverse-transpose, so non-uniform object scale
 is supported. Imported cameras retain glTF's local `-Z` forward direction.
 
+Base-color textures honor the glTF texture-coordinate set and
+`KHR_texture_transform` offset, rotation, scale, and `texCoord` override emitted
+by Blender's Texture Coordinate and Mapping nodes. The transform is baked into
+the imported vertices to keep editor and packed playback compact and identical.
+Texture wrapping follows the glTF sampler; Blender's Repeat mode therefore
+continues to tile when transformed UVs leave the 0-to-1 range.
+
 ## Imported cameras
 
 When **Use glTF Camera** is enabled on a mesh cue, HiMYM uses the first camera
