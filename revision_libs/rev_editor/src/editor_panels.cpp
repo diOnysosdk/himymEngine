@@ -46,6 +46,23 @@ static int CreateCurveFromTriggerTrack(EditorContext* editor, int track_index)
     return curve_index;
 }
 
+static float GetRecordingSceneStart(const ProjectData* project, float timeline_time)
+{
+    if (!project || project->scene_count <= 0) return timeline_time;
+
+    float scene_start = 0.0f;
+    for (int scene_index = 0; scene_index < project->scene_count; ++scene_index) {
+        const float scene_end = scene_start + project->scenes[scene_index].duration;
+        const bool is_last_scene = scene_index == project->scene_count - 1;
+        if (timeline_time < scene_end || (is_last_scene && timeline_time <= scene_end)) {
+            return scene_start;
+        }
+        scene_start = scene_end;
+    }
+
+    return timeline_time;
+}
+
 static bool AppendTriggerTrackToCurve(EditorContext* editor, int track_index, int curve_index)
 {
     if (!editor || !editor->project || track_index < 0 ||
@@ -116,6 +133,28 @@ void UpdateCurveRefAfterDelete(int* ref, int deleted_curve)
     }
 }
 
+void UpdateAssetShaderCurveRefs(AssetShader* shader, int deleted_curve)
+{
+    if (!shader) return;
+    UpdateCurveRefAfterDelete(&shader->curve_speed, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_intensity, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_warp, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_exposure, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_fade, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_opacity, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_exposure_ramp, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_fade_ramp, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_low_r, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_low_g, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_low_b, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_mid_r, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_mid_g, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_mid_b, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_high_r, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_high_g, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_high_b, deleted_curve);
+}
+
 void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
 {
     if (!project || deleted_curve < 0) return;
@@ -172,6 +211,9 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
                 UpdateCurveRefAfterDelete(&effect->curve_color_b, deleted_curve);
                 UpdateCurveRefAfterDelete(&effect->curve_color_a, deleted_curve);
             }
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index) {
+                UpdateAssetShaderCurveRefs(&cue->shaders[shader_index], deleted_curve);
+            }
         }
 
         for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
@@ -191,6 +233,34 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
                 UpdateCurveRefAfterDelete(&effect->curve_color_g, deleted_curve);
                 UpdateCurveRefAfterDelete(&effect->curve_color_b, deleted_curve);
                 UpdateCurveRefAfterDelete(&effect->curve_color_a, deleted_curve);
+            }
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index) {
+                UpdateAssetShaderCurveRefs(&cue->shaders[shader_index], deleted_curve);
+            }
+        }
+
+        for (int i = 0; i < scene->pixel_cue_count; ++i) {
+            PixelCue* cue = &scene->pixel_cues[i];
+            UpdateCurveRefAfterDelete(&cue->curve_x, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_y, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_scale, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_rotation, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_opacity, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_frame, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_palette_offset, deleted_curve);
+            for (int e = 0; e < cue->post_effect_count; ++e) {
+                LayerPostEffect* effect = &cue->post_effects[e];
+                UpdateCurveRefAfterDelete(&effect->curve_intensity, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_threshold, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_radius, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_r, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_g, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_b, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_a, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_amount, deleted_curve);
+            }
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index) {
+                UpdateAssetShaderCurveRefs(&cue->shaders[shader_index], deleted_curve);
             }
         }
 
@@ -560,6 +630,25 @@ static int AllocateCurveSlotForPanel(EditorContext* editor, float start_v, float
 int CreateTriggerTimingCurve(EditorContext* editor, int track_index)
 {
     return CreateCurveFromTriggerTrack(editor, track_index);
+}
+
+bool DeleteProjectCurve(EditorContext* editor, int curve_index)
+{
+    if (!editor || !editor->project || curve_index < 0 ||
+        curve_index >= editor->project->curve_count) return false;
+
+    rev::curve::DestroyCurve(editor->project->curves[curve_index]);
+    for (int i = curve_index; i < editor->project->curve_count - 1; ++i) {
+        editor->project->curves[i] = editor->project->curves[i + 1];
+        memcpy(editor->project->curve_names[i], editor->project->curve_names[i + 1],
+               sizeof(editor->project->curve_names[i]));
+    }
+    --editor->project->curve_count;
+    ReindexCurveReferencesAfterDelete(editor->project, curve_index);
+    editor->selected_curve_index = -1;
+    editor->editing_curve_index = -1;
+    editor->project->modified = true;
+    return true;
 }
 
 void RenderTimeline(EditorContext* editor) {
@@ -1881,20 +1970,7 @@ void RenderCurveEditor(EditorContext* editor) {
         
         ImGui::SameLine();
         if (editor->selected_curve_index >= 0 && ImGui::Button("Delete Curve")) {
-            if (editor->selected_curve_index < editor->project->curve_count) {
-                const int deleted_curve = editor->selected_curve_index;
-                rev::curve::DestroyCurve(editor->project->curves[editor->selected_curve_index]);
-                // Shift remaining curves
-                for (int i = editor->selected_curve_index; i < editor->project->curve_count - 1; ++i) {
-                    editor->project->curves[i] = editor->project->curves[i + 1];
-                    memcpy(editor->project->curve_names[i], editor->project->curve_names[i + 1],
-                           sizeof(editor->project->curve_names[i]));
-                }
-                editor->project->curve_count--;
-                ReindexCurveReferencesAfterDelete(editor->project, deleted_curve);
-                editor->selected_curve_index = -1;
-                editor->project->modified = true;
-            }
+            DeleteProjectCurve(editor, editor->selected_curve_index);
         }
         
         ImGui::SameLine();
@@ -2611,7 +2687,7 @@ void RenderTriggerRecorder(EditorContext* editor) {
             track->timing.bpm = editor->recording_bpm;
             track->timing.beat_offset = editor->recording_beat_offset;
             editor->recording_track_index = index;
-            editor->current_time = 0.0f;
+            editor->current_time = GetRecordingSceneStart(editor->project, editor->current_time);
             editor->playing = true;
             editor->trigger_recording = true;
             editor->project->modified = true;

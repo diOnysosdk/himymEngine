@@ -19,6 +19,7 @@ void RenderProperties(EditorContext* editor);
 void RenderAssetBrowser(EditorContext* editor);
 void RenderCurveEditor(EditorContext* editor);
 int CreateTriggerTimingCurve(EditorContext* editor, int track_index);
+bool DeleteProjectCurve(EditorContext* editor, int curve_index);
 void RenderTriggerRecorder(EditorContext* editor);
 
 // Modal Dialog Functions (editor_modals.cpp)

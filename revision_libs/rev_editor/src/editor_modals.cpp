@@ -540,10 +540,18 @@ void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int
             ImGui::InputInt("Track##layer_timing_track", &timing_track);
             if (timing_track < 0) timing_track = 0;
             if (timing_track >= editor->project->trigger_track_count) timing_track = editor->project->trigger_track_count - 1;
-            if (ImGui::Button("Load recorded timings##layer_timing")) {
-                int curve_index = CreateTriggerTimingCurve(editor, timing_track);
+            int* timing_field = timing_fields[timing_target];
+            const bool has_timing_curve = *timing_field >= 0 &&
+                *timing_field < editor->project->curve_count;
+            const char* timing_button_label = has_timing_curve
+                ? "Edit timing curve##layer_timing"
+                : "Load recorded timings##layer_timing";
+            if (ImGui::Button(timing_button_label)) {
+                int curve_index = has_timing_curve
+                    ? *timing_field
+                    : CreateTriggerTimingCurve(editor, timing_track);
                 if (curve_index >= 0) {
-                    *timing_fields[timing_target] = curve_index;
+                    *timing_field = curve_index;
                     editor->editing_curve_index = curve_index;
                     editor->editing_curve_cue_type = cue_type;
                     editor->editing_curve_field = -1;
@@ -551,6 +559,22 @@ void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int
                              "Layer Effect %s timing", timing_names[timing_target]);
                     editor->curve_editor_modal_request_open = true;
                     if (modified) *modified = true;
+                }
+            }
+            if (has_timing_curve) {
+                ImGui::SameLine();
+                if (ImGui::Button("Reload from track##layer_timing")) {
+                    int curve_index = CreateTriggerTimingCurve(editor, timing_track);
+                    if (curve_index >= 0) {
+                        *timing_field = curve_index;
+                        editor->editing_curve_index = curve_index;
+                        editor->editing_curve_cue_type = cue_type;
+                        editor->editing_curve_field = -1;
+                        snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label),
+                                 "Layer Effect %s timing", timing_names[timing_target]);
+                        editor->curve_editor_modal_request_open = true;
+                        if (modified) *modified = true;
+                    }
                 }
             }
             ImGui::SameLine();
@@ -704,6 +728,9 @@ static void MarkCurveUsed(bool* used, int curve_index) {
     }
 }
 
+static void MarkLayerPostEffectCurves(bool* used, const LayerPostEffect& effect);
+static void MarkAssetShaderCurves(bool* used, const AssetShader& shader);
+
 void BuildCurveUsageMap(ProjectData* project, bool* used) {
     if (!project || !used) return;
 
@@ -750,6 +777,10 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, cue->curve_y);
             MarkCurveUsed(used, cue->curve_scale);
             MarkCurveUsed(used, cue->curve_opacity);
+            for (int e = 0; e < cue->post_effect_count; ++e)
+                MarkLayerPostEffectCurves(used, cue->post_effects[e]);
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index)
+                MarkAssetShaderCurves(used, cue->shaders[shader_index]);
         }
 
         for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
@@ -759,6 +790,22 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, cue->curve_scale);
             MarkCurveUsed(used, cue->curve_opacity);
             MarkCurveUsed(used, cue->curve_frame);
+            for (int e = 0; e < cue->post_effect_count; ++e)
+                MarkLayerPostEffectCurves(used, cue->post_effects[e]);
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index)
+                MarkAssetShaderCurves(used, cue->shaders[shader_index]);
+        }
+
+        for (int i = 0; i < scene->pixel_cue_count; ++i) {
+            PixelCue* cue = &scene->pixel_cues[i];
+            MarkCurveUsed(used, cue->curve_x); MarkCurveUsed(used, cue->curve_y);
+            MarkCurveUsed(used, cue->curve_scale); MarkCurveUsed(used, cue->curve_rotation);
+            MarkCurveUsed(used, cue->curve_opacity); MarkCurveUsed(used, cue->curve_frame);
+            MarkCurveUsed(used, cue->curve_palette_offset);
+            for (int e = 0; e < cue->post_effect_count; ++e)
+                MarkLayerPostEffectCurves(used, cue->post_effects[e]);
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index)
+                MarkAssetShaderCurves(used, cue->shaders[shader_index]);
         }
 
         for (int i = 0; i < scene->text_cue_count; ++i) {
@@ -822,6 +869,8 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, effect->curve_color_a);
             MarkCurveUsed(used, effect->curve_amount);
         }
+        for (int i = 0; i < scene->scene_layer_post_effect_count; ++i)
+            MarkLayerPostEffectCurves(used, scene->scene_layer_post_effects[i]);
     }
 }
 
@@ -1205,10 +1254,15 @@ static void RenderTriggerTimingAssignment(EditorContext* editor,
     ImGui::Combo("Track", &selected_track, TriggerTrackComboGetter,
                  editor->project->trigger_tracks, editor->project->trigger_track_count);
 
-    if (ImGui::Button("Load recorded timings")) {
-        int curve_index = CreateTriggerTimingCurve(editor, selected_track);
+    int* selected_curve_field = targets[selected_target].curve_field;
+    const bool has_timing_curve = selected_curve_field &&
+        *selected_curve_field >= 0 && *selected_curve_field < editor->project->curve_count;
+    if (ImGui::Button(has_timing_curve ? "Edit timing curve" : "Load recorded timings")) {
+        int curve_index = has_timing_curve
+            ? *selected_curve_field
+            : CreateTriggerTimingCurve(editor, selected_track);
         if (curve_index >= 0) {
-            *targets[selected_target].curve_field = curve_index;
+            *selected_curve_field = curve_index;
             editor->editing_curve_index = curve_index;
             editor->editing_curve_cue_type = editor->selected_cue_type;
             snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label),
@@ -1218,9 +1272,96 @@ static void RenderTriggerTimingAssignment(EditorContext* editor,
             if (modified) *modified = true;
         }
     }
+    if (has_timing_curve) {
+        ImGui::SameLine();
+        if (ImGui::Button("Reload from track")) {
+            int curve_index = CreateTriggerTimingCurve(editor, selected_track);
+            if (curve_index >= 0) {
+                *selected_curve_field = curve_index;
+                editor->editing_curve_index = curve_index;
+                editor->editing_curve_cue_type = editor->selected_cue_type;
+                snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label),
+                         "%s timing", targets[selected_target].label);
+                editor->curve_editor_modal_request_open = true;
+                editor->project->modified = true;
+                if (modified) *modified = true;
+            }
+        }
+    }
     ImGui::SameLine();
     ImGui::TextDisabled("Nodes only; edit values in Curve Editor");
     ImGui::PopID();
+}
+
+static void MarkLayerPostEffectCurves(bool* used, const LayerPostEffect& effect) {
+    MarkCurveUsed(used, effect.curve_intensity); MarkCurveUsed(used, effect.curve_threshold);
+    MarkCurveUsed(used, effect.curve_radius); MarkCurveUsed(used, effect.curve_color_r);
+    MarkCurveUsed(used, effect.curve_color_g); MarkCurveUsed(used, effect.curve_color_b);
+    MarkCurveUsed(used, effect.curve_color_a); MarkCurveUsed(used, effect.curve_amount);
+}
+
+static void MarkAssetShaderCurves(bool* used, const AssetShader& shader) {
+    MarkCurveUsed(used, shader.curve_speed); MarkCurveUsed(used, shader.curve_intensity);
+    MarkCurveUsed(used, shader.curve_warp); MarkCurveUsed(used, shader.curve_exposure);
+    MarkCurveUsed(used, shader.curve_fade); MarkCurveUsed(used, shader.curve_opacity);
+    MarkCurveUsed(used, shader.curve_exposure_ramp); MarkCurveUsed(used, shader.curve_fade_ramp);
+    MarkCurveUsed(used, shader.curve_palette_low_r); MarkCurveUsed(used, shader.curve_palette_low_g);
+    MarkCurveUsed(used, shader.curve_palette_low_b); MarkCurveUsed(used, shader.curve_palette_mid_r);
+    MarkCurveUsed(used, shader.curve_palette_mid_g); MarkCurveUsed(used, shader.curve_palette_mid_b);
+    MarkCurveUsed(used, shader.curve_palette_high_r); MarkCurveUsed(used, shader.curve_palette_high_g);
+    MarkCurveUsed(used, shader.curve_palette_high_b);
+}
+
+static void RefreshOpenCueAfterCurveDelete(EditorContext* editor)
+{
+    if (!editor || editor->selected_scene_index < 0 || editor->selected_cue_index < 0) return;
+    SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+    if (!scene) return;
+
+    const int cue_index = editor->selected_cue_index;
+    switch (editor->selected_cue_type) {
+        case CueTypeShader:
+            if (cue_index < scene->shader_cue_count) editor->editing_shader = scene->shader_cues[cue_index];
+            break;
+        case CueTypeImage:
+            if (cue_index < scene->image_cue_count) editor->editing_image = scene->image_cues[cue_index];
+            break;
+        case CueTypeAnimatedSprite:
+            if (cue_index < scene->animated_sprite_cue_count)
+                editor->editing_animated_sprite = scene->animated_sprite_cues[cue_index];
+            break;
+        case CueTypeText:
+            if (cue_index < scene->text_cue_count) editor->editing_text = scene->text_cues[cue_index];
+            break;
+        case CueTypeScrollText:
+            if (cue_index < scene->scroll_text_cue_count)
+                editor->editing_scroll_text = scene->scroll_text_cues[cue_index];
+            break;
+        case CueTypeMesh:
+            if (cue_index < scene->mesh_cue_count) editor->editing_mesh = scene->mesh_cues[cue_index];
+            break;
+        case CueTypePixel:
+            if (cue_index < scene->pixel_cue_count) editor->editing_pixel = scene->pixel_cues[cue_index];
+            break;
+        default:
+            break;
+    }
+
+    if (editor->shader_modal_asset_mode && editor->shader_modal_asset_index >= 0) {
+        AssetShader* shader = nullptr;
+        if (editor->shader_modal_asset_cue_type == CueTypeImage && cue_index < scene->image_cue_count &&
+            editor->shader_modal_asset_index < scene->image_cues[cue_index].shader_count) {
+            shader = &scene->image_cues[cue_index].shaders[editor->shader_modal_asset_index];
+        } else if (editor->shader_modal_asset_cue_type == CueTypeAnimatedSprite &&
+                   cue_index < scene->animated_sprite_cue_count &&
+                   editor->shader_modal_asset_index < scene->animated_sprite_cues[cue_index].shader_count) {
+            shader = &scene->animated_sprite_cues[cue_index].shaders[editor->shader_modal_asset_index];
+        } else if (editor->shader_modal_asset_cue_type == CueTypePixel && cue_index < scene->pixel_cue_count &&
+                   editor->shader_modal_asset_index < scene->pixel_cues[cue_index].shader_count) {
+            shader = &scene->pixel_cues[cue_index].shaders[editor->shader_modal_asset_index];
+        }
+        if (shader) editor->editing_asset_shader = *shader;
+    }
 }
 
 void RenderCurveEditorModal(EditorContext* editor) {
@@ -1845,80 +1986,9 @@ void RenderCurveEditorModal(EditorContext* editor) {
             ImGui::Separator();
             
             if (ImGui::Button("Yes, Delete", ImVec2(120, 0))) {
-                // Delete the curve by resetting the field to -1
-                int curve_index = editor->editing_curve_index;
-                int cue_type = editor->editing_curve_cue_type;
-                
-                if (editor->selected_scene_index >= 0 && editor->selected_cue_index >= 0) {
-                    SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
-                    if (scene) {
-                        // Reset curve field to -1 based on cue type
-                        if (cue_type == CueTypeShader && editor->selected_cue_index < scene->shader_cue_count) {
-                            // Shader cue
-                            ShaderCue* cue = &scene->shader_cues[editor->selected_cue_index];
-                            if (cue->curve_speed == curve_index) cue->curve_speed = -1;
-                            if (cue->curve_intensity == curve_index) cue->curve_intensity = -1;
-                            if (cue->curve_warp == curve_index) cue->curve_warp = -1;
-                            if (cue->curve_exposure == curve_index) cue->curve_exposure = -1;
-                            if (cue->curve_fade == curve_index) cue->curve_fade = -1;
-                            if (cue->curve_palette_low_r == curve_index) cue->curve_palette_low_r = -1;
-                            if (cue->curve_palette_low_g == curve_index) cue->curve_palette_low_g = -1;
-                            if (cue->curve_palette_low_b == curve_index) cue->curve_palette_low_b = -1;
-                            if (cue->curve_palette_mid_r == curve_index) cue->curve_palette_mid_r = -1;
-                            if (cue->curve_palette_mid_g == curve_index) cue->curve_palette_mid_g = -1;
-                            if (cue->curve_palette_mid_b == curve_index) cue->curve_palette_mid_b = -1;
-                            if (cue->curve_palette_high_r == curve_index) cue->curve_palette_high_r = -1;
-                            if (cue->curve_palette_high_g == curve_index) cue->curve_palette_high_g = -1;
-                            if (cue->curve_palette_high_b == curve_index) cue->curve_palette_high_b = -1;
-                            if (cue->curve_opacity == curve_index) cue->curve_opacity = -1;
-                            if (cue->curve_exposure_ramp == curve_index) cue->curve_exposure_ramp = -1;
-                            if (cue->curve_fade_ramp == curve_index) cue->curve_fade_ramp = -1;
-                            editor->editing_shader = *cue; // Update editing copy
-                        } else if (cue_type == CueTypeImage && editor->selected_cue_index < scene->image_cue_count) {
-                            // Image cue
-                            ImageCue* cue = &scene->image_cues[editor->selected_cue_index];
-                            if (cue->curve_x == curve_index) cue->curve_x = -1;
-                            if (cue->curve_y == curve_index) cue->curve_y = -1;
-                            if (cue->curve_scale == curve_index) cue->curve_scale = -1;
-                            if (cue->curve_rotation == curve_index) cue->curve_rotation = -1;
-                            if (cue->curve_opacity == curve_index) cue->curve_opacity = -1;
-                            editor->editing_image = *cue; // Update editing copy
-                        } else if (cue_type == CueTypeText && editor->selected_cue_index < scene->text_cue_count) {
-                            // Text cue
-                            TextCue* cue = &scene->text_cues[editor->selected_cue_index];
-                            if (cue->curve_size == curve_index) cue->curve_size = -1;
-                            if (cue->curve_color_r == curve_index) cue->curve_color_r = -1;
-                            if (cue->curve_color_g == curve_index) cue->curve_color_g = -1;
-                            if (cue->curve_color_b == curve_index) cue->curve_color_b = -1;
-                            if (cue->curve_x == curve_index) cue->curve_x = -1;
-                            if (cue->curve_y == curve_index) cue->curve_y = -1;
-                            editor->editing_text = *cue; // Update editing copy
-                        } else if (cue_type == CueTypeMesh && editor->selected_cue_index < scene->mesh_cue_count) {
-                            // Mesh cue
-                            MeshCue* cue = &scene->mesh_cues[editor->selected_cue_index];
-                            if (cue->curve_mesh_size == curve_index) cue->curve_mesh_size = -1;
-                            if (cue->curve_pos_x == curve_index) cue->curve_pos_x = -1;
-                            if (cue->curve_pos_y == curve_index) cue->curve_pos_y = -1;
-                            if (cue->curve_pos_z == curve_index) cue->curve_pos_z = -1;
-                            if (cue->curve_rot_x == curve_index) cue->curve_rot_x = -1;
-                            if (cue->curve_rot_y == curve_index) cue->curve_rot_y = -1;
-                            if (cue->curve_rot_z == curve_index) cue->curve_rot_z = -1;
-                            if (cue->curve_scale_x == curve_index) cue->curve_scale_x = -1;
-                            if (cue->curve_scale_y == curve_index) cue->curve_scale_y = -1;
-                            if (cue->curve_scale_z == curve_index) cue->curve_scale_z = -1;
-                            if (cue->curve_color_r == curve_index) cue->curve_color_r = -1;
-                            if (cue->curve_color_g == curve_index) cue->curve_color_g = -1;
-                            if (cue->curve_color_b == curve_index) cue->curve_color_b = -1;
-                            if (cue->curve_color_a == curve_index) cue->curve_color_a = -1;
-                            if (cue->curve_metallic == curve_index) cue->curve_metallic = -1;
-                            if (cue->curve_roughness == curve_index) cue->curve_roughness = -1;
-                            if (cue->curve_fov == curve_index) cue->curve_fov = -1;
-                            editor->editing_mesh = *cue; // Update editing copy
-                        }
-                        editor->project->modified = true;
-                    }
+                if (DeleteProjectCurve(editor, editor->editing_curve_index)) {
+                    RefreshOpenCueAfterCurveDelete(editor);
                 }
-                
                 editor->curve_editor_modal_open = false;
                 ImGui::CloseCurrentPopup();
                 ImGui::CloseCurrentPopup();
