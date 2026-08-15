@@ -133,6 +133,234 @@ static bool InspectPipelineShaderVersion(const EditorContext* editor, const char
     return true;
 }
 
+struct PipelineSourceEditorState {
+    bool request_open = false;
+    bool open = false;
+    bool dirty = false;
+    int pipeline_index = -1;
+    int pass_index = -1;
+    char filename[128] = {};
+    char error[256] = {};
+    std::vector<char> source;
+};
+
+static PipelineSourceEditorState g_pipeline_source_editor;
+static constexpr size_t kPipelineSourceEditorCapacity = 512 * 1024;
+
+static bool ResolvePipelineShaderPath(const EditorContext* editor, const char* declared_path,
+                                      char* resolved, size_t resolved_size) {
+    if (!editor || !editor->project || !declared_path || !declared_path[0] ||
+        !resolved || resolved_size == 0) return false;
+    resolved[0] = '\0';
+    if (strchr(declared_path, ':') || declared_path[0] == '\\' || declared_path[0] == '/') {
+        strncpy_s(resolved, resolved_size, declared_path, _TRUNCATE);
+    } else if (editor->project->workspace_path[0]) {
+        snprintf(resolved, resolved_size, "%s\\%s", editor->project->workspace_path, declared_path);
+    }
+    DWORD attributes = resolved[0] ? GetFileAttributesA(resolved) : INVALID_FILE_ATTRIBUTES;
+    if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return true;
+
+    const char* filename = strrchr(declared_path, '/');
+    const char* backslash = strrchr(declared_path, '\\');
+    if (!filename || (backslash && backslash > filename)) filename = backslash;
+    filename = filename ? filename + 1 : declared_path;
+    if (editor->project->assets_path[0]) {
+        snprintf(resolved, resolved_size, "%s\\%s", editor->project->assets_path, filename);
+        attributes = GetFileAttributesA(resolved);
+        return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+    }
+    return false;
+}
+
+static bool ReadPipelineShaderSource(const EditorContext* editor, const char* declared_path,
+                                     std::vector<char>* source) {
+    if (!source) return false;
+    char resolved[640] = {};
+    if (!ResolvePipelineShaderPath(editor, declared_path, resolved, sizeof(resolved))) return false;
+    FILE* file = nullptr;
+    fopen_s(&file, resolved, "rb");
+    if (!file) return false;
+    fseek(file, 0, SEEK_END);
+    const long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    if (size < 0 || (size_t)size >= kPipelineSourceEditorCapacity) {
+        fclose(file);
+        return false;
+    }
+    source->assign(kPipelineSourceEditorCapacity, '\0');
+    const bool loaded = size == 0 || fread(source->data(), 1, (size_t)size, file) == (size_t)size;
+    fclose(file);
+    return loaded;
+}
+
+static bool IsValidPipelineShaderFilename(const char* filename) {
+    if (!filename || !filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) return false;
+    if (strpbrk(filename, "\\/:*?\"<>|")) return false;
+    const size_t length = strlen(filename);
+    return length > 0 && filename[length - 1] != ' ' && filename[length - 1] != '.';
+}
+
+static bool EnsurePipelineShaderExtension(char* filename, size_t filename_size) {
+    const char* extension = strrchr(filename, '.');
+    if (extension && (!_stricmp(extension, ".glsl") || !_stricmp(extension, ".frag") ||
+                      !_stricmp(extension, ".fs"))) return true;
+    if (strlen(filename) + strlen(".glsl") >= filename_size) return false;
+    strcat_s(filename, filename_size, ".glsl");
+    return true;
+}
+
+static void BeginPipelineSourceEditor(EditorContext* editor, int pipeline_index, int pass_index,
+                                      bool create_new) {
+    if (!editor || !editor->project || pipeline_index < 0 ||
+        pipeline_index >= editor->project->shader_pipeline_count || pass_index < 0 ||
+        pass_index >= rev::runtime::kMaxShaderPasses) return;
+    PipelineSourceEditorState& state = g_pipeline_source_editor;
+    state = {};
+    state.pipeline_index = pipeline_index;
+    state.pass_index = pass_index;
+    state.source.assign(kPipelineSourceEditorCapacity, '\0');
+    const rev::runtime::ShaderPass& pass =
+        editor->project->shader_pipelines[pipeline_index].passes[pass_index];
+
+    if (!create_new && pass.source_path[0]) {
+        const char* filename = strrchr(pass.source_path, '/');
+        const char* backslash = strrchr(pass.source_path, '\\');
+        if (!filename || (backslash && backslash > filename)) filename = backslash;
+        filename = filename ? filename + 1 : pass.source_path;
+        strncpy_s(state.filename, filename, _TRUNCATE);
+        if (!ReadPipelineShaderSource(editor, pass.source_path, &state.source)) {
+            snprintf(state.error, sizeof(state.error), "Could not read %s. Paste replacement source or discard.",
+                     pass.source_path);
+        }
+    } else {
+        const char* pass_slug = pass_index == rev::runtime::ShaderPassImage ? "image" :
+            pass_index == rev::runtime::ShaderPassBufferA ? "buffer_a" :
+            pass_index == rev::runtime::ShaderPassBufferB ? "buffer_b" :
+            pass_index == rev::runtime::ShaderPassBufferC ? "buffer_c" : "buffer_d";
+        snprintf(state.filename, sizeof(state.filename), "pipeline_%d_%s.glsl",
+                 pipeline_index + 1, pass_slug);
+        if (editor->project->assets_path[0]) {
+            char candidate[640] = {};
+            snprintf(candidate, sizeof(candidate), "%s\\%s",
+                     editor->project->assets_path, state.filename);
+            for (int suffix = 2; GetFileAttributesA(candidate) != INVALID_FILE_ATTRIBUTES; ++suffix) {
+                snprintf(state.filename, sizeof(state.filename), "pipeline_%d_%s_%d.glsl",
+                         pipeline_index + 1, pass_slug, suffix);
+                snprintf(candidate, sizeof(candidate), "%s\\%s",
+                         editor->project->assets_path, state.filename);
+            }
+        }
+        static const char* shader_template =
+            "#version 330 core\n\n"
+            "void mainImage(out vec4 fragColor, in vec2 fragCoord)\n"
+            "{\n"
+            "    vec2 uv = fragCoord / iResolution.xy;\n"
+            "    fragColor = vec4(uv, 0.5 + 0.5 * sin(iTime), 1.0);\n"
+            "}\n";
+        strcpy_s(state.source.data(), state.source.size(), shader_template);
+        state.dirty = true;
+    }
+    state.request_open = true;
+}
+
+static bool SavePipelineSourceEditor(EditorContext* editor) {
+    PipelineSourceEditorState& state = g_pipeline_source_editor;
+    state.error[0] = '\0';
+    if (!editor || !editor->project || state.pipeline_index < 0 ||
+        state.pipeline_index >= editor->project->shader_pipeline_count || state.pass_index < 0 ||
+        state.pass_index >= rev::runtime::kMaxShaderPasses) {
+        strcpy_s(state.error, "The shader pass is no longer available.");
+        return false;
+    }
+    if (!editor->project->assets_path[0]) {
+        strcpy_s(state.error, "Save the project first so project_assets has a known location.");
+        return false;
+    }
+    if (!EnsurePipelineShaderExtension(state.filename, sizeof(state.filename))) {
+        strcpy_s(state.error, "The filename is too long to add the .glsl extension.");
+        return false;
+    }
+    if (!IsValidPipelineShaderFilename(state.filename)) {
+        strcpy_s(state.error, "Enter a plain filename without path characters.");
+        return false;
+    }
+    const DWORD attributes = GetFileAttributesA(editor->project->assets_path);
+    if (attributes == INVALID_FILE_ATTRIBUTES && !CreateDirectoryA(editor->project->assets_path, nullptr)) {
+        snprintf(state.error, sizeof(state.error), "Could not create project_assets (error %lu).", GetLastError());
+        return false;
+    }
+    char destination[640] = {};
+    snprintf(destination, sizeof(destination), "%s\\%s", editor->project->assets_path, state.filename);
+    FILE* file = nullptr;
+    fopen_s(&file, destination, "wb");
+    if (!file) {
+        snprintf(state.error, sizeof(state.error), "Could not write %s.", destination);
+        return false;
+    }
+    const size_t source_size = strlen(state.source.data());
+    const bool written = fwrite(state.source.data(), 1, source_size, file) == source_size;
+    fclose(file);
+    if (!written) {
+        snprintf(state.error, sizeof(state.error), "Could not finish writing %s.", destination);
+        return false;
+    }
+    rev::runtime::ShaderPass& pass =
+        editor->project->shader_pipelines[state.pipeline_index].passes[state.pass_index];
+    snprintf(pass.source_path, sizeof(pass.source_path), "project_assets/%s", state.filename);
+    editor->project->modified = true;
+    state.dirty = false;
+    InvalidatePreviewShaderPipeline(state.pipeline_index);
+    printf("[SHADER PIPELINE] Saved source: %s\n", destination);
+    return true;
+}
+
+static void RenderPipelineSourceEditor(EditorContext* editor) {
+    PipelineSourceEditorState& state = g_pipeline_source_editor;
+    if (state.request_open) {
+        ImGui::OpenPopup("GLSL Source Editor");
+        state.request_open = false;
+        state.open = true;
+    }
+    bool keep_open = state.open;
+    ImGui::SetNextWindowSize(ImVec2(920.0f, 720.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::BeginPopupModal("GLSL Source Editor", &keep_open, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::TextUnformatted("Paste Shadertoy mainImage code or edit the complete GLSL fragment source.");
+        if (ImGui::InputText("Filename", state.filename, sizeof(state.filename))) state.dirty = true;
+        ImVec2 editor_size(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y - 78.0f);
+        if (editor_size.y < 240.0f) editor_size.y = 240.0f;
+        if (ImGui::InputTextMultiline("##glsl_source", state.source.data(), state.source.size(), editor_size,
+                                      ImGuiInputTextFlags_AllowTabInput)) state.dirty = true;
+        if (state.error[0])
+            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.25f, 1.0f), "%s", state.error);
+        else if (state.dirty)
+            ImGui::TextDisabled("Unsaved changes - closing this window saves them to project_assets.");
+        else
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, 1.0f), "Saved to project_assets.");
+
+        if (ImGui::Button("Save", ImVec2(120.0f, 0.0f))) SavePipelineSourceEditor(editor);
+        ImGui::SameLine();
+        if (ImGui::Button("Save & Close", ImVec2(140.0f, 0.0f)) && SavePipelineSourceEditor(editor)) {
+            state.open = false;
+            keep_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard & Close", ImVec2(140.0f, 0.0f))) {
+            state.open = false;
+            keep_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (state.open && !keep_open) {
+        if (!state.dirty || SavePipelineSourceEditor(editor)) {
+            state.open = false;
+        } else {
+            state.request_open = true;
+        }
+    }
+}
+
 static void CloseCueSettingsForRecording(EditorContext* editor)
 {
     if (!editor) return;
@@ -2163,7 +2391,7 @@ void RenderShaderModal(EditorContext* editor) {
                 rev::runtime::ShaderPipeline& pipeline =
                     editor->project->shader_pipelines[cue->shader_pipeline_index];
                 auto BrowsePipelineAsset = [&](char* destination, size_t destination_size,
-                                               const char* filter) {
+                                               const char* filter) -> bool {
                     OPENFILENAMEA ofn = {};
                     char filepath[512] = {};
                     ofn.lStructSize = sizeof(ofn);
@@ -2175,7 +2403,7 @@ void RenderShaderModal(EditorContext* editor) {
                     ofn.lpstrInitialDir = editor->project->assets_path[0]
                         ? editor->project->assets_path : editor->startup_dir;
                     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-                    if (!GetOpenFileNameA(&ofn)) return;
+                    if (!GetOpenFileNameA(&ofn)) return false;
                     const char* filename = strrchr(filepath, '\\');
                     if (!filename) filename = strrchr(filepath, '/');
                     filename = filename ? filename + 1 : filepath;
@@ -2185,7 +2413,7 @@ void RenderShaderModal(EditorContext* editor) {
                                  editor->project->assets_path, filename);
                         if (_stricmp(filepath, copied_path) != 0 && !CopyFileA(filepath, copied_path, FALSE)) {
                             printf("[SHADER PIPELINE] Could not copy %s (err=%lu)\n", filepath, GetLastError());
-                            return;
+                            return false;
                         }
                         snprintf(destination, destination_size, "project_assets/%s", filename);
                     } else {
@@ -2193,6 +2421,7 @@ void RenderShaderModal(EditorContext* editor) {
                         for (char* p = destination; *p; ++p) if (*p == '\\') *p = '/';
                     }
                     AutoSave();
+                    return true;
                 };
                 if (ImGui::InputText("Pipeline Name", pipeline.name, sizeof(pipeline.name))) AutoSave();
                 static const char* pass_names[rev::runtime::kMaxShaderPasses] = {
@@ -2210,9 +2439,18 @@ void RenderShaderModal(EditorContext* editor) {
                         if (ImGui::SliderFloat("Resolution Scale", &pass.resolution_scale, 0.125f, 1.0f, "%.3f")) AutoSave();
                         if (ImGui::InputText("GLSL Source", pass.source_path, sizeof(pass.source_path))) AutoSave();
                         ImGui::SameLine();
-                        if (ImGui::Button("Browse GLSL"))
+                        if (ImGui::Button("Browse GLSL") &&
                             BrowsePipelineAsset(pass.source_path, sizeof(pass.source_path),
-                                                "GLSL Fragment Shader\0*.glsl;*.frag;*.fs\0All Files\0*.*\0");
+                                                "GLSL Fragment Shader\0*.glsl;*.frag;*.fs\0All Files\0*.*\0"))
+                            InvalidatePreviewShaderPipeline(cue->shader_pipeline_index);
+                        ImGui::SameLine();
+                        if (ImGui::Button("New / Paste GLSL"))
+                            BeginPipelineSourceEditor(editor, cue->shader_pipeline_index, pass_index, true);
+                        if (pass.source_path[0]) {
+                            ImGui::SameLine();
+                            if (ImGui::Button("Edit GLSL"))
+                                BeginPipelineSourceEditor(editor, cue->shader_pipeline_index, pass_index, false);
+                        }
                         if (pass.enabled && pass.source_path[0]) {
                             rev::shader::FragmentSourceVersionStatus version_status =
                                 rev::shader::FragmentSourceVersionReady;
@@ -2242,9 +2480,61 @@ void RenderShaderModal(EditorContext* editor) {
                                 ImGui::InputText("Texture Path", channel.asset_path, sizeof(channel.asset_path))) AutoSave();
                             if (channel.kind == rev::runtime::ShaderChannelTexture) {
                                 ImGui::SameLine();
-                                if (ImGui::Button("Browse Texture"))
+                                if (ImGui::Button("Load Texture") &&
                                     BrowsePipelineAsset(channel.asset_path, sizeof(channel.asset_path),
-                                                        "Images\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0All Files\0*.*\0");
+                                                        "Images\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0All Files\0*.*\0"))
+                                    InvalidatePreviewShaderPipeline(cue->shader_pipeline_index);
+                                ImGui::SameLine();
+                                if (ImGui::Button("Clear Texture")) {
+                                    channel.asset_path[0] = '\0';
+                                    AutoSave();
+                                    InvalidatePreviewShaderPipeline(cue->shader_pipeline_index);
+                                }
+                            } else if (channel.kind >= rev::runtime::ShaderChannelBufferA &&
+                                       channel.kind <= rev::runtime::ShaderChannelBufferD) {
+                                const int referenced_pass_index = rev::runtime::ShaderPassBufferA +
+                                    (channel.kind - rev::runtime::ShaderChannelBufferA);
+                                rev::runtime::ShaderPass& referenced_pass = pipeline.passes[referenced_pass_index];
+                                ImGui::TextDisabled("Uses %s output%s", pass_names[referenced_pass_index],
+                                    referenced_pass.enabled ? "" : " (pass is disabled)");
+                                if (ImGui::Button("Load Buffer GLSL") &&
+                                    BrowsePipelineAsset(referenced_pass.source_path,
+                                                        sizeof(referenced_pass.source_path),
+                                                        "GLSL Fragment Shader\0*.glsl;*.frag;*.fs\0All Files\0*.*\0")) {
+                                    referenced_pass.enabled = true;
+                                    AutoSave();
+                                    InvalidatePreviewShaderPipeline(cue->shader_pipeline_index);
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::Button("New / Paste Buffer GLSL")) {
+                                    referenced_pass.enabled = true;
+                                    AutoSave();
+                                    BeginPipelineSourceEditor(editor, cue->shader_pipeline_index,
+                                                              referenced_pass_index, true);
+                                }
+                                if (referenced_pass.source_path[0]) {
+                                    ImGui::SameLine();
+                                    if (ImGui::Button("Edit Buffer GLSL"))
+                                        BeginPipelineSourceEditor(editor, cue->shader_pipeline_index,
+                                                                  referenced_pass_index, false);
+                                }
+                            } else if (channel.kind == rev::runtime::ShaderChannelSelfPreviousFrame) {
+                                ImGui::TextDisabled("Uses this pass's previous-frame output.");
+                                if (ImGui::Button("Load This Pass GLSL") &&
+                                    BrowsePipelineAsset(pass.source_path, sizeof(pass.source_path),
+                                                        "GLSL Fragment Shader\0*.glsl;*.frag;*.fs\0All Files\0*.*\0"))
+                                    InvalidatePreviewShaderPipeline(cue->shader_pipeline_index);
+                                ImGui::SameLine();
+                                if (ImGui::Button("New / Paste This Pass GLSL"))
+                                    BeginPipelineSourceEditor(editor, cue->shader_pipeline_index, pass_index, true);
+                                if (pass.source_path[0]) {
+                                    ImGui::SameLine();
+                                    if (ImGui::Button("Edit This Pass GLSL"))
+                                        BeginPipelineSourceEditor(editor, cue->shader_pipeline_index,
+                                                                  pass_index, false);
+                                }
+                            } else if (channel.kind == rev::runtime::ShaderChannelAudioSpectrum) {
+                                ImGui::TextDisabled("Uses the live 512x2 XM audio spectrum texture.");
                             }
                             ImGui::PopID();
                         }
@@ -2560,7 +2850,10 @@ void RenderShaderModal(EditorContext* editor) {
             editor->shader_modal_asset_mode = false;
             ImGui::CloseCurrentPopup();
         }
-        
+
+        // Keep this nested under Shader Parameters so ImGui preserves the
+        // parent modal while the source editor is active.
+        RenderPipelineSourceEditor(editor);
         ImGui::EndPopup();
     } else {
         // If popup was closed, reset the flag

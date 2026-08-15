@@ -26,7 +26,7 @@ These are the preferred documentation entry points. They can still drift, so ver
 | `../BUILD.md` | Current build and authoring-handoff workflow. |
 | `context/CODE_STYLE.md` | Current coding, build-profile, and completion rules. |
 | `guides/EDITOR_GUIDE.md` | Current C++/ImGui editor workflow. |
-| `guides/SHADER_GUIDE.md` | Current preset, GLSL 330, Shadertoy, multipass, feedback, texture, and audio-channel authoring workflow. |
+| `guides/SHADER_GUIDE.md` | Current preset, built-in GLSL source editor, GLSL 330, Shadertoy, multipass, feedback, texture, and audio-channel authoring workflow. |
 | `guides/BLENDER_GLTF_GUIDE.md` | Current Blender 5.2/glTF axis and compact procedural-material contract. |
 | `CURVES_RUNTIME_USAGE.md` | Current curve consumption patterns. |
 

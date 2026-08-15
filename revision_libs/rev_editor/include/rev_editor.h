@@ -474,6 +474,7 @@ void RenderPreviewPanel(EditorContext* editor);
 // Preview viewport
 void InitializePreview(EditorContext* editor, int width, int height);
 void CleanupPreview(EditorContext* editor);
+void InvalidatePreviewShaderPipeline(int pipeline_index);
 void ResizePreview(EditorContext* editor, int width, int height);
 void RenderPreviewFrame(EditorContext* editor);
 void UpdatePlayback(EditorContext* editor, float delta_time);

@@ -140,6 +140,10 @@ automatic duration envelope (`1` is black and `0` is fully visible).
 
 For custom GLSL, Shadertoy imports, Buffer A-D pipelines, feedback, texture
 channels, and audio-reactive shaders, see [SHADER_GUIDE.md](SHADER_GUIDE.md).
+Pipeline passes can import a file with **Browse GLSL**, create or paste code in
+the built-in editor with **New / Paste GLSL**, and reopen assigned sources with
+**Edit GLSL**. Built-in editor saves go directly to the project's
+`project_assets` directory and refresh the preview shader.
 
 1. **Select scene** in timeline
 2. **Click shader "+ Cue"** button

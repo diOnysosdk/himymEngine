@@ -7580,6 +7580,11 @@ static void DestroyPreviewPipelineState(PreviewPipelineState* state) {
     *state = {};
 }
 
+void InvalidatePreviewShaderPipeline(int pipeline_index) {
+    if (pipeline_index < 0 || pipeline_index >= rev::runtime::kMaxShaderPipelines) return;
+    DestroyPreviewPipelineState(&g_preview_pipeline_cache[pipeline_index]);
+}
+
 static bool LoadPreviewPipelineSource(EditorContext* editor, const char* declared_path,
                                       std::string* source) {
     if (!editor || !editor->project || !declared_path || !declared_path[0] || !source) return false;

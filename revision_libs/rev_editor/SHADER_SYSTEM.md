@@ -16,6 +16,17 @@ The previous duplicated runtime `fragment_shaders[]` array has been removed to p
 
 ## Shadertoy Compatibility
 
+The pipeline pass UI supports both file import and direct authoring. **New /
+Paste GLSL** opens a large multiline editor with a GLSL 330 `mainImage`
+template; **Edit GLSL** loads the currently assigned source. Saves write to
+`project_assets`, update the pass's portable source path, and invalidate the
+editor preview cache so same-path edits compile immediately.
+
+Channel authoring is type-aware: textures expose load/path/clear controls,
+Buffer A-D expose source actions for the referenced buffer pass, self-feedback
+exposes source actions for the current pass, and audio/none omit irrelevant
+file controls. Same-name GLSL and texture reloads invalidate the preview cache.
+
 `rev_shader` accepts fragment sources that define Shadertoy's
 `mainImage(out vec4, in vec2)` entry point without a `main()` function. It
 normalizes missing or different version directives to `#version 330 core` in

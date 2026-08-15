@@ -35,14 +35,27 @@ example.
 1. Add or edit a shader cue and open **Shadertoy Pipeline**.
 2. Click **Create Pipeline**. The new pipeline is assigned to the cue and its
    Image pass is enabled.
-3. Open **Image**, click **Browse GLSL**, and select a `.glsl`, `.frag`, or `.fs`
-   fragment shader.
+3. Open **Image**, then either:
+   - click **Browse GLSL** to import a `.glsl`, `.frag`, or `.fs` fragment shader; or
+   - click **New / Paste GLSL** to open the built-in source editor and paste
+     Shadertoy code directly.
 4. Confirm the modal reports **Valid pipeline: 1 enabled pass(es)**.
 5. Preview, then use **Do It All** to validate the packed runtime.
 
 The browse button copies the source into the project's `project_assets`
 directory and stores a portable `project_assets/...` path. Keep project shader
 and texture assets there so another machine and the packer can resolve them.
+
+The built-in source editor starts new files with a GLSL 330-compatible
+`mainImage` template. Choose the filename, paste or write the shader, then use
+**Save** or **Save & Close**. Closing the source window with its X also saves
+pending changes. The source is written into `project_assets`, assigned to the
+current pass, and recompiled for preview immediately. Use **Edit GLSL** beside
+any assigned source to reopen and modify an imported or previously pasted
+shader. **Discard & Close** is the explicit way to leave without saving.
+
+Save the project before creating a source in the built-in editor so HiMYM knows
+where its `project_assets` directory belongs.
 
 ## Writing a Single-Pass Shader
 
@@ -161,9 +174,23 @@ Each pass has four independently configured channels:
 | **Self Previous Frame** | This pass's output from the previous frame |
 | **Audio Spectrum** | Live Shadertoy-style XM audio texture |
 
-Use **Browse Texture** for texture inputs. HiMYM copies supported images into
+Use **Load Texture** for texture inputs. HiMYM copies supported images into
 `project_assets`, loads them in the editor and standalone runtime, and embeds
 only referenced channel textures in packed builds.
+
+Channel controls follow the selected type:
+
+- **Texture** offers **Load Texture**, an editable texture path, and **Clear
+  Texture**.
+- **Buffer A-D** offers shortcuts to load, create/paste, or edit the referenced
+  buffer pass's GLSL. Loading source through the shortcut also enables that
+  buffer pass.
+- **Self Previous Frame** offers the same source actions for the current pass.
+- **None** and **Audio Spectrum** do not show unrelated file controls; audio
+  reports that it uses the live XM spectrum texture.
+
+Reloading a shader or texture with the same filename invalidates the editor
+preview cache, so the updated file appears without restarting the editor.
 
 ### Previous-Frame Feedback
 
