@@ -1821,13 +1821,28 @@ void RenderAssetBrowser(EditorContext* editor) {
     
     bool asset_browser_visible = ImGui::Begin("Asset Browser", &editor->show_asset_browser);
     if (asset_browser_visible) {
-        ImGui::Text("Assets Folder");
+        if (!editor->project || !editor->project->assets_path[0]) {
+            ImGui::TextDisabled("Save or open a project to create its asset folder.");
+            ImGui::End();
+            return;
+        }
+
+        const char* assets_path = editor->project->assets_path;
+        auto BuildSearchPattern = [assets_path](char* pattern, size_t pattern_size,
+                                                 const char* wildcard) {
+            snprintf(pattern, pattern_size, "%s\\%s", assets_path, wildcard);
+        };
+
+        ImGui::Text("Project Assets Folder");
+        ImGui::TextWrapped("%s", assets_path);
         ImGui::Separator();
         
         // Categories
         if (ImGui::CollapsingHeader("Music (.xm)", ImGuiTreeNodeFlags_DefaultOpen)) {
             WIN32_FIND_DATAA find_data;
-            HANDLE h_find = FindFirstFileA("assets/*.xm", &find_data);
+            char pattern[1024];
+            BuildSearchPattern(pattern, sizeof(pattern), "*.xm");
+            HANDLE h_find = FindFirstFileA(pattern, &find_data);
             
             if (h_find != INVALID_HANDLE_VALUE) {
                 do {
@@ -1848,7 +1863,9 @@ void RenderAssetBrowser(EditorContext* editor) {
             
             // PNG files
             WIN32_FIND_DATAA find_data;
-            HANDLE h_find = FindFirstFileA("assets/*.png", &find_data);
+            char pattern[1024];
+            BuildSearchPattern(pattern, sizeof(pattern), "*.png");
+            HANDLE h_find = FindFirstFileA(pattern, &find_data);
             
             if (h_find != INVALID_HANDLE_VALUE) {
                 found_any = true;
@@ -1863,7 +1880,8 @@ void RenderAssetBrowser(EditorContext* editor) {
             }
             
             // JPG files
-            h_find = FindFirstFileA("assets/*.jpg", &find_data);
+            BuildSearchPattern(pattern, sizeof(pattern), "*.jpg");
+            h_find = FindFirstFileA(pattern, &find_data);
             
             if (h_find != INVALID_HANDLE_VALUE) {
                 found_any = true;
@@ -1878,7 +1896,8 @@ void RenderAssetBrowser(EditorContext* editor) {
             }
 
             // WebP files
-            h_find = FindFirstFileA("assets/*.webp", &find_data);
+            BuildSearchPattern(pattern, sizeof(pattern), "*.webp");
+            h_find = FindFirstFileA(pattern, &find_data);
 
             if (h_find != INVALID_HANDLE_VALUE) {
                 found_any = true;
@@ -1900,11 +1919,13 @@ void RenderAssetBrowser(EditorContext* editor) {
         if (ImGui::CollapsingHeader("Shaders (.glsl, .vert, .frag)")) {
             bool found_any = false;
             
-            const char* patterns[] = {"assets/*.glsl", "assets/*.vert", "assets/*.frag"};
+            const char* wildcards[] = {"*.glsl", "*.vert", "*.frag"};
             
             for (int i = 0; i < 3; ++i) {
                 WIN32_FIND_DATAA find_data;
-                HANDLE h_find = FindFirstFileA(patterns[i], &find_data);
+                char pattern[1024];
+                BuildSearchPattern(pattern, sizeof(pattern), wildcards[i]);
+                HANDLE h_find = FindFirstFileA(pattern, &find_data);
                 
                 if (h_find != INVALID_HANDLE_VALUE) {
                     found_any = true;
@@ -1926,7 +1947,9 @@ void RenderAssetBrowser(EditorContext* editor) {
         
         if (ImGui::CollapsingHeader("All Files")) {
             WIN32_FIND_DATAA find_data;
-            HANDLE h_find = FindFirstFileA("assets/*.*", &find_data);
+            char pattern[1024];
+            BuildSearchPattern(pattern, sizeof(pattern), "*.*");
+            HANDLE h_find = FindFirstFileA(pattern, &find_data);
             
             if (h_find != INVALID_HANDLE_VALUE) {
                 do {
