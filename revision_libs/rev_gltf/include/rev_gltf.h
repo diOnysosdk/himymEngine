@@ -101,6 +101,8 @@ struct ImportResult {
     int              animation_count;
     bool             has_light;
     float            light_pos[3];
+    float            light_direction[3]; // world-space direction toward the scene
+    int              light_type;         // 0=unknown, 1=directional, 2=point, 3=spot
     int              light_node_index;
     bool             has_camera;
     float            camera_pos[3];

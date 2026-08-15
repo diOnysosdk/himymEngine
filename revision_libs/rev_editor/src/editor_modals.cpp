@@ -4358,6 +4358,9 @@ void RenderMeshModal(EditorContext* editor) {
                         mesh->imported_light_pos[0] = ir->light_pos[0];
                         mesh->imported_light_pos[1] = ir->light_pos[1];
                         mesh->imported_light_pos[2] = ir->light_pos[2];
+                        memcpy(mesh->imported_light_direction, ir->light_direction, sizeof(ir->light_direction));
+                        mesh->imported_light_type = ir->light_type;
+                        mesh->imported_light_node_index = ir->light_node_index;
                         mesh->emissive_color[0] = ir->material.emissive[0];
                         mesh->emissive_color[1] = ir->material.emissive[1];
                         mesh->emissive_color[2] = ir->material.emissive[2];

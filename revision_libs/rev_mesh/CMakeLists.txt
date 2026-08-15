@@ -3,6 +3,7 @@ project(rev_mesh)
 
 add_library(rev_mesh STATIC
     src/mesh.cpp
+    src/mesh_shadow.cpp
 )
 
 target_include_directories(rev_mesh PUBLIC
@@ -11,6 +12,8 @@ target_include_directories(rev_mesh PUBLIC
 
 target_link_libraries(rev_mesh PRIVATE
     opengl32
+    rev_shader
+    rev_runtime
 )
 
 # Size optimization

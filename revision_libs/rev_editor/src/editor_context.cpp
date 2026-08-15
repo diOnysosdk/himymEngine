@@ -2,6 +2,7 @@
 #include "rev_shader.h"
 #include "rev_pack.h"
 #include "rev_mesh.h"
+#include "rev_mesh_shadow.h"
 #include "rev_gltf.h"
 #include "rev_xm.h"
 #include "rev_pixel.h"
@@ -7381,15 +7382,18 @@ out vec3 v_frag_pos;
 out vec3 v_normal;
 out vec2 v_uv;
 out vec3 v_noise_pos;
+out vec4 v_light_space_pos;
 uniform mat4 u_model;
 uniform mat4 u_view;
 uniform mat4 u_projection;
+uniform mat4 u_light_matrix;
 void main() {
     vec4 world_pos = u_model * vec4(a_pos, 1.0);
     v_frag_pos = world_pos.xyz;
     v_normal   = mat3(transpose(inverse(u_model))) * a_normal;
     v_uv       = a_uv;
     v_noise_pos = a_pos;
+    v_light_space_pos = u_light_matrix * world_pos;
     gl_Position = u_projection * u_view * world_pos;
 }
 )";
@@ -7400,8 +7404,13 @@ in vec3 v_frag_pos;
 in vec3 v_normal;
 in vec2 v_uv;
 in vec3 v_noise_pos;
+in vec4 v_light_space_pos;
 out vec4 fragColor;
 uniform vec3  u_light_pos;
+uniform vec3  u_light_direction;
+uniform int   u_light_directional;
+uniform sampler2D u_shadow_map;
+uniform int u_shadow_enabled;
 uniform vec3  u_view_pos;
 uniform vec4  u_color;
 uniform float u_metallic;
@@ -7440,6 +7449,18 @@ float material_noise(vec3 p) {
     }
     return norm > 0.0 ? sum / norm : 0.0;
 }
+float shadow_visibility(vec3 normal, vec3 light_dir) {
+    if (u_shadow_enabled == 0) return 1.0;
+    vec3 p = v_light_space_pos.xyz / v_light_space_pos.w;
+    p = p * 0.5 + 0.5;
+    if (p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 1.0;
+    float bias = max(0.0015 * (1.0 - dot(normal, light_dir)), 0.0003);
+    vec2 texel = 1.0 / vec2(textureSize(u_shadow_map, 0));
+    float visible = 0.0;
+    for (int x=-1;x<=1;++x) for(int y=-1;y<=1;++y)
+        visible += p.z - bias <= texture(u_shadow_map, p.xy + vec2(x,y)*texel).r ? 1.0 : 0.0;
+    return visible / 9.0;
+}
 void main() {
     vec3  base = u_color.rgb;
     float alpha = u_color.a;
@@ -7453,7 +7474,7 @@ void main() {
     float material_roughness = u_noise_target == 2
         ? mix(u_roughness, noise_value, u_noise_strength) : u_roughness;
     vec3  norm     = normalize(v_normal);
-    vec3  ldir     = normalize(u_light_pos - v_frag_pos);
+    vec3  ldir     = u_light_directional != 0 ? normalize(-u_light_direction) : normalize(u_light_pos - v_frag_pos);
     vec3  vdir     = normalize(u_view_pos  - v_frag_pos);
     vec3  hdir     = normalize(ldir + vdir);
     // Ambient
@@ -7467,7 +7488,8 @@ void main() {
     vec3  spec        = spec_col * spec_fac * (1.0 - material_roughness * 0.85);
     vec3  emissive    = u_emissive_color * u_emissive_strength;
     if (u_noise_target == 3) emissive *= mix(1.0, noise_value, u_noise_strength);
-    vec3  result      = base * (ambient + diff) + spec + emissive;
+    float visibility  = shadow_visibility(norm, ldir);
+    vec3  result      = base * (ambient + diff * visibility) + spec * visibility + emissive;
     fragColor = vec4(result, alpha);
 }
 )";
@@ -7477,6 +7499,7 @@ void main() {
 
 static rev::shader::Program* g_preview_shader_cache[128] = {};
 static rev::shader::Program* g_asset_shader_cache[128] = {};
+static rev::mesh::ShadowMap g_preview_mesh_shadow = {};
 
 struct PreviewPipelinePassState {
     rev::shader::Program* program;
@@ -8008,6 +8031,7 @@ void CleanupPreview(EditorContext* editor) {
         rev::shader::DestroyProgram((rev::shader::Program*)editor->mesh_shader);
         editor->mesh_shader = nullptr;
     }
+    rev::mesh::DestroyShadowMap(&g_preview_mesh_shadow);
     if (editor->post_shader) {
         rev::shader::DestroyProgram((rev::shader::Program*)editor->post_shader);
         editor->post_shader = nullptr;
@@ -9951,6 +9975,27 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 }
 
                                 float draw_light[3] = {3.0f, 5.0f, 4.0f};
+                                float light_direction[3] = {0.0f, -1.0f, 0.0f};
+                                const bool directional_light = cue->use_imported_light &&
+                                    cached->has_imported_light && cached->imported_light_type == 1;
+                                if (directional_light) {
+                                    memcpy(light_direction, cached->imported_light_direction, sizeof(light_direction));
+                                    if (node_delta_mats && cached->imported_light_node_index >= 0 &&
+                                        cached->imported_light_node_index < (int)cached->imported_node_count) {
+                                        const float* d = &node_delta_mats[cached->imported_light_node_index * 16];
+                                        const float x=light_direction[0], y=light_direction[1], z=light_direction[2];
+                                        light_direction[0]=d[0]*x+d[4]*y+d[8]*z;
+                                        light_direction[1]=d[1]*x+d[5]*y+d[9]*z;
+                                        light_direction[2]=d[2]*x+d[6]*y+d[10]*z;
+                                    }
+                                    rev::mesh::RenderDirectionalShadow(&g_preview_mesh_shadow, cached, model, light_direction);
+                                    glBindFramebuffer(0x8D40, editor->preview_fbo);
+                                    glViewport(0, 0, editor->preview_width, editor->preview_height);
+                                    rev::shader::Use(mesh_prog);
+                                }
+                                rev::shader::SetInt(mesh_prog, rev::shader::GetUniformLocation(mesh_prog, "u_light_directional"), directional_light ? 1 : 0);
+                                rev::shader::SetVec3(mesh_prog, rev::shader::GetUniformLocation(mesh_prog, "u_light_direction"), light_direction[0], light_direction[1], light_direction[2]);
+                                rev::mesh::BindDirectionalShadow(directional_light ? &g_preview_mesh_shadow : nullptr, mesh_prog);
                                 if (cue->use_imported_light && cached->has_imported_light) {
                                     const float* light_delta = nullptr;
                                     if (node_delta_mats && cached->imported_light_node_index >= 0 &&
@@ -10148,6 +10193,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     mesh->imported_light_pos[0] = ir->light_pos[0];
                                     mesh->imported_light_pos[1] = ir->light_pos[1];
                                     mesh->imported_light_pos[2] = ir->light_pos[2];
+                                    memcpy(mesh->imported_light_direction, ir->light_direction, sizeof(ir->light_direction));
+                                    mesh->imported_light_type = ir->light_type;
+                                    mesh->imported_light_node_index = ir->light_node_index;
                                     mesh->emissive_color[0] = ir->material.emissive[0];
                                     mesh->emissive_color[1] = ir->material.emissive[1];
                                     mesh->emissive_color[2] = ir->material.emissive[2];
@@ -10244,6 +10292,27 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 }
                                 
                                 float draw_light[3] = {3.0f, 5.0f, 4.0f};
+                                float light_direction[3] = {0.0f, -1.0f, 0.0f};
+                                const bool directional_light = cue->use_imported_light &&
+                                    mesh->has_imported_light && mesh->imported_light_type == 1;
+                                if (directional_light) {
+                                    memcpy(light_direction, mesh->imported_light_direction, sizeof(light_direction));
+                                    if (node_delta_mats && mesh->imported_light_node_index >= 0 &&
+                                        mesh->imported_light_node_index < (int)mesh->imported_node_count) {
+                                        const float* d = &node_delta_mats[mesh->imported_light_node_index * 16];
+                                        const float x=light_direction[0], y=light_direction[1], z=light_direction[2];
+                                        light_direction[0]=d[0]*x+d[4]*y+d[8]*z;
+                                        light_direction[1]=d[1]*x+d[5]*y+d[9]*z;
+                                        light_direction[2]=d[2]*x+d[6]*y+d[10]*z;
+                                    }
+                                    rev::mesh::RenderDirectionalShadow(&g_preview_mesh_shadow, mesh, model, light_direction);
+                                    glBindFramebuffer(0x8D40, editor->preview_fbo);
+                                    glViewport(0, 0, editor->preview_width, editor->preview_height);
+                                    rev::shader::Use(mesh_prog);
+                                }
+                                rev::shader::SetInt(mesh_prog, rev::shader::GetUniformLocation(mesh_prog, "u_light_directional"), directional_light ? 1 : 0);
+                                rev::shader::SetVec3(mesh_prog, rev::shader::GetUniformLocation(mesh_prog, "u_light_direction"), light_direction[0], light_direction[1], light_direction[2]);
+                                rev::mesh::BindDirectionalShadow(directional_light ? &g_preview_mesh_shadow : nullptr, mesh_prog);
                                 if (cue->use_imported_light && mesh->has_imported_light) {
                                     const float* light_delta = nullptr;
                                     if (node_delta_mats && mesh->imported_light_node_index >= 0 &&

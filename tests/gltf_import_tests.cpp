@@ -109,6 +109,12 @@ int main(int argc, char** argv) {
     }
 
     Check(result->has_camera, "fixture camera import");
+    Check(result->has_light && result->light_type == 1,
+          "first imported directional light type");
+    Check(Near(result->light_direction[0], 0.0f) &&
+          Near(result->light_direction[1], 1.0f) &&
+          Near(result->light_direction[2], 0.0f),
+          "directional light world direction from glTF node rotation");
     Check(Near(result->camera_pos[0], 4.0f) &&
           Near(result->camera_pos[1], 5.0f) &&
           Near(result->camera_pos[2], 6.0f),

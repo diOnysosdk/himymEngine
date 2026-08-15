@@ -91,6 +91,10 @@ Mesh* CreateMesh(uint32_t vertex_count, uint32_t index_count) {
     mesh->imported_light_pos[0] = 0.0f;
     mesh->imported_light_pos[1] = 0.0f;
     mesh->imported_light_pos[2] = 0.0f;
+    mesh->imported_light_direction[0] = 0.0f;
+    mesh->imported_light_direction[1] = -1.0f;
+    mesh->imported_light_direction[2] = 0.0f;
+    mesh->imported_light_type = 0;
     mesh->imported_light_node_index = -1;
     mesh->has_imported_camera = false;
     mesh->imported_camera_pos[0] = 0.0f;

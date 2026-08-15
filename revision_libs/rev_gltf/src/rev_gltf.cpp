@@ -805,21 +805,20 @@ static void GatherSceneMeshNodes(cgltf_node* node, cgltf_node** out_nodes, int m
     }
 }
 
-static bool FindFirstSceneLight(const cgltf_data* data, cgltf_node* node, float out_pos[3], int* out_node_index) {
+static bool FindFirstSceneLight(const cgltf_data* data, cgltf_node* node, ImportResult* result) {
     if (!node) return false;
     if (node->light) {
         float m[16] = {};
         cgltf_node_transform_world(node, m);
-        out_pos[0] = m[12];
-        out_pos[1] = m[13];
-        out_pos[2] = m[14];
-        if (out_node_index && data) {
-            *out_node_index = (int)cgltf_node_index(data, node);
-        }
+        result->light_pos[0] = m[12]; result->light_pos[1] = m[13]; result->light_pos[2] = m[14];
+        const float local_forward[3] = {0.0f, 0.0f, -1.0f};
+        TransformVector(m, local_forward, result->light_direction);
+        result->light_type = (int)node->light->type;
+        if (data) result->light_node_index = (int)cgltf_node_index(data, node);
         return true;
     }
     for (cgltf_size ci = 0; ci < node->children_count; ++ci) {
-        if (FindFirstSceneLight(data, node->children[ci], out_pos, out_node_index)) {
+        if (FindFirstSceneLight(data, node->children[ci], result)) {
             return true;
         }
     }
@@ -963,10 +962,14 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
     result->light_pos[0] = 0.0f;
     result->light_pos[1] = 0.0f;
     result->light_pos[2] = 0.0f;
-        result->light_node_index = -1; // Initialize light node index
+    result->light_direction[0] = 0.0f;
+    result->light_direction[1] = -1.0f;
+    result->light_direction[2] = 0.0f;
+    result->light_type = 0;
+    result->light_node_index = -1;
     if (data->scene && data->scene->nodes_count > 0) {
         for (cgltf_size ni = 0; ni < data->scene->nodes_count; ++ni) {
-            if (FindFirstSceneLight(data, data->scene->nodes[ni], result->light_pos, &result->light_node_index)) {
+            if (FindFirstSceneLight(data, data->scene->nodes[ni], result)) {
                 result->has_light = true;
                 break;
             }
@@ -979,6 +982,9 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
                 result->light_pos[0] = m[12];
                 result->light_pos[1] = m[13];
                 result->light_pos[2] = m[14];
+                const float local_forward[3] = {0.0f, 0.0f, -1.0f};
+                TransformVector(m, local_forward, result->light_direction);
+                result->light_type = (int)data->nodes[ni].light->type;
                 result->light_node_index = (int)ni;
                 result->has_light = true;
                 break;
