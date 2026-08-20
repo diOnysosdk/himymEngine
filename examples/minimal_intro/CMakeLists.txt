@@ -32,6 +32,10 @@ set(HIMYM_PACKED_USE_PIXEL ON)
 set(HIMYM_PACKED_USE_PARTICLES ON)
 set(HIMYM_PACKED_USE_MESH ON)
 set(HIMYM_PACKED_USE_GLTF ON)
+set(HIMYM_PACKED_USE_IMAGE ON)
+set(HIMYM_PACKED_USE_TEXT ON)
+set(HIMYM_PACKED_USE_IMAGE_DECODER ON)
+option(HIMYM_PACKED_DIAGNOSTICS "Keep verbose logging and debug-file support in packed runtimes" OFF)
 set(HIMYM_PACKED_MANIFEST_DIR "${CMAKE_BINARY_DIR}" CACHE PATH
     "Directory containing packed_assets.h and packed_features.cmake")
 set(_himym_packed_features "${HIMYM_PACKED_MANIFEST_DIR}/packed_features.cmake")
@@ -67,7 +71,10 @@ if(HIMYM_PACKED_USE_GLTF)
 endif()
 target_link_libraries(minimal_intro_packed PRIVATE ${_himym_packed_libraries})
 
-target_compile_definitions(minimal_intro_packed PRIVATE HIMYM_PACKED_ASSETS)
+target_compile_definitions(minimal_intro_packed PRIVATE
+    HIMYM_PACKED_ASSETS
+    "HIMYM_PACKED_DIAGNOSTICS=$<BOOL:${HIMYM_PACKED_DIAGNOSTICS}>"
+)
 if(HIMYM_PACKED_USE_GLTF)
     target_compile_definitions(minimal_intro_packed PRIVATE REV_GLTF_AVAILABLE)
 endif()

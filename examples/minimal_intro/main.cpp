@@ -1,6 +1,5 @@
 #include <windows.h>
 #include <gl/gl.h>
-#include <gdiplus.h>
 
 // Packed builds receive project-derived feature macros from rev_pack. Keep
 // legacy generated headers and the file-based development runtime universal.
@@ -28,6 +27,26 @@
 #endif
 #ifndef HIMYM_USE_SCROLL_TEXT
 #define HIMYM_USE_SCROLL_TEXT 1
+#endif
+#ifndef HIMYM_USE_IMAGE
+#define HIMYM_USE_IMAGE 1
+#endif
+#ifndef HIMYM_USE_TEXT
+#define HIMYM_USE_TEXT 1
+#endif
+#ifndef HIMYM_USE_IMAGE_DECODER
+#define HIMYM_USE_IMAGE_DECODER 1
+#endif
+#ifndef HIMYM_PACKED_DIAGNOSTICS
+#ifdef HIMYM_PACKED_ASSETS
+#define HIMYM_PACKED_DIAGNOSTICS 0
+#else
+#define HIMYM_PACKED_DIAGNOSTICS 1
+#endif
+#endif
+
+#if HIMYM_USE_IMAGE_DECODER
+#include <gdiplus.h>
 #endif
 
 #include "rev_platform.h"
@@ -138,7 +157,9 @@ struct RuntimeSceneMenu {
 static const int kPostEffectCount = 23;
 static const int kPostEffectFade = 12;
 
+#if HIMYM_USE_IMAGE_DECODER
 #pragma comment(lib, "gdiplus.lib")
+#endif
 #if HIMYM_USE_XM
 #pragma comment(lib, "winmm.lib")
 #include <mmsystem.h>
@@ -169,15 +190,18 @@ static void ParseShaderNoiseMapPaths(const char* line, char paths[4][512]) {
         field = end + 1;
     }
 }
+#if HIMYM_PACKED_DIAGNOSTICS
 static bool g_verbose_logging = false;
-
 static bool IsVerboseLoggingEnabled() {
     char env[16] = {};
     DWORD n = GetEnvironmentVariableA("HIMYM_VERBOSE", env, sizeof(env));
     return (n > 0 && env[0] != '0');
 }
-
 #define LOGV(...) do { if (g_verbose_logging) printf(__VA_ARGS__); } while (0)
+#else
+static constexpr bool g_verbose_logging = false;
+#define LOGV(...) ((void)0)
+#endif
 
 // ===== WinMM audio thread for XM playback =====
 #if HIMYM_USE_XM
@@ -2629,6 +2653,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
+#if HIMYM_PACKED_DIAGNOSTICS
     g_verbose_logging = IsVerboseLoggingEnabled();
     if (g_verbose_logging) {
         // Optional debug console for verbose sessions.
@@ -2644,6 +2669,7 @@ int main(int argc, char* argv[]) {
         printf("=== HiMYM Minimal Intro ===\n");
         printf("Verbose logging: ON (HIMYM_VERBOSE)\n\n");
     }
+#endif
 
     // Cues file path: argv[1] takes priority (editor always passes it).
     // Packed standalone build: extract embedded kPackedCuesContent to a temp file —
@@ -2713,7 +2739,8 @@ int main(int argc, char* argv[]) {
     }
     LOGV("Loaded %d shader cue(s)\n", shader_cue_count);
 
-    ImageTexture shader_noise_textures[16][4] = {};
+    ImageTexture shader_noise_textures[HIMYM_USE_IMAGE_DECODER ? 16 : 1][4] = {};
+#if HIMYM_USE_IMAGE_DECODER
     for (int cue_index = 0; cue_index < shader_cue_count; ++cue_index) {
         for (int map_index = 0; map_index < 4; ++map_index) {
             const char* declared_path = shader_cues[cue_index].noise_textures.paths[map_index];
@@ -2725,6 +2752,7 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+#endif
 
     const int kMaxPostEffects = 64;
     RuntimePostEffect post_effects[kMaxPostEffects] = {};
@@ -2737,8 +2765,12 @@ int main(int argc, char* argv[]) {
     static rev::runtime::SceneNavigation scene_navigation[64] = {};
     int scene_navigation_count = LoadSceneNavigation(cues_path, scene_navigation, 64);
     static RuntimeSceneMenu scene_menus[64] = {};
+#if HIMYM_USE_TEXT
     int scene_menu_count = LoadSceneMenus(cues_path, scene_menus, 64);
-    static TextTexture scene_menu_textures[64][rev::runtime::kMaxMenuItems] = {};
+#else
+    const int scene_menu_count = 0;
+#endif
+    static TextTexture scene_menu_textures[HIMYM_USE_TEXT ? 64 : 1][rev::runtime::kMaxMenuItems] = {};
     LOGV("Loaded %d scene row(s), %d interactive menu(s)\n", scene_navigation_count, scene_menu_count);
     
     // Setup default fallback shader cue
@@ -2783,13 +2815,17 @@ int main(int argc, char* argv[]) {
     bool has_music = (music_cue_count > 0);
     
     // Load image cues (multi-cue support)
-    const int kMaxImageCues = 32;
-    ImageCue image_cues[kMaxImageCues] = {};
-    ImageTexture image_texes[kMaxImageCues] = {};
-    bool image_loaded[kMaxImageCues] = {};
-    int image_frame_counts[kMaxImageCues] = {};
-    char image_runtime_paths[kMaxImageCues][512] = {};
+    const int kMaxImageCues = HIMYM_USE_IMAGE ? 32 : 0;
+    ImageCue image_cues[HIMYM_USE_IMAGE ? kMaxImageCues : 1] = {};
+    ImageTexture image_texes[HIMYM_USE_IMAGE ? kMaxImageCues : 1] = {};
+    bool image_loaded[HIMYM_USE_IMAGE ? kMaxImageCues : 1] = {};
+    int image_frame_counts[HIMYM_USE_IMAGE ? kMaxImageCues : 1] = {};
+    char image_runtime_paths[HIMYM_USE_IMAGE ? kMaxImageCues : 1][512] = {};
+#if HIMYM_USE_IMAGE
     int image_cue_count = LoadAllImageCues(cues_path, image_cues, kMaxImageCues);
+#else
+    const int image_cue_count = 0;
+#endif
     bool has_image = (image_cue_count > 0);
     LOGV("Image cues loaded: %d\n", image_cue_count);
     if (g_logfile) {
@@ -2874,13 +2910,17 @@ int main(int argc, char* argv[]) {
 #endif
     
     // Load text cues (multi-cue support)
-    const int kMaxTextCues = 32;
-    TextCue text_cues[kMaxTextCues] = {};
-    TextTexture text_texes[kMaxTextCues] = {};
-    TextGlyphAtlas text_atlases[kMaxTextCues] = {};
-    bool text_loaded[kMaxTextCues] = {};
-    bool text_force_baked[kMaxTextCues] = {};
+    const int kMaxTextCues = HIMYM_USE_TEXT ? 32 : 0;
+    TextCue text_cues[HIMYM_USE_TEXT ? kMaxTextCues : 1] = {};
+    TextTexture text_texes[HIMYM_USE_TEXT ? kMaxTextCues : 1] = {};
+    TextGlyphAtlas text_atlases[HIMYM_USE_TEXT ? kMaxTextCues : 1] = {};
+    bool text_loaded[HIMYM_USE_TEXT ? kMaxTextCues : 1] = {};
+    bool text_force_baked[HIMYM_USE_TEXT ? kMaxTextCues : 1] = {};
+#if HIMYM_USE_TEXT
     int text_cue_count = LoadAllTextCues(cues_path, text_cues, kMaxTextCues);
+#else
+    const int text_cue_count = 0;
+#endif
 
     const int kMaxScrollTextCues = HIMYM_USE_SCROLL_TEXT ? 64 : 0;
     static ScrollTextCue scroll_text_cues[HIMYM_USE_SCROLL_TEXT ? kMaxScrollTextCues : 1] = {};
@@ -3009,10 +3049,12 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
          gl_info.vendor ? gl_info.vendor : "unknown",
          gl_info.renderer ? gl_info.renderer : "unknown");
     
-    // Initialize GDI+
+    // Initialize GDI+ only when this packed project needs image/text decoding.
+#if HIMYM_USE_IMAGE_DECODER
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-    ULONG_PTR gdiplusToken;
+    ULONG_PTR gdiplusToken = 0;
     Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr);
+#endif
     
     // Load GL 3.3+ function pointers
     glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)rev::platform::GetProcAddress("glGenVertexArrays");
@@ -3262,6 +3304,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_flip_v"), 1.0f);
         rev::shader::SetVec4(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect"), 0.0f, 0.0f, 1.0f, 1.0f);
         LOGV("Sprite shader OK\n");
+#if HIMYM_USE_TEXT
         for (int menu_index = 0; menu_index < scene_menu_count; ++menu_index) {
             for (int item_index = 0; item_index < scene_menus[menu_index].menu.item_count; ++item_index) {
                 const char* label = scene_menus[menu_index].menu.items[item_index].label;
@@ -3270,6 +3313,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                                   &scene_menu_textures[menu_index][item_index]);
             }
         }
+#endif
     }
 
     unsigned int runtime_shader_audio_texture = 0;
@@ -3388,6 +3432,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     glClearColor(0, 0, 0, 0);
                     glClear(GL_COLOR_BUFFER_BIT);
                 }
+#if HIMYM_USE_IMAGE_DECODER
                 for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
                     const rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
                     if (channel.kind != rev::runtime::ShaderChannelTexture) continue;
@@ -3404,6 +3449,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         LoadImageTexture(resolved, &pass_state.channel_textures[channel_index]);
 #endif
                 }
+#endif
             }
         }
         glBindFramebuffer_rt(0x8D40, scene_fbo);
@@ -4909,6 +4955,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 if (shader_state->u_noise_speed >= 0) rev::shader::SetVec2(shader_state->prog, shader_state->u_noise_speed, cue.noise.speed_x, cue.noise.speed_y);
                 if (shader_state->u_noise_seed >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_seed, cue.noise.seed);
                 if (shader_state->u_noise_contrast >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_contrast, cue.noise.contrast);
+#if HIMYM_USE_IMAGE_DECODER
                 if (glActiveTexture) {
                     int noise_map_count = 0;
                     for (int map_index = 0; map_index < 4; ++map_index) {
@@ -4926,6 +4973,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     }
                     glActiveTexture(GL_TEXTURE0);
                 }
+#else
+                if (shader_state->u_noise_map_count >= 0) {
+                    rev::shader::SetInt(shader_state->prog, shader_state->u_noise_map_count, 0);
+                }
+#endif
 
                 glDrawArrays(GL_TRIANGLES, 0, 3);
             }
@@ -7138,6 +7190,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             shader_programs[i].prog = nullptr;
         }
     }
+#if HIMYM_USE_IMAGE_DECODER
     for (int cue_index = 0; cue_index < shader_cue_count; ++cue_index) {
         for (int map_index = 0; map_index < 4; ++map_index) {
             if (shader_noise_textures[cue_index][map_index].texture_id != 0) {
@@ -7146,6 +7199,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
         }
     }
+#endif
     if (scene_texture) glDeleteTextures(1, &scene_texture);
     if (post_texture) glDeleteTextures(1, &post_texture);
     if (history_texture) glDeleteTextures(1, &history_texture);
@@ -7162,7 +7216,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         rev::curve::DestroyCurve(curves[i]);
     }
     
+#if HIMYM_USE_IMAGE_DECODER
     Gdiplus::GdiplusShutdown(gdiplusToken);
+#endif
     
     if (g_logfile) {
         fflush(g_logfile);

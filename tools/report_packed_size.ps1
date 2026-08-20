@@ -75,7 +75,7 @@ for ($index = 0; $index -lt $addresses.Count; ++$index) {
 
 $features = @()
 foreach ($line in Get-Content -LiteralPath $features_path) {
-    if ($line -match '^set\(HIMYM_PACKED_USE_([A-Z]+)\s+(ON|OFF)\)') {
+    if ($line -match '^set\(HIMYM_PACKED_USE_([A-Z_]+)\s+(ON|OFF)\)') {
         $features += "$($Matches[1])=$($Matches[2])"
     }
 }

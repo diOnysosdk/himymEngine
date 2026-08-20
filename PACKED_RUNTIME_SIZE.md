@@ -38,6 +38,9 @@ chunkable sections.
 | Pixel-emitter cue | `HIMYM_USE_PARTICLES` | `rev_particles` |
 | Any mesh cue | `HIMYM_USE_MESH` | `rev_mesh` |
 | External mesh with `mesh_type == 4` | `HIMYM_USE_GLTF` | `rev_gltf` and `rev_mesh` |
+| Image cue | `HIMYM_USE_IMAGE` | none; prunes image cue parsing, state, and rendering |
+| Text cue or interactive menu | `HIMYM_USE_TEXT` | none; prunes text/menu parsing, state, and rendering |
+| Any image-decoding consumer | `HIMYM_USE_IMAGE_DECODER` | none; prunes GDI+/WIC code and imports when absent |
 | Animated-sprite cue | `HIMYM_USE_ANIMATED_SPRITE` | none; prunes runtime code |
 | Scrolling-text cue | `HIMYM_USE_SCROLL_TEXT` | none; prunes runtime code |
 
@@ -46,6 +49,16 @@ not select an optional library. A sprite-mode menu item references an existing
 scene-local animated-sprite cue; that cue selects
 `HIMYM_USE_ANIMATED_SPRITE` and supplies the packed frame assets. Reusing the
 same cue for several menu icons therefore adds item rows, not duplicate images.
+
+`HIMYM_USE_IMAGE_DECODER` is enabled by image and text cues, scrolling text,
+animated sprites, image-backed particle emitters, shader-pipeline texture
+channels, and interactive menus. Primitive-only particles and shader pipelines
+without texture channels do not retain GDI+/WIC. The external-cue runtime keeps
+all decoding paths for development compatibility.
+
+Packed builds also disable verbose environment-variable, console, and debug-log
+handling by default. Configure with `-DHIMYM_PACKED_DIAGNOSTICS=ON` when a packed
+diagnostic build is needed; this changes diagnostics only, not authored output.
 
 Particle emitters do not enable mesh by themselves. Mesh attachment projection
 is compiled only when the same project also contains mesh cues.
@@ -87,6 +100,22 @@ uncompressed PE file sizes and include the identical embedded project data.
 Total optional-system reduction in this controlled build: **152,576 bytes**.
 Alignment and link-time optimization mean subsystem deltas should not be
 treated as perfectly additive across unrelated projects.
+
+## Shader-pipeline-only trimming
+
+Measured August 20, 2026 from `E:\Demos\shaderfromnet`, which contains one
+project-owned shader pipeline and no image, text, sprite, pixel, particle,
+music, mesh, or texture-channel rows. Both builds used the GENERAL profile and
+the identical 10,806-byte embedded payload.
+
+| Runtime | EXE bytes | Non-asset remainder |
+|---|---:|---:|
+| Before image/text/decoder and diagnostic gating | 158,208 | 147,402 |
+| After gating | 96,768 | 85,962 |
+
+The new manifest-driven paths removed **61,440 bytes (38.8%)** without changing
+the shader source or authored cues. The post-change linker map contains no live
+image/text loader or GDI+ import symbols.
 
 For a representative shader/text-only project (`demos/lilbox`), the generated
 manifest selected only `rev_curve`, `rev_platform`, `rev_runtime`, and
