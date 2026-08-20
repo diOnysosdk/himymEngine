@@ -296,6 +296,7 @@ struct ProjectFeatures {
     bool image_decoder;
     bool animated_sprite;
     bool scroll_text;
+    bool shader_text;
 };
 
 static void WriteProjectFeatures(FILE* header, const ProjectFeatures& features) {
@@ -310,6 +311,7 @@ static void WriteProjectFeatures(FILE* header, const ProjectFeatures& features) 
     fprintf(header, "#define HIMYM_USE_IMAGE_DECODER %d\n", features.image_decoder ? 1 : 0);
     fprintf(header, "#define HIMYM_USE_ANIMATED_SPRITE %d\n", features.animated_sprite ? 1 : 0);
     fprintf(header, "#define HIMYM_USE_SCROLL_TEXT %d\n\n", features.scroll_text ? 1 : 0);
+    fprintf(header, "#define HIMYM_USE_SHADER_TEXT %d\n\n", features.shader_text ? 1 : 0);
 }
 
 static bool WriteProjectFeatureCMake(const char* output_header,
@@ -336,6 +338,7 @@ static bool WriteProjectFeatureCMake(const char* output_header,
     fprintf(feature_file, "set(HIMYM_PACKED_USE_IMAGE_DECODER %s)\n", features.image_decoder ? "ON" : "OFF");
     fprintf(feature_file, "set(HIMYM_PACKED_USE_ANIMATED_SPRITE %s)\n", features.animated_sprite ? "ON" : "OFF");
     fprintf(feature_file, "set(HIMYM_PACKED_USE_SCROLL_TEXT %s)\n", features.scroll_text ? "ON" : "OFF");
+    fprintf(feature_file, "set(HIMYM_PACKED_USE_SHADER_TEXT %s)\n", features.shader_text ? "ON" : "OFF");
     fclose(feature_file);
     return true;
 }
@@ -616,6 +619,7 @@ PackResult PackAssets(const char* cues_path,
     bool in_shader = false, in_shader_pipeline_pass = false, in_shader_pipeline_channel = false,
          in_post_effect = false, in_scene_post_effect = false, in_image = false,
          in_music = false, in_mesh = false, in_text = false, in_scroll_text = false,
+         in_shader_text = false,
          in_animated_sprite = false, in_pixel = false, in_pixel_emitter = false,
          in_scene_menu = false;
     bool shader_ids[64] = {};
@@ -629,7 +633,7 @@ PackResult PackAssets(const char* cues_path,
         if (s[0] == '[') {
             in_shader = in_post_effect = in_scene_post_effect = false;
             in_shader_pipeline_pass = in_shader_pipeline_channel = false;
-            in_image = in_music = in_mesh = in_text = in_scroll_text = false;
+            in_image = in_music = in_mesh = in_text = in_scroll_text = in_shader_text = false;
             in_animated_sprite = in_pixel = in_pixel_emitter = false;
             in_scene_menu = false;
         }
@@ -646,6 +650,7 @@ PackResult PackAssets(const char* cues_path,
         if (strstr(s, "[mesh_cues]"))        { in_shader = false; in_image = false; in_music = false; in_mesh = true;  in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (strstr(s, "[text_cues]"))        { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = true;  in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (strstr(s, "[scroll_text_cues]")) { in_shader = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = true;  in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[shader_text_cues]")) { in_shader_text = true; continue; }
         if (strstr(s, "[scene_menus]")) { in_scene_menu = true; continue; }
         if (s[0] == '[') { in_shader = false; in_post_effect = false; in_scene_post_effect = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (s[0] == '#' || s[0] == '\r' || s[0] == '\n' || s[0] == '\0') continue;
@@ -663,6 +668,7 @@ PackResult PackAssets(const char* cues_path,
         }
         if (in_animated_sprite) features.animated_sprite = true;
         if (in_scroll_text) features.scroll_text = true;
+        if (in_shader_text) features.shader_text = true;
         if (in_scene_menu) features.text = true;
         if (in_image || in_text || in_scroll_text || in_animated_sprite ||
             in_scene_menu || (in_pixel_emitter && ParsePixelEmitterVisualSource(s) == 0))

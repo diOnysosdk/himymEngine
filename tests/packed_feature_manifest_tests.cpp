@@ -19,6 +19,7 @@ struct ExpectedFeatures {
     bool image_decoder;
     bool animated_sprite;
     bool scroll_text;
+    bool shader_text;
 };
 
 int failures = 0;
@@ -119,6 +120,7 @@ void RunCase(const std::filesystem::path& root,
         {"IMAGE_DECODER", expected.image_decoder},
         {"ANIMATED_SPRITE", expected.animated_sprite},
         {"SCROLL_TEXT", expected.scroll_text},
+        {"SHADER_TEXT", expected.shader_text},
     };
     for (const FeatureCheck& feature : features) {
         CheckFlag(header, case_name, "#define HIMYM_USE_", feature.name,
@@ -170,6 +172,8 @@ int main() {
             {false, false, false, false, false, false, false, true, true, false}, true);
     RunCase(root, "scroll_text", "[scroll_text_cues]\nscroll row\n",
             {false, false, false, false, false, false, false, true, false, true}, false);
+    RunCase(root, "shader_text", "[shader_text_cues]\nshader text row\n",
+            {false, false, false, false, false, false, false, false, false, false, true}, false);
     RunCase(root, "text", "[text_cues]\ntext row\n",
             {false, false, false, false, false, false, true, true}, false);
     RunCase(root, "scene_menu", "[scene_menus]\nmenu row\n",

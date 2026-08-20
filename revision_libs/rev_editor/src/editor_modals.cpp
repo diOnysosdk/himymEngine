@@ -5973,6 +5973,59 @@ void RenderPixelEmitterModal(EditorContext* editor) {
     }
 }
 
+void RenderShaderTextModal(EditorContext* editor) {
+    if (!editor || !editor->project || editor->selected_scene_index < 0 ||
+        editor->selected_scene_index >= editor->project->scene_count) return;
+    SceneBlock* scene = &editor->project->scenes[editor->selected_scene_index];
+    if (editor->selected_cue_type != CueTypeShaderText || editor->selected_cue_index < 0 ||
+        editor->selected_cue_index >= scene->shader_text_cue_count) return;
+    if (editor->shader_text_modal_request_open) {
+        editor->editing_shader_text = scene->shader_text_cues[editor->selected_cue_index];
+        ImGui::OpenPopup("Shader Text Cue");
+        editor->shader_text_modal_request_open = false;
+        editor->shader_text_modal_open = true;
+    }
+    if (ImGui::BeginPopupModal("Shader Text Cue", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ShaderTextCue& cue = editor->editing_shader_text;
+        bool changed = false;
+        changed |= ImGui::InputTextMultiline("Text", cue.text, sizeof(cue.text), ImVec2(500, 90));
+        const char* modes[] = {"Static", "Horizontal scroll"};
+        changed |= ImGui::Combo("Mode", &cue.mode, modes, 2);
+        changed |= ImGui::SliderFloat("X", &cue.x, 0.0f, 1.0f);
+        changed |= ImGui::SliderFloat("Y", &cue.y, 0.0f, 1.0f);
+        changed |= ImGui::SliderFloat("Height (px)", &cue.size, 7.0f, 280.0f);
+        changed |= ImGui::ColorEdit3("Color", &cue.color.r);
+        changed |= ImGui::SliderFloat("Opacity", &cue.opacity, 0.0f, 1.0f);
+        changed |= ImGui::SliderFloat("Spacing", &cue.spacing, 0.25f, 3.0f);
+        if (cue.mode == 0) {
+            const char* align[] = {"Left", "Center", "Right"};
+            changed |= ImGui::Combo("Alignment", &cue.alignment, align, 3);
+        } else {
+            const char* direction[] = {"Left", "Right"};
+            changed |= ImGui::Combo("Direction", &cue.direction, direction, 2);
+            changed |= ImGui::SliderFloat("Speed (px/s)", &cue.speed, 0.0f, 500.0f);
+            const char* loops[] = {"Loop", "Clamp"};
+            changed |= ImGui::Combo("Motion", &cue.loop_mode, loops, 2);
+        }
+        changed |= ImGui::InputFloat("Start", &cue.cue_start);
+        changed |= ImGui::InputFloat("End", &cue.cue_end);
+        changed |= ImGui::InputFloat("Fade in", &cue.fade_in);
+        changed |= ImGui::InputFloat("Fade out", &cue.fade_out);
+        changed |= ImGui::SliderInt("Layer", &cue.layer_order, -10, 10);
+        const char* blends[] = {"Alpha", "Additive", "Multiply", "Screen"};
+        changed |= ImGui::Combo("Blend", &cue.blend_mode, blends, 4);
+        if (changed) {
+            scene->shader_text_cues[editor->selected_cue_index] = cue;
+            editor->project->modified = true;
+        }
+        if (ImGui::Button("Close", ImVec2(240, 0))) {
+            editor->shader_text_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    } else if (editor->shader_text_modal_open) editor->shader_text_modal_open = false;
+}
+
 } // namespace editor
 } // namespace rev
 

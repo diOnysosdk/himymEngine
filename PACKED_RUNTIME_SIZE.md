@@ -288,3 +288,15 @@ x64/PE32+. It reaches its PE parser but terminates with an internal
 x86-64 support, so kkrunchy is not a compatible compressor for the current x64
 release target. The local downloaded copy is kept only under ignored
 `build/tools/kkrunchy` and is not shipped in the editor release.
+
+## Shader text cue
+
+`Shader Text Cue` is the compact alternative to the GDI+/glyph-atlas text and
+scroll-text cues. It renders an embedded 5x7 ASCII font directly with GLSL and
+supports static alignment or looping/clamped horizontal scrolling. It has no
+font, image, atlas, WIC, or GDI+ dependency.
+
+The packer emits `HIMYM_USE_SHADER_TEXT`/`HIMYM_PACKED_USE_SHADER_TEXT` only
+when `[shader_text_cues]` contains rows. This flag does not enable
+`HIMYM_USE_TEXT` or `HIMYM_USE_IMAGE_DECODER`, so a shader-text-only intro
+keeps the decoder-free runtime path.

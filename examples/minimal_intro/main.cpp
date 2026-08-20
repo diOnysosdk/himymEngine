@@ -37,6 +37,9 @@
 #ifndef HIMYM_USE_IMAGE_DECODER
 #define HIMYM_USE_IMAGE_DECODER 1
 #endif
+#ifndef HIMYM_USE_SHADER_TEXT
+#define HIMYM_USE_SHADER_TEXT 1
+#endif
 #ifndef HIMYM_PACKED_DIAGNOSTICS
 #ifdef HIMYM_PACKED_ASSETS
 #define HIMYM_PACKED_DIAGNOSTICS 0
@@ -87,6 +90,7 @@ using rev::runtime::PixelEmitterCue;
 using rev::runtime::ImageTexture;
 using rev::runtime::TextCue;
 using rev::runtime::ScrollTextCue;
+using rev::runtime::ShaderTextCue;
 using rev::runtime::TextTexture;
 using rev::runtime::TextGlyphAtlas;
 using rev::runtime::TextGlyph;
@@ -1068,6 +1072,37 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
         }
     }
 
+    fclose(f);
+    return count;
+}
+
+int LoadAllShaderTextCues(const char* path, ShaderTextCue* cues, int max_cues) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+    char line[2048]; bool section = false; int count = 0;
+    while (fgets(line, sizeof(line), f) && count < max_cues) {
+        char* s = line; while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') ++s;
+        if (strstr(s, "[shader_text_cues]")) { section = true; continue; }
+        if (s[0] == '[' && section) break;
+        if (!section || s[0] == '#' || !s[0] || s[0] == '\r' || s[0] == '\n') continue;
+        char* pipe = strchr(s, '|'); if (!pipe) continue; *pipe = 0;
+        ShaderTextCue* cue = &cues[count];
+        rev::runtime::InitializeShaderTextCue(cue);
+        char decoded[512] = {}; const char* src = s; char* dst = decoded;
+        while (*src && dst < decoded + 511) {
+            if (src[0] == '\\' && src[1] == 'n') { *dst++ = '\n'; src += 2; }
+            else *dst++ = *src++;
+        }
+        strncpy_s(cue->text, decoded, _TRUNCATE);
+        int parsed = sscanf_s(pipe + 1,
+            "%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d",
+            &cue->x, &cue->y, &cue->size, &cue->color.r, &cue->color.g, &cue->color.b,
+            &cue->opacity, &cue->mode, &cue->alignment, &cue->direction, &cue->loop_mode,
+            &cue->speed, &cue->spacing, &cue->cue_start, &cue->cue_end, &cue->fade_in,
+            &cue->fade_out, &cue->layer_order, &cue->blend_mode);
+        if (parsed >= 15) ++count;
+    }
     fclose(f);
     return count;
 }
@@ -2185,6 +2220,56 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
     return drew_glyph;
 }
 
+static void DrawShaderText(rev::shader::Program* program, const ShaderTextCue& cue,
+                           float time, float viewport_width, float viewport_height) {
+    if (!program || !cue.text[0] || viewport_width <= 0.0f || viewport_height <= 0.0f) return;
+    const float local = time - cue.cue_start;
+    float alpha = cue.opacity;
+    if (cue.fade_in > 0.0f && local < cue.fade_in) alpha *= local / cue.fade_in;
+    const float remaining = cue.cue_end - time;
+    if (cue.fade_out > 0.0f && remaining < cue.fade_out) alpha *= remaining / cue.fade_out;
+    if (alpha <= 0.0f) return;
+    const size_t length = strlen(cue.text);
+    const float glyph_width = cue.size * (5.0f / 7.0f);
+    const float advance = cue.size * (6.0f / 7.0f) * (cue.spacing > 0.01f ? cue.spacing : 0.01f);
+    const float text_width = length ? advance * (float)length - (advance - glyph_width) : 0.0f;
+    float cursor = cue.x * viewport_width;
+    if (cue.mode == 0) {
+        if (cue.alignment == 1) cursor -= text_width * 0.5f;
+        else if (cue.alignment == 2) cursor -= text_width;
+    } else {
+        const float travel = viewport_width + text_width;
+        float moved = local * cue.speed;
+        if (cue.loop_mode == 0 && travel > 0.0f) moved = fmodf(moved, travel);
+        else if (moved > travel) moved = travel;
+        cursor = cue.direction == 1 ? -text_width + moved : viewport_width - moved;
+    }
+    rev::shader::Use(program);
+    const int u_position = rev::shader::GetUniformLocation(program, "u_position");
+    const int u_size = rev::shader::GetUniformLocation(program, "u_size");
+    const int u_color = rev::shader::GetUniformLocation(program, "u_color");
+    rev::shader::SetVec2(program, u_size, glyph_width / viewport_width, cue.size / viewport_height);
+    rev::shader::SetVec4(program, u_color, cue.color.r, cue.color.g, cue.color.b, alpha);
+    int row_locations[7];
+    for (int row = 0; row < 7; ++row) {
+        char name[16]; sprintf_s(name, "u_rows[%d]", row);
+        row_locations[row] = rev::shader::GetUniformLocation(program, name);
+    }
+    for (size_t i = 0; i < length; ++i, cursor += advance) {
+        if (cue.text[i] == '\n') continue;
+        const float center = cursor + glyph_width * 0.5f;
+        if (center + glyph_width * 0.5f < 0.0f || center - glyph_width * 0.5f > viewport_width) continue;
+        unsigned int packed = 0, last = 0;
+        rev::runtime::GetShaderTextGlyph((unsigned char)cue.text[i], &packed, &last);
+        for (int row = 0; row < 6; ++row)
+            rev::shader::SetFloat(program, row_locations[row], (float)((packed >> (row * 5)) & 31u));
+        rev::shader::SetFloat(program, row_locations[6], (float)(last & 31u));
+        rev::shader::SetVec2(program, u_position, center / viewport_width * 2.0f - 1.0f,
+                            1.0f - cue.y * 2.0f);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+}
+
 // Sprite fragment shader - textured with opacity
 const char* sprite_fragment_shader = R"(
 #version 330 core
@@ -2934,6 +3019,20 @@ int main(int argc, char* argv[]) {
     const int scroll_text_cue_count = 0;
 #endif
 
+    const int kMaxShaderTextCues = HIMYM_USE_SHADER_TEXT ? 64 : 0;
+    static ShaderTextCue shader_text_cues[HIMYM_USE_SHADER_TEXT ? kMaxShaderTextCues : 1] = {};
+#if HIMYM_USE_SHADER_TEXT
+    const int shader_text_cue_count = LoadAllShaderTextCues(cues_path, shader_text_cues, kMaxShaderTextCues);
+#else
+    const int shader_text_cue_count = 0;
+#endif
+#if HIMYM_PACKED_DIAGNOSTICS
+    if (g_logfile) {
+        fprintf(g_logfile, "Shader text cues loaded: %d\n", shader_text_cue_count);
+        fflush(g_logfile);
+    }
+#endif
+
     // Load mesh cues (multi-cue support)
     const int kMaxMeshCues = 32;
     int mesh_cue_count = 0;
@@ -2985,6 +3084,9 @@ int main(int argc, char* argv[]) {
     }
     for (int i = 0; i < scroll_text_cue_count; ++i) {
         if (scroll_text_cues[i].cue_end > total_duration) total_duration = scroll_text_cues[i].cue_end;
+    }
+    for (int i = 0; i < shader_text_cue_count; ++i) {
+        if (shader_text_cues[i].cue_end > total_duration) total_duration = shader_text_cues[i].cue_end;
     }
 #if HIMYM_USE_MESH
     for (int i = 0; i < mesh_cue_count; ++i) {
@@ -3297,6 +3399,18 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     
     // Compile sprite shader
     rev::shader::Program* sprite_shader = rev::shader::CompileFromSource(sprite_vertex_shader, sprite_fragment_shader);
+    rev::shader::Program* shader_text_shader = nullptr;
+#if HIMYM_USE_SHADER_TEXT
+    if (shader_text_cue_count > 0)
+        shader_text_shader = rev::shader::CompileFromSource(
+            rev::runtime::GetShaderTextVertexSource(), rev::runtime::GetShaderTextFragmentSource());
+#if HIMYM_PACKED_DIAGNOSTICS
+    if (g_logfile) {
+        fprintf(g_logfile, "Shader text program: %s\n", shader_text_shader ? "OK" : "FAILED");
+        fflush(g_logfile);
+    }
+#endif
+#endif
     if (!sprite_shader) {
         printf("ERROR: Sprite shader failed to compile\n");
     } else {
@@ -4988,8 +5102,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         // --- Unified layered draw pass ---
         // Collect active image/text/scroll/mesh cues, sort by layer_order, draw in order.
         {
-            struct DrawEntry { int type; int layer; int cue_idx; }; // 0=image 1=text 2=mesh 3=scroll 4=animated sprite 5=pixel 6=emitter
-            DrawEntry entries[kMaxImageCues + kMaxAnimatedSpriteCues + kMaxPixelCues + kMaxPixelEmitterCues + kMaxTextCues + kMaxScrollTextCues + kMaxMeshCues]; int ne = 0;
+            struct DrawEntry { int type; int layer; int cue_idx; }; // 7=shader text
+            DrawEntry entries[kMaxImageCues + kMaxAnimatedSpriteCues + kMaxPixelCues + kMaxPixelEmitterCues + kMaxTextCues + kMaxScrollTextCues + kMaxShaderTextCues + kMaxMeshCues]; int ne = 0;
 
             for (int ii = 0; ii < image_cue_count; ++ii) {
                 ImageCue& icue = image_cues[ii];
@@ -5039,6 +5153,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 if (msh_active) entries[ne++] = {2, mesh_cue.layer_order, mi};
             }
 #endif
+            for (int si = 0; si < shader_text_cue_count; ++si) {
+                ShaderTextCue& cue = shader_text_cues[si];
+                if (shader_text_shader && cue.text[0] && time >= cue.cue_start && time <= cue.cue_end)
+                    entries[ne++] = {7, cue.layer_order, si};
+            }
 
             // Bubble sort ascending (lower layer_order draws first = further back)
             // Tie-break rule for same layer: mesh behind image behind text/scroll.
@@ -5906,6 +6025,15 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (cue.visual_source == 1) glDeleteTextures(1, &emitter_texture);
                 }
 #endif
+                else if (entries[ei].type == 7) {
+                    ShaderTextCue& cue = shader_text_cues[entries[ei].cue_idx];
+                    glBindVertexArray(vao);
+                    if (depth_on) { glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); depth_on = false; }
+                    if (!blend_on) { glEnable(GL_BLEND); blend_on = true; }
+                    ApplySpriteBlendMode(cue.blend_mode);
+                    DrawShaderText(shader_text_shader, cue, time,
+                                   (float)config.width, (float)config.height);
+                }
                 else if (entries[ei].type == 1) {
                     // Text sprite
                     int text_idx = entries[ei].cue_idx;
@@ -7133,6 +7261,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     if (sprite_shader) {
         rev::shader::DestroyProgram(sprite_shader);
     }
+    if (shader_text_shader) rev::shader::DestroyProgram(shader_text_shader);
     if (post_shader) {
         rev::shader::DestroyProgram(post_shader);
     }

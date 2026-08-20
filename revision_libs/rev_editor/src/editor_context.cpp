@@ -1235,6 +1235,9 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->editing_scroll_text.curve_wave_length = -1;
     editor->editing_scroll_text.curve_jitter_amp = -1;
     editor->editing_scroll_text.curve_jitter_freq = -1;
+    editor->shader_text_modal_open = false;
+    editor->shader_text_modal_request_open = false;
+    rev::runtime::InitializeShaderTextCue(&editor->editing_shader_text);
     editor->installed_fonts = nullptr;
     editor->installed_font_count = 0;
     editor->mesh_modal_open = false;
@@ -1358,6 +1361,7 @@ void DestroyEditor(EditorContext* editor) {
             delete[] scene->pixel_emitter_cues;
             delete[] scene->text_cues;
             delete[] scene->scroll_text_cues;
+            delete[] scene->shader_text_cues;
             delete[] scene->music_cues;
             delete[] scene->mesh_cues;
             delete[] scene->post_effects;
@@ -1482,6 +1486,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
     bool in_pixel_emitter_cues = false;
     bool in_text_cues = false;
     bool in_scroll_text_cues = false;
+    bool in_shader_text_cues = false;
     bool in_music_cues = false;
     bool in_mesh_cues = false;
     bool in_post_effects = false;
@@ -1589,6 +1594,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_scroll_text_cue.curve_wave_length = -1;
     current_scroll_text_cue.curve_jitter_amp = -1;
     current_scroll_text_cue.curve_jitter_freq = -1;
+    ShaderTextCue current_shader_text_cue;
+    rev::runtime::InitializeShaderTextCue(&current_shader_text_cue);
     MusicCue current_music_cue = {};
     MeshCue current_mesh_cue = {};
     current_mesh_cue.scale[0] = current_mesh_cue.scale[1] = current_mesh_cue.scale[2] = 1.0f;
@@ -1904,6 +1911,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_scroll_text_cues = true;
             in_music_cues = false;
         } else if (strstr(start, "\"music_cues\":")) {
+            in_shader_text_cues = false;
             in_shader_cues = false;
             in_image_cues = false;
             in_animated_sprite_cues = false;
@@ -1913,6 +1921,11 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_scroll_text_cues = false;
             in_music_cues = true;
             in_mesh_cues = false;
+        } else if (strstr(start, "\"shader_text_cues\":")) {
+            in_shader_cues = in_image_cues = in_animated_sprite_cues = false;
+            in_pixel_cues = in_pixel_emitter_cues = in_text_cues = in_scroll_text_cues = false;
+            in_music_cues = in_mesh_cues = false;
+            in_shader_text_cues = true;
         } else if (strstr(start, "\"mesh_cues\":")) {
             in_shader_cues = false;
             in_image_cues = false;
@@ -2762,6 +2775,31 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 current_scroll_text_cue.curve_wave_length = -1;
                 current_scroll_text_cue.curve_jitter_amp = -1;
                 current_scroll_text_cue.curve_jitter_freq = -1;
+            }
+        }
+
+        if (in_shader_text_cues && current_scene) {
+            if (strstr(start, "\"text\":")) ParseJsonStringValue(start, current_shader_text_cue.text, sizeof(current_shader_text_cue.text));
+            else if (strstr(start, "\"x\":")) sscanf_s(start, "\"x\": %f", &current_shader_text_cue.x);
+            else if (strstr(start, "\"y\":")) sscanf_s(start, "\"y\": %f", &current_shader_text_cue.y);
+            else if (strstr(start, "\"size\":")) sscanf_s(start, "\"size\": %f", &current_shader_text_cue.size);
+            else if (strstr(start, "\"color\":")) sscanf_s(start, "\"color\": [%f, %f, %f]", &current_shader_text_cue.color.r, &current_shader_text_cue.color.g, &current_shader_text_cue.color.b);
+            else if (strstr(start, "\"opacity\":")) sscanf_s(start, "\"opacity\": %f", &current_shader_text_cue.opacity);
+            else if (strstr(start, "\"mode\":")) sscanf_s(start, "\"mode\": %d", &current_shader_text_cue.mode);
+            else if (strstr(start, "\"alignment\":")) sscanf_s(start, "\"alignment\": %d", &current_shader_text_cue.alignment);
+            else if (strstr(start, "\"direction\":")) sscanf_s(start, "\"direction\": %d", &current_shader_text_cue.direction);
+            else if (strstr(start, "\"loop_mode\":")) sscanf_s(start, "\"loop_mode\": %d", &current_shader_text_cue.loop_mode);
+            else if (strstr(start, "\"speed\":")) sscanf_s(start, "\"speed\": %f", &current_shader_text_cue.speed);
+            else if (strstr(start, "\"spacing\":")) sscanf_s(start, "\"spacing\": %f", &current_shader_text_cue.spacing);
+            else if (strstr(start, "\"cue_start\":")) sscanf_s(start, "\"cue_start\": %f", &current_shader_text_cue.cue_start);
+            else if (strstr(start, "\"cue_end\":")) sscanf_s(start, "\"cue_end\": %f", &current_shader_text_cue.cue_end);
+            else if (strstr(start, "\"fade_in\":")) sscanf_s(start, "\"fade_in\": %f", &current_shader_text_cue.fade_in);
+            else if (strstr(start, "\"fade_out\":")) sscanf_s(start, "\"fade_out\": %f", &current_shader_text_cue.fade_out);
+            else if (strstr(start, "\"layer_order\":")) sscanf_s(start, "\"layer_order\": %d", &current_shader_text_cue.layer_order);
+            else if (strstr(start, "\"blend_mode\":")) sscanf_s(start, "\"blend_mode\": %d", &current_shader_text_cue.blend_mode);
+            else if (indent == 8 && start[0] == '}' && current_shader_text_cue.text[0]) {
+                AddShaderTextCue(current_scene, current_shader_text_cue);
+                rev::runtime::InitializeShaderTextCue(&current_shader_text_cue);
             }
         }
 
@@ -3711,7 +3749,24 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "        }%s\n", (i < scene->scroll_text_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
-        
+
+        fprintf(f, "      \"shader_text_cues\": [\n");
+        for (int i = 0; i < scene->shader_text_cue_count; ++i) {
+            ShaderTextCue* cue = &scene->shader_text_cues[i];
+            char escaped_text[1024] = {};
+            JsonEscapeString(cue->text, escaped_text, sizeof(escaped_text));
+            fprintf(f, "        {\n");
+            fprintf(f, "          \"text\": \"%s\",\n", escaped_text);
+            fprintf(f, "          \"x\": %.3f,\n          \"y\": %.3f,\n          \"size\": %.3f,\n", cue->x, cue->y, cue->size);
+            fprintf(f, "          \"color\": [%.3f, %.3f, %.3f],\n", cue->color.r, cue->color.g, cue->color.b);
+            fprintf(f, "          \"opacity\": %.3f,\n          \"mode\": %d,\n          \"alignment\": %d,\n", cue->opacity, cue->mode, cue->alignment);
+            fprintf(f, "          \"direction\": %d,\n          \"loop_mode\": %d,\n          \"speed\": %.3f,\n          \"spacing\": %.3f,\n", cue->direction, cue->loop_mode, cue->speed, cue->spacing);
+            fprintf(f, "          \"cue_start\": %.3f,\n          \"cue_end\": %.3f,\n          \"fade_in\": %.3f,\n          \"fade_out\": %.3f,\n", cue->cue_start, cue->cue_end, cue->fade_in, cue->fade_out);
+            fprintf(f, "          \"layer_order\": %d,\n          \"blend_mode\": %d\n", cue->layer_order, cue->blend_mode);
+            fprintf(f, "        }%s\n", i + 1 < scene->shader_text_cue_count ? "," : "");
+        }
+        fprintf(f, "      ],\n");
+
         // Music cues
         fprintf(f, "      \"music_cues\": [\n");
         for (int i = 0; i < scene->music_cue_count; ++i) {
@@ -3929,6 +3984,7 @@ bool NewProject(EditorContext* editor) {
         delete[] scene->pixel_emitter_cues;
         delete[] scene->text_cues;
         delete[] scene->scroll_text_cues;
+        delete[] scene->shader_text_cues;
         delete[] scene->music_cues;
         delete[] scene->mesh_cues;
         delete[] scene->post_effects;
@@ -4143,6 +4199,9 @@ void RenderUI(EditorContext* editor) {
 
     if (editor->scroll_text_modal_open || editor->scroll_text_modal_request_open) {
         RenderScrollTextModal(editor);
+    }
+    if (editor->shader_text_modal_open || editor->shader_text_modal_request_open) {
+        RenderShaderTextModal(editor);
     }
 
     if (editor->mesh_modal_open || editor->mesh_modal_request_open) {
@@ -4392,6 +4451,8 @@ void CleanupDeletedCueResources(EditorContext* editor) {
     editor->text_modal_request_open = false;
     editor->scroll_text_modal_open = false;
     editor->scroll_text_modal_request_open = false;
+    editor->shader_text_modal_open = false;
+    editor->shader_text_modal_request_open = false;
     editor->mesh_modal_open = false;
     editor->mesh_modal_request_open = false;
 
@@ -4661,7 +4722,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     enum Section { NONE, SHADER_CUES, SHADER_PIPELINE_CUES, SHADER_PIPELINES,
         SHADER_PIPELINE_PASSES, SHADER_PIPELINE_CHANNELS, IMAGE_CUES,
         ANIMATED_SPRITE_CUES, PIXEL_CUES, PIXEL_EMITTER_CUES, TEXT_CUES,
-        SCROLL_TEXT_CUES, MUSIC_CUES, POST_EFFECTS, CURVES, METADATA };
+        SCROLL_TEXT_CUES, SHADER_TEXT_CUES, MUSIC_CUES, POST_EFFECTS, CURVES, METADATA };
     Section current_section = NONE;
     
     float total_duration = 10.0f; // Default
@@ -4692,6 +4753,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         if (strstr(start, "[pixel_emitter_cues]")) { current_section = PIXEL_EMITTER_CUES; continue; }
         if (strstr(start, "[text_cues]")) { current_section = TEXT_CUES; continue; }
         if (strstr(start, "[scroll_text_cues]")) { current_section = SCROLL_TEXT_CUES; continue; }
+        if (strstr(start, "[shader_text_cues]")) { current_section = SHADER_TEXT_CUES; continue; }
         if (strstr(start, "[music_cues]")) { current_section = MUSIC_CUES; continue; }
         if (strstr(start, "[post_effects]")) { current_section = POST_EFFECTS; continue; }
         if (strstr(start, "[curves]")) { current_section = CURVES; continue; }
@@ -5115,6 +5177,24 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
 
         // Parse scroll text cues:
         // text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path|wave_length|curve_wave_length
+        if (current_section == SHADER_TEXT_CUES) {
+            char* pipe = strchr(start, '|');
+            if (!pipe) continue;
+            *pipe = 0;
+            ShaderTextCue cue;
+            rev::runtime::InitializeShaderTextCue(&cue);
+            char decoded[512] = {}; const char* src = start; char* dst = decoded;
+            while (*src && dst < decoded + 511) { if (src[0] == '\\' && src[1] == 'n') { *dst++ = '\n'; src += 2; } else *dst++ = *src++; }
+            strncpy_s(cue.text, decoded, _TRUNCATE);
+            int parsed = sscanf_s(pipe + 1, "%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d",
+                &cue.x, &cue.y, &cue.size, &cue.color.r, &cue.color.g, &cue.color.b,
+                &cue.opacity, &cue.mode, &cue.alignment, &cue.direction, &cue.loop_mode,
+                &cue.speed, &cue.spacing, &cue.cue_start, &cue.cue_end, &cue.fade_in,
+                &cue.fade_out, &cue.layer_order, &cue.blend_mode);
+            if (parsed >= 15) AddShaderTextCue(&editor->project->scenes[0], cue);
+            continue;
+        }
+
         if (current_section == SCROLL_TEXT_CUES) {
             char* p1 = strchr(start, '|');
             if (!p1) continue;
@@ -5938,6 +6018,26 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     }
 
     fprintf(f, "\n");
+    fprintf(f, "[shader_text_cues]\n");
+    fprintf(f, "# text|x|y|size|r|g|b|opacity|mode|alignment|direction|loop|speed|spacing|start|end|fade_in|fade_out|layer|blend\n");
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        SceneBlock* scene = &editor->project->scenes[scene_idx];
+        float scene_start = 0.0f;
+        for (int i = 0; i < scene_idx; ++i) scene_start += editor->project->scenes[i].duration;
+        for (int cue_idx = 0; cue_idx < scene->shader_text_cue_count; ++cue_idx) {
+            ShaderTextCue* cue = &scene->shader_text_cues[cue_idx];
+            char encoded[1024] = {}; char* dst = encoded;
+            for (const char* src = cue->text; *src && dst < encoded + 1022; ++src) {
+                if (*src == '\n') { *dst++ = '\\'; *dst++ = 'n'; } else *dst++ = *src;
+            }
+            fprintf(f, "%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d\n",
+                    encoded, cue->x, cue->y, cue->size, cue->color.r, cue->color.g, cue->color.b,
+                    cue->opacity, cue->mode, cue->alignment, cue->direction, cue->loop_mode,
+                    cue->speed, cue->spacing, scene_start + cue->cue_start, scene_start + cue->cue_end,
+                    cue->fade_in, cue->fade_out, cue->layer_order, cue->blend_mode);
+        }
+    }
+    fprintf(f, "\n");
     
     // [music_cues] section
     fprintf(f, "[music_cues]\n");
@@ -6677,6 +6777,9 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
     scene->scroll_text_cues = nullptr;
     scene->scroll_text_cue_count = 0;
     scene->scroll_text_cue_capacity = 0;
+    scene->shader_text_cues = nullptr;
+    scene->shader_text_cue_count = 0;
+    scene->shader_text_cue_capacity = 0;
     
     scene->music_cues = nullptr;
     scene->music_cue_count = 0;
@@ -6734,6 +6837,7 @@ void DeleteScene(EditorContext* editor, int scene_index) {
     delete[] scene->pixel_emitter_cues;
     delete[] scene->text_cues;
     delete[] scene->scroll_text_cues;
+    delete[] scene->shader_text_cues;
     delete[] scene->music_cues;
     delete[] scene->mesh_cues;
     delete[] scene->post_effects;
@@ -6931,6 +7035,21 @@ int AddScrollTextCue(SceneBlock* scene, const ScrollTextCue& cue) {
     return index;
 }
 
+int AddShaderTextCue(SceneBlock* scene, const ShaderTextCue& cue) {
+    if (!scene) return -1;
+    if (scene->shader_text_cue_count >= scene->shader_text_cue_capacity) {
+        int capacity = scene->shader_text_cue_capacity ? scene->shader_text_cue_capacity * 2 : 4;
+        ShaderTextCue* cues = new ShaderTextCue[capacity];
+        for (int i = 0; i < scene->shader_text_cue_count; ++i) cues[i] = scene->shader_text_cues[i];
+        delete[] scene->shader_text_cues;
+        scene->shader_text_cues = cues;
+        scene->shader_text_cue_capacity = capacity;
+    }
+    int index = scene->shader_text_cue_count++;
+    scene->shader_text_cues[index] = cue;
+    return index;
+}
+
 int AddMusicCue(SceneBlock* scene, const MusicCue& cue) {
     if (!scene) return -1;
     
@@ -7019,6 +7138,13 @@ void DeleteScrollTextCue(SceneBlock* scene, int cue_index) {
         scene->scroll_text_cues[i] = scene->scroll_text_cues[i + 1];
     }
     scene->scroll_text_cue_count--;
+}
+
+void DeleteShaderTextCue(SceneBlock* scene, int cue_index) {
+    if (!scene || cue_index < 0 || cue_index >= scene->shader_text_cue_count) return;
+    for (int i = cue_index; i + 1 < scene->shader_text_cue_count; ++i)
+        scene->shader_text_cues[i] = scene->shader_text_cues[i + 1];
+    --scene->shader_text_cue_count;
 }
 
 void DeleteMusicCue(SceneBlock* scene, int cue_index) {
@@ -7612,6 +7738,7 @@ float material_noise(vec3 p) {
     }
     return norm > 0.0 ? sum / norm : 0.0;
 }
+
 float shadow_visibility(vec3 normal, vec3 light_dir) {
     if (u_shadow_enabled == 0) return 1.0;
     vec3 p = v_light_space_pos.xyz / v_light_space_pos.w;
@@ -8036,6 +8163,35 @@ static void RenderAssetShaderOverlays(const AssetShader* shaders, int shader_cou
     }
 }
 
+static void DrawPreviewShaderText(rev::shader::Program* program, const ShaderTextCue& cue,
+                                  float time, float width, float height) {
+    if (!program || !cue.text[0]) return;
+    float local = time - cue.cue_start, alpha = cue.opacity;
+    if (cue.fade_in > 0.0f && local < cue.fade_in) alpha *= local / cue.fade_in;
+    if (cue.fade_out > 0.0f && cue.cue_end - time < cue.fade_out) alpha *= (cue.cue_end - time) / cue.fade_out;
+    float glyph_width = cue.size * 5.0f / 7.0f;
+    float advance = cue.size * 6.0f / 7.0f * (cue.spacing > 0.01f ? cue.spacing : 0.01f);
+    size_t length = strlen(cue.text);
+    float text_width = length ? advance * (float)length - advance + glyph_width : 0.0f;
+    float cursor = cue.x * width;
+    if (cue.mode == 0) cursor -= cue.alignment == 1 ? text_width * 0.5f : cue.alignment == 2 ? text_width : 0.0f;
+    else { float travel = width + text_width, moved = local * cue.speed; if (cue.loop_mode == 0 && travel > 0.0f) moved = fmodf(moved, travel); else if (moved > travel) moved = travel; cursor = cue.direction == 1 ? -text_width + moved : width - moved; }
+    rev::shader::Use(program);
+    int up = rev::shader::GetUniformLocation(program, "u_position");
+    rev::shader::SetVec2(program, rev::shader::GetUniformLocation(program, "u_size"), glyph_width / width, cue.size / height);
+    rev::shader::SetVec4(program, rev::shader::GetUniformLocation(program, "u_color"), cue.color.r, cue.color.g, cue.color.b, alpha);
+    int rows[7]; for (int r = 0; r < 7; ++r) { char name[16]; sprintf_s(name, "u_rows[%d]", r); rows[r] = rev::shader::GetUniformLocation(program, name); }
+    for (size_t i = 0; i < length; ++i, cursor += advance) {
+        float center = cursor + glyph_width * 0.5f;
+        if (center + glyph_width * 0.5f < 0 || center - glyph_width * 0.5f > width) continue;
+        unsigned int packed, last; rev::runtime::GetShaderTextGlyph((unsigned char)cue.text[i], &packed, &last);
+        for (int r = 0; r < 6; ++r) rev::shader::SetFloat(program, rows[r], (float)((packed >> (r * 5)) & 31u));
+        rev::shader::SetFloat(program, rows[6], (float)(last & 31u));
+        rev::shader::SetVec2(program, up, center / width * 2.0f - 1.0f, 1.0f - cue.y * 2.0f);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+}
+
 void InitializePreview(EditorContext* editor, int width, int height) {
     if (!editor || editor->preview_initialized) return;
     
@@ -8151,6 +8307,9 @@ void InitializePreview(EditorContext* editor, int width, int height) {
     rev::shader::SetVec4((rev::shader::Program*)editor->sprite_shader,
                          rev::shader::GetUniformLocation((rev::shader::Program*)editor->sprite_shader, "u_uv_rect"),
                          0.0f, 0.0f, 1.0f, 1.0f);
+    editor->shader_text_shader = rev::shader::CompileFromSource(
+        rev::runtime::GetShaderTextVertexSource(), rev::runtime::GetShaderTextFragmentSource());
+    if (!editor->shader_text_shader) { CleanupPreview(editor); return; }
 
     editor->post_shader = rev::shader::CompileFromSource(preview_vertex_shader, GetPostEffectFragmentSource());
     if (!editor->post_shader) {
@@ -8198,6 +8357,10 @@ void CleanupPreview(EditorContext* editor) {
     if (editor->mesh_shader) {
         rev::shader::DestroyProgram((rev::shader::Program*)editor->mesh_shader);
         editor->mesh_shader = nullptr;
+    }
+    if (editor->shader_text_shader) {
+        rev::shader::DestroyProgram((rev::shader::Program*)editor->shader_text_shader);
+        editor->shader_text_shader = nullptr;
     }
     rev::mesh::DestroyShadowMap(&g_preview_mesh_shadow);
     if (editor->post_shader) {
@@ -8723,6 +8886,13 @@ void RenderPreviewFrame(EditorContext* editor) {
                 if (time_in_range && cue->text[0])
                     items[item_count++] = { 3, cue, cue->layer_order, item_scene_start };
             }
+            for (int i = 0; i < scene->shader_text_cue_count && item_count < kMaxItems; ++i) {
+                ShaderTextCue* cue = &scene->shader_text_cues[i];
+                float absolute_start = item_scene_start + cue->cue_start;
+                float absolute_end = item_scene_start + cue->cue_end;
+                if (editor->current_time >= absolute_start && editor->current_time <= absolute_end && cue->text[0])
+                    items[item_count++] = { 7, cue, cue->layer_order, item_scene_start };
+            }
             for (int i = 0; i < scene->mesh_cue_count && item_count < kMaxItems; i++) {
                 MeshCue* cue = &scene->mesh_cues[i];
                 float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
@@ -8760,6 +8930,17 @@ void RenderPreviewFrame(EditorContext* editor) {
         for (int idx = 0; idx < item_count; idx++) {
             DrawItem& item = items[idx];
             glDisable(GL_CULL_FACE);
+
+            if (item.type == 7) {
+                glDisable(GL_DEPTH_TEST);
+                glEnable(GL_BLEND);
+                ShaderTextCue* cue = (ShaderTextCue*)item.cue;
+                ApplySpriteBlendMode(cue->blend_mode);
+                DrawPreviewShaderText((rev::shader::Program*)editor->shader_text_shader, *cue,
+                                      editor->current_time - item.scene_start_time,
+                                      (float)editor->preview_width, (float)editor->preview_height);
+                continue;
+            }
 
             if (item.type == 0 || item.type == 1 || item.type == 3 || item.type == 4 || item.type == 5 || item.type == 6) {
                 // Sprite (image, text, scroll text, animated sprite)

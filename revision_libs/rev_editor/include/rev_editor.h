@@ -17,6 +17,7 @@ using rev::runtime::PixelCue;
 using rev::runtime::PixelEmitterCue;
 using rev::runtime::TextCue;
 using rev::runtime::ScrollTextCue;
+using rev::runtime::ShaderTextCue;
 using rev::runtime::TextAnimationConfig;
 using rev::runtime::TextRevealConfig;
 using rev::runtime::TextExitConfig;
@@ -46,6 +47,7 @@ enum CueType {
     CueTypePixel = 7,
     CueTypePixelEmitter = 8,
     CueTypePostEffect = 9,
+    CueTypeShaderText = 10,
 };
 
 enum PostEffectType {
@@ -229,6 +231,10 @@ struct SceneBlock {
     ScrollTextCue* scroll_text_cues;
     int scroll_text_cue_count;
     int scroll_text_cue_capacity;
+
+    ShaderTextCue* shader_text_cues;
+    int shader_text_cue_count;
+    int shader_text_cue_capacity;
     
     MusicCue* music_cues;
     int music_cue_count;
@@ -340,6 +346,7 @@ struct EditorContext {
     bool preview_initialized;
     void* preview_shader;            // rev::shader::Program* for fullscreen shader
     void* sprite_shader;             // rev::shader::Program* for sprite rendering
+    void* shader_text_shader;        // texture-free 5x7 text rendering
     void* mesh_shader;               // rev::shader::Program* for 3D mesh rendering
     void* post_shader;               // rev::shader::Program* for post-production effects
     int preview_current_shader_id;   // Currently compiled shader preset ID (-1 = none)
@@ -391,6 +398,10 @@ struct EditorContext {
     ScrollTextCue editing_scroll_text;
     bool scroll_text_modal_open;
     bool scroll_text_modal_request_open;
+
+    ShaderTextCue editing_shader_text;
+    bool shader_text_modal_open;
+    bool shader_text_modal_request_open;
     
     // Installed Windows fonts (for font picker)
     char** installed_fonts;
@@ -467,6 +478,7 @@ void RenderPixelModal(EditorContext* editor);
 void RenderPixelEmitterModal(EditorContext* editor);
 void RenderTextModal (EditorContext* editor);
 void RenderScrollTextModal(EditorContext* editor);
+void RenderShaderTextModal(EditorContext* editor);
 void RenderMeshModal (EditorContext* editor);
 void RenderProperties(EditorContext* editor);
 void RenderAssetBrowser(EditorContext* editor);
@@ -496,6 +508,7 @@ int AddPixelCue(SceneBlock* scene, const PixelCue& cue);
 int AddPixelEmitterCue(SceneBlock* scene, const PixelEmitterCue& cue);
 int AddTextCue  (SceneBlock* scene, const TextCue&   cue);
 int AddScrollTextCue(SceneBlock* scene, const ScrollTextCue& cue);
+int AddShaderTextCue(SceneBlock* scene, const ShaderTextCue& cue);
 int AddMusicCue (SceneBlock* scene, const MusicCue&  cue);
 int AddMeshCue  (SceneBlock* scene, const MeshCue&   cue);
 int AddPostEffect(SceneBlock* scene, const PostEffect& effect);
@@ -508,6 +521,7 @@ void DeletePixelCue(SceneBlock* scene, int cue_index);
 void DeletePixelEmitterCue(SceneBlock* scene, int cue_index);
 void DeleteTextCue  (SceneBlock* scene, int cue_index);
 void DeleteScrollTextCue(SceneBlock* scene, int cue_index);
+void DeleteShaderTextCue(SceneBlock* scene, int cue_index);
 void DeleteMusicCue (SceneBlock* scene, int cue_index);
 void DeleteMeshCue  (SceneBlock* scene, int cue_index);
 

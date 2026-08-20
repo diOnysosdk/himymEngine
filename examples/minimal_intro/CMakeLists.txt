@@ -35,6 +35,7 @@ set(HIMYM_PACKED_USE_GLTF ON)
 set(HIMYM_PACKED_USE_IMAGE ON)
 set(HIMYM_PACKED_USE_TEXT ON)
 set(HIMYM_PACKED_USE_IMAGE_DECODER ON)
+set(HIMYM_PACKED_USE_SHADER_TEXT ON)
 option(HIMYM_PACKED_DIAGNOSTICS "Keep verbose logging and debug-file support in packed runtimes" OFF)
 set(HIMYM_PACKED_MANIFEST_DIR "${CMAKE_BINARY_DIR}" CACHE PATH
     "Directory containing packed_assets.h and packed_features.cmake")

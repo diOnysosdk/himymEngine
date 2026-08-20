@@ -30,6 +30,7 @@ void RenderImageModal(EditorContext* editor);
 void RenderAnimatedSpriteModal(EditorContext* editor);
 void RenderTextModal(EditorContext* editor);
 void RenderScrollTextModal(EditorContext* editor);
+void RenderShaderTextModal(EditorContext* editor);
 void RenderMeshModal(EditorContext* editor);
 void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int* effect_count,
 							bool* modified, const char* id_prefix, int cue_type, int cue_index);

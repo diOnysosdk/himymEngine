@@ -624,6 +624,29 @@ struct MusicCue {
     float cue_end;
 };
 
+// Texture-free 5x7 text rendered directly by a tiny glyph shader.
+// This cue deliberately has no font/image asset fields so packed projects can
+// use text without pulling in GDI+, WIC, or texture decoding.
+struct ShaderTextCue {
+    char     text[512];
+    float    x, y;          // Anchor in normalized screen space [0..1]
+    float    size;          // Glyph height in pixels
+    ColorRGB color;
+    float    opacity;
+    int      mode;          // 0=static, 1=horizontal scroll
+    int      alignment;     // 0=left, 1=center, 2=right (static mode)
+    int      direction;     // 0=left, 1=right (scroll mode)
+    int      loop_mode;     // 0=loop, 1=clamp
+    float    speed;         // Pixels per second
+    float    spacing;       // Advance multiplier
+    float    cue_start;
+    float    cue_end;
+    float    fade_in;
+    float    fade_out;
+    int      layer_order;
+    int      blend_mode;    // 0=alpha, 1=additive, 2=multiply, 3=screen
+};
+
 // Scene navigation metadata. These rows remain code-only in packed builds.
 enum SceneWipeType {
     SceneWipeNone = 0,
@@ -785,6 +808,11 @@ float QuantizeTriggerBeat(float beat, float interval_beats);
 float EvaluateTriggerPulse(const TriggerTrack* track, float time_seconds, float pulse_beats);
 bool AddTriggerEvent(TriggerTrack* track, float beat, int value);
 void InitializeTextAnimationConfig(TextAnimationConfig* config);
+void InitializeShaderTextCue(ShaderTextCue* cue);
+bool GetShaderTextGlyph(unsigned char character, unsigned int* rows_0_to_5,
+                        unsigned int* row_6);
+const char* GetShaderTextVertexSource();
+const char* GetShaderTextFragmentSource();
 bool ParseTextAnimationConfig(const char* serialized, TextAnimationConfig* config);
 void InitializeGlyphAnimationState(GlyphAnimationState* state);
 // timeline_time is relative to the cue/asset start; reveal and exit offsets use this local time.

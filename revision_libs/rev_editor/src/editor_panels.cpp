@@ -1496,6 +1496,18 @@ void RenderProperties(EditorContext* editor) {
                 editor->scroll_text_modal_request_open = true;
                 editor->project->modified = true;
             }
+
+            if (ImGui::Button("+ Shader Text Cue")) {
+                ShaderTextCue cue;
+                rev::runtime::InitializeShaderTextCue(&cue);
+                cue.cue_end = scene->duration;
+                int new_index = AddShaderTextCue(scene, cue);
+                editor->editing_shader_text = scene->shader_text_cues[new_index];
+                editor->selected_cue_index = new_index;
+                editor->selected_cue_type = CueTypeShaderText;
+                editor->shader_text_modal_request_open = true;
+                editor->project->modified = true;
+            }
             
             if (ImGui::Button("+ Music Cue")) {
                 MusicCue cue = {};
@@ -1745,6 +1757,25 @@ void RenderProperties(EditorContext* editor) {
                         DeleteScrollTextCue(scene, i);
                         editor->project->modified = true;
                         CleanupDeletedCueResources(editor);
+                    }
+                    ImGui::PopID();
+                }
+            }
+
+            if (scene->shader_text_cue_count > 0) {
+                ImGui::Text("Shader Text Cues:");
+                for (int i = 0; i < scene->shader_text_cue_count; ++i) {
+                    ImGui::PushID(3600 + i);
+                    if (ImGui::Button(scene->shader_text_cues[i].text[0] ? scene->shader_text_cues[i].text : "(shader text)")) {
+                        editor->editing_shader_text = scene->shader_text_cues[i];
+                        editor->selected_cue_index = i;
+                        editor->selected_cue_type = CueTypeShaderText;
+                        editor->shader_text_modal_request_open = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X")) {
+                        DeleteShaderTextCue(scene, i);
+                        editor->project->modified = true;
                     }
                     ImGui::PopID();
                 }

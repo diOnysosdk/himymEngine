@@ -17,6 +17,72 @@
 namespace rev {
 namespace runtime {
 
+void InitializeShaderTextCue(ShaderTextCue* cue) {
+    if (!cue) return;
+    memset(cue, 0, sizeof(*cue));
+    strcpy_s(cue->text, "SHADER TEXT");
+    cue->x = 0.5f;
+    cue->y = 0.5f;
+    cue->size = 56.0f;
+    cue->color = {1.0f, 0.85f, 0.35f};
+    cue->opacity = 1.0f;
+    cue->alignment = 1;
+    cue->speed = 42.0f;
+    cue->spacing = 1.0f;
+    cue->cue_end = 10.0f;
+    cue->fade_in = 0.15f;
+    cue->fade_out = 0.15f;
+}
+
+bool GetShaderTextGlyph(unsigned char c, unsigned int* a, unsigned int* b) {
+    unsigned int x = 0, y = 0;
+#define GLYPH(ch, lo, hi) case ch: x = lo##u; y = hi##u; break
+    switch (c) {
+    GLYPH('A',589284910,17); GLYPH('B',589252158,30); GLYPH('C',554189327,15); GLYPH('D',588826174,30);
+    GLYPH('E',554648095,31); GLYPH('F',554648095,16); GLYPH('G',589021711,15); GLYPH('H',589284913,17);
+    GLYPH('I',138547342,14); GLYPH('J',606144583,12); GLYPH('K',625758801,17); GLYPH('L',554189328,31);
+    GLYPH('M',588961649,17); GLYPH('N',588896049,17); GLYPH('O',588826158,14); GLYPH('P',554649150,16);
+    GLYPH('Q',626574894,13); GLYPH('R',625952318,17); GLYPH('S',35078671,30); GLYPH('T',138547359,4);
+    GLYPH('U',588826161,14); GLYPH('V',353945137,4); GLYPH('W',727369265,10); GLYPH('X',581052977,17);
+    GLYPH('Y',138553905,4); GLYPH('Z',545392703,31);
+    GLYPH('a',586201088,15); GLYPH('b',589093392,30); GLYPH('c',554187776,15); GLYPH('d',588887073,15);
+    GLYPH('e',569948160,15); GLYPH('f',277750054,8); GLYPH('g',49858016,14); GLYPH('h',589093392,17);
+    GLYPH('i',138555396,14); GLYPH('j',606148610,12); GLYPH('k',696928784,18); GLYPH('l',138547340,14);
+    GLYPH('m',727377920,21); GLYPH('n',589092864,17); GLYPH('o',588822528,14); GLYPH('p',568915968,16);
+    GLYPH('q',49855488,1); GLYPH('r',554489856,16); GLYPH('s',48774144,30); GLYPH('t',310669576,6);
+    GLYPH('u',655934464,13); GLYPH('v',353944576,4); GLYPH('w',727237632,10); GLYPH('x',340083712,17);
+    GLYPH('y',49857536,14); GLYPH('z',272727040,31);
+    GLYPH('0',597347886,14); GLYPH('1',138547588,14); GLYPH('2',272696878,31); GLYPH('3',35062846,30);
+    GLYPH('4',100214978,2); GLYPH('5',35602975,30); GLYPH('6',589251086,14); GLYPH('7',276957247,8);
+    GLYPH('8',588727854,14); GLYPH('9',35112494,14);
+    GLYPH(' ',0,0); GLYPH('.',201326592,6); GLYPH(',',207618048,4); GLYPH('!',4329604,4);
+    GLYPH('?',4261422,4); GLYPH(':',207624384,0); GLYPH(';',207624384,4); GLYPH('-',1015808,0);
+    GLYPH('_',0,31); GLYPH('+',139432064,0); GLYPH('/',17043521,0); GLYPH('\\',1118480,0);
+    GLYPH('"',10570,0); GLYPH('\'',4228,0); GLYPH('(',142876802,2); GLYPH(')',136382600,8);
+    GLYPH('[',277094670,14); GLYPH(']',69273678,14); GLYPH('=',1016800,0); GLYPH('*',720353952,0);
+    GLYPH('#',368409930,10); GLYPH('%',224662361,0); GLYPH('&',626283084,13); GLYPH('@',561700398,14);
+    default: x = 4261422u; y = 4u; break;
+    }
+#undef GLYPH
+    if (a) *a = x;
+    if (b) *b = y;
+    return c >= 32 && c <= 126;
+}
+
+const char* GetShaderTextVertexSource() {
+    return R"(#version 330 core
+out vec2 uv; uniform vec2 u_position; uniform vec2 u_size;
+void main(){float x=-1.0+float((gl_VertexID&1)<<1);float y=-1.0+float((gl_VertexID>>1)<<1);
+uv=vec2((x+1.0)*.5,(y+1.0)*.5);gl_Position=vec4(u_position+vec2(x,y)*u_size,.999,1.0);})";
+}
+
+const char* GetShaderTextFragmentSource() {
+    return R"(#version 330 core
+in vec2 uv;out vec4 fragColor;uniform float u_rows[7];uniform vec4 u_color;
+void main(){ivec2 p=ivec2(floor(uv*vec2(5.0,7.0)));int row=clamp(6-p.y,0,6);
+float bit=mod(floor(u_rows[row]/exp2(float(4-p.x))),2.0);fragColor=vec4(u_color.rgb,u_color.a*bit);})";
+}
+
 void InitializeShaderPipeline(ShaderPipeline* pipeline) {
     if (!pipeline) return;
     memset(pipeline, 0, sizeof(*pipeline));
