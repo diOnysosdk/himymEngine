@@ -4400,6 +4400,10 @@ void CleanupDeletedCueResources(EditorContext* editor) {
 void RenderMenuBar(EditorContext* editor) {
     if (!editor) return;
     bool open_about = false;
+    bool open_custom_competition_limit = false;
+    static int competition_mode_index = 1;
+    static int custom_competition_size_kb = 128;
+    static const char* competition_modes[] = { "FAST", "SLOW", "VERYSLOW" };
     
     // ImGui menu bar
     if (ImGui::BeginMainMenuBar()) {
@@ -4545,8 +4549,27 @@ void RenderMenuBar(EditorContext* editor) {
             if (ImGui::MenuItem("Pack, Build and Run")) {
                 PackBuildAndRun(editor);
             }
-            if (ImGui::MenuItem("Competition Size Build (Crinkler)")) {
-                BuildCompetitionSize(editor);
+            if (ImGui::BeginMenu("Competition Size Build (Crinkler)")) {
+                if (ImGui::MenuItem("64 KiB")) {
+                    BuildCompetitionSize(editor, 64, competition_modes[competition_mode_index]);
+                }
+                if (ImGui::MenuItem("128 KiB")) {
+                    BuildCompetitionSize(editor, 128, competition_modes[competition_mode_index]);
+                }
+                if (ImGui::MenuItem("Custom Limit...")) {
+                    open_custom_competition_limit = true;
+                }
+                ImGui::Separator();
+                if (ImGui::BeginMenu("Compression Mode")) {
+                    for (int mode_index = 0; mode_index < 3; ++mode_index) {
+                        if (ImGui::MenuItem(competition_modes[mode_index], nullptr,
+                                            competition_mode_index == mode_index)) {
+                            competition_mode_index = mode_index;
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenu();
             }
             if (ImGui::MenuItem("Build Screen Saver (.scr)")) {
                 BuildScreenSaver(editor);
@@ -4566,6 +4589,25 @@ void RenderMenuBar(EditorContext* editor) {
 
     if (open_about) {
         ImGui::OpenPopup("About HiMYM");
+    }
+    if (open_custom_competition_limit) {
+        ImGui::OpenPopup("Custom Crinkler Size Limit");
+    }
+    if (ImGui::BeginPopupModal("Custom Crinkler Size Limit", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputInt("Size limit (KiB)", &custom_competition_size_kb);
+        if (custom_competition_size_kb < 1) custom_competition_size_kb = 1;
+        ImGui::Text("Compression mode: %s", competition_modes[competition_mode_index]);
+        if (ImGui::Button("Build")) {
+            BuildCompetitionSize(editor, custom_competition_size_kb,
+                                 competition_modes[competition_mode_index]);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
     if (ImGui::BeginPopupModal("About HiMYM", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Created by Dennis \"diOnysos/TiTAN/Equinox\" Kjaer");
@@ -6440,8 +6482,8 @@ bool PackBuildAndRun(EditorContext* editor) {
     return PackBuildPacked(editor, true);
 }
 
-bool BuildCompetitionSize(EditorContext* editor) {
-    if (!editor) return false;
+bool BuildCompetitionSize(EditorContext* editor, int size_limit_kb, const char* competition_mode) {
+    if (!editor || size_limit_kb < 1 || !competition_mode) return false;
 
     SanitizeWindowsSdkEnvironmentForBuild();
     printf("\n=== Competition Size Build (Crinkler) ===\n");
@@ -6499,12 +6541,13 @@ bool BuildCompetitionSize(EditorContext* editor) {
              "powershell -NoProfile -ExecutionPolicy Bypass -File \"%s\\tools\\build_crinkler_competition.ps1\" "
              "-CrinklerPath \"%s\" "
              "-SourceBuildDirectory \"%s\\build\" -PackedManifestDirectory \"%s\\build\" "
-             "-CompetitionBuildDirectory \"%s\\build\\crinkler-win32\" -OutputDirectory \"%s\"",
+             "-CompetitionBuildDirectory \"%s\\build\\crinkler-win32\" -OutputDirectory \"%s\" "
+             "-SizeLimitKB %d -CompetitionMode %s",
              editor->startup_dir, crinkler_path, editor->startup_dir, editor->startup_dir,
-             editor->startup_dir, release_dir);
+             editor->startup_dir, release_dir, size_limit_kb, competition_mode);
 
-    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
-              "Building normal x64 and optional Crinkler artifacts...", _TRUNCATE);
+    snprintf(editor->build_status_message, sizeof(editor->build_status_message),
+             "Building Crinkler %d KiB target (%s)...", size_limit_kb, competition_mode);
     editor->build_status_timer = 8.0f;
     int result = system(command);
     if (result != 0) {
@@ -6514,8 +6557,9 @@ bool BuildCompetitionSize(EditorContext* editor) {
         return false;
     }
 
-    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
-              "Competition build complete: normal x64 and Crinkler x86 outputs created.", _TRUNCATE);
+    snprintf(editor->build_status_message, sizeof(editor->build_status_message),
+             "Competition build complete: Crinkler x86 fits %d KiB (%s).",
+             size_limit_kb, competition_mode);
     editor->build_status_timer = 10.0f;
     return true;
 }

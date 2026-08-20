@@ -524,8 +524,8 @@ bool PackProject(EditorContext* editor);
 // Pack assets into the exe (checksum-based, only re-packs changed files), then build and run.
 bool PackBuildAndRun(EditorContext* editor);
 // Preserve the normal packed x64 executable, then optionally produce a
-// separate Win32 Crinkler competition-size artifact.
-bool BuildCompetitionSize(EditorContext* editor);
+// separate Win32 Crinkler competition-size artifact under an explicit budget.
+bool BuildCompetitionSize(EditorContext* editor, int size_limit_kb, const char* competition_mode);
 // Build the packed runtime and copy it as a Windows screen saver (.scr).
 bool BuildScreenSaver(EditorContext* editor);
 

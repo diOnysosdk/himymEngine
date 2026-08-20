@@ -54,6 +54,11 @@ The HiMYM editor is the native `editor_app.exe` authoring application. It manage
 
 ## Core Workflows
 
+The **Build > Competition Size Build (Crinkler)** submenu provides 64 KiB,
+128 KiB, and custom executable-size budgets plus FAST, SLOW, and VERYSLOW
+compression modes. The normal packed x64 artifact is preserved first;
+the selected budget is enforced against the separate Crinkler x86 executable.
+
 ### Workflow 1: Create New Scene
 
 1. **Click "+ Scene"** (bottom left)

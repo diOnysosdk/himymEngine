@@ -141,7 +141,11 @@ Visual Studio Win32 C++ tools, then set its path for the editor:
 $env:CRINKLER_EXE = "C:\tools\crinkler\crinkler.exe"
 ```
 
-After saving a project, choose **Build > Competition Size Build (Crinkler)**.
+After saving a project, choose **Build > Competition Size Build (Crinkler)**,
+then select the **64 KiB**, **128 KiB**, or **Custom Limit** budget. Choose the
+compression mode from the same submenu; `FAST` is intended for iteration and
+`SLOW` or `VERYSLOW` for final output. The build fails if the resulting x86
+executable exceeds the selected byte budget.
 The editor checks `CRINKLER_EXE`, `tools\crinkler\crinkler.exe`, and `PATH`; if
 none resolves, it opens a file picker for `crinkler.exe`. The command exports
 and packs the project, builds and copies the normal x64 runtime first, and then
@@ -157,11 +161,15 @@ The equivalent command-line workflow is:
 ```powershell
 .\tools\build_crinkler_competition.ps1 `
   -CrinklerPath C:\tools\crinkler\crinkler.exe `
+  -SizeLimitKB 128 `
+  -CompetitionMode SLOW `
   -OutputDirectory C:\path\to\project\bin\Release
 ```
 
 The wrapper defaults to Crinkler's `SLOW` competition mode. Pass
-`-CompetitionMode FAST` for iteration. On a fresh build tree it bootstraps a
+`-CompetitionMode FAST` for iteration. `-SizeLimitKB` enables the final budget
+check; omitting it preserves compatibility with older command-line workflows
+and performs no category-size check. On a fresh build tree it bootstraps a
 reuse file and, when required, distributes code sections across four parts so
 no Crinkler part exceeds its 64 KiB uncompressed limit.
 

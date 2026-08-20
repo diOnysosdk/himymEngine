@@ -6,7 +6,9 @@ param(
     [string]$OutputDirectory = "",
     [string]$Configuration = "Release",
     [ValidateSet("INSTANT", "FAST", "SLOW", "VERYSLOW")]
-    [string]$CompetitionMode = "SLOW"
+    [string]$CompetitionMode = "SLOW",
+    [ValidateRange(0, 2097151)]
+    [int]$SizeLimitKB = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,36 +25,63 @@ function Invoke-NativeWithExitCode {
     return $LASTEXITCODE
 }
 
-function Split-CrinklerCodeParts {
-    param([string]$ReusePath)
+function Split-CrinklerSectionParts {
+    param(
+        [string[]]$Lines,
+        [string]$PartName,
+        [string]$NextPartName
+    )
 
-    $lines = @(Get-Content -LiteralPath $ReusePath)
-    if ($lines -contains "# Code4 sections") {
-        return $false
+    if ($Lines -contains "# $($PartName)4 sections") {
+        return $null
     }
-    $code_header = [Array]::IndexOf($lines, "# Code sections")
-    $data_header = [Array]::IndexOf($lines, "# Data sections")
-    if ($code_header -lt 0 -or $data_header -le ($code_header + 2)) {
-        throw "Crinkler reuse file has no splittable Code section: $ReusePath"
+    $part_header = [Array]::IndexOf($Lines, "# $PartName sections")
+    $next_header = [Array]::IndexOf($Lines, "# $NextPartName sections")
+    if ($part_header -lt 0 -or $next_header -le ($part_header + 2)) {
+        return $null
     }
 
-    $code_sections = @($lines[($code_header + 1)..($data_header - 1)] |
+    $sections = @($Lines[($part_header + 1)..($next_header - 1)] |
         Where-Object {
-            -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch '^# Code\d* sections$'
+            -not [string]::IsNullOrWhiteSpace($_) -and
+            $_ -notmatch "^# $([regex]::Escape($PartName))\d* sections$"
         })
     $rewritten = @()
-    $rewritten += $lines[0..($code_header - 1)]
+    if ($part_header -gt 0) {
+        $rewritten += $Lines[0..($part_header - 1)]
+    }
     for ($part = 0; $part -lt 4; ++$part) {
-        $part_name = if ($part -eq 0) { "Code" } else { "Code$($part + 1)" }
-        $rewritten += "# $part_name sections"
-        for ($index = $part; $index -lt $code_sections.Count; $index += 4) {
-            $rewritten += $code_sections[$index]
+        $split_part_name = if ($part -eq 0) { $PartName } else { "$PartName$($part + 1)" }
+        $rewritten += "# $split_part_name sections"
+        for ($index = $part; $index -lt $sections.Count; $index += 4) {
+            $rewritten += $sections[$index]
         }
         $rewritten += ""
     }
-    $rewritten += $lines[$data_header..($lines.Count - 1)]
-    Set-Content -LiteralPath $ReusePath -Value $rewritten -Encoding ASCII
-    Write-Host "[competition] Split $($code_sections.Count) code sections across four code parts."
+    $rewritten += $Lines[$next_header..($Lines.Count - 1)]
+    Write-Host "[competition] Split $($sections.Count) $($PartName.ToLowerInvariant()) sections across four parts."
+    return ,$rewritten
+}
+
+function Split-CrinklerOversizedParts {
+    param([string]$ReusePath)
+
+    $lines = @(Get-Content -LiteralPath $ReusePath)
+    $changed = $false
+    $split_lines = Split-CrinklerSectionParts $lines "Code" "Data"
+    if ($null -ne $split_lines) {
+        $lines = @($split_lines)
+        $changed = $true
+    }
+    $split_lines = Split-CrinklerSectionParts $lines "Text" "Uninitialized"
+    if ($null -ne $split_lines) {
+        $lines = @($split_lines)
+        $changed = $true
+    }
+    if (-not $changed) {
+        return $false
+    }
+    Set-Content -LiteralPath $ReusePath -Value $lines -Encoding ASCII
     return $true
 }
 
@@ -137,7 +166,7 @@ $build_arguments = @("--build", $competition_build, "--config", $Configuration,
     "--target", "minimal_intro_packed")
 $build_exit_code = Invoke-NativeWithExitCode cmake $build_arguments
 if ($build_exit_code -ne 0 -and (Test-Path -LiteralPath $reuse_file -PathType Leaf)) {
-    if (Split-CrinklerCodeParts $reuse_file) {
+    if (Split-CrinklerOversizedParts $reuse_file) {
         Invoke-Native cmake @("-S", $repository_root, "-B", $competition_build,
             "-G", "Visual Studio 17 2022", "-A", "Win32",
             "-DHIMYM_RELEASE_PROFILE=INTRO",
@@ -156,6 +185,15 @@ Set-Content -LiteralPath $reuse_fingerprint_file -Value $manifest_fingerprint -E
 $competition_exe = Join-Path $competition_build "bin\$Configuration\minimal_intro_competition.exe"
 if (-not (Test-Path -LiteralPath $competition_exe -PathType Leaf)) {
     throw "Crinkler competition executable was not produced: $competition_exe"
+}
+$competition_size = (Get-Item -LiteralPath $competition_exe).Length
+if ($SizeLimitKB -gt 0) {
+    $size_limit_bytes = $SizeLimitKB * 1KB
+    if ($competition_size -gt $size_limit_bytes) {
+        $over_by = $competition_size - $size_limit_bytes
+        throw "Crinkler competition executable is $competition_size bytes, exceeding the $SizeLimitKB KiB budget by $over_by bytes."
+    }
+    Write-Host "[competition] Size budget PASS: $competition_size / $size_limit_bytes bytes ($SizeLimitKB KiB)."
 }
 Copy-Item -LiteralPath $competition_exe -Destination $output_dir -Force
 $report = Join-Path $competition_build "crinkler_report.html"
