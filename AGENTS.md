@@ -44,7 +44,18 @@ Treat current code and CMake files as authoritative. Before relying on material 
 - Packed post-effect GLSL is also project-specific. Collect enabled effect types from global, scene-layer, image, animated-sprite, and pixel rows; preserve the universal shader only for editor/file playback and older packed shader manifests.
 - Maintain editor/runtime OpenGL-state parity, especially VAO binding, depth writes, blending, and opaque/transparent ordering.
 - Load post-OpenGL-1.1 functions with `wglGetProcAddress`.
+- Declare every WGL-loaded OpenGL function pointer with `APIENTRY`. The normal
+  x64 ABI can hide a missing calling convention, but Crinkler's x86 runtime
+  will corrupt the stack and may flicker, render black, or crash.
 - Initialize GDI+ before image/text loading and preserve its Windows path and stream-lifetime requirements.
+- Competition-size builds are optional Win32 artifacts and never replace the
+  supported x64 `minimal_intro_packed.exe`. Build and preserve x64 first.
+- Crinkler consumes ordinary COFF, not MSVC LTCG objects, and ignores embedded
+  `/DEFAULTLIB` directives. Keep `/GL` and `/LTCG` out of its tree, disable IPO
+  in dependencies such as libxm, and pass required imports such as WinMM explicitly.
+- Scope Crinkler reuse layouts to the current packed manifests. Regenerate the
+  layout when assets or feature flags change, and keep every initialized part
+  below Crinkler's 64 KiB uncompressed limit.
 
 ## Runtime constraints
 
@@ -84,11 +95,15 @@ cmake --build build --config Release --target minimal_intro_packed
 cmake --build build --config Release --target text_animation_tests
 cmake --build build --config Release --target packed_feature_manifest_tests
 .\tools\test_editor_pipeline.ps1
+.\tools\build_crinkler_competition.ps1 -CompetitionMode FAST
 ```
 
 Run `build\bin\Release\text_animation_tests.exe` for text-animation changes. If `rev_pack` changes, rebuild the editor or `pack_cli` before validating packed output. For current `minimal_intro_packed`, validate generated mesh/glTF selection through `HIMYM_USE_MESH`, `HIMYM_USE_GLTF`, and `build/packed_features.cmake`; the live target no longer uses the historical `REV_ENABLE_3D` option.
 
 Report exact commands and distinguish new failures from stale or environmental failures.
+For competition changes, validate both PE architectures and smoke-test shader
+pipelines in the x86 artifact; an x64-only render check cannot expose calling-
+convention defects.
 
 ## Style
 

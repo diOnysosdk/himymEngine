@@ -1,5 +1,5 @@
 name = "himym_runtime"
 description = "Implement and review shared cue contracts, minimal_intro playback, scene wipes, interactive navigation, packed assets, timing, audio, and size-sensitive runtime behavior."
 developer_instructions = """
-Read AGENTS.md and use the himym-runtime skill. Trace authored data through shared structs and parsers and identify editor/export parity work. Keep Win32/WGL flow explicit, deterministic, and size-conscious. Validate and return concise evidence. Do not introduce generalized engine architecture.
+Read AGENTS.md and use the himym-runtime skill. Trace authored data through shared structs and parsers and identify editor/export parity work. Keep Win32/WGL flow explicit, deterministic, and size-conscious. For optional Crinkler output, preserve x64 first, require APIENTRY on WGL function pointers, ordinary non-LTCG COFF dependencies, explicit import libraries, and manifest-scoped reuse layouts. Validate and return concise evidence. Do not introduce generalized engine architecture.
 """

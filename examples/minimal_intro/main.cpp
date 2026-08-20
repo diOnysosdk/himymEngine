@@ -3022,17 +3022,19 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
 
-    typedef void (*PFNGLGENFRAMEBUFFERSPROC)(int, unsigned int*);
-    typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int, unsigned int);
-    typedef void (*PFNGLFRAMEBUFFERTEXTURE2DPROC)(unsigned int, unsigned int, unsigned int, unsigned int, int);
-    typedef void (*PFNGLGENRENDERBUFFERSPROC)(int, unsigned int*);
-    typedef void (*PFNGLBINDRENDERBUFFERPROC)(unsigned int, unsigned int);
-    typedef void (*PFNGLRENDERBUFFERSTORAGEPROC)(unsigned int, unsigned int, int, int);
-    typedef void (*PFNGLFRAMEBUFFERRENDERBUFFERPROC)(unsigned int, unsigned int, unsigned int, unsigned int);
-    typedef void (*PFNGLBLITFRAMEBUFFERPROC)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
-    typedef unsigned int (*PFNGLCHECKFRAMEBUFFERSTATUSPROC)(unsigned int);
-    typedef void (*PFNGLDELETEFRAMEBUFFERSPROC)(int, const unsigned int*);
-    typedef void (*PFNGLDELETERENDERBUFFERSPROC)(int, const unsigned int*);
+    // WGL extension entry points are __stdcall on x86. Omitting APIENTRY is
+    // invisible on x64 but corrupts the Crinkler runtime stack on every call.
+    typedef void (APIENTRY *PFNGLGENFRAMEBUFFERSPROC)(int, unsigned int*);
+    typedef void (APIENTRY *PFNGLBINDFRAMEBUFFERPROC)(unsigned int, unsigned int);
+    typedef void (APIENTRY *PFNGLFRAMEBUFFERTEXTURE2DPROC)(unsigned int, unsigned int, unsigned int, unsigned int, int);
+    typedef void (APIENTRY *PFNGLGENRENDERBUFFERSPROC)(int, unsigned int*);
+    typedef void (APIENTRY *PFNGLBINDRENDERBUFFERPROC)(unsigned int, unsigned int);
+    typedef void (APIENTRY *PFNGLRENDERBUFFERSTORAGEPROC)(unsigned int, unsigned int, int, int);
+    typedef void (APIENTRY *PFNGLFRAMEBUFFERRENDERBUFFERPROC)(unsigned int, unsigned int, unsigned int, unsigned int);
+    typedef void (APIENTRY *PFNGLBLITFRAMEBUFFERPROC)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
+    typedef unsigned int (APIENTRY *PFNGLCHECKFRAMEBUFFERSTATUSPROC)(unsigned int);
+    typedef void (APIENTRY *PFNGLDELETEFRAMEBUFFERSPROC)(int, const unsigned int*);
+    typedef void (APIENTRY *PFNGLDELETERENDERBUFFERSPROC)(int, const unsigned int*);
     auto glGenFramebuffers_rt = (PFNGLGENFRAMEBUFFERSPROC)rev::platform::GetProcAddress("glGenFramebuffers");
     auto glBindFramebuffer_rt = (PFNGLBINDFRAMEBUFFERPROC)rev::platform::GetProcAddress("glBindFramebuffer");
     auto glFramebufferTexture2D_rt = (PFNGLFRAMEBUFFERTEXTURE2DPROC)rev::platform::GetProcAddress("glFramebufferTexture2D");
@@ -3977,8 +3979,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         const int kWarmupFrames = 2;
         const double warmup_begin = rev::platform::GetTime();
 
-        typedef void (*PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
-        typedef void (*PFNGLUNIFORM4FVPROC)(int, int, const float*);
+        typedef void (APIENTRY *PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
+        typedef void (APIENTRY *PFNGLUNIFORM4FVPROC)(int, int, const float*);
         auto glUniformMatrix4fv_fn = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
         auto glUniform4fv_fn = (PFNGLUNIFORM4FVPROC)wglGetProcAddress("glUniform4fv");
 
@@ -6413,7 +6415,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     rev::shader::SetInt(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_directional"), directional_light ? 1 : 0);
                     rev::shader::SetVec3(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_direction"), light_direction[0], light_direction[1], light_direction[2]);
                     rev::mesh::BindDirectionalShadow(directional_light ? &mesh_shadow : nullptr, mesh_shader);
-                    typedef void (*PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
+                    typedef void (APIENTRY *PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
                     auto glUniformMatrix4fv_fn = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
                     int loc_model = rev::shader::GetUniformLocation(mesh_shader, "u_model");
                     if (mesh_cue.use_imported_camera && mesh_obj->has_imported_camera) {
@@ -6501,7 +6503,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         mesh_cue.fade_in_start, mesh_cue.fade_in_end,
                         mesh_cue.fade_out_start, mesh_cue.fade_out_end, time);
                     float cue_col[4] = {anim_color[0], anim_color[1], anim_color[2], anim_color[3] * opa};
-                    typedef void (*PFNGLUNIFORM4FVPROC)(int, int, const float*);
+                    typedef void (APIENTRY *PFNGLUNIFORM4FVPROC)(int, int, const float*);
                     auto glUniform4fv_fn = (PFNGLUNIFORM4FVPROC)wglGetProcAddress("glUniform4fv");
                     if (loc_color >= 0 && glUniform4fv_fn) {
                         glUniform4fv_fn(loc_color, 1, cue_col);

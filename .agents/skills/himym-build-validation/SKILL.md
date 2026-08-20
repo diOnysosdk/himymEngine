@@ -14,4 +14,12 @@ description: Configure, build, test, and diagnose HiMYM changes. Use after C++, 
 7. Perform launch/visual checks when the environment permits.
 8. Report commands, results, and whether failures predate the change.
 
+For Crinkler work, validate that the normal artifact is PE32+ x64 and preserved,
+the competition artifact is PE32 x86, dependencies do not emit `/GL`/LTCG
+objects, pragma-only system libraries are explicit, and the reuse fingerprint
+tracks both packed manifests. A successful link is insufficient for graphics
+changes: smoke-test repeated WGL calls in the x86 executable because missing
+`APIENTRY` annotations are invisible on x64 and typically fail as flicker,
+black output, or a delayed crash.
+
 Use commands in root `AGENTS.md`. Do not delete build directories or regenerate unrelated outputs merely to get a clean result.

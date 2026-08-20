@@ -24,15 +24,16 @@ typedef int GLint;
 #include <gl/gl.h>  // For glDrawElements from opengl32.dll
 
 extern "C" {
-    typedef void (*PFNGLGENVERTEXARRAYSPROC)(GLsizei n, GLuint* arrays);
-    typedef void (*PFNGLBINDVERTEXARRAYPROC)(GLuint array);
-    typedef void (*PFNGLGENBUFFERSPROC)(GLsizei n, GLuint* buffers);
-    typedef void (*PFNGLBINDBUFFERPROC)(GLenum target, GLuint buffer);
-    typedef void (*PFNGLBUFFERDATAPROC)(GLenum target, ptrdiff_t size, const void* data, GLenum usage);
-    typedef void (*PFNGLENABLEVERTEXATTRIBARRAYPROC)(GLuint index);
-    typedef void (*PFNGLVERTEXATTRIBPOINTERPROC)(GLuint index, GLint size, GLenum type, unsigned char normalized, GLsizei stride, const void* pointer);
-    typedef void (*PFNGLDELETEVERTEXARRAYSPROC)(GLsizei n, const GLuint* arrays);
-    typedef void (*PFNGLDELETEBUFFERSPROC)(GLsizei n, const GLuint* buffers);
+    // WGL extension entry points use __stdcall on x86 competition builds.
+    typedef void (APIENTRY *PFNGLGENVERTEXARRAYSPROC)(GLsizei n, GLuint* arrays);
+    typedef void (APIENTRY *PFNGLBINDVERTEXARRAYPROC)(GLuint array);
+    typedef void (APIENTRY *PFNGLGENBUFFERSPROC)(GLsizei n, GLuint* buffers);
+    typedef void (APIENTRY *PFNGLBINDBUFFERPROC)(GLenum target, GLuint buffer);
+    typedef void (APIENTRY *PFNGLBUFFERDATAPROC)(GLenum target, ptrdiff_t size, const void* data, GLenum usage);
+    typedef void (APIENTRY *PFNGLENABLEVERTEXATTRIBARRAYPROC)(GLuint index);
+    typedef void (APIENTRY *PFNGLVERTEXATTRIBPOINTERPROC)(GLuint index, GLint size, GLenum type, unsigned char normalized, GLsizei stride, const void* pointer);
+    typedef void (APIENTRY *PFNGLDELETEVERTEXARRAYSPROC)(GLsizei n, const GLuint* arrays);
+    typedef void (APIENTRY *PFNGLDELETEBUFFERSPROC)(GLsizei n, const GLuint* buffers);
 }
 
 // GL function pointers (extensions only - glDrawElements is core 1.1 from opengl32.lib)

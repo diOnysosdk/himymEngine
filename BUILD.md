@@ -130,6 +130,67 @@ UPX 5.1.1 `--best --lzma`, validate them with `upx -t`, and write a comparison
 report. Classic kkrunchy cannot pack the project's x64/PE32+ executable; it is
 an x86/PE32 tool and fails in its PE parser.
 
+## Optional competition-size build with Crinkler
+
+Crinkler is an optional replacement linker for a separate 32-bit competition
+artifact. It never replaces `minimal_intro_packed.exe`, which remains the
+supported Windows 11 x64 output. Install the current Crinkler release and the
+Visual Studio Win32 C++ tools, then set its path for the editor:
+
+```powershell
+$env:CRINKLER_EXE = "C:\tools\crinkler\crinkler.exe"
+```
+
+After saving a project, choose **Build > Competition Size Build (Crinkler)**.
+The editor checks `CRINKLER_EXE`, `tools\crinkler\crinkler.exe`, and `PATH`; if
+none resolves, it opens a file picker for `crinkler.exe`. The command exports
+and packs the project, builds and copies the normal x64 runtime first, and then
+configures an isolated `build\crinkler-win32` tree.
+The project-local `bin\Release` directory receives:
+
+- `minimal_intro_packed.exe`, the normal supported x64 artifact;
+- `minimal_intro_competition.exe`, the optional Crinkler x86 artifact; and
+- `crinkler_report.html`, when Crinkler produces its size report.
+
+The equivalent command-line workflow is:
+
+```powershell
+.\tools\build_crinkler_competition.ps1 `
+  -CrinklerPath C:\tools\crinkler\crinkler.exe `
+  -OutputDirectory C:\path\to\project\bin\Release
+```
+
+The wrapper defaults to Crinkler's `SLOW` competition mode. Pass
+`-CompetitionMode FAST` for iteration. On a fresh build tree it bootstraps a
+reuse file and, when required, distributes code sections across four parts so
+no Crinkler part exceeds its 64 KiB uncompressed limit.
+
+Crinkler builds require CMake 3.29 or newer, the Visual Studio 2022 Win32
+compiler components, and an SSE4.2-capable competition machine. They use the
+`INTRO` profile without `/GL` or `/LTCG`, because Crinkler consumes ordinary
+COFF objects. Always smoke-test both executables on the competition machine.
+The Crinkler target maps the SDK's forwarded `ole32` COM imports to their
+physical Windows implementation in `combase.dll`; this avoids API-set DLL
+resolution failures while retaining normal x64 linkage for the primary build.
+XM-enabled competition builds compile libxm as ordinary COFF instead of LTCG
+and link WinMM explicitly because Crinkler does not consume embedded
+`/DEFAULTLIB` directives. The reuse layout is regenerated whenever the packed
+assets or feature manifest changes, including when switching projects.
+
+All functions loaded with `wglGetProcAddress` must use pointer types declared
+with `APIENTRY`. Windows x64 has one calling convention and can hide this bug;
+the x86 competition runtime uses `__stdcall`, so an unannotated pointer can
+corrupt the stack after repeated framebuffer, uniform, VAO, or buffer calls.
+Typical symptoms are a Shadertoy pipeline flickering briefly and then rendering
+black even though `minimal_intro_packed.exe` works. A successful x86 link does
+not validate this ABI contract; visually smoke-test the competition executable.
+
+Crinkler's 64 KiB rule applies to every uncompressed initialized part, not only
+code. The wrapper can redistribute separate code sections automatically, but a
+single very large embedded image, XM, glTF/GLB, font atlas, or shader-source
+section may still require packer-side chunking. Keep the normal x64 artifact as
+the release fallback and test representative production assets.
+
 The compiler can then place the received files in the matching workspace,
 copy both generated manifests into that workspace's `build` directory if needed,
 repack, and run the normal `minimal_intro_packed` build. The editor stores its
@@ -189,9 +250,8 @@ After release build:
 # Check executable size
 ls build\bin\Release\*.exe | Select-Object Name, Length
 
-# For compressed size (requires kkrunchy or Crinkler)
-# kkrunchy minimal_intro.exe --out minimal_intro_packed.exe
-# ls minimal_intro_packed.exe
+# For the optional 32-bit Crinkler competition artifact, use the dedicated
+# workflow above. Crinkler is a linker, not a post-link x64 compressor.
 ```
 
 Target: <100 KB uncompressed, <30 KB compressed

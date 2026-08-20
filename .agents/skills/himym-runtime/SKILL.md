@@ -14,6 +14,12 @@ Read `AGENTS.md` and use `$himym-codebase-map` when ownership is unclear.
 5. Keep release behavior deterministic and packed-asset friendly.
 6. Validate the smallest affected target, then packed/editor targets for cross-layer changes.
 
+For optional competition builds, preserve the normal x64 artifact first. Treat
+Crinkler as an x86 replacement linker: WGL-loaded function pointers require
+`APIENTRY`, all linked objects must be ordinary COFF rather than LTCG, pragma-
+only default libraries must be made explicit, and reuse layouts must be
+regenerated when packed manifests change.
+
 Do not duplicate shared types or texture helpers. Preserve `curve_* == -1`, GDI+ requirements, modern GL loading through `wglGetProcAddress`, GL state restoration, and cue-driven XM startup. Avoid speculative abstractions and report meaningful binary/dependency costs.
 
 For interactive navigation, preserve the originating menu as explicit session

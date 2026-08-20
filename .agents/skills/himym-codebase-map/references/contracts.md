@@ -26,5 +26,11 @@ For every cue/property, locate its shared defaults, editor ownership, JSON save/
 - 2D/3D interleaving requires deliberate VAO, depth, and blend restoration.
 - GDI+ has initialization, separator, and stream-lifetime requirements.
 - Windows `<gl/gl.h>` exposes only OpenGL 1.1 declarations.
+- Every function obtained through `wglGetProcAddress` uses `APIENTRY`; missing
+  x86 calling conventions can pass x64 validation while corrupting Crinkler.
+- Optional Crinkler output never replaces the normal x64 packed artifact. Its
+  isolated tree uses non-LTCG COFF objects, explicit import libraries, and a
+  reuse layout fingerprinted to `packed_assets.h` and
+  `packed_features.cmake`.
 
 Do not assume older library/cue inventories are exhaustive. Inspect current animated-sprite, pixel, particle, advanced text, post-effect, asset-shader, trigger, glTF, and packed-asset support.

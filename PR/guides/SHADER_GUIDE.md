@@ -310,6 +310,9 @@ Recommended workflow:
 2. Confirm the pipeline is reported valid.
 3. Use **Do It All**, or explicitly Export → Pack → configure/build → Run.
 4. Compare editor preview with the standalone or packed runtime.
+5. If producing a competition artifact, run
+   `minimal_intro_competition.exe` separately; x64 playback does not validate
+   the x86 WGL calling convention.
 
 ## Adding a Built-In Preset
 
@@ -345,6 +348,18 @@ older documentation are complete.
   `project_assets`.
 - Re-export and repack after changing a source path or channel.
 - Confirm the referenced file still exists at export time.
+
+### Competition shader flickers and then renders black
+
+- Confirm the normal `minimal_intro_packed.exe` still renders correctly. If it
+  does, inspect the x86-only path before changing GLSL or packed data.
+- Every function pointer returned by `wglGetProcAddress` must be declared with
+  `APIENTRY`. Missing `__stdcall` stack cleanup is hidden on x64 and commonly
+  appears in Crinkler x86 as fast initial flicker followed by black output or a
+  delayed crash.
+- Audit framebuffer, uniform, texture, VAO, buffer, mesh, and post-processing
+  entry points together; one frequently called mismatched pointer is enough.
+- Rebuild both outputs after the fix and visually smoke-test the x86 executable.
 
 ### Audio shader is static
 

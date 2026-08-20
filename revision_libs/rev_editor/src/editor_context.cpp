@@ -4545,6 +4545,9 @@ void RenderMenuBar(EditorContext* editor) {
             if (ImGui::MenuItem("Pack, Build and Run")) {
                 PackBuildAndRun(editor);
             }
+            if (ImGui::MenuItem("Competition Size Build (Crinkler)")) {
+                BuildCompetitionSize(editor);
+            }
             if (ImGui::MenuItem("Build Screen Saver (.scr)")) {
                 BuildScreenSaver(editor);
             }
@@ -6279,7 +6282,7 @@ bool PackProject(EditorContext* editor) {
     return true;
 }
 
-bool PackBuildAndRun(EditorContext* editor) {
+static bool PackBuildPacked(EditorContext* editor, bool launch_after_build) {
     if (!editor) return false;
 
     SanitizeWindowsSdkEnvironmentForBuild();
@@ -6380,6 +6383,19 @@ bool PackBuildAndRun(EditorContext* editor) {
                                                      project_packed_path,
                                                      sizeof(project_packed_path));
 
+    if (!launch_after_build) {
+        if (!copied_packed) {
+            strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                      "Normal packed build succeeded, but project output copy failed.", _TRUNCATE);
+            editor->build_status_timer = 10.0f;
+            return false;
+        }
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                  "Normal packed x64 build complete.", _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+        return true;
+    }
+
     // Step 4: Launch — absolute exe path + cues_path as argv[1]
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Launching packed intro...", _TRUNCATE);
     editor->build_status_timer = 3.0f;
@@ -6418,6 +6434,90 @@ bool PackBuildAndRun(EditorContext* editor) {
     }
 
     return (run_result == 0);
+}
+
+bool PackBuildAndRun(EditorContext* editor) {
+    return PackBuildPacked(editor, true);
+}
+
+bool BuildCompetitionSize(EditorContext* editor) {
+    if (!editor) return false;
+
+    SanitizeWindowsSdkEnvironmentForBuild();
+    printf("\n=== Competition Size Build (Crinkler) ===\n");
+
+    char crinkler_path[512] = {};
+    DWORD env_length = GetEnvironmentVariableA("CRINKLER_EXE", crinkler_path,
+                                               (DWORD)sizeof(crinkler_path));
+    if (env_length == 0 || env_length >= sizeof(crinkler_path) ||
+        !FileExists(crinkler_path)) {
+        crinkler_path[0] = '\0';
+        char local_path[512] = {};
+        snprintf(local_path, sizeof(local_path), "%s\\tools\\crinkler\\crinkler.exe",
+                 editor->startup_dir);
+        if (FileExists(local_path)) {
+            strncpy_s(crinkler_path, sizeof(crinkler_path), local_path, _TRUNCATE);
+        } else {
+            DWORD found_length = SearchPathA(nullptr, "crinkler.exe", nullptr,
+                                             (DWORD)sizeof(crinkler_path), crinkler_path, nullptr);
+            if (found_length == 0 || found_length >= sizeof(crinkler_path)) {
+                crinkler_path[0] = '\0';
+            }
+        }
+    }
+
+    if (!crinkler_path[0]) {
+        OPENFILENAMEA ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = (HWND)editor->window->hwnd;
+        ofn.lpstrFile = crinkler_path;
+        ofn.nMaxFile = sizeof(crinkler_path);
+        ofn.lpstrFilter = "Crinkler Executable\0crinkler.exe\0Executable Files\0*.exe\0All Files\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.lpstrTitle = "Locate crinkler.exe";
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+        if (!GetOpenFileNameA(&ofn)) {
+            strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                      "Competition build cancelled: select crinkler.exe to continue.", _TRUNCATE);
+            editor->build_status_timer = 8.0f;
+            return false;
+        }
+    }
+
+    if (!PackBuildPacked(editor, false)) return false;
+
+    char release_dir[512] = {};
+    if (!EnsureProjectOutputReleaseDir(editor, release_dir, sizeof(release_dir))) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                  "Could not create project output directory.", _TRUNCATE);
+        editor->build_status_timer = 10.0f;
+        return false;
+    }
+
+    char command[2048] = {};
+    snprintf(command, sizeof(command),
+             "powershell -NoProfile -ExecutionPolicy Bypass -File \"%s\\tools\\build_crinkler_competition.ps1\" "
+             "-CrinklerPath \"%s\" "
+             "-SourceBuildDirectory \"%s\\build\" -PackedManifestDirectory \"%s\\build\" "
+             "-CompetitionBuildDirectory \"%s\\build\\crinkler-win32\" -OutputDirectory \"%s\"",
+             editor->startup_dir, crinkler_path, editor->startup_dir, editor->startup_dir,
+             editor->startup_dir, release_dir);
+
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+              "Building normal x64 and optional Crinkler artifacts...", _TRUNCATE);
+    editor->build_status_timer = 8.0f;
+    int result = system(command);
+    if (result != 0) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                  "Competition build failed; normal packed output was preserved.", _TRUNCATE);
+        editor->build_status_timer = 12.0f;
+        return false;
+    }
+
+    strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+              "Competition build complete: normal x64 and Crinkler x86 outputs created.", _TRUNCATE);
+    editor->build_status_timer = 10.0f;
+    return true;
 }
 
 bool BuildScreenSaver(EditorContext* editor) {

@@ -15,6 +15,11 @@ Read `AGENTS.md`, shared cue definitions, `rev_editor.h`, and the relevant edito
 6. Update parsers/rendering when exported semantics change.
 7. Build `himym_editor`; test headless or round-trip paths when affected.
 
+Competition Size Build is optional and must build/copy the supported normal
+x64 packed artifact before attempting Crinkler x86. Project asset or feature
+changes must invalidate the competition reuse layout; a competition failure
+must never remove or replace the normal output.
+
 Do not redefine shared cues. Initialize new fields deliberately, preserve copied-asset cleanup coverage, keep save -> export -> pack -> build -> launch explicit, and avoid generalized UI frameworks or new dependencies.
 
 For menu authoring, keep ImGui IDs stable while labels are edited. Preserve

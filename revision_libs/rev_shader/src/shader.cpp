@@ -69,11 +69,12 @@ static PFNGLUNIFORM4FPROC glUniform4f = nullptr;
 static PFNGLUNIFORM1IPROC glUniform1i = nullptr;
 static PFNGLUNIFORMMATRIX4FVPROC glUniformMatrix4fv = nullptr;
 
+#ifndef HIMYM_CRINKLER_BUILD
 static std::once_flag g_gl_load_once;
+#endif
 static bool g_gl_functions_ready = false;
 
-static void LoadGLFunctions() {
-    std::call_once(g_gl_load_once, []() {
+static void LoadGLFunctionsDirect() {
         glCreateShader = (PFNGLCREATESHADERPROC)wglGetProcAddress("glCreateShader");
         glShaderSource = (PFNGLSHADERSOURCEPROC)wglGetProcAddress("glShaderSource");
         glCompileShader = (PFNGLCOMPILESHADERPROC)wglGetProcAddress("glCompileShader");
@@ -99,7 +100,17 @@ static void LoadGLFunctions() {
             glLinkProgram && glGetProgramiv && glGetProgramInfoLog && glUseProgram &&
             glDeleteShader && glDeleteProgram && glGetUniformLocation && glUniform1f &&
             glUniform2f && glUniform3f && glUniform4f && glUniform1i && glUniformMatrix4fv;
-    });
+}
+
+static void LoadGLFunctions() {
+#ifdef HIMYM_CRINKLER_BUILD
+    // The competition runtime initializes and renders on one thread. Avoid
+    // std::call_once here because the modern MSVC helper is forwarded through
+    // a kernel32 API-set cycle that Crinkler 3.0b cannot resolve.
+    if (!g_gl_functions_ready) LoadGLFunctionsDirect();
+#else
+    std::call_once(g_gl_load_once, LoadGLFunctionsDirect);
+#endif
 }
 
 namespace rev {

@@ -7,6 +7,28 @@ reconfigures CMake after packing, then builds `minimal_intro_packed`.
 
 The external-cue `minimal_intro` target remains universal.
 
+The optional Crinkler workflow produces a separate Win32
+`minimal_intro_competition.exe`. It reuses the same generated packed manifests
+but does not replace the supported x64 `minimal_intro_packed.exe`. Crinkler is
+a replacement linker rather than an x64 post-link compressor, so its isolated
+build disables `/GL` and `/LTCG` and requires competition-machine smoke tests.
+The wrapper preserves Crinkler's generated reuse layout and automatically
+splits code into multiple parts when the uncompressed 64 KiB part limit is hit.
+It fingerprints both packed manifests so feature or project changes regenerate
+that layout. XM-enabled builds also disable libxm IPO in the Crinkler tree and
+link WinMM explicitly; the supported normal build retains its existing flags.
+Every OpenGL function pointer obtained from `wglGetProcAddress` is declared
+with `APIENTRY`. This is a competition correctness requirement: missing
+`__stdcall` annotations are masked on x64 but corrupt the x86 stack, often as
+brief shader flicker followed by black output. Shader-pipeline and mesh paths
+must therefore receive an actual x86 playback check, not link-only validation.
+
+The 64 KiB uncompressed-part ceiling also applies to data and text. Reuse-file
+partitioning can move independent sections, but cannot split one oversized
+embedded asset section. Very large images, music, meshes, font atlases, or GLSL
+sources remain project-specific risks until packed assets are emitted in
+chunkable sections.
+
 ## Feature mapping
 
 | Exported content | C++ flag | Optional target dependency |
