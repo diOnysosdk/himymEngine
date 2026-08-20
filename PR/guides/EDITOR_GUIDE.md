@@ -439,8 +439,10 @@ evaluating the stack belonging to the active scene interval.
 
 **Result**: Full workflow in one click!
 
-The project Properties panel also controls the compiled runtime window. `Fullscreen` and
-`Title` are exported in `[metadata]` and applied by the runtime. `Build > Build Screen Saver
+The project Properties panel also controls the compiled runtime window. `Fullscreen`,
+`Window Size`, and `Title` are exported in `[metadata]` and applied by the runtime. Windowed
+output is a centered, borderless 16:9 window selectable at 1920x1080, 960x540, 480x270, or
+240x135. `Build > Build Screen Saver
 (.scr)` runs the packed build and copies the standalone executable to
 `bin/Release/minimal_intro.scr`. Windows screen savers are executables with a `.scr`
 extension; Windows launches this artifact with `/s`, which forces fullscreen mode.

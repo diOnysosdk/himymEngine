@@ -914,6 +914,19 @@ void RenderProperties(EditorContext* editor) {
             editor->project->runtime_fullscreen = runtime_fullscreen;
             editor->project->modified = true;
         }
+        if (!runtime_fullscreen) {
+            static const char* kWindowSizes[] = {
+                "1920 x 1080", "960 x 540", "480 x 270", "240 x 135"
+            };
+            int size_index = editor->project->runtime_window_divisor == 2 ? 1 :
+                             editor->project->runtime_window_divisor == 4 ? 2 :
+                             editor->project->runtime_window_divisor == 8 ? 3 : 0;
+            if (ImGui::Combo("Window Size", &size_index, kWindowSizes, 4)) {
+                editor->project->runtime_window_divisor = 1 << size_index;
+                editor->project->modified = true;
+            }
+            ImGui::TextDisabled("Windowed runtime is borderless and centered.");
+        }
         char runtime_title[128] = {};
         strncpy_s(runtime_title, sizeof(runtime_title), editor->project->runtime_title, _TRUNCATE);
         if (ImGui::InputText("Title", runtime_title, sizeof(runtime_title))) {

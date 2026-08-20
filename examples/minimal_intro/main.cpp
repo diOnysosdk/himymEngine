@@ -1712,6 +1712,7 @@ struct RuntimePlaybackSettings {
     bool music_loop;
     bool music_persist_across_scenes;
     bool runtime_fullscreen;
+    int runtime_window_divisor;
     char runtime_title[128];
     rev::runtime::AudioEffects audio_effects;
 };
@@ -1723,6 +1724,7 @@ bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* sett
     settings->music_loop = false;
     settings->music_persist_across_scenes = false;
     settings->runtime_fullscreen = true;
+    settings->runtime_window_divisor = 1;
     strncpy_s(settings->runtime_title, sizeof(settings->runtime_title), "HiMYM - Minimal Intro Test", _TRUNCATE);
     rev::runtime::InitializeAudioEffects(&settings->audio_effects);
 
@@ -1763,6 +1765,12 @@ bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* sett
             found = true;
         } else if (sscanf_s(s, "runtime_fullscreen=%d", &bool_value) == 1) {
             settings->runtime_fullscreen = (bool_value != 0);
+            found = true;
+        } else if (sscanf_s(s, "runtime_window_divisor=%d", &settings->runtime_window_divisor) == 1) {
+            if (settings->runtime_window_divisor != 1 && settings->runtime_window_divisor != 2 &&
+                settings->runtime_window_divisor != 4 && settings->runtime_window_divisor != 8) {
+                settings->runtime_window_divisor = 1;
+            }
             found = true;
         } else if (strncmp(s, "runtime_title=", 14) == 0) {
             char* title = s + 14;
@@ -2975,9 +2983,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     
     // Create window and OpenGL context
     rev::platform::WindowConfig config;
-    config.width = 1920;
-    config.height = 1080;
     config.fullscreen = playback_settings.runtime_fullscreen || screen_saver_mode;
+    const int window_divisor = config.fullscreen ? 1 : playback_settings.runtime_window_divisor;
+    config.width = 1920 / window_divisor;
+    config.height = 1080 / window_divisor;
+    config.borderless = !config.fullscreen;
     config.title = playback_settings.runtime_title;
     
     rev::platform::Window* window = rev::platform::CreateIntroWindow(config);

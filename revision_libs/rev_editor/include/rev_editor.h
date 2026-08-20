@@ -279,6 +279,7 @@ struct ProjectData {
     bool  loop_music;           // true = loop active XM cue playback
     bool  music_persist_across_scenes; // true = keep current track across scene cuts unless a different cue track becomes active
     bool  runtime_fullscreen;   // true = launch compiled intro fullscreen
+    int   runtime_window_divisor; // windowed output: 1, 2, 4, or 8 relative to 1920x1080
     char  runtime_title[128];   // title shown by the compiled runtime window
     AudioEffects audio_effects;
 };

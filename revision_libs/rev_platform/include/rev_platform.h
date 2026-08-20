@@ -13,6 +13,7 @@ struct WindowConfig {
     int width = 1920;
     int height = 1080;
     bool fullscreen = true;
+    bool borderless = false;
     const char* title = "Intro";
 };
 

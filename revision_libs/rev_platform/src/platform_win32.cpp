@@ -72,11 +72,11 @@ Window* CreateIntroWindow(const WindowConfig& config) {
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     RegisterClassEx(&wc);
     
-    // Window style — fullscreen uses WS_POPUP (no border/titlebar), windowed uses WS_OVERLAPPEDWINDOW.
+    // Fullscreen and authored borderless windows use WS_POPUP (no border/titlebar).
     // Window size matches config.width/height; glViewport in the render loop explicitly sets the
     // GL viewport to config.width x config.height each frame so render proportions always match
     // the preview FBO (also 1920×1080).
-    DWORD style = config.fullscreen ? WS_POPUP : WS_OVERLAPPEDWINDOW;
+    DWORD style = (config.fullscreen || config.borderless) ? WS_POPUP : WS_OVERLAPPEDWINDOW;
     int x = config.fullscreen ? 0 : CW_USEDEFAULT;
     int y = config.fullscreen ? 0 : CW_USEDEFAULT;
     int width  = config.width;
@@ -87,6 +87,9 @@ Window* CreateIntroWindow(const WindowConfig& config) {
         // display regardless of the configured render resolution.
         width  = GetSystemMetrics(SM_CXSCREEN);
         height = GetSystemMetrics(SM_CYSCREEN);
+    } else if (config.borderless) {
+        x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
+        y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
     }
 
     window->win_width  = width;

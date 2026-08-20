@@ -1321,6 +1321,7 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->project->loop_music = false;
     editor->project->music_persist_across_scenes = false;
     editor->project->runtime_fullscreen = true;
+    editor->project->runtime_window_divisor = 1;
     strncpy_s(editor->project->runtime_title, sizeof(editor->project->runtime_title), "HiMYM - Minimal Intro Test", _TRUNCATE);
     rev::runtime::InitializeAudioEffects(&editor->project->audio_effects);
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
@@ -1648,6 +1649,13 @@ bool LoadProject(EditorContext* editor, const char* path) {
         if (strstr(start, "\"runtime_title\":")) {
             ParseJsonStringValue(start, editor->project->runtime_title,
                                  sizeof(editor->project->runtime_title));
+            continue;
+        }
+        if (sscanf_s(start, "\"runtime_window_divisor\": %d", &editor->project->runtime_window_divisor) == 1) {
+            if (editor->project->runtime_window_divisor != 1 && editor->project->runtime_window_divisor != 2 &&
+                editor->project->runtime_window_divisor != 4 && editor->project->runtime_window_divisor != 8) {
+                editor->project->runtime_window_divisor = 1;
+            }
             continue;
         }
         if (strstr(start, "\"pipeline_name\":")) {
@@ -3233,6 +3241,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
     char escaped_runtime_title[256] = {};
     JsonEscapeString(editor->project->runtime_title, escaped_runtime_title, sizeof(escaped_runtime_title));
     fprintf(f, "  \"runtime_fullscreen\": %d,\n", editor->project->runtime_fullscreen ? 1 : 0);
+    fprintf(f, "  \"runtime_window_divisor\": %d,\n", editor->project->runtime_window_divisor);
     fprintf(f, "  \"runtime_title\": \"%s\",\n", escaped_runtime_title);
     fprintf(f, "  \"audio_gain_enabled\": %d,\n", editor->project->audio_effects.gain_enabled);
     fprintf(f, "  \"audio_gain_db\": %.3f,\n", editor->project->audio_effects.gain_db);
@@ -3946,6 +3955,7 @@ bool NewProject(EditorContext* editor) {
     editor->project->loop_music = false;
     editor->project->music_persist_across_scenes = false;
     editor->project->runtime_fullscreen = true;
+    editor->project->runtime_window_divisor = 1;
     strncpy_s(editor->project->runtime_title, sizeof(editor->project->runtime_title), "HiMYM - Minimal Intro Test", _TRUNCATE);
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
@@ -4659,6 +4669,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     int music_loop_setting = 0;
     int music_persist_setting = 0;
     int runtime_fullscreen_setting = 1;
+    int runtime_window_divisor_setting = 1;
     char runtime_title_setting[128] = "HiMYM - Minimal Intro Test";
     AudioEffects audio_effects = {};
     rev::runtime::InitializeAudioEffects(&audio_effects);
@@ -4697,6 +4708,8 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             } else if (sscanf_s(start, "music_persist=%d", &music_persist_setting) == 1) {
                 // parsed below
             } else if (sscanf_s(start, "runtime_fullscreen=%d", &runtime_fullscreen_setting) == 1) {
+                // parsed below
+            } else if (sscanf_s(start, "runtime_window_divisor=%d", &runtime_window_divisor_setting) == 1) {
                 // parsed below
             } else if (strncmp(start, "runtime_title=", 14) == 0) {
                 strncpy_s(runtime_title_setting, sizeof(runtime_title_setting), start + 14, _TRUNCATE);
@@ -5290,6 +5303,11 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         editor->project->loop_music = (music_loop_setting != 0);
         editor->project->music_persist_across_scenes = (music_persist_setting != 0);
         editor->project->runtime_fullscreen = (runtime_fullscreen_setting != 0);
+        editor->project->runtime_window_divisor = runtime_window_divisor_setting;
+        if (editor->project->runtime_window_divisor != 1 && editor->project->runtime_window_divisor != 2 &&
+            editor->project->runtime_window_divisor != 4 && editor->project->runtime_window_divisor != 8) {
+            editor->project->runtime_window_divisor = 1;
+        }
         strncpy_s(editor->project->runtime_title, sizeof(editor->project->runtime_title), runtime_title_setting, _TRUNCATE);
         editor->project->audio_effects = audio_effects;
     }
@@ -6065,6 +6083,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     fprintf(f, "music_loop=%d\n", editor->project->loop_music ? 1 : 0);
     fprintf(f, "music_persist=%d\n", editor->project->music_persist_across_scenes ? 1 : 0);
     fprintf(f, "runtime_fullscreen=%d\n", editor->project->runtime_fullscreen ? 1 : 0);
+    fprintf(f, "runtime_window_divisor=%d\n", editor->project->runtime_window_divisor);
     fprintf(f, "runtime_title=%s\n", editor->project->runtime_title);
     fprintf(f, "audio_gain_enabled=%d\n", editor->project->audio_effects.gain_enabled);
     fprintf(f, "audio_gain_db=%.3f\n", editor->project->audio_effects.gain_db);
