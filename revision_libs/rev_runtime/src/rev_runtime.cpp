@@ -1318,6 +1318,14 @@ bool CreateTextGlyphAtlas(const char* font_name, float size, TextGlyphAtlas* atl
     return atlas->texture_id != 0;
 }
 
+float ComputeTextViewportScale(float viewport_width, float viewport_height)
+{
+    if (viewport_width <= 0.0f || viewport_height <= 0.0f) return 1.0f;
+    const float scale_x = viewport_width / 1920.0f;
+    const float scale_y = viewport_height / 1080.0f;
+    return scale_x < scale_y ? scale_x : scale_y;
+}
+
 float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
                               int direction, float size_scale, float spacing,
                               float wrap_gap, float viewport_width,

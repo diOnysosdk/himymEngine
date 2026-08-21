@@ -43,6 +43,12 @@ Treat current code and CMake files as authoritative. Before relying on material 
 - Packed shader sources are project-specific: `rev_pack` emits only fullscreen and enabled asset-shader preset IDs referenced by the exported cues, plus preset 0 as the no-cue fallback. The editor and file-based runtime keep the universal preset registry.
 - Packed post-effect GLSL is also project-specific. Collect enabled effect types from global, scene-layer, image, animated-sprite, and pixel rows; preserve the universal shader only for editor/file playback and older packed shader manifests.
 - Maintain editor/runtime OpenGL-state parity, especially VAO binding, depth writes, blending, and opaque/transparent ordering.
+- Shader-pipeline cue opacity is a compositor contract, not a GLSL contract:
+  multiply the evaluated opacity curve by the cue fade envelope in preview and
+  runtime, and alpha-composite a partially opaque bottom layer against black.
+- Shader text and scrolling text use a 1920x1080 authored pixel canvas. Scale
+  glyph metrics, pixel speed, and atlas travel uniformly by the smaller
+  viewport axis while keeping normalized anchors unchanged.
 - Load post-OpenGL-1.1 functions with `wglGetProcAddress`.
 - Declare every WGL-loaded OpenGL function pointer with `APIENTRY`. The normal
   x64 ABI can hide a missing calling convention, but Crinkler's x86 runtime
@@ -56,6 +62,12 @@ Treat current code and CMake files as authoritative. Before relying on material 
 - Scope Crinkler reuse layouts to the current packed manifests. Regenerate the
   layout when assets or feature flags change, and keep every initialized part
   below Crinkler's 64 KiB uncompressed limit.
+- The editor exposes 64 KiB, 128 KiB, and custom final-size budgets separately
+  from Crinkler's per-part 64 KiB limit. Refuse to link while the existing
+  competition executable is locked, with an actionable close-process error.
+- Avoid `std::call_once` in Crinkler-linked graphics libraries when its Win32
+  InitOnce forwarding creates import cycles; competition playback is
+  single-threaded, so a direct guarded loader is sufficient there.
 
 ## Runtime constraints
 

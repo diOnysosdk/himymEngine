@@ -22,6 +22,12 @@ regenerated when packed manifests change.
 
 Do not duplicate shared types or texture helpers. Preserve `curve_* == -1`, GDI+ requirements, modern GL loading through `wglGetProcAddress`, GL state restoration, and cue-driven XM startup. Avoid speculative abstractions and report meaningful binary/dependency costs.
 
+Composite Shadertoy pipelines with the evaluated opacity curve multiplied by
+the cue fade envelope. A partially opaque first layer must alpha-blend against
+the cleared scene instead of only writing reduced alpha. Treat shader-text and
+scrolling-text pixel values as authored at 1920x1080 and scale them uniformly
+to the runtime viewport without moving normalized anchors.
+
 For interactive navigation, preserve the originating menu as explicit session
 state. Menu scenes loop until activation or exit; destinations return to that
 origin on authored scene expiry or non-looping XM completion. Treat sprite

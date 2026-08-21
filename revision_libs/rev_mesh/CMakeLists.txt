@@ -16,6 +16,10 @@ target_link_libraries(rev_mesh PRIVATE
     rev_runtime
 )
 
+if(HIMYM_CRINKLER_EXECUTABLE)
+    target_compile_definitions(rev_mesh PRIVATE HIMYM_CRINKLER_BUILD)
+endif()
+
 # Size optimization
 if(MSVC)
     target_compile_options(rev_mesh PRIVATE /W4)

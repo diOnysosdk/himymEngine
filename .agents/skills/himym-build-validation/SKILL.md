@@ -22,4 +22,8 @@ changes: smoke-test repeated WGL calls in the x86 executable because missing
 `APIENTRY` annotations are invisible on x64 and typically fail as flicker,
 black output, or a delayed crash.
 
+Exercise the selected 64 KiB, 128 KiB, or custom final-size budget independently
+from the per-part 64 KiB reuse constraint. If the competition output is running,
+expect the wrapper to fail before linking with a close-the-process diagnostic.
+
 Use commands in root `AGENTS.md`. Do not delete build directories or regenerate unrelated outputs merely to get a clean result.

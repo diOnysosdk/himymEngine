@@ -2,7 +2,9 @@
 #include <cstring>
 #include <cmath>
 #include <vector>
+#ifndef HIMYM_CRINKLER_BUILD
 #include <mutex>
+#endif
 
 // Forward declare OpenGL functions
 typedef unsigned int GLuint;
@@ -50,21 +52,35 @@ static PFNGLDELETEBUFFERSPROC glDeleteBuffers = nullptr;
 // Load GL functions
 #include <windows.h>
 
-static void LoadGLFunctions() {
-    static std::once_flag g_mesh_gl_load_once;
-    std::call_once(g_mesh_gl_load_once, []() {
-        glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)wglGetProcAddress("glGenVertexArrays");
-        glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
-        glGenBuffers = (PFNGLGENBUFFERSPROC)wglGetProcAddress("glGenBuffers");
-        glBindBuffer = (PFNGLBINDBUFFERPROC)wglGetProcAddress("glBindBuffer");
-        glBufferData = (PFNGLBUFFERDATAPROC)wglGetProcAddress("glBufferData");
-        glEnableVertexAttribArray = (PFNGLENABLEVERTEXATTRIBARRAYPROC)wglGetProcAddress("glEnableVertexAttribArray");
-        glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC)wglGetProcAddress("glVertexAttribPointer");
-        glDeleteVertexArrays = (PFNGLDELETEVERTEXARRAYSPROC)wglGetProcAddress("glDeleteVertexArrays");
-        glDeleteBuffers = (PFNGLDELETEBUFFERSPROC)wglGetProcAddress("glDeleteBuffers");
+#ifndef HIMYM_CRINKLER_BUILD
+static std::once_flag g_mesh_gl_load_once;
+#endif
+static bool g_mesh_gl_load_attempted = false;
 
-        // Note: glDrawElements is core OpenGL 1.1, loaded from opengl32.lib via <gl/gl.h>
-    });
+static void LoadGLFunctionsDirect() {
+    glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)wglGetProcAddress("glGenVertexArrays");
+    glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
+    glGenBuffers = (PFNGLGENBUFFERSPROC)wglGetProcAddress("glGenBuffers");
+    glBindBuffer = (PFNGLBINDBUFFERPROC)wglGetProcAddress("glBindBuffer");
+    glBufferData = (PFNGLBUFFERDATAPROC)wglGetProcAddress("glBufferData");
+    glEnableVertexAttribArray = (PFNGLENABLEVERTEXATTRIBARRAYPROC)wglGetProcAddress("glEnableVertexAttribArray");
+    glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC)wglGetProcAddress("glVertexAttribPointer");
+    glDeleteVertexArrays = (PFNGLDELETEVERTEXARRAYSPROC)wglGetProcAddress("glDeleteVertexArrays");
+    glDeleteBuffers = (PFNGLDELETEBUFFERSPROC)wglGetProcAddress("glDeleteBuffers");
+    g_mesh_gl_load_attempted = true;
+
+    // glDrawElements is core OpenGL 1.1, loaded from opengl32.lib via <gl/gl.h>.
+}
+
+static void LoadGLFunctions() {
+#ifdef HIMYM_CRINKLER_BUILD
+    // Competition playback initializes and renders on one thread. Avoid
+    // std::call_once because its InitOnceBeginInitialize import enters an
+    // API-set forwarding cycle in Crinkler 3.0b.
+    if (!g_mesh_gl_load_attempted) LoadGLFunctionsDirect();
+#else
+    std::call_once(g_mesh_gl_load_once, LoadGLFunctionsDirect);
+#endif
 }
 
 namespace rev {

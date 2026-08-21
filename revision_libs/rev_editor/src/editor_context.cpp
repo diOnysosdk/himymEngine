@@ -8021,8 +8021,18 @@ static bool RenderPreviewPipeline(EditorContext* editor, int pipeline_index, flo
     PreviewPipelinePassState& image = state.passes[rev::runtime::ShaderPassImage];
     glBindFramebuffer(0x8D40, editor->preview_fbo);
     glViewport(0, 0, editor->preview_width, editor->preview_height);
-    if (blend_layer) { glEnable(GL_BLEND); ApplyShaderLayerBlendMode(blend_mode, opacity); }
-    else glDisable(GL_BLEND);
+    if (blend_layer) {
+        glEnable(GL_BLEND);
+        ApplyShaderLayerBlendMode(blend_mode, opacity);
+    } else if (opacity < 0.9999f) {
+        // The bottom pipeline layer is drawn over the cleared scene. It still
+        // needs alpha compositing for cue opacity and fade envelopes to affect
+        // RGB; writing a reduced source alpha with blending disabled does not.
+        glEnable(GL_BLEND);
+        ApplyShaderLayerBlendMode(0, opacity);
+    } else {
+        glDisable(GL_BLEND);
+    }
     rev::shader::Program* sprite = (rev::shader::Program*)editor->sprite_shader;
     rev::shader::Use(sprite);
     rev::shader::SetVec2(sprite, rev::shader::GetUniformLocation(sprite, "u_position"), 0, 0);
@@ -8169,16 +8179,18 @@ static void DrawPreviewShaderText(rev::shader::Program* program, const ShaderTex
     float local = time - cue.cue_start, alpha = cue.opacity;
     if (cue.fade_in > 0.0f && local < cue.fade_in) alpha *= local / cue.fade_in;
     if (cue.fade_out > 0.0f && cue.cue_end - time < cue.fade_out) alpha *= (cue.cue_end - time) / cue.fade_out;
-    float glyph_width = cue.size * 5.0f / 7.0f;
-    float advance = cue.size * 6.0f / 7.0f * (cue.spacing > 0.01f ? cue.spacing : 0.01f);
+    const float viewport_scale = rev::runtime::ComputeTextViewportScale(width, height);
+    const float glyph_height = cue.size * viewport_scale;
+    float glyph_width = glyph_height * 5.0f / 7.0f;
+    float advance = glyph_height * 6.0f / 7.0f * (cue.spacing > 0.01f ? cue.spacing : 0.01f);
     size_t length = strlen(cue.text);
     float text_width = length ? advance * (float)length - advance + glyph_width : 0.0f;
     float cursor = cue.x * width;
     if (cue.mode == 0) cursor -= cue.alignment == 1 ? text_width * 0.5f : cue.alignment == 2 ? text_width : 0.0f;
-    else { float travel = width + text_width, moved = local * cue.speed; if (cue.loop_mode == 0 && travel > 0.0f) moved = fmodf(moved, travel); else if (moved > travel) moved = travel; cursor = cue.direction == 1 ? -text_width + moved : width - moved; }
+    else { float travel = width + text_width, moved = local * cue.speed * viewport_scale; if (cue.loop_mode == 0 && travel > 0.0f) moved = fmodf(moved, travel); else if (moved > travel) moved = travel; cursor = cue.direction == 1 ? -text_width + moved : width - moved; }
     rev::shader::Use(program);
     int up = rev::shader::GetUniformLocation(program, "u_position");
-    rev::shader::SetVec2(program, rev::shader::GetUniformLocation(program, "u_size"), glyph_width / width, cue.size / height);
+    rev::shader::SetVec2(program, rev::shader::GetUniformLocation(program, "u_size"), glyph_width / width, glyph_height / height);
     rev::shader::SetVec4(program, rev::shader::GetUniformLocation(program, "u_color"), cue.color.r, cue.color.g, cue.color.b, alpha);
     int rows[7]; for (int r = 0; r < 7; ++r) { char name[16]; sprintf_s(name, "u_rows[%d]", r); rows[r] = rev::shader::GetUniformLocation(program, name); }
     for (size_t i = 0; i < length; ++i, cursor += advance) {
@@ -8637,6 +8649,7 @@ void RenderPreviewFrame(EditorContext* editor) {
             }
 
             float envelope = ComputeShaderCueEnvelope(local_time, cue_duration, cue->fade_in, cue->fade_out);
+            float composite_opacity = Clamp01(opacity * envelope);
             float exposure = exposure_base + exposure_ramp * local_time;
             float fade = (fade_base + fade_ramp * local_time) * envelope;
             if (exposure < 0.0f) exposure = 0.0f;
@@ -8655,7 +8668,7 @@ void RenderPreviewFrame(EditorContext* editor) {
             if (cue->shader_pipeline_index >= 0 &&
                 RenderPreviewPipeline(editor, cue->shader_pipeline_index, editor->current_time,
                                       1.0f / 60.0f, (int)(editor->current_time * 60.0f),
-                                      li != 0, cue->blend_mode, opacity)) {
+                                      li != 0, cue->blend_mode, composite_opacity)) {
                 continue;
             }
 
@@ -9699,7 +9712,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float scene_time = editor->current_time - item.scene_start_time;
                     rev::runtime::TextGlyphAtlas* atlas = EnsurePreviewAtlas(editor, true,
                         cue->font_name, cue->size);
-                    float size_scale = cue->size > 0.0f ? anim_size / cue->size : 1.0f;
+                    const float viewport_text_scale = rev::runtime::ComputeTextViewportScale(
+                        (float)editor->preview_width, (float)editor->preview_height);
+                    float size_scale = (cue->size > 0.0f ? anim_size / cue->size : 1.0f) *
+                        viewport_text_scale;
                     float travel = rev::runtime::ComputeScrollTextTravel(
                         atlas, cue->text, cue->direction, size_scale, cue->spacing,
                         cue->wrap_gap, (float)editor->preview_width,
@@ -9760,7 +9776,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (atlas && glActiveTexture_fn) glActiveTexture_fn(0x84C0);
                     if (atlas && DrawPreviewGlyphRun(sprite_prog, atlas, scroll_text_buffer,
                         scroll_x - jitter_x, scroll_y - jitter_y - wave_offset,
-                        cue->size > 0.0f ? effective_size / cue->size : 1.0f,
+                        (cue->size > 0.0f ? effective_size / cue->size : 1.0f) * viewport_text_scale,
                         cue->spacing, scroll_opacity,
                         draw_r, draw_g, draw_b,
                         (float)editor->preview_width, (float)editor->preview_height,

@@ -173,6 +173,12 @@ and performs no category-size check. On a fresh build tree it bootstraps a
 reuse file and, when required, distributes code sections across four parts so
 no Crinkler part exceeds its 64 KiB uncompressed limit.
 
+The selected 64 KiB, 128 KiB, or custom budget limits the final executable;
+it does not change Crinkler's separate 64 KiB ceiling for each initialized
+reuse part. If `minimal_intro_competition.exe` is still running, the wrapper
+stops before linking with an explicit instruction to close the intro (or a
+stale `crinkler.exe`) instead of emitting a long linker error cascade.
+
 Crinkler builds require CMake 3.29 or newer, the Visual Studio 2022 Win32
 compiler components, and an SSE4.2-capable competition machine. They use the
 `INTRO` profile without `/GL` or `/LTCG`, because Crinkler consumes ordinary
@@ -184,6 +190,9 @@ XM-enabled competition builds compile libxm as ordinary COFF instead of LTCG
 and link WinMM explicitly because Crinkler does not consume embedded
 `/DEFAULTLIB` directives. The reuse layout is regenerated whenever the packed
 assets or feature manifest changes, including when switching projects.
+The mesh library also avoids `std::call_once` in the single-threaded Crinkler
+configuration because the associated Win32 InitOnce API forwarding can create
+an import cycle; supported x64 builds retain the thread-safe loader.
 
 All functions loaded with `wglGetProcAddress` must use pointer types declared
 with `APIENTRY`. Windows x64 has one calling convention and can hide this bug;

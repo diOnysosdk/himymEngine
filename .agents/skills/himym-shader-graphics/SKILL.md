@@ -17,4 +17,10 @@ description: Implement or review HiMYM rendering and visual-content systems. Use
 8. Build the affected target and visually verify both normal x64 and optional
    Crinkler x86 artifacts when competition rendering is in scope.
 
+Shadertoy pipeline opacity is applied by the final compositor: use the
+evaluated cue opacity times its fade envelope, and alpha-blend a partial bottom
+layer over black. Project GLSL is not required to declare an opacity uniform.
+For Crinkler-only single-threaded GL loaders, prefer a small guarded direct load
+when `std::call_once` introduces Win32 InitOnce/API-set import cycles.
+
 Favor direct, packer-friendly rendering code. Do not add a generic renderer, scene graph, runtime plugin architecture, or heavyweight material system.

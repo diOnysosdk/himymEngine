@@ -19,6 +19,9 @@ Competition Size Build is optional and must build/copy the supported normal
 x64 packed artifact before attempting Crinkler x86. Project asset or feature
 changes must invalidate the competition reuse layout; a competition failure
 must never remove or replace the normal output.
+Keep the 64 KiB, 128 KiB, and custom output budgets distinct from Crinkler's
+64 KiB uncompressed-part ceiling. Detect a locked competition executable before
+linking and tell the author to close the running intro or stale linker process.
 
 Do not redefine shared cues. Initialize new fields deliberately, preserve copied-asset cleanup coverage, keep save -> export -> pack -> build -> launch explicit, and avoid generalized UI frameworks or new dependencies.
 

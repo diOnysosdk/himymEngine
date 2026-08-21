@@ -2230,8 +2230,10 @@ static void DrawShaderText(rev::shader::Program* program, const ShaderTextCue& c
     if (cue.fade_out > 0.0f && remaining < cue.fade_out) alpha *= remaining / cue.fade_out;
     if (alpha <= 0.0f) return;
     const size_t length = strlen(cue.text);
-    const float glyph_width = cue.size * (5.0f / 7.0f);
-    const float advance = cue.size * (6.0f / 7.0f) * (cue.spacing > 0.01f ? cue.spacing : 0.01f);
+    const float viewport_scale = rev::runtime::ComputeTextViewportScale(viewport_width, viewport_height);
+    const float glyph_height = cue.size * viewport_scale;
+    const float glyph_width = glyph_height * (5.0f / 7.0f);
+    const float advance = glyph_height * (6.0f / 7.0f) * (cue.spacing > 0.01f ? cue.spacing : 0.01f);
     const float text_width = length ? advance * (float)length - (advance - glyph_width) : 0.0f;
     float cursor = cue.x * viewport_width;
     if (cue.mode == 0) {
@@ -2239,7 +2241,7 @@ static void DrawShaderText(rev::shader::Program* program, const ShaderTextCue& c
         else if (cue.alignment == 2) cursor -= text_width;
     } else {
         const float travel = viewport_width + text_width;
-        float moved = local * cue.speed;
+        float moved = local * cue.speed * viewport_scale;
         if (cue.loop_mode == 0 && travel > 0.0f) moved = fmodf(moved, travel);
         else if (moved > travel) moved = travel;
         cursor = cue.direction == 1 ? -text_width + moved : viewport_width - moved;
@@ -2248,7 +2250,7 @@ static void DrawShaderText(rev::shader::Program* program, const ShaderTextCue& c
     const int u_position = rev::shader::GetUniformLocation(program, "u_position");
     const int u_size = rev::shader::GetUniformLocation(program, "u_size");
     const int u_color = rev::shader::GetUniformLocation(program, "u_color");
-    rev::shader::SetVec2(program, u_size, glyph_width / viewport_width, cue.size / viewport_height);
+    rev::shader::SetVec2(program, u_size, glyph_width / viewport_width, glyph_height / viewport_height);
     rev::shader::SetVec4(program, u_color, cue.color.r, cue.color.g, cue.color.b, alpha);
     int row_locations[7];
     for (int row = 0; row < 7; ++row) {
@@ -3628,6 +3630,12 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         if (blend_layer) {
             glEnable(GL_BLEND);
             ApplyShaderLayerBlendMode(blend_mode, opacity);
+        } else if (opacity < 0.9999f) {
+            // A reduced source alpha has no visual effect when blending is
+            // disabled. Alpha-composite the bottom pipeline layer so authored
+            // opacity curves and fade envelopes can fade it against black.
+            glEnable(GL_BLEND);
+            ApplyShaderLayerBlendMode(0, opacity);
         } else {
             glDisable(GL_BLEND);
         }
@@ -4971,6 +4979,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 anim_fade = anim_fade + anim_fade_ramp * local_time;
 
                 float envelope = ComputeShaderCueEnvelope(local_time, cue_duration, cue.fade_in, cue.fade_out);
+                float composite_opacity = Clamp01(anim_opacity * envelope);
                 anim_fade *= envelope;
                 if (anim_exposure < 0.0f) anim_exposure = 0.0f;
                 if (anim_fade < 0.0f) anim_fade = 0.0f;
@@ -4987,7 +4996,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
                 if (cue.shader_pipeline_index >= 0 &&
                     render_shader_pipeline(cue.shader_pipeline_index, time, dt, shader_frame,
-                                           li != 0, cue.blend_mode, anim_opacity)) {
+                                           li != 0, cue.blend_mode, composite_opacity)) {
                     continue;
                 }
 
@@ -6285,7 +6294,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         return v;
                     };
 
-                    float size_scale = cue.size > 0.0f ? anim_size / cue.size : 1.0f;
+                    const float viewport_text_scale = rev::runtime::ComputeTextViewportScale(
+                        (float)config.width, (float)config.height);
+                    float size_scale = (cue.size > 0.0f ? anim_size / cue.size : 1.0f) *
+                        viewport_text_scale;
                     float travel = rev::runtime::ComputeScrollTextTravel(
                         &scroll_text_atlases[scroll_idx], cue.text, cue.direction,
                         size_scale, cue.spacing, cue.wrap_gap,
@@ -6350,7 +6362,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         cue.fade_out_start, cue.fade_out_end,
                         time);
                     float opacity = clamp01(anim_opacity * fade_mul * (1.0f + cue.shadow * 0.1f));
-                    float glyph_scale = cue.size > 0.0f ? (anim_size / cue.size) : 1.0f;
+                    float glyph_scale = (cue.size > 0.0f ? (anim_size / cue.size) : 1.0f) *
+                        viewport_text_scale;
 
                     float spacing_mul = (cue.spacing <= 0.01f) ? 0.01f : cue.spacing;
                     float scroll_x = anim_x + dir_x * wrapped + jitter_x + distortion;

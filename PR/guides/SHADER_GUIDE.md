@@ -282,6 +282,11 @@ The owning shader cue controls when and how the pipeline is composited:
 - Fade-in and fade-out envelope
 
 Pipeline GLSL receives project timeline time, not time reset to the cue start.
+Opacity curves and cue fade-in/fade-out are applied universally by the final
+pipeline compositor; custom GLSL does not need to declare an opacity uniform.
+This also applies when the pipeline is the bottom shader layer: partial opacity
+is alpha-composited against the cleared black scene instead of merely reducing
+the framebuffer's stored alpha.
 Use `iTime` directly for globally synchronized animation. Pipeline files do not
 automatically receive preset-only palette, noise, speed, warp, transform, or
 curve uniforms; encode controls in GLSL or use timing/layer controls on the cue.

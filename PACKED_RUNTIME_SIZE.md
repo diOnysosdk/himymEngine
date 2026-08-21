@@ -23,11 +23,23 @@ with `APIENTRY`. This is a competition correctness requirement: missing
 brief shader flicker followed by black output. Shader-pipeline and mesh paths
 must therefore receive an actual x86 playback check, not link-only validation.
 
+The editor's 64 KiB, 128 KiB, and custom choices are final executable budgets,
+independent of Crinkler's 64 KiB uncompressed-part ceiling. The wrapper checks
+that an existing competition executable is writable before linking and reports
+the running/stale process directly. In Crinkler builds, `rev_mesh` uses a small
+single-threaded guarded GL loader rather than `std::call_once` to avoid the
+Win32 InitOnce API-set forwarding cycle; the normal x64 loader remains unchanged.
+
 The 64 KiB uncompressed-part ceiling also applies to data and text. Reuse-file
 partitioning can move independent sections, but cannot split one oversized
 embedded asset section. Very large images, music, meshes, font atlases, or GLSL
 sources remain project-specific risks until packed assets are emitted in
 chunkable sections.
+
+Shader text and scrolling text pixel metrics are authored at 1920x1080. The
+preview and both runtimes scale glyph size, pixel speed, and atlas travel by
+the smaller viewport-axis ratio, preserving normalized placement at 960x540
+and other 16:9 window sizes.
 
 ## Feature mapping
 

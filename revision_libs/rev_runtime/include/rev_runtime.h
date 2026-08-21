@@ -853,6 +853,10 @@ float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
                               float wrap_gap, float viewport_width,
                               float viewport_height, float start_x,
                               float start_y, int loop_mode);
+// Text pixel metrics are authored against the editor's 1920x1080 canvas.
+// Scale them uniformly for smaller runtime framebuffers while normalized
+// anchors remain unchanged.
+float ComputeTextViewportScale(float viewport_width, float viewport_height);
 bool SaveTextGlyphAtlas(const char* font_name, float size,
                         const char* image_path, const char* metadata_path);
 bool LoadTextGlyphAtlasFromMemory(const unsigned char* image_data, size_t image_size,

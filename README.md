@@ -159,6 +159,7 @@ per-library estimates for release planning.
 - **Scene Timeline**: Cue-based sequencing with precise timing
 - **Scene Navigation**: Directional entry wipes and interactive music-disc/diskmag menus with keyboard selection and optional per-menu mouse control
 - **Shader Effects**: Built-in GLSL presets plus project-owned Shadertoy Image/Buffer A-D pipelines with textures, feedback, and XM audio channels
+- **Portable Compositing**: Shadertoy cue opacity curves and fade envelopes work independently of custom GLSL, while text pixel metrics scale from the authored 1920x1080 canvas
 - **3D Rendering**: glTF mesh support with Phong lighting and material slots
 - **Animated Sprites**: Frame-sequence image cues with FPS, loop/once/pingpong playback, and curve-driven frame selection
 - **Sprite Menu Icons**: Reuse one animated-sprite cue across independently positioned menu destinations

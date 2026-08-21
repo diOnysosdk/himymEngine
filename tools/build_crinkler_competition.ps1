@@ -25,6 +25,21 @@ function Invoke-NativeWithExitCode {
     return $LASTEXITCODE
 }
 
+function Assert-OutputFileWritable {
+    param([string]$OutputPath)
+
+    if (-not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) {
+        return
+    }
+    try {
+        $stream = [System.IO.File]::Open($OutputPath, [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $stream.Dispose()
+    } catch {
+        throw "Competition output is locked: $OutputPath. Close a running minimal_intro_competition.exe or stale crinkler.exe process, then build again."
+    }
+}
+
 function Split-CrinklerSectionParts {
     param(
         [string[]]$Lines,
@@ -162,6 +177,8 @@ Invoke-Native cmake @("-S", $repository_root, "-B", $competition_build,
     "-DHIMYM_PACKED_MANIFEST_DIR=$manifest_dir",
     "-DHIMYM_CRINKLER_EXECUTABLE=$CrinklerPath",
     "-DHIMYM_CRINKLER_COMPMODE=$configure_mode")
+$competition_exe = Join-Path $competition_build "bin\$Configuration\minimal_intro_competition.exe"
+Assert-OutputFileWritable $competition_exe
 $build_arguments = @("--build", $competition_build, "--config", $Configuration,
     "--target", "minimal_intro_packed")
 $build_exit_code = Invoke-NativeWithExitCode cmake $build_arguments
@@ -182,7 +199,6 @@ if ($build_exit_code -ne 0) {
 }
 Set-Content -LiteralPath $reuse_fingerprint_file -Value $manifest_fingerprint -Encoding ASCII
 
-$competition_exe = Join-Path $competition_build "bin\$Configuration\minimal_intro_competition.exe"
 if (-not (Test-Path -LiteralPath $competition_exe -PathType Leaf)) {
     throw "Crinkler competition executable was not produced: $competition_exe"
 }

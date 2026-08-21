@@ -59,6 +59,10 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
 - [x] Audit 2D/3D interleaving for VAO, depth-write, blend, and draw-order parity.
 - [x] Restore sprite UV state after pipeline compositing and keep text/scroll-text
       atlas orientation identical in editor, standalone, and packed playback.
+- [x] Scale shader-text and scrolling-text pixel metrics from the authored
+      1920x1080 canvas while preserving normalized placement at smaller runtimes.
+- [x] Apply Shadertoy pipeline opacity curves and cue fade envelopes in the
+      compositor, including the first/background layer over black.
 - [x] Measure clamp-mode scroll travel from glyph extent and authored start so
       text exits the viewport without whitespace padding.
 - [x] Validate opaque-before-transparent glTF material-slot rendering.
@@ -74,6 +78,8 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
       to its originating menu on scene expiry or non-looping XM completion.
 - [x] Support several independently positioned menu items sharing one
       animated-sprite cue without duplicating its frame assets.
+- [x] Add 64 KiB, 128 KiB, and custom Crinkler output budgets, preflight locked
+      competition outputs, and avoid the mesh InitOnce import cycle on x86.
 
 Exit criteria:
 
