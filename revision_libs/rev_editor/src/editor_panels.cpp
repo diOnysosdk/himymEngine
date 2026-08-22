@@ -2022,6 +2022,16 @@ void RenderProperties(EditorContext* editor) {
                     }
                     DrawCueParameterClipboardButtons(editor, scene, CueTypeShaderText, i);
                     ImGui::SameLine();
+                    if (ImGui::SmallButton("+")) {
+                        ShaderTextCue cue = scene->shader_text_cues[i];
+                        int new_index = AddShaderTextCue(scene, cue);
+                        editor->editing_shader_text = scene->shader_text_cues[new_index];
+                        editor->selected_cue_index = new_index;
+                        editor->selected_cue_type = CueTypeShaderText;
+                        editor->shader_text_modal_request_open = true;
+                        editor->project->modified = true;
+                    }
+                    ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {
                         DeleteShaderTextCue(scene, i);
                         editor->project->modified = true;

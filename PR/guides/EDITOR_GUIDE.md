@@ -32,6 +32,8 @@ font assets, emitter visual source, or mesh asset/type. Assigned curves are
 duplicated, so editing a pasted cue's curve does not change the source cue.
 Asset Shader rows inside Image, Animated Sprite, and Pixel cue modals also have
 a **+** button that duplicates the shader preset and all of its current settings.
+Shader Text Cue rows have the same **+** duplication control as other visual
+cue rows; the copy opens immediately so its text or animation can be adjusted.
 
 **Walkthrough of the native C++17/ImGui scene authoring tool**
 
