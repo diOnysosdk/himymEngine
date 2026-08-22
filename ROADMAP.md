@@ -67,6 +67,8 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
       and smaller windowed runtimes such as 960x540.
 - [x] Apply Shadertoy pipeline opacity curves and cue fade envelopes in the
       compositor, including the first/background layer over black.
+- [x] Add same-type parameter copy/paste for all visual asset cues while
+      preserving destination content and independently cloning curves.
 - [x] Measure clamp-mode scroll travel from glyph extent and authored start so
       text exits the viewport without whitespace padding.
 - [x] Validate opaque-before-transparent glTF material-slot rendering.

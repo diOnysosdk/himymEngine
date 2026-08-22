@@ -175,6 +175,8 @@ per-library estimates for release planning.
 - **Shader Modal**: Preset tuning and validated Shadertoy multipass graph authoring with portable project assets
 - **Animated Sprite Modal**: Single-frame or automatically discovered numbered-sequence importing, playback controls, and per-parameter curves
 - **Curve Editor**: Visual animation curve creation and manipulation
+- **Cue Parameter Clipboard**: Copy timing, fades, transforms, colors, effects,
+  shaders, and curves between same-type visual cues while keeping destination content
 - **Asset Browser**: Browse and organize meshes, textures, and audio
 - **Live Preview**: See changes in real-time during authoring
 - **Export Pipeline**: One-click export to runtime-ready format

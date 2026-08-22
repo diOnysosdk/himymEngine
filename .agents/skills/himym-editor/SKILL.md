@@ -27,6 +27,12 @@ Preview image cues use 1920x1080-authored source-pixel dimensions and normalized
 
 Shader Text Cue curve buttons cover X, Y, height, RGB, opacity, spacing, and scroll speed. Persist every assignment through JSON and append it to the backward-compatible cues.txt row.
 
+The same-type cue parameter clipboard supports Image, Animated Sprite, Pixel,
+Pixel Emitter, Text, Scroll Text, Shader Text, and Mesh cues. Paste keeps the
+destination content/asset identity and deep-clones every assigned direct,
+post-effect, and asset-shader curve so source and destination remain editable
+independently.
+
 Do not redefine shared cues. Initialize new fields deliberately, preserve copied-asset cleanup coverage, keep save -> export -> pack -> build -> launch explicit, and avoid generalized UI frameworks or new dependencies.
 
 For menu authoring, keep ImGui IDs stable while labels are edited. Preserve

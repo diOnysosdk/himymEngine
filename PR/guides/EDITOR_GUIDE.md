@@ -23,6 +23,14 @@ cue start and behave the same in editor preview, standalone playback, and
 packed playback. Older project and `cues.txt` rows load with these assignments
 unassigned.
 
+Each Image, Animated Sprite, Pixel, Pixel Emitter, Text, Scroll Text, Shader
+Text, and Mesh row has **C** (copy parameters) and **P** (paste parameters)
+buttons. Copy a source row, then press **P** on another row of the same type.
+Paste transfers timing, fades, transforms, colors, shaders, effects, and other
+type-specific settings while preserving the destination image, frames, text,
+font assets, emitter visual source, or mesh asset/type. Assigned curves are
+duplicated, so editing a pasted cue's curve does not change the source cue.
+
 **Walkthrough of the native C++17/ImGui scene authoring tool**
 
 ## Overview

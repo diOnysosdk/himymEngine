@@ -10,6 +10,248 @@ namespace editor {
 
 namespace {
 
+struct CueParameterClipboard {
+    int cue_type = -1;
+    ImageCue image = {};
+    AnimatedSpriteCue animated_sprite = {};
+    PixelCue pixel = {};
+    PixelEmitterCue emitter = {};
+    TextCue text = {};
+    ScrollTextCue scroll_text = {};
+    ShaderTextCue shader_text = {};
+    MeshCue mesh = {};
+};
+
+static CueParameterClipboard g_cue_parameter_clipboard;
+
+static int CloneClipboardCurve(ProjectData* project, int source_index,
+                               int cloned_indices[rev::runtime::kMaxCurves], bool* failed)
+{
+    if (source_index < 0) return -1;
+    if (!project || source_index >= project->curve_count) return -1;
+    if (cloned_indices[source_index] >= -1) return cloned_indices[source_index];
+    if (project->curve_count >= rev::runtime::kMaxCurves) {
+        if (failed) *failed = true;
+        cloned_indices[source_index] = -1;
+        return -1;
+    }
+
+    const rev::curve::Curve& source = project->curves[source_index];
+    const int destination_index = project->curve_count++;
+    rev::curve::Curve& destination = project->curves[destination_index];
+    destination = rev::curve::CreateCurve(source.point_count > 0 ? source.point_count : 2);
+    destination.duration = source.duration;
+    destination.wrap_mode = source.wrap_mode;
+    for (int point_index = 0; point_index < source.point_count; ++point_index)
+        rev::curve::AddPoint(destination, source.points[point_index]);
+    cloned_indices[source_index] = destination_index;
+    return destination_index;
+}
+
+static void CloneClipboardCurveFields(ProjectData* project, int** fields, int field_count,
+                                      int cloned_indices[rev::runtime::kMaxCurves], bool* failed)
+{
+    for (int i = 0; i < field_count; ++i)
+        *fields[i] = CloneClipboardCurve(project, *fields[i], cloned_indices, failed);
+}
+
+static void CloneClipboardEffectCurves(ProjectData* project, LayerPostEffect* effects,
+                                       int effect_count, int cloned_indices[rev::runtime::kMaxCurves],
+                                       bool* failed)
+{
+    for (int i = 0; i < effect_count; ++i) {
+        int* fields[] = {
+            &effects[i].curve_intensity, &effects[i].curve_threshold, &effects[i].curve_radius,
+            &effects[i].curve_color_r, &effects[i].curve_color_g, &effects[i].curve_color_b,
+            &effects[i].curve_color_a, &effects[i].curve_amount
+        };
+        CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, failed);
+    }
+}
+
+static void CloneClipboardShaderCurves(ProjectData* project, AssetShader* shaders,
+                                       int shader_count, int cloned_indices[rev::runtime::kMaxCurves],
+                                       bool* failed)
+{
+    for (int i = 0; i < shader_count; ++i) {
+        int* fields[] = {
+            &shaders[i].curve_speed, &shaders[i].curve_intensity, &shaders[i].curve_warp,
+            &shaders[i].curve_exposure, &shaders[i].curve_fade, &shaders[i].curve_opacity,
+            &shaders[i].curve_exposure_ramp, &shaders[i].curve_fade_ramp,
+            &shaders[i].curve_palette_low_r, &shaders[i].curve_palette_low_g, &shaders[i].curve_palette_low_b,
+            &shaders[i].curve_palette_mid_r, &shaders[i].curve_palette_mid_g, &shaders[i].curve_palette_mid_b,
+            &shaders[i].curve_palette_high_r, &shaders[i].curve_palette_high_g, &shaders[i].curve_palette_high_b
+        };
+        CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, failed);
+    }
+}
+
+static void InitializeClipboardCurveMap(int cloned_indices[rev::runtime::kMaxCurves])
+{
+    for (int i = 0; i < rev::runtime::kMaxCurves; ++i) cloned_indices[i] = -2;
+}
+
+static bool CopySelectedCueParameters(EditorContext* editor, SceneBlock* scene)
+{
+    if (!editor || !scene || editor->selected_cue_index < 0) return false;
+    const int index = editor->selected_cue_index;
+    g_cue_parameter_clipboard.cue_type = editor->selected_cue_type;
+    switch (editor->selected_cue_type) {
+        case CueTypeImage: if (index < scene->image_cue_count) g_cue_parameter_clipboard.image = scene->image_cues[index]; else return false; break;
+        case CueTypeAnimatedSprite: if (index < scene->animated_sprite_cue_count) g_cue_parameter_clipboard.animated_sprite = scene->animated_sprite_cues[index]; else return false; break;
+        case CueTypePixel: if (index < scene->pixel_cue_count) g_cue_parameter_clipboard.pixel = scene->pixel_cues[index]; else return false; break;
+        case CueTypePixelEmitter: if (index < scene->pixel_emitter_cue_count) g_cue_parameter_clipboard.emitter = scene->pixel_emitter_cues[index]; else return false; break;
+        case CueTypeText: if (index < scene->text_cue_count) g_cue_parameter_clipboard.text = scene->text_cues[index]; else return false; break;
+        case CueTypeScrollText: if (index < scene->scroll_text_cue_count) g_cue_parameter_clipboard.scroll_text = scene->scroll_text_cues[index]; else return false; break;
+        case CueTypeShaderText: if (index < scene->shader_text_cue_count) g_cue_parameter_clipboard.shader_text = scene->shader_text_cues[index]; else return false; break;
+        case CueTypeMesh: if (index < scene->mesh_cue_count) g_cue_parameter_clipboard.mesh = scene->mesh_cues[index]; else return false; break;
+        default: g_cue_parameter_clipboard.cue_type = -1; return false;
+    }
+    snprintf(editor->build_status_message, sizeof(editor->build_status_message), "Copied cue parameters");
+    editor->build_status_timer = 3.0f;
+    return true;
+}
+
+static bool PasteSelectedCueParameters(EditorContext* editor, SceneBlock* scene)
+{
+    if (!editor || !editor->project || !scene || editor->selected_cue_index < 0 ||
+        g_cue_parameter_clipboard.cue_type != editor->selected_cue_type) return false;
+    ProjectData* project = editor->project;
+    const int index = editor->selected_cue_index;
+    int cloned_indices[rev::runtime::kMaxCurves];
+    InitializeClipboardCurveMap(cloned_indices);
+    bool curve_clone_failed = false;
+
+    switch (editor->selected_cue_type) {
+        case CueTypeImage: {
+            if (index >= scene->image_cue_count) return false;
+            ImageCue identity = scene->image_cues[index];
+            ImageCue& cue = scene->image_cues[index]; cue = g_cue_parameter_clipboard.image;
+            strcpy_s(cue.asset_key, identity.asset_key); strcpy_s(cue.asset_path, identity.asset_path);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_rotation, &cue.curve_opacity};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            CloneClipboardEffectCurves(project, cue.post_effects, cue.post_effect_count, cloned_indices, &curve_clone_failed);
+            CloneClipboardShaderCurves(project, cue.shaders, cue.shader_count, cloned_indices, &curve_clone_failed);
+            editor->editing_image = cue;
+        } break;
+        case CueTypeAnimatedSprite: {
+            if (index >= scene->animated_sprite_cue_count) return false;
+            AnimatedSpriteCue identity = scene->animated_sprite_cues[index];
+            AnimatedSpriteCue& cue = scene->animated_sprite_cues[index]; cue = g_cue_parameter_clipboard.animated_sprite;
+            strcpy_s(cue.sprite_name, identity.sprite_name); strcpy_s(cue.frame_keys_csv, identity.frame_keys_csv); strcpy_s(cue.frame_paths_csv, identity.frame_paths_csv);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_rotation, &cue.curve_opacity, &cue.curve_frame};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            CloneClipboardEffectCurves(project, cue.post_effects, cue.post_effect_count, cloned_indices, &curve_clone_failed);
+            CloneClipboardShaderCurves(project, cue.shaders, cue.shader_count, cloned_indices, &curve_clone_failed);
+            editor->editing_animated_sprite = cue;
+        } break;
+        case CueTypePixel: {
+            if (index >= scene->pixel_cue_count) return false;
+            PixelCue identity = scene->pixel_cues[index];
+            PixelCue& cue = scene->pixel_cues[index]; cue = g_cue_parameter_clipboard.pixel;
+            strcpy_s(cue.asset_key, identity.asset_key); strcpy_s(cue.asset_path, identity.asset_path);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_rotation, &cue.curve_opacity, &cue.curve_frame, &cue.curve_palette_offset};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            CloneClipboardEffectCurves(project, cue.post_effects, cue.post_effect_count, cloned_indices, &curve_clone_failed);
+            CloneClipboardShaderCurves(project, cue.shaders, cue.shader_count, cloned_indices, &curve_clone_failed);
+            editor->editing_pixel = cue;
+        } break;
+        case CueTypePixelEmitter: {
+            if (index >= scene->pixel_emitter_cue_count) return false;
+            PixelEmitterCue identity = scene->pixel_emitter_cues[index];
+            PixelEmitterCue& cue = scene->pixel_emitter_cues[index]; cue = g_cue_parameter_clipboard.emitter;
+            strcpy_s(cue.asset_key, identity.asset_key); strcpy_s(cue.asset_path, identity.asset_path);
+            cue.visual_source = identity.visual_source; cue.primitive_shape = identity.primitive_shape;
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_rotation, &cue.curve_opacity,
+                &cue.curve_emission_rate, &cue.curve_speed_min, &cue.curve_speed_max, &cue.curve_lifetime_min,
+                &cue.curve_lifetime_max, &cue.curve_scale_min, &cue.curve_scale_max};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            CloneClipboardEffectCurves(project, cue.post_effects, cue.post_effect_count, cloned_indices, &curve_clone_failed);
+            CloneClipboardShaderCurves(project, cue.shaders, cue.shader_count, cloned_indices, &curve_clone_failed);
+            editor->editing_pixel_emitter = cue;
+        } break;
+        case CueTypeText: {
+            if (index >= scene->text_cue_count) return false;
+            TextCue identity = scene->text_cues[index]; TextCue& cue = scene->text_cues[index]; cue = g_cue_parameter_clipboard.text;
+            strcpy_s(cue.text, identity.text); strcpy_s(cue.font_name, identity.font_name);
+            strcpy_s(cue.baked_asset_key, identity.baked_asset_key); strcpy_s(cue.baked_asset_path, identity.baked_asset_path);
+            strcpy_s(cue.glyph_atlas_key, identity.glyph_atlas_key); strcpy_s(cue.glyph_atlas_path, identity.glyph_atlas_path);
+            strcpy_s(cue.glyph_meta_key, identity.glyph_meta_key); strcpy_s(cue.glyph_meta_path, identity.glyph_meta_path);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_size, &cue.curve_rotation, &cue.curve_color_r, &cue.curve_color_g, &cue.curve_color_b};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            editor->editing_text = cue;
+        } break;
+        case CueTypeScrollText: {
+            if (index >= scene->scroll_text_cue_count) return false;
+            ScrollTextCue identity = scene->scroll_text_cues[index]; ScrollTextCue& cue = scene->scroll_text_cues[index]; cue = g_cue_parameter_clipboard.scroll_text;
+            strcpy_s(cue.text, identity.text); strcpy_s(cue.font_name, identity.font_name);
+            strcpy_s(cue.baked_asset_key, identity.baked_asset_key); strcpy_s(cue.baked_asset_path, identity.baked_asset_path);
+            strcpy_s(cue.glyph_atlas_key, identity.glyph_atlas_key); strcpy_s(cue.glyph_atlas_path, identity.glyph_atlas_path);
+            strcpy_s(cue.glyph_meta_key, identity.glyph_meta_key); strcpy_s(cue.glyph_meta_path, identity.glyph_meta_path);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_speed, &cue.curve_size, &cue.curve_rotation,
+                &cue.curve_opacity, &cue.curve_color_r, &cue.curve_color_g, &cue.curve_color_b, &cue.curve_wave_amp,
+                &cue.curve_wave_freq, &cue.curve_wave_length, &cue.curve_jitter_amp, &cue.curve_jitter_freq};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            editor->editing_scroll_text = cue;
+        } break;
+        case CueTypeShaderText: {
+            if (index >= scene->shader_text_cue_count) return false;
+            ShaderTextCue identity = scene->shader_text_cues[index]; ShaderTextCue& cue = scene->shader_text_cues[index]; cue = g_cue_parameter_clipboard.shader_text;
+            strcpy_s(cue.text, identity.text);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_size, &cue.curve_color_r, &cue.curve_color_g,
+                &cue.curve_color_b, &cue.curve_opacity, &cue.curve_speed, &cue.curve_spacing};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            editor->editing_shader_text = cue;
+        } break;
+        case CueTypeMesh: {
+            if (index >= scene->mesh_cue_count) return false;
+            MeshCue identity = scene->mesh_cues[index]; MeshCue& cue = scene->mesh_cues[index]; cue = g_cue_parameter_clipboard.mesh;
+            strcpy_s(cue.asset_key, identity.asset_key); strcpy_s(cue.asset_path, identity.asset_path); cue.mesh_type = identity.mesh_type;
+            int* fields[] = {&cue.curve_pos_x, &cue.curve_pos_y, &cue.curve_pos_z, &cue.curve_rot_x, &cue.curve_rot_y,
+                &cue.curve_rot_z, &cue.curve_scale_x, &cue.curve_scale_y, &cue.curve_scale_z, &cue.curve_color_r,
+                &cue.curve_color_g, &cue.curve_color_b, &cue.curve_color_a, &cue.curve_mesh_size,
+                &cue.curve_metallic, &cue.curve_roughness, &cue.curve_fov};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            editor->editing_mesh = cue;
+        } break;
+        default: return false;
+    }
+
+    project->modified = true;
+    snprintf(editor->build_status_message, sizeof(editor->build_status_message), "%s",
+             curve_clone_failed ? "Pasted parameters; some curves could not be cloned (curve limit reached)"
+                                : "Pasted parameters and cloned curves");
+    editor->build_status_timer = 4.0f;
+    return true;
+}
+
+static void DrawCueParameterClipboardButtons(EditorContext* editor, SceneBlock* scene,
+                                             int cue_type, int cue_index)
+{
+    ImGui::SameLine();
+    if (ImGui::SmallButton("C")) {
+        editor->selected_cue_type = cue_type;
+        editor->selected_cue_index = cue_index;
+        CopySelectedCueParameters(editor, scene);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Copy this cue's parameters");
+
+    ImGui::SameLine();
+    const bool can_paste = g_cue_parameter_clipboard.cue_type == cue_type;
+    ImGui::BeginDisabled(!can_paste);
+    if (ImGui::SmallButton("P")) {
+        editor->selected_cue_type = cue_type;
+        editor->selected_cue_index = cue_index;
+        PasteSelectedCueParameters(editor, scene);
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip(can_paste
+            ? "Paste parameters; keep this cue's asset/content and clone curves"
+            : "Copy parameters from another cue of this type first");
+}
+
 static int CreateCurveFromTriggerTrack(EditorContext* editor, int track_index)
 {
     if (!editor || !editor->project || track_index < 0 ||
@@ -1574,6 +1816,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypeImage;
                         editor->image_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeImage, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         ImageCue cue = scene->image_cues[i];
@@ -1607,6 +1850,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypeAnimatedSprite;
                         editor->animated_sprite_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeAnimatedSprite, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         AnimatedSpriteCue cue = scene->animated_sprite_cues[i];
@@ -1639,6 +1883,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypePixel;
                         editor->pixel_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypePixel, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         PixelCue cue = scene->pixel_cues[i];
@@ -1673,6 +1918,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypePixelEmitter;
                         editor->pixel_emitter_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypePixelEmitter, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         int new_index = AddPixelEmitterCue(scene, cue);
@@ -1706,6 +1952,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypeText;
                         editor->text_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeText, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         TextCue cue = scene->text_cues[i];
@@ -1742,6 +1989,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::IsItemHovered() && scene->scroll_text_cues[i].text[0] != '\0') {
                         ImGui::SetTooltip("%s", scene->scroll_text_cues[i].text);
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeScrollText, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         ScrollTextCue cue = scene->scroll_text_cues[i];
@@ -1772,6 +2020,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypeShaderText;
                         editor->shader_text_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeShaderText, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("X")) {
                         DeleteShaderTextCue(scene, i);
@@ -1832,6 +2081,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypeMesh;
                         editor->mesh_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeMesh, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         MeshCue cue = *mc;

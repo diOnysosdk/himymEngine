@@ -33,6 +33,9 @@ Treat current code and CMake files as authoritative. Before relying on material 
 - Keep semantics aligned across project JSON, editor load/save, `cues.txt` export/import, runtime parsing, preview, standalone rendering, and packing.
 - For a new cue type, follow: shared struct -> parser -> editor ownership/UI -> save/load/export/import -> preview -> runtime -> packer -> validation.
 - Initialize every unassigned `curve_*` index to `-1`.
+- Same-type cue parameter paste preserves the destination cue's content or
+  asset identity and deep-clones assigned curves. Never leave pasted cues
+  sharing mutable curve indices with the source cue.
 - Preserve deterministic ordering in exports and rendering.
 - Interactive menu scenes hold/loop locally until activation or exit. A launched destination returns to the exact originating menu when its scene duration or non-looping XM cue ends; ordinary linear playback remains unchanged.
 - Menu animated-sprite references are scene-local indices. Multiple items may instance one cue with independent menu-owned image positions, hit bounds, targets, and selection tint; deletion must clear or reindex references deterministically.
