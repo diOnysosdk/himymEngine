@@ -875,6 +875,23 @@ static void RenderAssetShaders(EditorContext* editor, AssetShader* shaders, int*
             editor->shader_modal_request_open = true;
         }
         ImGui::SameLine();
+        ImGui::BeginDisabled(*shader_count >= rev::runtime::kMaxAssetShaders);
+        if (ImGui::SmallButton("+")) {
+            AssetShader duplicate = shader;
+            duplicate.order = *shader_count;
+            shaders[*shader_count] = duplicate;
+            ++*shader_count;
+            if (modified) *modified = true;
+            ImGui::EndDisabled();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip(*shader_count < rev::runtime::kMaxAssetShaders
+                ? "Duplicate this asset shader"
+                : "Maximum asset shader count reached");
+        ImGui::SameLine();
         if (ImGui::SmallButton("X")) {
             for (int move = i; move + 1 < *shader_count; ++move) shaders[move] = shaders[move + 1];
             --*shader_count;

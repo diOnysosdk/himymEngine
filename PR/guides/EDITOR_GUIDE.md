@@ -30,6 +30,8 @@ Paste transfers timing, fades, transforms, colors, shaders, effects, and other
 type-specific settings while preserving the destination image, frames, text,
 font assets, emitter visual source, or mesh asset/type. Assigned curves are
 duplicated, so editing a pasted cue's curve does not change the source cue.
+Asset Shader rows inside Image, Animated Sprite, and Pixel cue modals also have
+a **+** button that duplicates the shader preset and all of its current settings.
 
 **Walkthrough of the native C++17/ImGui scene authoring tool**
 

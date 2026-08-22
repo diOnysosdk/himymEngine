@@ -173,6 +173,7 @@ per-library estimates for release planning.
 - **Scene Authoring**: Timeline-based scene composition
 - **Interactive Menus**: Label buttons or animated-sprite icons with per-item position, hit bounds, and destination scene
 - **Shader Modal**: Preset tuning and validated Shadertoy multipass graph authoring with portable project assets
+- **Asset Shader Duplication**: Duplicate a configured per-asset shader directly with its row-level `+` control
 - **Animated Sprite Modal**: Single-frame or automatically discovered numbered-sequence importing, playback controls, and per-parameter curves
 - **Curve Editor**: Visual animation curve creation and manipulation
 - **Cue Parameter Clipboard**: Copy timing, fades, transforms, colors, effects,
