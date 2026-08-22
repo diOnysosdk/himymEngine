@@ -1065,6 +1065,19 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, cue->curve_jitter_freq);
         }
 
+        for (int i = 0; i < scene->shader_text_cue_count; ++i) {
+            ShaderTextCue* cue = &scene->shader_text_cues[i];
+            MarkCurveUsed(used, cue->curve_x);
+            MarkCurveUsed(used, cue->curve_y);
+            MarkCurveUsed(used, cue->curve_size);
+            MarkCurveUsed(used, cue->curve_color_r);
+            MarkCurveUsed(used, cue->curve_color_g);
+            MarkCurveUsed(used, cue->curve_color_b);
+            MarkCurveUsed(used, cue->curve_opacity);
+            MarkCurveUsed(used, cue->curve_speed);
+            MarkCurveUsed(used, cue->curve_spacing);
+        }
+
         for (int i = 0; i < scene->mesh_cue_count; ++i) {
             MeshCue* cue = &scene->mesh_cues[i];
             MarkCurveUsed(used, cue->curve_mesh_size);
@@ -1332,6 +1345,21 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 add_target("Scroll Wave Length", &cue->curve_wave_length, cue->wave_length);
                 add_target("Scroll Jitter Amp", &cue->curve_jitter_amp, cue->jitter_amp);
                 add_target("Scroll Jitter Freq", &cue->curve_jitter_freq, cue->jitter_freq);
+            }
+            break;
+        case CueTypeShaderText:
+            if (cue_index >= scene->shader_text_cue_count) break;
+            {
+                ShaderTextCue* cue = &scene->shader_text_cues[cue_index];
+                add_target("Shader Text X", &cue->curve_x, cue->x);
+                add_target("Shader Text Y", &cue->curve_y, cue->y);
+                add_target("Shader Text Height", &cue->curve_size, cue->size);
+                add_target("Shader Text Color R", &cue->curve_color_r, cue->color.r);
+                add_target("Shader Text Color G", &cue->curve_color_g, cue->color.g);
+                add_target("Shader Text Color B", &cue->curve_color_b, cue->color.b);
+                add_target("Shader Text Opacity", &cue->curve_opacity, cue->opacity);
+                add_target("Shader Text Speed", &cue->curve_speed, cue->speed);
+                add_target("Shader Text Spacing", &cue->curve_spacing, cue->spacing);
             }
             break;
         case CueTypeMusic:
@@ -5988,15 +6016,46 @@ void RenderShaderTextModal(EditorContext* editor) {
     if (ImGui::BeginPopupModal("Shader Text Cue", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ShaderTextCue& cue = editor->editing_shader_text;
         bool changed = false;
+        auto ShowCurveButton = [&](const char* id, int* editing_field, int* actual_field,
+                                   float base_value, const char* label) {
+            ImGui::SameLine();
+            if (*editing_field >= 0) {
+                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", *editing_field);
+                ImGui::SameLine();
+            }
+            if (ImGui::SmallButton(id)) {
+                scene->shader_text_cues[editor->selected_cue_index] = cue;
+                if (*actual_field < 0) *actual_field = AcquireCurveSlot(editor, base_value, nullptr);
+                *editing_field = *actual_field;
+                if (*actual_field >= 0 && *actual_field < editor->project->curve_count) {
+                    editor->editing_curve_index = *actual_field;
+                    editor->editing_curve_cue_type = CueTypeShaderText;
+                    editor->editing_curve_field = -1;
+                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", label);
+                    editor->curve_editor_modal_request_open = true;
+                    editor->project->modified = true;
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
+        };
+        ShaderTextCue& actual = scene->shader_text_cues[editor->selected_cue_index];
         changed |= ImGui::InputTextMultiline("Text", cue.text, sizeof(cue.text), ImVec2(500, 90));
         const char* modes[] = {"Static", "Horizontal scroll"};
         changed |= ImGui::Combo("Mode", &cue.mode, modes, 2);
         changed |= ImGui::SliderFloat("X", &cue.x, 0.0f, 1.0f);
+        ShowCurveButton("+##shader_text_x", &cue.curve_x, &actual.curve_x, cue.x, "Shader Text X");
         changed |= ImGui::SliderFloat("Y", &cue.y, 0.0f, 1.0f);
+        ShowCurveButton("+##shader_text_y", &cue.curve_y, &actual.curve_y, cue.y, "Shader Text Y");
         changed |= ImGui::SliderFloat("Height (px)", &cue.size, 7.0f, 280.0f);
+        ShowCurveButton("+##shader_text_size", &cue.curve_size, &actual.curve_size, cue.size, "Shader Text Height");
         changed |= ImGui::ColorEdit3("Color", &cue.color.r);
+        ShowCurveButton("R curve##shader_text_r", &cue.curve_color_r, &actual.curve_color_r, cue.color.r, "Shader Text Color R");
+        ShowCurveButton("G curve##shader_text_g", &cue.curve_color_g, &actual.curve_color_g, cue.color.g, "Shader Text Color G");
+        ShowCurveButton("B curve##shader_text_b", &cue.curve_color_b, &actual.curve_color_b, cue.color.b, "Shader Text Color B");
         changed |= ImGui::SliderFloat("Opacity", &cue.opacity, 0.0f, 1.0f);
+        ShowCurveButton("+##shader_text_opacity", &cue.curve_opacity, &actual.curve_opacity, cue.opacity, "Shader Text Opacity");
         changed |= ImGui::SliderFloat("Spacing", &cue.spacing, 0.25f, 3.0f);
+        ShowCurveButton("+##shader_text_spacing", &cue.curve_spacing, &actual.curve_spacing, cue.spacing, "Shader Text Spacing");
         if (cue.mode == 0) {
             const char* align[] = {"Left", "Center", "Right"};
             changed |= ImGui::Combo("Alignment", &cue.alignment, align, 3);
@@ -6004,6 +6063,7 @@ void RenderShaderTextModal(EditorContext* editor) {
             const char* direction[] = {"Left", "Right"};
             changed |= ImGui::Combo("Direction", &cue.direction, direction, 2);
             changed |= ImGui::SliderFloat("Speed (px/s)", &cue.speed, 0.0f, 500.0f);
+            ShowCurveButton("+##shader_text_speed", &cue.curve_speed, &actual.curve_speed, cue.speed, "Shader Text Speed");
             const char* loops[] = {"Loop", "Clamp"};
             changed |= ImGui::Combo("Motion", &cue.loop_mode, loops, 2);
         }
@@ -6018,6 +6078,13 @@ void RenderShaderTextModal(EditorContext* editor) {
             scene->shader_text_cues[editor->selected_cue_index] = cue;
             editor->project->modified = true;
         }
+        static int shader_text_target = 0;
+        static int shader_text_curve = 0;
+        RenderCurveReuseSection(editor, "shader_text_curve_reuse", CueTypeShaderText,
+                                &shader_text_target, &shader_text_curve);
+        // Curve reuse edits the scene-owned cue; keep the modal copy aligned so
+        // the next parameter edit cannot overwrite a newly assigned curve.
+        cue = actual;
         if (ImGui::Button("Close", ImVec2(240, 0))) {
             editor->shader_text_modal_open = false;
             ImGui::CloseCurrentPopup();

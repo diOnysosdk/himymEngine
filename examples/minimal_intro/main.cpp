@@ -1096,11 +1096,14 @@ int LoadAllShaderTextCues(const char* path, ShaderTextCue* cues, int max_cues) {
         }
         strncpy_s(cue->text, decoded, _TRUNCATE);
         int parsed = sscanf_s(pipe + 1,
-            "%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d",
+            "%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
             &cue->x, &cue->y, &cue->size, &cue->color.r, &cue->color.g, &cue->color.b,
             &cue->opacity, &cue->mode, &cue->alignment, &cue->direction, &cue->loop_mode,
             &cue->speed, &cue->spacing, &cue->cue_start, &cue->cue_end, &cue->fade_in,
-            &cue->fade_out, &cue->layer_order, &cue->blend_mode);
+            &cue->fade_out, &cue->layer_order, &cue->blend_mode,
+            &cue->curve_x, &cue->curve_y, &cue->curve_size,
+            &cue->curve_color_r, &cue->curve_color_g, &cue->curve_color_b,
+            &cue->curve_opacity, &cue->curve_speed, &cue->curve_spacing);
         if (parsed >= 15) ++count;
     }
     fclose(f);
@@ -2221,27 +2224,41 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
 }
 
 static void DrawShaderText(rev::shader::Program* program, const ShaderTextCue& cue,
-                           float time, float viewport_width, float viewport_height) {
+                           float time, float viewport_width, float viewport_height,
+                           const rev::curve::Curve* curves, int curve_count) {
     if (!program || !cue.text[0] || viewport_width <= 0.0f || viewport_height <= 0.0f) return;
     const float local = time - cue.cue_start;
-    float alpha = cue.opacity;
+    auto Evaluate = [&](int curve_index, float fallback) {
+        if (!curves || curve_index < 0 || curve_index >= curve_count || local < 0.0f) return fallback;
+        const rev::curve::Curve& curve = curves[curve_index];
+        return curve.duration > 0.0f ? rev::curve::Evaluate(curve, local / curve.duration) : fallback;
+    };
+    const float x = Evaluate(cue.curve_x, cue.x);
+    const float y = Evaluate(cue.curve_y, cue.y);
+    const float size = Evaluate(cue.curve_size, cue.size);
+    const float speed = Evaluate(cue.curve_speed, cue.speed);
+    const float spacing = Evaluate(cue.curve_spacing, cue.spacing);
+    const float color_r = Evaluate(cue.curve_color_r, cue.color.r);
+    const float color_g = Evaluate(cue.curve_color_g, cue.color.g);
+    const float color_b = Evaluate(cue.curve_color_b, cue.color.b);
+    float alpha = Evaluate(cue.curve_opacity, cue.opacity);
     if (cue.fade_in > 0.0f && local < cue.fade_in) alpha *= local / cue.fade_in;
     const float remaining = cue.cue_end - time;
     if (cue.fade_out > 0.0f && remaining < cue.fade_out) alpha *= remaining / cue.fade_out;
     if (alpha <= 0.0f) return;
     const size_t length = strlen(cue.text);
     const float viewport_scale = rev::runtime::ComputeTextViewportScale(viewport_width, viewport_height);
-    const float glyph_height = cue.size * viewport_scale;
+    const float glyph_height = size * viewport_scale;
     const float glyph_width = glyph_height * (5.0f / 7.0f);
-    const float advance = glyph_height * (6.0f / 7.0f) * (cue.spacing > 0.01f ? cue.spacing : 0.01f);
+    const float advance = glyph_height * (6.0f / 7.0f) * (spacing > 0.01f ? spacing : 0.01f);
     const float text_width = length ? advance * (float)length - (advance - glyph_width) : 0.0f;
-    float cursor = cue.x * viewport_width;
+    float cursor = x * viewport_width;
     if (cue.mode == 0) {
         if (cue.alignment == 1) cursor -= text_width * 0.5f;
         else if (cue.alignment == 2) cursor -= text_width;
     } else {
         const float travel = viewport_width + text_width;
-        float moved = local * cue.speed * viewport_scale;
+        float moved = local * speed * viewport_scale;
         if (cue.loop_mode == 0 && travel > 0.0f) moved = fmodf(moved, travel);
         else if (moved > travel) moved = travel;
         cursor = cue.direction == 1 ? -text_width + moved : viewport_width - moved;
@@ -2251,7 +2268,7 @@ static void DrawShaderText(rev::shader::Program* program, const ShaderTextCue& c
     const int u_size = rev::shader::GetUniformLocation(program, "u_size");
     const int u_color = rev::shader::GetUniformLocation(program, "u_color");
     rev::shader::SetVec2(program, u_size, glyph_width / viewport_width, glyph_height / viewport_height);
-    rev::shader::SetVec4(program, u_color, cue.color.r, cue.color.g, cue.color.b, alpha);
+    rev::shader::SetVec4(program, u_color, color_r, color_g, color_b, alpha);
     int row_locations[7];
     for (int row = 0; row < 7; ++row) {
         char name[16]; sprintf_s(name, "u_rows[%d]", row);
@@ -2267,7 +2284,7 @@ static void DrawShaderText(rev::shader::Program* program, const ShaderTextCue& c
             rev::shader::SetFloat(program, row_locations[row], (float)((packed >> (row * 5)) & 31u));
         rev::shader::SetFloat(program, row_locations[6], (float)(last & 31u));
         rev::shader::SetVec2(program, u_position, center / viewport_width * 2.0f - 1.0f,
-                            1.0f - cue.y * 2.0f);
+                            1.0f - y * 2.0f);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
 }
@@ -5452,8 +5469,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     }
 #endif
 
-                    float w = (draw_image_tex->width  * anim_scale) / (float)config.width  * 2.0f;
-                    float h = (draw_image_tex->height * anim_scale) / (float)config.height * 2.0f;
+                    const float viewport_scale = rev::runtime::ComputeAuthoredViewportScale(
+                        (float)config.width, (float)config.height);
+                    float w = (draw_image_tex->width  * anim_scale * viewport_scale) / (float)config.width  * 2.0f;
+                    float h = (draw_image_tex->height * anim_scale * viewport_scale) / (float)config.height * 2.0f;
                     float x =  (anim_x * 2.0f - 1.0f);
                     float y = -((anim_y * 2.0f) - 1.0f);
                     if (!IsSpriteVisible(x, y, w, h)) continue;
@@ -6041,7 +6060,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (!blend_on) { glEnable(GL_BLEND); blend_on = true; }
                     ApplySpriteBlendMode(cue.blend_mode);
                     DrawShaderText(shader_text_shader, cue, time,
-                                   (float)config.width, (float)config.height);
+                                   (float)config.width, (float)config.height,
+                                   curves, curve_count);
                 }
                 else if (entries[ei].type == 1) {
                     // Text sprite

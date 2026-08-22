@@ -32,6 +32,15 @@ void InitializeShaderTextCue(ShaderTextCue* cue) {
     cue->cue_end = 10.0f;
     cue->fade_in = 0.15f;
     cue->fade_out = 0.15f;
+    cue->curve_x = -1;
+    cue->curve_y = -1;
+    cue->curve_size = -1;
+    cue->curve_color_r = -1;
+    cue->curve_color_g = -1;
+    cue->curve_color_b = -1;
+    cue->curve_opacity = -1;
+    cue->curve_speed = -1;
+    cue->curve_spacing = -1;
 }
 
 bool GetShaderTextGlyph(unsigned char c, unsigned int* a, unsigned int* b) {
@@ -1318,12 +1327,17 @@ bool CreateTextGlyphAtlas(const char* font_name, float size, TextGlyphAtlas* atl
     return atlas->texture_id != 0;
 }
 
-float ComputeTextViewportScale(float viewport_width, float viewport_height)
+float ComputeAuthoredViewportScale(float viewport_width, float viewport_height)
 {
     if (viewport_width <= 0.0f || viewport_height <= 0.0f) return 1.0f;
     const float scale_x = viewport_width / 1920.0f;
     const float scale_y = viewport_height / 1080.0f;
     return scale_x < scale_y ? scale_x : scale_y;
+}
+
+float ComputeTextViewportScale(float viewport_width, float viewport_height)
+{
+    return ComputeAuthoredViewportScale(viewport_width, viewport_height);
 }
 
 float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,

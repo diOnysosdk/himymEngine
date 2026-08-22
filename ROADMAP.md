@@ -61,6 +61,10 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
       atlas orientation identical in editor, standalone, and packed playback.
 - [x] Scale shader-text and scrolling-text pixel metrics from the authored
       1920x1080 canvas while preserving normalized placement at smaller runtimes.
+- [x] Add Shader Text Cue curve authoring and runtime evaluation for position,
+      height, RGB, opacity, spacing, and horizontal-scroll speed.
+- [x] Preserve image-cue size and placement between the 1920x1080 editor canvas
+      and smaller windowed runtimes such as 960x540.
 - [x] Apply Shadertoy pipeline opacity curves and cue fade envelopes in the
       compositor, including the first/background layer over black.
 - [x] Measure clamp-mode scroll travel from glyph extent and authored start so

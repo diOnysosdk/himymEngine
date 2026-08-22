@@ -4,10 +4,11 @@ Text cues expose an **Alignment** selector with Left, Center, and Right options.
 
 When **Loop Intro** is enabled, preview and exported runtime wrap at the project's total scene duration. Cue end times beyond that duration do not extend the loop; they are useful for persistent layers but cannot prevent text or shader cues from restarting on the next pass.
 
-Shader-text and scrolling-text pixel metrics are authored against the editor's
-1920x1080 canvas. Windowed runtime sizes such as 960x540 scale glyph size,
-pixel-based shader-text speed, atlas travel, and baked scroll sprites uniformly;
-normalized anchors keep the same composition placement.
+Image-cue dimensions, shader-text metrics, and scrolling-text metrics are
+authored against the editor's 1920x1080 canvas. Windowed runtime sizes such as
+960x540 scale source-image dimensions, glyph size, pixel-based shader-text
+speed, atlas travel, and baked scroll sprites uniformly; normalized anchors
+keep the same composition placement.
 
 For Shadertoy pipeline cues, **Opacity**, an assigned opacity curve, and the
 cue's fade-in/fade-out envelope are combined by the compositor. This works for
@@ -15,6 +16,12 @@ the first/background shader layer as well as overlays and does not require an
 opacity uniform in the imported GLSL. Other preset parameter sliders affect a
 custom pipeline only when its GLSL explicitly implements the corresponding
 uniform or behavior.
+
+Shader Text Cue provides curve buttons for X, Y, pixel height, color R/G/B,
+opacity, spacing, and horizontal-scroll speed. Curves use time relative to the
+cue start and behave the same in editor preview, standalone playback, and
+packed playback. Older project and `cues.txt` rows load with these assignments
+unassigned.
 
 **Walkthrough of the native C++17/ImGui scene authoring tool**
 

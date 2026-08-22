@@ -46,9 +46,14 @@ Treat current code and CMake files as authoritative. Before relying on material 
 - Shader-pipeline cue opacity is a compositor contract, not a GLSL contract:
   multiply the evaluated opacity curve by the cue fade envelope in preview and
   runtime, and alpha-composite a partially opaque bottom layer against black.
-- Shader text and scrolling text use a 1920x1080 authored pixel canvas. Scale
-  glyph metrics, pixel speed, and atlas travel uniformly by the smaller
-  viewport axis while keeping normalized anchors unchanged.
+- Image cues, shader text, and scrolling text use a 1920x1080 authored pixel
+  canvas. Scale image dimensions, glyph metrics, pixel speed, and atlas travel
+  uniformly by the smaller viewport axis while keeping normalized anchors
+  unchanged.
+- Shader Text Cue curve slots cover X, Y, glyph height, color RGB, opacity,
+  spacing, and scroll speed. Default every slot to `-1`, append them to the
+  backward-compatible `cues.txt` row, and evaluate them identically in preview
+  and runtime using cue-local time.
 - Load post-OpenGL-1.1 functions with `wglGetProcAddress`.
 - Declare every WGL-loaded OpenGL function pointer with `APIENTRY`. The normal
   x64 ABI can hide a missing calling convention, but Crinkler's x86 runtime

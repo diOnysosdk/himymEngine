@@ -163,7 +163,7 @@ per-library estimates for release planning.
 - **3D Rendering**: glTF mesh support with Phong lighting and material slots
 - **Animated Sprites**: Frame-sequence image cues with FPS, loop/once/pingpong playback, and curve-driven frame selection
 - **Sprite Menu Icons**: Reuse one animated-sprite cue across independently positioned menu destinations
-- **Text Rendering**: TTF font rendering with fade/animation curves
+- **Text Rendering**: TTF text plus texture-free 5x7 shader text with curve-driven position, height, RGB, opacity, spacing, and scroll speed
 - **Audio Sync**: XM music playback with timeline markers
 - **Animation Curves**: 6 easing modes for smooth parameter interpolation
 - **Transparency Support**: Per-layer alpha blending and fade control

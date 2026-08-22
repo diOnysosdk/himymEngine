@@ -2797,6 +2797,15 @@ bool LoadProject(EditorContext* editor, const char* path) {
             else if (strstr(start, "\"fade_out\":")) sscanf_s(start, "\"fade_out\": %f", &current_shader_text_cue.fade_out);
             else if (strstr(start, "\"layer_order\":")) sscanf_s(start, "\"layer_order\": %d", &current_shader_text_cue.layer_order);
             else if (strstr(start, "\"blend_mode\":")) sscanf_s(start, "\"blend_mode\": %d", &current_shader_text_cue.blend_mode);
+            else if (strstr(start, "\"curve_x\":")) sscanf_s(start, "\"curve_x\": %d", &current_shader_text_cue.curve_x);
+            else if (strstr(start, "\"curve_y\":")) sscanf_s(start, "\"curve_y\": %d", &current_shader_text_cue.curve_y);
+            else if (strstr(start, "\"curve_size\":")) sscanf_s(start, "\"curve_size\": %d", &current_shader_text_cue.curve_size);
+            else if (strstr(start, "\"curve_color_r\":")) sscanf_s(start, "\"curve_color_r\": %d", &current_shader_text_cue.curve_color_r);
+            else if (strstr(start, "\"curve_color_g\":")) sscanf_s(start, "\"curve_color_g\": %d", &current_shader_text_cue.curve_color_g);
+            else if (strstr(start, "\"curve_color_b\":")) sscanf_s(start, "\"curve_color_b\": %d", &current_shader_text_cue.curve_color_b);
+            else if (strstr(start, "\"curve_opacity\":")) sscanf_s(start, "\"curve_opacity\": %d", &current_shader_text_cue.curve_opacity);
+            else if (strstr(start, "\"curve_speed\":")) sscanf_s(start, "\"curve_speed\": %d", &current_shader_text_cue.curve_speed);
+            else if (strstr(start, "\"curve_spacing\":")) sscanf_s(start, "\"curve_spacing\": %d", &current_shader_text_cue.curve_spacing);
             else if (indent == 8 && start[0] == '}' && current_shader_text_cue.text[0]) {
                 AddShaderTextCue(current_scene, current_shader_text_cue);
                 rev::runtime::InitializeShaderTextCue(&current_shader_text_cue);
@@ -3762,7 +3771,10 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "          \"opacity\": %.3f,\n          \"mode\": %d,\n          \"alignment\": %d,\n", cue->opacity, cue->mode, cue->alignment);
             fprintf(f, "          \"direction\": %d,\n          \"loop_mode\": %d,\n          \"speed\": %.3f,\n          \"spacing\": %.3f,\n", cue->direction, cue->loop_mode, cue->speed, cue->spacing);
             fprintf(f, "          \"cue_start\": %.3f,\n          \"cue_end\": %.3f,\n          \"fade_in\": %.3f,\n          \"fade_out\": %.3f,\n", cue->cue_start, cue->cue_end, cue->fade_in, cue->fade_out);
-            fprintf(f, "          \"layer_order\": %d,\n          \"blend_mode\": %d\n", cue->layer_order, cue->blend_mode);
+            fprintf(f, "          \"layer_order\": %d,\n          \"blend_mode\": %d,\n", cue->layer_order, cue->blend_mode);
+            fprintf(f, "          \"curve_x\": %d,\n          \"curve_y\": %d,\n          \"curve_size\": %d,\n", cue->curve_x, cue->curve_y, cue->curve_size);
+            fprintf(f, "          \"curve_color_r\": %d,\n          \"curve_color_g\": %d,\n          \"curve_color_b\": %d,\n", cue->curve_color_r, cue->curve_color_g, cue->curve_color_b);
+            fprintf(f, "          \"curve_opacity\": %d,\n          \"curve_speed\": %d,\n          \"curve_spacing\": %d\n", cue->curve_opacity, cue->curve_speed, cue->curve_spacing);
             fprintf(f, "        }%s\n", i + 1 < scene->shader_text_cue_count ? "," : "");
         }
         fprintf(f, "      ],\n");
@@ -5186,11 +5198,14 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             char decoded[512] = {}; const char* src = start; char* dst = decoded;
             while (*src && dst < decoded + 511) { if (src[0] == '\\' && src[1] == 'n') { *dst++ = '\n'; src += 2; } else *dst++ = *src++; }
             strncpy_s(cue.text, decoded, _TRUNCATE);
-            int parsed = sscanf_s(pipe + 1, "%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d",
+            int parsed = sscanf_s(pipe + 1, "%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
                 &cue.x, &cue.y, &cue.size, &cue.color.r, &cue.color.g, &cue.color.b,
                 &cue.opacity, &cue.mode, &cue.alignment, &cue.direction, &cue.loop_mode,
                 &cue.speed, &cue.spacing, &cue.cue_start, &cue.cue_end, &cue.fade_in,
-                &cue.fade_out, &cue.layer_order, &cue.blend_mode);
+                &cue.fade_out, &cue.layer_order, &cue.blend_mode,
+                &cue.curve_x, &cue.curve_y, &cue.curve_size,
+                &cue.curve_color_r, &cue.curve_color_g, &cue.curve_color_b,
+                &cue.curve_opacity, &cue.curve_speed, &cue.curve_spacing);
             if (parsed >= 15) AddShaderTextCue(&editor->project->scenes[0], cue);
             continue;
         }
@@ -6019,7 +6034,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
 
     fprintf(f, "\n");
     fprintf(f, "[shader_text_cues]\n");
-    fprintf(f, "# text|x|y|size|r|g|b|opacity|mode|alignment|direction|loop|speed|spacing|start|end|fade_in|fade_out|layer|blend\n");
+    fprintf(f, "# text|x|y|size|r|g|b|opacity|mode|alignment|direction|loop|speed|spacing|start|end|fade_in|fade_out|layer|blend|curve_x|curve_y|curve_size|curve_r|curve_g|curve_b|curve_opacity|curve_speed|curve_spacing\n");
     for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
         SceneBlock* scene = &editor->project->scenes[scene_idx];
         float scene_start = 0.0f;
@@ -6030,11 +6045,14 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
             for (const char* src = cue->text; *src && dst < encoded + 1022; ++src) {
                 if (*src == '\n') { *dst++ = '\\'; *dst++ = 'n'; } else *dst++ = *src;
             }
-            fprintf(f, "%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d\n",
+            fprintf(f, "%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d\n",
                     encoded, cue->x, cue->y, cue->size, cue->color.r, cue->color.g, cue->color.b,
                     cue->opacity, cue->mode, cue->alignment, cue->direction, cue->loop_mode,
                     cue->speed, cue->spacing, scene_start + cue->cue_start, scene_start + cue->cue_end,
-                    cue->fade_in, cue->fade_out, cue->layer_order, cue->blend_mode);
+                    cue->fade_in, cue->fade_out, cue->layer_order, cue->blend_mode,
+                    cue->curve_x, cue->curve_y, cue->curve_size,
+                    cue->curve_color_r, cue->curve_color_g, cue->curve_color_b,
+                    cue->curve_opacity, cue->curve_speed, cue->curve_spacing);
         }
     }
     fprintf(f, "\n");
@@ -8174,24 +8192,39 @@ static void RenderAssetShaderOverlays(const AssetShader* shaders, int shader_cou
 }
 
 static void DrawPreviewShaderText(rev::shader::Program* program, const ShaderTextCue& cue,
-                                  float time, float width, float height) {
+                                  float time, float width, float height,
+                                  const rev::curve::Curve* curves, int curve_count) {
     if (!program || !cue.text[0]) return;
-    float local = time - cue.cue_start, alpha = cue.opacity;
+    float local = time - cue.cue_start;
+    auto Evaluate = [&](int curve_index, float fallback) {
+        if (!curves || curve_index < 0 || curve_index >= curve_count || local < 0.0f) return fallback;
+        const rev::curve::Curve& curve = curves[curve_index];
+        return curve.duration > 0.0f ? rev::curve::Evaluate(curve, local / curve.duration) : fallback;
+    };
+    const float x = Evaluate(cue.curve_x, cue.x);
+    const float y = Evaluate(cue.curve_y, cue.y);
+    const float size = Evaluate(cue.curve_size, cue.size);
+    const float speed = Evaluate(cue.curve_speed, cue.speed);
+    const float spacing = Evaluate(cue.curve_spacing, cue.spacing);
+    const float color_r = Evaluate(cue.curve_color_r, cue.color.r);
+    const float color_g = Evaluate(cue.curve_color_g, cue.color.g);
+    const float color_b = Evaluate(cue.curve_color_b, cue.color.b);
+    float alpha = Evaluate(cue.curve_opacity, cue.opacity);
     if (cue.fade_in > 0.0f && local < cue.fade_in) alpha *= local / cue.fade_in;
     if (cue.fade_out > 0.0f && cue.cue_end - time < cue.fade_out) alpha *= (cue.cue_end - time) / cue.fade_out;
     const float viewport_scale = rev::runtime::ComputeTextViewportScale(width, height);
-    const float glyph_height = cue.size * viewport_scale;
+    const float glyph_height = size * viewport_scale;
     float glyph_width = glyph_height * 5.0f / 7.0f;
-    float advance = glyph_height * 6.0f / 7.0f * (cue.spacing > 0.01f ? cue.spacing : 0.01f);
+    float advance = glyph_height * 6.0f / 7.0f * (spacing > 0.01f ? spacing : 0.01f);
     size_t length = strlen(cue.text);
     float text_width = length ? advance * (float)length - advance + glyph_width : 0.0f;
-    float cursor = cue.x * width;
+    float cursor = x * width;
     if (cue.mode == 0) cursor -= cue.alignment == 1 ? text_width * 0.5f : cue.alignment == 2 ? text_width : 0.0f;
-    else { float travel = width + text_width, moved = local * cue.speed * viewport_scale; if (cue.loop_mode == 0 && travel > 0.0f) moved = fmodf(moved, travel); else if (moved > travel) moved = travel; cursor = cue.direction == 1 ? -text_width + moved : width - moved; }
+    else { float travel = width + text_width, moved = local * speed * viewport_scale; if (cue.loop_mode == 0 && travel > 0.0f) moved = fmodf(moved, travel); else if (moved > travel) moved = travel; cursor = cue.direction == 1 ? -text_width + moved : width - moved; }
     rev::shader::Use(program);
     int up = rev::shader::GetUniformLocation(program, "u_position");
     rev::shader::SetVec2(program, rev::shader::GetUniformLocation(program, "u_size"), glyph_width / width, glyph_height / height);
-    rev::shader::SetVec4(program, rev::shader::GetUniformLocation(program, "u_color"), cue.color.r, cue.color.g, cue.color.b, alpha);
+    rev::shader::SetVec4(program, rev::shader::GetUniformLocation(program, "u_color"), color_r, color_g, color_b, alpha);
     int rows[7]; for (int r = 0; r < 7; ++r) { char name[16]; sprintf_s(name, "u_rows[%d]", r); rows[r] = rev::shader::GetUniformLocation(program, name); }
     for (size_t i = 0; i < length; ++i, cursor += advance) {
         float center = cursor + glyph_width * 0.5f;
@@ -8199,7 +8232,7 @@ static void DrawPreviewShaderText(rev::shader::Program* program, const ShaderTex
         unsigned int packed, last; rev::runtime::GetShaderTextGlyph((unsigned char)cue.text[i], &packed, &last);
         for (int r = 0; r < 6; ++r) rev::shader::SetFloat(program, rows[r], (float)((packed >> (r * 5)) & 31u));
         rev::shader::SetFloat(program, rows[6], (float)(last & 31u));
-        rev::shader::SetVec2(program, up, center / width * 2.0f - 1.0f, 1.0f - cue.y * 2.0f);
+        rev::shader::SetVec2(program, up, center / width * 2.0f - 1.0f, 1.0f - y * 2.0f);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
 }
@@ -8951,7 +8984,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                 ApplySpriteBlendMode(cue->blend_mode);
                 DrawPreviewShaderText((rev::shader::Program*)editor->shader_text_shader, *cue,
                                       editor->current_time - item.scene_start_time,
-                                      (float)editor->preview_width, (float)editor->preview_height);
+                                      (float)editor->preview_width, (float)editor->preview_height,
+                                      editor->project->curves, editor->project->curve_count);
                 continue;
             }
 
@@ -9319,8 +9353,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                     rev::runtime::ImageTexture rt_img{};
                     if (!rev::runtime::LoadImageTexture(full_path, &rt_img)) continue;
                     tex    = rt_img.texture_id;
-                    norm_w = (rt_img.width  * anim_scale) / editor->preview_width  * 2.0f;
-                    norm_h = (rt_img.height * anim_scale) / editor->preview_height * 2.0f;
+                    const float viewport_scale = rev::runtime::ComputeAuthoredViewportScale(
+                        (float)editor->preview_width, (float)editor->preview_height);
+                    norm_w = (rt_img.width  * anim_scale * viewport_scale) / editor->preview_width  * 2.0f;
+                    norm_h = (rt_img.height * anim_scale * viewport_scale) / editor->preview_height * 2.0f;
                     pos_x  =  (anim_x * 2.0f) - 1.0f;
                     pos_y  = -((anim_y * 2.0f) - 1.0f);
                     rotation = anim_rotation;

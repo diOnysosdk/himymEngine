@@ -36,10 +36,10 @@ embedded asset section. Very large images, music, meshes, font atlases, or GLSL
 sources remain project-specific risks until packed assets are emitted in
 chunkable sections.
 
-Shader text and scrolling text pixel metrics are authored at 1920x1080. The
-preview and both runtimes scale glyph size, pixel speed, and atlas travel by
-the smaller viewport-axis ratio, preserving normalized placement at 960x540
-and other 16:9 window sizes.
+Image-cue dimensions, shader text, and scrolling text pixel metrics are authored
+at 1920x1080. The preview and both runtimes scale source-image dimensions,
+glyph size, pixel speed, and atlas travel by the smaller viewport-axis ratio,
+preserving normalized placement at 960x540 and other window sizes.
 
 ## Feature mapping
 

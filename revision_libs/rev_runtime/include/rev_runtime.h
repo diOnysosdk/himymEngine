@@ -645,6 +645,15 @@ struct ShaderTextCue {
     float    fade_out;
     int      layer_order;
     int      blend_mode;    // 0=alpha, 1=additive, 2=multiply, 3=screen
+    int      curve_x;
+    int      curve_y;
+    int      curve_size;
+    int      curve_color_r;
+    int      curve_color_g;
+    int      curve_color_b;
+    int      curve_opacity;
+    int      curve_speed;
+    int      curve_spacing;
 };
 
 // Scene navigation metadata. These rows remain code-only in packed builds.
@@ -853,9 +862,10 @@ float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
                               float wrap_gap, float viewport_width,
                               float viewport_height, float start_x,
                               float start_y, int loop_mode);
-// Text pixel metrics are authored against the editor's 1920x1080 canvas.
-// Scale them uniformly for smaller runtime framebuffers while normalized
-// anchors remain unchanged.
+// Pixel metrics are authored against the editor's 1920x1080 canvas. Scale
+// them uniformly for other framebuffers while normalized anchors remain
+// unchanged.
+float ComputeAuthoredViewportScale(float viewport_width, float viewport_height);
 float ComputeTextViewportScale(float viewport_width, float viewport_height);
 bool SaveTextGlyphAtlas(const char* font_name, float size,
                         const char* image_path, const char* metadata_path);

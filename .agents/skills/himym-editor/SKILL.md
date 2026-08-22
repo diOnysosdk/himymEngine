@@ -23,6 +23,10 @@ Keep the 64 KiB, 128 KiB, and custom output budgets distinct from Crinkler's
 64 KiB uncompressed-part ceiling. Detect a locked competition executable before
 linking and tell the author to close the running intro or stale linker process.
 
+Preview image cues use 1920x1080-authored source-pixel dimensions and normalized anchors; scale dimensions uniformly to the preview viewport so runtime sizes preserve composition.
+
+Shader Text Cue curve buttons cover X, Y, height, RGB, opacity, spacing, and scroll speed. Persist every assignment through JSON and append it to the backward-compatible cues.txt row.
+
 Do not redefine shared cues. Initialize new fields deliberately, preserve copied-asset cleanup coverage, keep save -> export -> pack -> build -> launch explicit, and avoid generalized UI frameworks or new dependencies.
 
 For menu authoring, keep ImGui IDs stable while labels are edited. Preserve

@@ -22,6 +22,10 @@ regenerated when packed manifests change.
 
 Do not duplicate shared types or texture helpers. Preserve `curve_* == -1`, GDI+ requirements, modern GL loading through `wglGetProcAddress`, GL state restoration, and cue-driven XM startup. Avoid speculative abstractions and report meaningful binary/dependency costs.
 
+Evaluate Shader Text Cue X, Y, height, RGB, opacity, spacing, and speed curves from cue-local time; missing assignments remain -1 for old project and cues.txt rows.
+
+Treat image-cue source dimensions as 1920x1080-authored pixels. Scale them uniformly to the runtime viewport while leaving normalized positions unchanged.
+
 Composite Shadertoy pipelines with the evaluated opacity curve multiplied by
 the cue fade envelope. A partially opaque first layer must alpha-blend against
 the cleared scene instead of only writing reduced alpha. Treat shader-text and

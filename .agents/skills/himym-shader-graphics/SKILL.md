@@ -17,6 +17,8 @@ description: Implement or review HiMYM rendering and visual-content systems. Use
 8. Build the affected target and visually verify both normal x64 and optional
    Crinkler x86 artifacts when competition rendering is in scope.
 
+Image-cue source dimensions are authored in 1920x1080 pixels. Apply the shared viewport scale before converting them to normalized sprite size; normalized anchors remain unchanged.
+
 Shadertoy pipeline opacity is applied by the final compositor: use the
 evaluated cue opacity times its fade envelope, and alpha-blend a partial bottom
 layer over black. Project GLSL is not required to declare an opacity uniform.
