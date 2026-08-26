@@ -8,9 +8,11 @@ namespace platform {
 // WGL extension function pointers
 typedef HGLRC (WINAPI * PFNWGLCREATECONTEXTATTRIBSARBPROC)(HDC, HGLRC, const int*);
 typedef BOOL (WINAPI * PFNWGLCHOOSEPIXELFORMATARBPROC)(HDC, const int*, const FLOAT*, UINT, int*, UINT*);
+typedef BOOL (APIENTRY * PFNWGLSWAPINTERVALEXTPROC)(int);
 
 static PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB = nullptr;
 static PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB = nullptr;
+static PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = nullptr;
 
 // Window procedure
 static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -157,6 +159,7 @@ Window* CreateIntroWindow(const WindowConfig& config) {
     
     // Load WGL extensions
     wglCreateContextAttribsARB = (PFNWGLCREATECONTEXTATTRIBSARBPROC)wglGetProcAddress("wglCreateContextAttribsARB");
+    wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");
     
     // Create modern OpenGL 3.3 context
     const int attribs[] = {
@@ -197,6 +200,14 @@ Window* CreateIntroWindow(const WindowConfig& config) {
     }
     
     window->hglrc = hglrc;
+
+    // Continuous sub-pixel motion (notably scrolling text) exposes uneven
+    // presentation immediately. Request one swap per display refresh when the
+    // driver supports WGL_EXT_swap_control; unsupported drivers keep their
+    // existing default behavior.
+    if (wglSwapIntervalEXT) {
+        wglSwapIntervalEXT(1);
+    }
     
     // Show window
     ShowWindow(hwnd, SW_SHOW);
