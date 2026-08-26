@@ -20,6 +20,10 @@ project, while `minimal_intro` remains a universal external-cue player.
 - [x] Compile out procedural mesh rendering when no mesh cue is authored.
 - [x] Pack only the fullscreen and enabled asset-shader GLSL presets referenced
       by the project, retaining preset 0 solely as the no-cue fallback.
+- [x] Author and execute Shadertoy-compatible Image/Buffer A-D pipelines with
+      scaled passes, texture inputs, previous-frame feedback, and XM audio data.
+- [x] Pack only enabled project-pipeline GLSL and texture channels, preserving
+      them during editor asset cleanup and resolving them from the project root.
 - [x] Compile out animated-sprite and scrolling-text parsing/rendering when the
       exported project contains no cues from those families.
 - [x] Generate packed post-effect GLSL containing only effect branches enabled
@@ -53,6 +57,20 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
 - [x] Visually compare the `rectruitro` editor preview and packed standalone runtime.
 - [x] Verify ESC and Alt+F4 shutdown during loading, playback, and audio teardown.
 - [x] Audit 2D/3D interleaving for VAO, depth-write, blend, and draw-order parity.
+- [x] Restore sprite UV state after pipeline compositing and keep text/scroll-text
+      atlas orientation identical in editor, standalone, and packed playback.
+- [x] Scale shader-text and scrolling-text pixel metrics from the authored
+      1920x1080 canvas while preserving normalized placement at smaller runtimes.
+- [x] Add Shader Text Cue curve authoring and runtime evaluation for position,
+      height, RGB, opacity, spacing, and horizontal-scroll speed.
+- [x] Preserve image-cue size and placement between the 1920x1080 editor canvas
+      and smaller windowed runtimes such as 960x540.
+- [x] Apply Shadertoy pipeline opacity curves and cue fade envelopes in the
+      compositor, including the first/background layer over black.
+- [x] Add same-type parameter copy/paste for all visual asset cues while
+      preserving destination content and independently cloning curves.
+- [x] Measure clamp-mode scroll travel from glyph extent and authored start so
+      text exits the viewport without whitespace padding.
 - [x] Validate opaque-before-transparent glTF material-slot rendering.
 - [x] Track the actual Win32 client size and use the centered
       letterbox/pillarbox output viewport for the authored 16:9 canvas.
@@ -60,6 +78,14 @@ Goal: make the editor-to-standalone handoff safe enough for competition use.
       and its non-16:9 display.
 - [x] Resolve the libxm `xm_tick_envelope` return-path warning.
 - [x] Resolve the libxm `load.c` C4333 shift warnings exposed by clean XM builds.
+- [x] Add directional scene-entry wipes and interactive music-disc/diskmag
+      menus with label or animated-sprite item visuals.
+- [x] Hold interactive scenes until selection and return a selected destination
+      to its originating menu on scene expiry or non-looping XM completion.
+- [x] Support several independently positioned menu items sharing one
+      animated-sprite cue without duplicating its frame assets.
+- [x] Add 64 KiB, 128 KiB, and custom Crinkler output budgets, preflight locked
+      competition outputs, and avoid the mesh InitOnce import cycle on x86.
 
 Exit criteria:
 
@@ -131,4 +157,4 @@ cmake --build build --config Release --target packed_feature_manifest_tests
 Run the focused test executables after building them. Rebuild `pack_cli` or the
 editor before validating generated `packed_assets.h` after packer changes.
 
-Last reviewed: August 9, 2026.
+Last reviewed: August 13, 2026.

@@ -1,6 +1,5 @@
 #include <windows.h>
 #include <gl/gl.h>
-#include <gdiplus.h>
 
 // Packed builds receive project-derived feature macros from rev_pack. Keep
 // legacy generated headers and the file-based development runtime universal.
@@ -29,6 +28,29 @@
 #ifndef HIMYM_USE_SCROLL_TEXT
 #define HIMYM_USE_SCROLL_TEXT 1
 #endif
+#ifndef HIMYM_USE_IMAGE
+#define HIMYM_USE_IMAGE 1
+#endif
+#ifndef HIMYM_USE_TEXT
+#define HIMYM_USE_TEXT 1
+#endif
+#ifndef HIMYM_USE_IMAGE_DECODER
+#define HIMYM_USE_IMAGE_DECODER 1
+#endif
+#ifndef HIMYM_USE_SHADER_TEXT
+#define HIMYM_USE_SHADER_TEXT 1
+#endif
+#ifndef HIMYM_PACKED_DIAGNOSTICS
+#ifdef HIMYM_PACKED_ASSETS
+#define HIMYM_PACKED_DIAGNOSTICS 0
+#else
+#define HIMYM_PACKED_DIAGNOSTICS 1
+#endif
+#endif
+
+#if HIMYM_USE_IMAGE_DECODER
+#include <gdiplus.h>
+#endif
 
 #include "rev_platform.h"
 #include "rev_shader.h"
@@ -44,6 +66,7 @@
 #endif
 #if HIMYM_USE_MESH
 #include "rev_mesh.h"
+#include "rev_mesh_shadow.h"
 #endif
 #if HIMYM_USE_GLTF && defined(REV_GLTF_AVAILABLE)
 #include "rev_gltf.h"
@@ -54,6 +77,7 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <mutex>
 
 #include "rev_shader_presets.h"
 
@@ -66,6 +90,7 @@ using rev::runtime::PixelEmitterCue;
 using rev::runtime::ImageTexture;
 using rev::runtime::TextCue;
 using rev::runtime::ScrollTextCue;
+using rev::runtime::ShaderTextCue;
 using rev::runtime::TextTexture;
 using rev::runtime::TextGlyphAtlas;
 using rev::runtime::TextGlyph;
@@ -127,10 +152,18 @@ struct RuntimeSceneLayerPostEffects {
     int effect_count;
 };
 
+struct RuntimeSceneMenu {
+    int scene_index;
+    rev::runtime::SceneMenu menu;
+    float sprite_animation_time[rev::runtime::kMaxMenuItems];
+};
+
 static const int kPostEffectCount = 23;
 static const int kPostEffectFade = 12;
 
+#if HIMYM_USE_IMAGE_DECODER
 #pragma comment(lib, "gdiplus.lib")
+#endif
 #if HIMYM_USE_XM
 #pragma comment(lib, "winmm.lib")
 #include <mmsystem.h>
@@ -161,15 +194,18 @@ static void ParseShaderNoiseMapPaths(const char* line, char paths[4][512]) {
         field = end + 1;
     }
 }
+#if HIMYM_PACKED_DIAGNOSTICS
 static bool g_verbose_logging = false;
-
 static bool IsVerboseLoggingEnabled() {
     char env[16] = {};
     DWORD n = GetEnvironmentVariableA("HIMYM_VERBOSE", env, sizeof(env));
     return (n > 0 && env[0] != '0');
 }
-
 #define LOGV(...) do { if (g_verbose_logging) printf(__VA_ARGS__); } while (0)
+#else
+static constexpr bool g_verbose_logging = false;
+#define LOGV(...) ((void)0)
+#endif
 
 // ===== WinMM audio thread for XM playback =====
 #if HIMYM_USE_XM
@@ -184,8 +220,23 @@ struct AudioState {
     WAVEHDR          headers[kAudioBufCount];
     int16_t*         pcm[kAudioBufCount];
     float            fbuf[kAudioFrames * kAudioChannels];
+    std::mutex       shader_audio_mutex;
+    float            shader_audio_samples[rev::runtime::kShaderAudioSampleFrames * 2];
     std::atomic<bool> stop;
 };
+
+static AudioState* g_shader_audio_state = nullptr;
+
+static void CaptureShaderAudioSamples(AudioState* state, const float* samples, int frame_count) {
+    if (!state || !samples) return;
+    const int captured_frames = frame_count < rev::runtime::kShaderAudioSampleFrames
+        ? frame_count : rev::runtime::kShaderAudioSampleFrames;
+    const int first_frame = frame_count - captured_frames;
+    std::lock_guard<std::mutex> lock(state->shader_audio_mutex);
+    memset(state->shader_audio_samples, 0, sizeof(state->shader_audio_samples));
+    memcpy(state->shader_audio_samples, samples + (size_t)first_frame * 2,
+           (size_t)captured_frames * 2 * sizeof(float));
+}
 
 static void FillAudioBufferFromPlayer(rev::xm::Player* player,
                                       float* fbuf,
@@ -220,6 +271,7 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
     // Pre-fill and submit all buffers before entering the loop
     for (int i = 0; i < kAudioBufCount; ++i) {
         FillAudioBufferFromPlayer(a->player.load(std::memory_order_acquire), a->fbuf, a->pcm[i], kAudioFrames);
+        CaptureShaderAudioSamples(a, a->fbuf, kAudioFrames);
         waveOutWrite(a->wave_out, &a->headers[i], sizeof(WAVEHDR));
     }
 
@@ -228,6 +280,7 @@ static DWORD WINAPI AudioThreadProc(LPVOID param) {
             if (a->headers[i].dwFlags & WHDR_DONE) {
                 a->headers[i].dwFlags &= ~WHDR_DONE;
                 FillAudioBufferFromPlayer(a->player.load(std::memory_order_acquire), a->fbuf, a->pcm[i], kAudioFrames);
+                CaptureShaderAudioSamples(a, a->fbuf, kAudioFrames);
                 waveOutWrite(a->wave_out, &a->headers[i], sizeof(WAVEHDR));
             }
         }
@@ -387,6 +440,7 @@ struct NoiseTextureSettings {
 // Shader cue data structure (runtime-local; editor uses its own ShaderCue with more fields)
 struct ShaderCue {
     int shader_scene_id;
+    int shader_pipeline_index;
     float palette_low[3];
     float palette_mid[3];
     float palette_high[3];
@@ -466,7 +520,91 @@ struct ShaderProgramState {
     int u_noise_contrast;
     int u_noise_maps[4];
     int u_noise_map_count;
+    int i_resolution;
+    int i_time;
+    int i_time_delta;
+    int i_frame;
+    int i_mouse;
+    int i_channels[4];
 };
+
+static int LoadShaderPipelines(const char* path,
+                               rev::runtime::ShaderPipeline* pipelines,
+                               int max_pipelines) {
+    if (!path || !pipelines || max_pipelines <= 0) return 0;
+    for (int i = 0; i < max_pipelines; ++i) rev::runtime::InitializeShaderPipeline(&pipelines[i]);
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+    enum Section { None, Pipelines, Passes, Channels } section = None;
+    int count = 0;
+    char line[1024] = {};
+    while (fgets(line, sizeof(line), f)) {
+        char* start = line;
+        while (*start == ' ' || *start == '\t') ++start;
+        if (strstr(start, "[shader_pipelines]")) { section = Pipelines; continue; }
+        if (strstr(start, "[shader_pipeline_passes]")) { section = Passes; continue; }
+        if (strstr(start, "[shader_pipeline_channels]")) { section = Channels; continue; }
+        if (*start == '[') { section = None; continue; }
+        if (*start == '#' || *start == '\r' || *start == '\n' || !*start) continue;
+        if (section == Pipelines) {
+            int pipeline_index = -1;
+            char name[64] = {};
+            if (sscanf_s(start, "%d|%63[^\r\n]", &pipeline_index, name, (unsigned)_countof(name)) == 2 &&
+                pipeline_index >= 0 && pipeline_index < max_pipelines) {
+                strncpy_s(pipelines[pipeline_index].name, name, _TRUNCATE);
+                if (count <= pipeline_index) count = pipeline_index + 1;
+            }
+        } else if (section == Passes) {
+            int pipeline_index = -1, pass_index = -1, enabled = 0;
+            float scale = 1.0f;
+            char source[512] = {};
+            if (sscanf_s(start, "%d|%d|%d|%f|%511[^\r\n]", &pipeline_index, &pass_index,
+                         &enabled, &scale, source, (unsigned)_countof(source)) == 5 &&
+                pipeline_index >= 0 && pipeline_index < max_pipelines && pass_index >= 0 &&
+                pass_index < rev::runtime::kMaxShaderPasses) {
+                rev::runtime::ShaderPass& pass = pipelines[pipeline_index].passes[pass_index];
+                pass.enabled = enabled != 0;
+                pass.resolution_scale = scale;
+                if (strcmp(source, "-") != 0) strncpy_s(pass.source_path, source, _TRUNCATE);
+            }
+        } else if (section == Channels) {
+            int pipeline_index = -1, pass_index = -1, channel_index = -1, kind = 0;
+            char asset[512] = {};
+            if (sscanf_s(start, "%d|%d|%d|%d|%511[^\r\n]", &pipeline_index, &pass_index,
+                         &channel_index, &kind, asset, (unsigned)_countof(asset)) == 5 &&
+                pipeline_index >= 0 && pipeline_index < max_pipelines && pass_index >= 0 &&
+                pass_index < rev::runtime::kMaxShaderPasses && channel_index >= 0 &&
+                channel_index < rev::runtime::kMaxShaderChannels) {
+                rev::runtime::ShaderChannel& channel = pipelines[pipeline_index].passes[pass_index].channels[channel_index];
+                channel.kind = kind;
+                if (strcmp(asset, "-") != 0) strncpy_s(channel.asset_path, asset, _TRUNCATE);
+            }
+        }
+    }
+    fclose(f);
+    return count;
+}
+
+static void LoadShaderPipelineCueRefs(const char* path, ShaderCue* cues, int cue_count) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return;
+    bool in_section = false;
+    char line[256] = {};
+    while (fgets(line, sizeof(line), f)) {
+        char* start = line;
+        while (*start == ' ' || *start == '\t') ++start;
+        if (strstr(start, "[shader_pipeline_cues]")) { in_section = true; continue; }
+        if (*start == '[' && in_section) break;
+        if (!in_section || *start == '#' || *start == '\r' || *start == '\n') continue;
+        int cue_index = -1, pipeline_index = -1;
+        if (sscanf_s(start, "%d|%d", &cue_index, &pipeline_index) == 2 &&
+            cue_index >= 0 && cue_index < cue_count)
+            cues[cue_index].shader_pipeline_index = pipeline_index;
+    }
+    fclose(f);
+}
 
 // Music cue data structure — provided by rev_runtime (MusicCue using above)
 // Image cue data structure — provided by rev_runtime (ImageCue using above)
@@ -934,6 +1072,40 @@ int LoadAllTextCues(const char* path, TextCue* cues, int max_cues) {
         }
     }
 
+    fclose(f);
+    return count;
+}
+
+int LoadAllShaderTextCues(const char* path, ShaderTextCue* cues, int max_cues) {
+    FILE* f = nullptr;
+    fopen_s(&f, path, "r");
+    if (!f) return 0;
+    char line[2048]; bool section = false; int count = 0;
+    while (fgets(line, sizeof(line), f) && count < max_cues) {
+        char* s = line; while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') ++s;
+        if (strstr(s, "[shader_text_cues]")) { section = true; continue; }
+        if (s[0] == '[' && section) break;
+        if (!section || s[0] == '#' || !s[0] || s[0] == '\r' || s[0] == '\n') continue;
+        char* pipe = strchr(s, '|'); if (!pipe) continue; *pipe = 0;
+        ShaderTextCue* cue = &cues[count];
+        rev::runtime::InitializeShaderTextCue(cue);
+        char decoded[512] = {}; const char* src = s; char* dst = decoded;
+        while (*src && dst < decoded + 511) {
+            if (src[0] == '\\' && src[1] == 'n') { *dst++ = '\n'; src += 2; }
+            else *dst++ = *src++;
+        }
+        strncpy_s(cue->text, decoded, _TRUNCATE);
+        int parsed = sscanf_s(pipe + 1,
+            "%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+            &cue->x, &cue->y, &cue->size, &cue->color.r, &cue->color.g, &cue->color.b,
+            &cue->opacity, &cue->mode, &cue->alignment, &cue->direction, &cue->loop_mode,
+            &cue->speed, &cue->spacing, &cue->cue_start, &cue->cue_end, &cue->fade_in,
+            &cue->fade_out, &cue->layer_order, &cue->blend_mode,
+            &cue->curve_x, &cue->curve_y, &cue->curve_size,
+            &cue->curve_color_r, &cue->curve_color_g, &cue->curve_color_b,
+            &cue->curve_opacity, &cue->curve_speed, &cue->curve_spacing);
+        if (parsed >= 15) ++count;
+    }
     fclose(f);
     return count;
 }
@@ -1467,8 +1639,64 @@ int LoadAllPixelEmitterCues(const char* path, PixelEmitterCue* cues, int max_cue
     fclose(f);
     return count;
 }
+
 #endif
 
+static int LoadSceneNavigation(const char* path, rev::runtime::SceneNavigation* scenes, int max_scenes) {
+    FILE* f = nullptr; fopen_s(&f, path, "r"); if (!f) return 0;
+    char line[2048]; bool in_section = false; int count = 0;
+    while (fgets(line, sizeof(line), f) && count < max_scenes) {
+        char* s = line; while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') ++s;
+        if (strstr(s, "[scenes]")) { in_section = true; continue; }
+        if (s[0] == '[' && in_section) break;
+        if (!in_section || s[0] == '#' || !s[0]) continue;
+        rev::runtime::SceneNavigation& scene = scenes[count];
+        if (sscanf_s(s, "%63[^|]|%f|%f|%d|%f|%f|%f|%f", scene.name,
+                     (unsigned)_countof(scene.name), &scene.start_time, &scene.end_time,
+                     &scene.wipe_type, &scene.wipe_duration, &scene.wipe_color[0],
+                     &scene.wipe_color[1], &scene.wipe_color[2]) == 8) ++count;
+    }
+    fclose(f); return count;
+}
+
+static int LoadSceneMenus(const char* path, RuntimeSceneMenu* menus, int max_menus) {
+    FILE* f = nullptr; fopen_s(&f, path, "r"); if (!f) return 0;
+    char line[4096]; bool in_section = false; int count = 0;
+    while (fgets(line, sizeof(line), f) && count < max_menus) {
+        char* s = line; while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') ++s;
+        if (strstr(s, "[scene_menus]")) { in_section = true; continue; }
+        if (s[0] == '[' && in_section) break;
+        if (!in_section || s[0] == '#' || !s[0]) continue;
+        RuntimeSceneMenu& out = menus[count]; out = {}; out.menu.enabled = 1;
+        char* context = nullptr; char* field = strtok_s(s, "|\r\n", &context);
+        if (!field) continue; out.scene_index = atoi(field);
+        field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue; out.menu.wrap = atoi(field);
+        field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue; out.menu.initial_item = atoi(field);
+        field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue;
+        sscanf_s(field, "%f,%f,%f,%f,%d", &out.menu.highlight_color[0], &out.menu.highlight_color[1],
+                 &out.menu.highlight_color[2], &out.menu.highlight_color[3], &out.menu.mouse_enabled);
+        field = strtok_s(nullptr, "|\r\n", &context); if (!field) continue;
+        int declared_count = atoi(field);
+        for (int i = 0; i < declared_count && i < rev::runtime::kMaxMenuItems; ++i) {
+            field = strtok_s(nullptr, "|\r\n", &context); if (!field) break;
+            rev::runtime::MenuItem& item = out.menu.items[out.menu.item_count];
+            item.animated_sprite_cue = -1;
+            int parsed = sscanf_s(field, "%63[^,],%d,%f,%f,%f,%f,%d,%d,%f,%f", item.label,
+                         (unsigned)_countof(item.label), &item.target_scene, &item.x, &item.y,
+                         &item.width, &item.height, &item.visual_type, &item.animated_sprite_cue,
+                         &item.image_x, &item.image_y);
+            if (parsed >= 6) {
+                if (parsed < 10) {
+                    item.image_x = item.x + item.width * 0.5f;
+                    item.image_y = item.y + item.height * 0.5f;
+                }
+                ++out.menu.item_count;
+            }
+        }
+        ++count;
+    }
+    fclose(f); return count;
+}
 #if HIMYM_USE_PIXEL
 static bool UploadPixelFrame(const PixelAnimation* animation, int frame_index,
                              int palette_offset, unsigned int* out_texture) {
@@ -1546,6 +1774,7 @@ struct RuntimePlaybackSettings {
     bool music_loop;
     bool music_persist_across_scenes;
     bool runtime_fullscreen;
+    int runtime_window_divisor;
     char runtime_title[128];
     rev::runtime::AudioEffects audio_effects;
 };
@@ -1557,6 +1786,7 @@ bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* sett
     settings->music_loop = false;
     settings->music_persist_across_scenes = false;
     settings->runtime_fullscreen = true;
+    settings->runtime_window_divisor = 1;
     strncpy_s(settings->runtime_title, sizeof(settings->runtime_title), "HiMYM - Minimal Intro Test", _TRUNCATE);
     rev::runtime::InitializeAudioEffects(&settings->audio_effects);
 
@@ -1597,6 +1827,12 @@ bool LoadRuntimePlaybackSettings(const char* path, RuntimePlaybackSettings* sett
             found = true;
         } else if (sscanf_s(s, "runtime_fullscreen=%d", &bool_value) == 1) {
             settings->runtime_fullscreen = (bool_value != 0);
+            found = true;
+        } else if (sscanf_s(s, "runtime_window_divisor=%d", &settings->runtime_window_divisor) == 1) {
+            if (settings->runtime_window_divisor != 1 && settings->runtime_window_divisor != 2 &&
+                settings->runtime_window_divisor != 4 && settings->runtime_window_divisor != 8) {
+                settings->runtime_window_divisor = 1;
+            }
             found = true;
         } else if (strncmp(s, "runtime_title=", 14) == 0) {
             char* title = s + 14;
@@ -1861,10 +2097,12 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
     int u_col = uniforms.color;
     int u_uv = uniforms.uv_rect;
     int u_rot = uniforms.rotation;
+    int u_flip_v = rev::shader::GetUniformLocation(program, "u_flip_v");
     if (u_tex >= 0) rev::shader::SetInt(program, u_tex, 0);
     if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity);
     if (u_col >= 0) rev::shader::SetVec3(program, u_col, r, g, b);
     if (u_rot >= 0) rev::shader::SetFloat(program, u_rot, rotation);
+    if (u_flip_v >= 0) rev::shader::SetFloat(program, u_flip_v, 1.0f);
     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, atlas->texture_id);
 
@@ -1985,6 +2223,72 @@ static bool DrawGlyphRun(rev::shader::Program* program, const TextGlyphAtlas* at
     return drew_glyph;
 }
 
+static void DrawShaderText(rev::shader::Program* program, const ShaderTextCue& cue,
+                           float time, float viewport_width, float viewport_height,
+                           const rev::curve::Curve* curves, int curve_count) {
+    if (!program || !cue.text[0] || viewport_width <= 0.0f || viewport_height <= 0.0f) return;
+    const float local = time - cue.cue_start;
+    auto Evaluate = [&](int curve_index, float fallback) {
+        if (!curves || curve_index < 0 || curve_index >= curve_count || local < 0.0f) return fallback;
+        const rev::curve::Curve& curve = curves[curve_index];
+        return curve.duration > 0.0f ? rev::curve::Evaluate(curve, local / curve.duration) : fallback;
+    };
+    const float x = Evaluate(cue.curve_x, cue.x);
+    const float y = Evaluate(cue.curve_y, cue.y);
+    const float size = Evaluate(cue.curve_size, cue.size);
+    const float speed = Evaluate(cue.curve_speed, cue.speed);
+    const float spacing = Evaluate(cue.curve_spacing, cue.spacing);
+    const float color_r = Evaluate(cue.curve_color_r, cue.color.r);
+    const float color_g = Evaluate(cue.curve_color_g, cue.color.g);
+    const float color_b = Evaluate(cue.curve_color_b, cue.color.b);
+    float alpha = Evaluate(cue.curve_opacity, cue.opacity);
+    if (cue.fade_in > 0.0f && local < cue.fade_in) alpha *= local / cue.fade_in;
+    const float remaining = cue.cue_end - time;
+    if (cue.fade_out > 0.0f && remaining < cue.fade_out) alpha *= remaining / cue.fade_out;
+    if (alpha <= 0.0f) return;
+    const size_t length = strlen(cue.text);
+    const float viewport_scale = rev::runtime::ComputeTextViewportScale(viewport_width, viewport_height);
+    const float glyph_height = size * viewport_scale;
+    const float glyph_width = glyph_height * (5.0f / 7.0f);
+    const float advance = glyph_height * (6.0f / 7.0f) * (spacing > 0.01f ? spacing : 0.01f);
+    const float text_width = length ? advance * (float)length - (advance - glyph_width) : 0.0f;
+    float cursor = x * viewport_width;
+    if (cue.mode == 0) {
+        if (cue.alignment == 1) cursor -= text_width * 0.5f;
+        else if (cue.alignment == 2) cursor -= text_width;
+    } else {
+        const float travel = viewport_width + text_width;
+        float moved = local * speed * viewport_scale;
+        if (cue.loop_mode == 0 && travel > 0.0f) moved = fmodf(moved, travel);
+        else if (moved > travel) moved = travel;
+        cursor = cue.direction == 1 ? -text_width + moved : viewport_width - moved;
+    }
+    rev::shader::Use(program);
+    const int u_position = rev::shader::GetUniformLocation(program, "u_position");
+    const int u_size = rev::shader::GetUniformLocation(program, "u_size");
+    const int u_color = rev::shader::GetUniformLocation(program, "u_color");
+    rev::shader::SetVec2(program, u_size, glyph_width / viewport_width, glyph_height / viewport_height);
+    rev::shader::SetVec4(program, u_color, color_r, color_g, color_b, alpha);
+    int row_locations[7];
+    for (int row = 0; row < 7; ++row) {
+        char name[16]; sprintf_s(name, "u_rows[%d]", row);
+        row_locations[row] = rev::shader::GetUniformLocation(program, name);
+    }
+    for (size_t i = 0; i < length; ++i, cursor += advance) {
+        if (cue.text[i] == '\n') continue;
+        const float center = cursor + glyph_width * 0.5f;
+        if (center + glyph_width * 0.5f < 0.0f || center - glyph_width * 0.5f > viewport_width) continue;
+        unsigned int packed = 0, last = 0;
+        rev::runtime::GetShaderTextGlyph((unsigned char)cue.text[i], &packed, &last);
+        for (int row = 0; row < 6; ++row)
+            rev::shader::SetFloat(program, row_locations[row], (float)((packed >> (row * 5)) & 31u));
+        rev::shader::SetFloat(program, row_locations[6], (float)(last & 31u));
+        rev::shader::SetVec2(program, u_position, center / viewport_width * 2.0f - 1.0f,
+                            1.0f - y * 2.0f);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+}
+
 // Sprite fragment shader - textured with opacity
 const char* sprite_fragment_shader = R"(
 #version 330 core
@@ -2009,15 +2313,18 @@ out vec3 v_frag_pos;
 out vec3 v_normal;
 out vec2 v_uv;
 out vec3 v_noise_pos;
+out vec4 v_light_space_pos;
 uniform mat4 u_model;
 uniform mat4 u_view;
 uniform mat4 u_projection;
+uniform mat4 u_light_matrix;
 void main() {
     vec4 world_pos = u_model * vec4(a_pos, 1.0);
     v_frag_pos = world_pos.xyz;
     v_normal   = mat3(transpose(inverse(u_model))) * a_normal;
     v_uv       = a_uv;
     v_noise_pos = a_pos;
+    v_light_space_pos = u_light_matrix * world_pos;
     gl_Position = u_projection * u_view * world_pos;
 }
 )";
@@ -2028,8 +2335,13 @@ in vec3 v_frag_pos;
 in vec3 v_normal;
 in vec2 v_uv;
 in vec3 v_noise_pos;
+in vec4 v_light_space_pos;
 out vec4 fragColor;
 uniform vec3  u_light_pos;
+uniform vec3  u_light_direction;
+uniform int   u_light_directional;
+uniform sampler2D u_shadow_map;
+uniform int u_shadow_enabled;
 uniform vec3  u_view_pos;
 uniform vec4  u_color;
 uniform float u_metallic;
@@ -2068,6 +2380,18 @@ float material_noise(vec3 p) {
     }
     return norm > 0.0 ? sum / norm : 0.0;
 }
+float shadow_visibility(vec3 normal, vec3 light_dir) {
+    if (u_shadow_enabled == 0) return 1.0;
+    vec3 p = v_light_space_pos.xyz / v_light_space_pos.w;
+    p = p * 0.5 + 0.5;
+    if (p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 1.0;
+    float bias = max(0.0015 * (1.0 - dot(normal, light_dir)), 0.0003);
+    vec2 texel = 1.0 / vec2(textureSize(u_shadow_map, 0));
+    float visible = 0.0;
+    for (int x=-1;x<=1;++x) for(int y=-1;y<=1;++y)
+        visible += p.z - bias <= texture(u_shadow_map, p.xy + vec2(x,y)*texel).r ? 1.0 : 0.0;
+    return visible / 9.0;
+}
 void main() {
     vec3  base = u_color.rgb;
     float alpha = u_color.a;
@@ -2081,7 +2405,7 @@ void main() {
     float material_roughness = u_noise_target == 2
         ? mix(u_roughness, noise_value, u_noise_strength) : u_roughness;
     vec3  norm     = normalize(v_normal);
-    vec3  ldir     = normalize(u_light_pos - v_frag_pos);
+    vec3  ldir     = u_light_directional != 0 ? normalize(-u_light_direction) : normalize(u_light_pos - v_frag_pos);
     vec3  vdir     = normalize(u_view_pos  - v_frag_pos);
     vec3  hdir     = normalize(ldir + vdir);
     float ambient  = 0.15;
@@ -2092,7 +2416,8 @@ void main() {
     vec3  spec        = spec_col * spec_fac * (1.0 - material_roughness * 0.85);
     vec3  emissive    = u_emissive_color * u_emissive_strength;
     if (u_noise_target == 3) emissive *= mix(1.0, noise_value, u_noise_strength);
-    vec3  result      = base * (ambient + diff) + spec + emissive;
+    float visibility  = shadow_visibility(norm, ldir);
+    vec3  result      = base * (ambient + diff * visibility) + spec * visibility + emissive;
     fragColor = vec4(result, alpha);
 }
 )";
@@ -2432,6 +2757,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
+#if HIMYM_PACKED_DIAGNOSTICS
     g_verbose_logging = IsVerboseLoggingEnabled();
     if (g_verbose_logging) {
         // Optional debug console for verbose sessions.
@@ -2447,6 +2773,7 @@ int main(int argc, char* argv[]) {
         printf("=== HiMYM Minimal Intro ===\n");
         printf("Verbose logging: ON (HIMYM_VERBOSE)\n\n");
     }
+#endif
 
     // Cues file path: argv[1] takes priority (editor always passes it).
     // Packed standalone build: extract embedded kPackedCuesContent to a temp file —
@@ -2501,9 +2828,23 @@ int main(int argc, char* argv[]) {
     // Load ALL shader cues (multi-scene support)
     ShaderCue shader_cues[16];  // Support up to 16 shader cues
     int shader_cue_count = LoadAllShaderCues(cues_path, shader_cues, 16);
+    for (int i = 0; i < shader_cue_count; ++i) shader_cues[i].shader_pipeline_index = -1;
+    LoadShaderPipelineCueRefs(cues_path, shader_cues, shader_cue_count);
+    rev::runtime::ShaderPipeline shader_pipelines[rev::runtime::kMaxShaderPipelines];
+    const int shader_pipeline_count = LoadShaderPipelines(
+        cues_path, shader_pipelines, rev::runtime::kMaxShaderPipelines);
+    for (int pipeline_index = 0; pipeline_index < shader_pipeline_count; ++pipeline_index) {
+        int pass_order[rev::runtime::kMaxShaderPasses] = {};
+        char pipeline_error[256] = {};
+        if (rev::runtime::BuildShaderPassOrder(&shader_pipelines[pipeline_index], pass_order,
+                                               pipeline_error, sizeof(pipeline_error)) < 0) {
+            printf("WARNING: Shader pipeline %d is invalid: %s\n", pipeline_index, pipeline_error);
+        }
+    }
     LOGV("Loaded %d shader cue(s)\n", shader_cue_count);
 
-    ImageTexture shader_noise_textures[16][4] = {};
+    ImageTexture shader_noise_textures[HIMYM_USE_IMAGE_DECODER ? 16 : 1][4] = {};
+#if HIMYM_USE_IMAGE_DECODER
     for (int cue_index = 0; cue_index < shader_cue_count; ++cue_index) {
         for (int map_index = 0; map_index < 4; ++map_index) {
             const char* declared_path = shader_cues[cue_index].noise_textures.paths[map_index];
@@ -2515,6 +2856,7 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+#endif
 
     const int kMaxPostEffects = 64;
     RuntimePostEffect post_effects[kMaxPostEffects] = {};
@@ -2524,6 +2866,16 @@ int main(int argc, char* argv[]) {
     int scene_layer_post_effect_count = LoadSceneLayerPostEffects(
         cues_path, scene_layer_post_effects, 64);
     LOGV("Loaded %d scene layer post-effect stack(s)\n", scene_layer_post_effect_count);
+    static rev::runtime::SceneNavigation scene_navigation[64] = {};
+    int scene_navigation_count = LoadSceneNavigation(cues_path, scene_navigation, 64);
+    static RuntimeSceneMenu scene_menus[64] = {};
+#if HIMYM_USE_TEXT
+    int scene_menu_count = LoadSceneMenus(cues_path, scene_menus, 64);
+#else
+    const int scene_menu_count = 0;
+#endif
+    static TextTexture scene_menu_textures[HIMYM_USE_TEXT ? 64 : 1][rev::runtime::kMaxMenuItems] = {};
+    LOGV("Loaded %d scene row(s), %d interactive menu(s)\n", scene_navigation_count, scene_menu_count);
     
     // Setup default fallback shader cue
     ShaderCue fallback_cue = {};
@@ -2567,13 +2919,17 @@ int main(int argc, char* argv[]) {
     bool has_music = (music_cue_count > 0);
     
     // Load image cues (multi-cue support)
-    const int kMaxImageCues = 32;
-    ImageCue image_cues[kMaxImageCues] = {};
-    ImageTexture image_texes[kMaxImageCues] = {};
-    bool image_loaded[kMaxImageCues] = {};
-    int image_frame_counts[kMaxImageCues] = {};
-    char image_runtime_paths[kMaxImageCues][512] = {};
+    const int kMaxImageCues = HIMYM_USE_IMAGE ? 32 : 0;
+    ImageCue image_cues[HIMYM_USE_IMAGE ? kMaxImageCues : 1] = {};
+    ImageTexture image_texes[HIMYM_USE_IMAGE ? kMaxImageCues : 1] = {};
+    bool image_loaded[HIMYM_USE_IMAGE ? kMaxImageCues : 1] = {};
+    int image_frame_counts[HIMYM_USE_IMAGE ? kMaxImageCues : 1] = {};
+    char image_runtime_paths[HIMYM_USE_IMAGE ? kMaxImageCues : 1][512] = {};
+#if HIMYM_USE_IMAGE
     int image_cue_count = LoadAllImageCues(cues_path, image_cues, kMaxImageCues);
+#else
+    const int image_cue_count = 0;
+#endif
     bool has_image = (image_cue_count > 0);
     LOGV("Image cues loaded: %d\n", image_cue_count);
     if (g_logfile) {
@@ -2658,13 +3014,17 @@ int main(int argc, char* argv[]) {
 #endif
     
     // Load text cues (multi-cue support)
-    const int kMaxTextCues = 32;
-    TextCue text_cues[kMaxTextCues] = {};
-    TextTexture text_texes[kMaxTextCues] = {};
-    TextGlyphAtlas text_atlases[kMaxTextCues] = {};
-    bool text_loaded[kMaxTextCues] = {};
-    bool text_force_baked[kMaxTextCues] = {};
+    const int kMaxTextCues = HIMYM_USE_TEXT ? 32 : 0;
+    TextCue text_cues[HIMYM_USE_TEXT ? kMaxTextCues : 1] = {};
+    TextTexture text_texes[HIMYM_USE_TEXT ? kMaxTextCues : 1] = {};
+    TextGlyphAtlas text_atlases[HIMYM_USE_TEXT ? kMaxTextCues : 1] = {};
+    bool text_loaded[HIMYM_USE_TEXT ? kMaxTextCues : 1] = {};
+    bool text_force_baked[HIMYM_USE_TEXT ? kMaxTextCues : 1] = {};
+#if HIMYM_USE_TEXT
     int text_cue_count = LoadAllTextCues(cues_path, text_cues, kMaxTextCues);
+#else
+    const int text_cue_count = 0;
+#endif
 
     const int kMaxScrollTextCues = HIMYM_USE_SCROLL_TEXT ? 64 : 0;
     static ScrollTextCue scroll_text_cues[HIMYM_USE_SCROLL_TEXT ? kMaxScrollTextCues : 1] = {};
@@ -2678,12 +3038,29 @@ int main(int argc, char* argv[]) {
     const int scroll_text_cue_count = 0;
 #endif
 
+    const int kMaxShaderTextCues = HIMYM_USE_SHADER_TEXT ? 64 : 0;
+    static ShaderTextCue shader_text_cues[HIMYM_USE_SHADER_TEXT ? kMaxShaderTextCues : 1] = {};
+#if HIMYM_USE_SHADER_TEXT
+    const int shader_text_cue_count = LoadAllShaderTextCues(cues_path, shader_text_cues, kMaxShaderTextCues);
+#else
+    const int shader_text_cue_count = 0;
+#endif
+#if HIMYM_PACKED_DIAGNOSTICS
+    if (g_logfile) {
+        fprintf(g_logfile, "Shader text cues loaded: %d\n", shader_text_cue_count);
+        fflush(g_logfile);
+    }
+#endif
+
     // Load mesh cues (multi-cue support)
     const int kMaxMeshCues = 32;
     int mesh_cue_count = 0;
     bool has_mesh = false;
 #if HIMYM_USE_MESH
-    MeshCue mesh_cues[kMaxMeshCues] = {};
+    // Mesh support is feature-gated in packed builds. Keeping this array on the
+    // WinMain stack made enabling the feature push the already sizeable runtime
+    // frame over Windows' default 1 MiB stack while the next cue parser entered.
+    static MeshCue mesh_cues[kMaxMeshCues] = {};
     mesh_cue_count = LoadAllMeshCues(cues_path, mesh_cues, kMaxMeshCues);
     has_mesh = (mesh_cue_count > 0);
     LOGV("Mesh cues loaded: %d\n", mesh_cue_count);
@@ -2727,6 +3104,9 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < scroll_text_cue_count; ++i) {
         if (scroll_text_cues[i].cue_end > total_duration) total_duration = scroll_text_cues[i].cue_end;
     }
+    for (int i = 0; i < shader_text_cue_count; ++i) {
+        if (shader_text_cues[i].cue_end > total_duration) total_duration = shader_text_cues[i].cue_end;
+    }
 #if HIMYM_USE_MESH
     for (int i = 0; i < mesh_cue_count; ++i) {
         if (mesh_cues[i].cue_end > total_duration) total_duration = mesh_cues[i].cue_end;
@@ -2764,9 +3144,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     
     // Create window and OpenGL context
     rev::platform::WindowConfig config;
-    config.width = 1920;
-    config.height = 1080;
     config.fullscreen = playback_settings.runtime_fullscreen || screen_saver_mode;
+    const int window_divisor = config.fullscreen ? 1 : playback_settings.runtime_window_divisor;
+    config.width = 1920 / window_divisor;
+    config.height = 1080 / window_divisor;
+    config.borderless = !config.fullscreen;
     config.title = playback_settings.runtime_title;
     
     rev::platform::Window* window = rev::platform::CreateIntroWindow(config);
@@ -2776,11 +3158,24 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     
     // Load OpenGL functions
     rev::platform::LoadGLFunctions();
+    rev::platform::OpenGLInfo gl_info = {};
+    if (!rev::platform::GetOpenGLInfo(&gl_info)) {
+        printf("ERROR: Unable to query the active OpenGL context\n");
+        rev::platform::DestroyIntroWindow(window);
+        return -1;
+    }
+    LOGV("OpenGL: %s | GLSL: %s | %s | %s\n",
+         gl_info.version ? gl_info.version : "unknown",
+         gl_info.glsl_version ? gl_info.glsl_version : "unknown",
+         gl_info.vendor ? gl_info.vendor : "unknown",
+         gl_info.renderer ? gl_info.renderer : "unknown");
     
-    // Initialize GDI+
+    // Initialize GDI+ only when this packed project needs image/text decoding.
+#if HIMYM_USE_IMAGE_DECODER
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-    ULONG_PTR gdiplusToken;
+    ULONG_PTR gdiplusToken = 0;
     Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr);
+#endif
     
     // Load GL 3.3+ function pointers
     glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)rev::platform::GetProcAddress("glGenVertexArrays");
@@ -2788,23 +3183,31 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     glActiveTexture = (PFNGLACTIVETEXTUREPROC)rev::platform::GetProcAddress("glActiveTexture");
     glBlendColor = (PFNGLBLENDCOLORPROC)rev::platform::GetProcAddress("glBlendColor");
     glBlendEquation_rt = (PFNGLBLENDEQUATIONPROC)rev::platform::GetProcAddress("glBlendEquation");
+    if (!glGenVertexArrays || !glBindVertexArray || !glActiveTexture ||
+        !glBlendColor || !glBlendEquation_rt) {
+        printf("ERROR: Required OpenGL 3.3 rendering functions are unavailable\n");
+        rev::platform::DestroyIntroWindow(window);
+        return -1;
+    }
     
     // Create and bind VAO (required for OpenGL 3.3 core)
     GLuint vao;
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
 
-    typedef void (*PFNGLGENFRAMEBUFFERSPROC)(int, unsigned int*);
-    typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int, unsigned int);
-    typedef void (*PFNGLFRAMEBUFFERTEXTURE2DPROC)(unsigned int, unsigned int, unsigned int, unsigned int, int);
-    typedef void (*PFNGLGENRENDERBUFFERSPROC)(int, unsigned int*);
-    typedef void (*PFNGLBINDRENDERBUFFERPROC)(unsigned int, unsigned int);
-    typedef void (*PFNGLRENDERBUFFERSTORAGEPROC)(unsigned int, unsigned int, int, int);
-    typedef void (*PFNGLFRAMEBUFFERRENDERBUFFERPROC)(unsigned int, unsigned int, unsigned int, unsigned int);
-    typedef void (*PFNGLBLITFRAMEBUFFERPROC)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
-    typedef unsigned int (*PFNGLCHECKFRAMEBUFFERSTATUSPROC)(unsigned int);
-    typedef void (*PFNGLDELETEFRAMEBUFFERSPROC)(int, const unsigned int*);
-    typedef void (*PFNGLDELETERENDERBUFFERSPROC)(int, const unsigned int*);
+    // WGL extension entry points are __stdcall on x86. Omitting APIENTRY is
+    // invisible on x64 but corrupts the Crinkler runtime stack on every call.
+    typedef void (APIENTRY *PFNGLGENFRAMEBUFFERSPROC)(int, unsigned int*);
+    typedef void (APIENTRY *PFNGLBINDFRAMEBUFFERPROC)(unsigned int, unsigned int);
+    typedef void (APIENTRY *PFNGLFRAMEBUFFERTEXTURE2DPROC)(unsigned int, unsigned int, unsigned int, unsigned int, int);
+    typedef void (APIENTRY *PFNGLGENRENDERBUFFERSPROC)(int, unsigned int*);
+    typedef void (APIENTRY *PFNGLBINDRENDERBUFFERPROC)(unsigned int, unsigned int);
+    typedef void (APIENTRY *PFNGLRENDERBUFFERSTORAGEPROC)(unsigned int, unsigned int, int, int);
+    typedef void (APIENTRY *PFNGLFRAMEBUFFERRENDERBUFFERPROC)(unsigned int, unsigned int, unsigned int, unsigned int);
+    typedef void (APIENTRY *PFNGLBLITFRAMEBUFFERPROC)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
+    typedef unsigned int (APIENTRY *PFNGLCHECKFRAMEBUFFERSTATUSPROC)(unsigned int);
+    typedef void (APIENTRY *PFNGLDELETEFRAMEBUFFERSPROC)(int, const unsigned int*);
+    typedef void (APIENTRY *PFNGLDELETERENDERBUFFERSPROC)(int, const unsigned int*);
     auto glGenFramebuffers_rt = (PFNGLGENFRAMEBUFFERSPROC)rev::platform::GetProcAddress("glGenFramebuffers");
     auto glBindFramebuffer_rt = (PFNGLBINDFRAMEBUFFERPROC)rev::platform::GetProcAddress("glBindFramebuffer");
     auto glFramebufferTexture2D_rt = (PFNGLFRAMEBUFFERTEXTURE2DPROC)rev::platform::GetProcAddress("glFramebufferTexture2D");
@@ -2959,6 +3362,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             state.u_noise_maps[map_index] = rev::shader::GetUniformLocation(state.prog, uniform_name);
         }
         state.u_noise_map_count = rev::shader::GetUniformLocation(state.prog, "u_noise_map_count");
+        state.i_resolution = rev::shader::GetUniformLocation(state.prog, "iResolution");
+        state.i_time = rev::shader::GetUniformLocation(state.prog, "iTime");
+        state.i_time_delta = rev::shader::GetUniformLocation(state.prog, "iTimeDelta");
+        state.i_frame = rev::shader::GetUniformLocation(state.prog, "iFrame");
+        state.i_mouse = rev::shader::GetUniformLocation(state.prog, "iMouse");
+        for (int channel = 0; channel < 4; ++channel) {
+            char uniform_name[24] = {};
+            snprintf(uniform_name, sizeof(uniform_name), "iChannel%d", channel);
+            state.i_channels[channel] = rev::shader::GetUniformLocation(state.prog, uniform_name);
+        }
         return &state;
     };
     ShaderProgramState asset_shader_programs[64] = {};
@@ -3005,6 +3418,18 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     
     // Compile sprite shader
     rev::shader::Program* sprite_shader = rev::shader::CompileFromSource(sprite_vertex_shader, sprite_fragment_shader);
+    rev::shader::Program* shader_text_shader = nullptr;
+#if HIMYM_USE_SHADER_TEXT
+    if (shader_text_cue_count > 0)
+        shader_text_shader = rev::shader::CompileFromSource(
+            rev::runtime::GetShaderTextVertexSource(), rev::runtime::GetShaderTextFragmentSource());
+#if HIMYM_PACKED_DIAGNOSTICS
+    if (g_logfile) {
+        fprintf(g_logfile, "Shader text program: %s\n", shader_text_shader ? "OK" : "FAILED");
+        fflush(g_logfile);
+    }
+#endif
+#endif
     if (!sprite_shader) {
         printf("ERROR: Sprite shader failed to compile\n");
     } else {
@@ -3012,7 +3437,244 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_flip_v"), 1.0f);
         rev::shader::SetVec4(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect"), 0.0f, 0.0f, 1.0f, 1.0f);
         LOGV("Sprite shader OK\n");
+#if HIMYM_USE_TEXT
+        for (int menu_index = 0; menu_index < scene_menu_count; ++menu_index) {
+            for (int item_index = 0; item_index < scene_menus[menu_index].menu.item_count; ++item_index) {
+                const char* label = scene_menus[menu_index].menu.items[item_index].label;
+                if (scene_menus[menu_index].menu.items[item_index].visual_type == 0 && label[0])
+                    RenderTextToTexture(label, "Segoe UI", 42.0f, 1.0f, 1.0f, 1.0f,
+                                                  &scene_menu_textures[menu_index][item_index]);
+            }
+        }
+#endif
     }
+
+    unsigned int runtime_shader_audio_texture = 0;
+    int runtime_shader_audio_frame = -1;
+    auto update_runtime_shader_audio_texture = [&](int frame) -> unsigned int {
+        if (runtime_shader_audio_texture && runtime_shader_audio_frame == frame)
+            return runtime_shader_audio_texture;
+        float samples[rev::runtime::kShaderAudioSampleFrames * 2] = {};
+#if HIMYM_USE_XM
+        if (g_shader_audio_state) {
+            std::lock_guard<std::mutex> lock(g_shader_audio_state->shader_audio_mutex);
+            memcpy(samples, g_shader_audio_state->shader_audio_samples, sizeof(samples));
+        }
+#endif
+        unsigned char pixels[rev::runtime::kShaderAudioTextureWidth * 2] = {};
+        rev::runtime::BuildShaderAudioTexture(samples, rev::runtime::kShaderAudioSampleFrames, pixels);
+        if (!runtime_shader_audio_texture) {
+            glGenTextures(1, &runtime_shader_audio_texture);
+            glBindTexture(GL_TEXTURE_2D, runtime_shader_audio_texture);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D, 0, 0x8229, rev::runtime::kShaderAudioTextureWidth, 2,
+                         0, 0x1903, GL_UNSIGNED_BYTE, pixels);
+        } else {
+            glBindTexture(GL_TEXTURE_2D, runtime_shader_audio_texture);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, rev::runtime::kShaderAudioTextureWidth, 2,
+                            0x1903, GL_UNSIGNED_BYTE, pixels);
+        }
+        runtime_shader_audio_frame = frame;
+        return runtime_shader_audio_texture;
+    };
+
+    struct RuntimePipelinePassState {
+        rev::shader::Program* program;
+        unsigned int fbos[2];
+        unsigned int textures[2];
+        int width;
+        int height;
+        int front;
+        ImageTexture channel_textures[rev::runtime::kMaxShaderChannels];
+    };
+    struct RuntimePipelineState {
+        bool valid;
+        int order[rev::runtime::kMaxShaderPasses];
+        int order_count;
+        RuntimePipelinePassState passes[rev::runtime::kMaxShaderPasses];
+    };
+    RuntimePipelineState runtime_pipelines[rev::runtime::kMaxShaderPipelines] = {};
+
+    auto load_pipeline_source = [&](int pipeline_index, int pass_index,
+                                    const char* declared_path, std::string* source) -> bool {
+        if (!source) return false;
+#if defined(HIMYM_PACKED_ASSETS)
+        char key[128] = {};
+        snprintf(key, sizeof(key), "shader_pipeline_%d_pass_%d_source", pipeline_index, pass_index);
+        const rev::pack::PackedAsset* asset = rev::pack::GetPackedAsset(key, kPackedAssets, kPackedAssetCount);
+        if (asset && asset->data && asset->size) {
+            source->assign(reinterpret_cast<const char*>(asset->data), asset->size);
+            return true;
+        }
+#endif
+        char resolved[640] = {};
+        if (!ResolveRuntimeAssetPath(declared_path, cues_path, resolved, sizeof(resolved))) return false;
+        FILE* source_file = nullptr;
+        fopen_s(&source_file, resolved, "rb");
+        if (!source_file) return false;
+        fseek(source_file, 0, SEEK_END);
+        long size = ftell(source_file);
+        fseek(source_file, 0, SEEK_SET);
+        if (size <= 0) { fclose(source_file); return false; }
+        source->resize((size_t)size);
+        const bool ok = fread(&(*source)[0], 1, (size_t)size, source_file) == (size_t)size;
+        fclose(source_file);
+        return ok;
+    };
+
+    if (scene_fbo_ready) {
+        for (int pipeline_index = 0; pipeline_index < shader_pipeline_count; ++pipeline_index) {
+            RuntimePipelineState& state = runtime_pipelines[pipeline_index];
+            char error[256] = {};
+            state.order_count = rev::runtime::BuildShaderPassOrder(
+                &shader_pipelines[pipeline_index], state.order, error, sizeof(error));
+            state.valid = state.order_count > 0;
+            for (int order_index = 0; state.valid && order_index < state.order_count; ++order_index) {
+                const int pass_index = state.order[order_index];
+                const rev::runtime::ShaderPass& pass = shader_pipelines[pipeline_index].passes[pass_index];
+                RuntimePipelinePassState& pass_state = state.passes[pass_index];
+                std::string source;
+                if (!load_pipeline_source(pipeline_index, pass_index, pass.source_path, &source)) {
+                    printf("WARNING: Cannot load shader pipeline %d pass %d: %s\n",
+                           pipeline_index, pass_index, pass.source_path);
+                    state.valid = false;
+                    break;
+                }
+                pass_state.program = rev::shader::CompileFromSource(vertex_shader, source.c_str());
+                if (!pass_state.program) { state.valid = false; break; }
+                pass_state.width = (int)(config.width * pass.resolution_scale);
+                pass_state.height = (int)(config.height * pass.resolution_scale);
+                if (pass_state.width < 1) pass_state.width = 1;
+                if (pass_state.height < 1) pass_state.height = 1;
+                glGenFramebuffers_rt(2, pass_state.fbos);
+                glGenTextures(2, pass_state.textures);
+                for (int target = 0; target < 2; ++target) {
+                    glBindTexture(GL_TEXTURE_2D, pass_state.textures[target]);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pass_state.width, pass_state.height,
+                                 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, 0x812F);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, 0x812F);
+                    glBindFramebuffer_rt(0x8D40, pass_state.fbos[target]);
+                    glFramebufferTexture2D_rt(0x8D40, 0x8CE0, GL_TEXTURE_2D, pass_state.textures[target], 0);
+                    if (glCheckFramebufferStatus_rt(0x8D40) != 0x8CD5) state.valid = false;
+                    glClearColor(0, 0, 0, 0);
+                    glClear(GL_COLOR_BUFFER_BIT);
+                }
+#if HIMYM_USE_IMAGE_DECODER
+                for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                    const rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+                    if (channel.kind != rev::runtime::ShaderChannelTexture) continue;
+#if defined(HIMYM_PACKED_ASSETS)
+                    char key[128] = {};
+                    snprintf(key, sizeof(key), "shader_pipeline_%d_pass_%d_channel_%d",
+                             pipeline_index, pass_index, channel_index);
+                    const rev::pack::PackedAsset* asset = rev::pack::GetPackedAsset(key, kPackedAssets, kPackedAssetCount);
+                    if (asset) LoadImageTextureFromMemory(asset->data, asset->size,
+                                                          &pass_state.channel_textures[channel_index]);
+#else
+                    char resolved[640] = {};
+                    if (ResolveRuntimeAssetPath(channel.asset_path, cues_path, resolved, sizeof(resolved)))
+                        LoadImageTexture(resolved, &pass_state.channel_textures[channel_index]);
+#endif
+                }
+#endif
+            }
+        }
+        glBindFramebuffer_rt(0x8D40, scene_fbo);
+        glViewport(0, 0, config.width, config.height);
+    }
+
+    auto render_shader_pipeline = [&](int pipeline_index, float pipeline_time,
+                                      float pipeline_dt, int pipeline_frame,
+                                      bool blend_layer, int blend_mode, float opacity) -> bool {
+        if (pipeline_index < 0 || pipeline_index >= shader_pipeline_count || !sprite_shader) return false;
+        RuntimePipelineState& state = runtime_pipelines[pipeline_index];
+        if (!state.valid) return false;
+        const rev::runtime::ShaderPipeline& pipeline = shader_pipelines[pipeline_index];
+        for (int order_index = 0; order_index < state.order_count; ++order_index) {
+            const int pass_index = state.order[order_index];
+            const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+            RuntimePipelinePassState& pass_state = state.passes[pass_index];
+            const int previous = pass_state.front;
+            const int destination = 1 - previous;
+            glBindFramebuffer_rt(0x8D40, pass_state.fbos[destination]);
+            glViewport(0, 0, pass_state.width, pass_state.height);
+            glDisable(GL_BLEND);
+            glDisable(GL_DEPTH_TEST);
+            glDepthMask(GL_FALSE);
+            glClearColor(0, 0, 0, 0);
+            glClear(GL_COLOR_BUFFER_BIT);
+            rev::shader::Use(pass_state.program);
+            rev::shader::SetVec3(pass_state.program, rev::shader::GetUniformLocation(pass_state.program, "iResolution"),
+                                 (float)pass_state.width, (float)pass_state.height, 1.0f);
+            rev::shader::SetFloat(pass_state.program, rev::shader::GetUniformLocation(pass_state.program, "iTime"), pipeline_time);
+            rev::shader::SetFloat(pass_state.program, rev::shader::GetUniformLocation(pass_state.program, "iTimeDelta"), pipeline_dt);
+            rev::shader::SetInt(pass_state.program, rev::shader::GetUniformLocation(pass_state.program, "iFrame"), pipeline_frame);
+            for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                const rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+                unsigned int texture = 0;
+                if (channel.kind == rev::runtime::ShaderChannelTexture)
+                    texture = pass_state.channel_textures[channel_index].texture_id;
+                else if (channel.kind >= rev::runtime::ShaderChannelBufferA &&
+                         channel.kind <= rev::runtime::ShaderChannelBufferD) {
+                    const int source_pass = channel.kind - rev::runtime::ShaderChannelBufferA + rev::runtime::ShaderPassBufferA;
+                    RuntimePipelinePassState& source = state.passes[source_pass];
+                    texture = source.textures[source.front];
+                } else if (channel.kind == rev::runtime::ShaderChannelSelfPreviousFrame)
+                    texture = pass_state.textures[previous];
+                else if (channel.kind == rev::runtime::ShaderChannelAudioSpectrum)
+                    texture = update_runtime_shader_audio_texture(pipeline_frame);
+                glActiveTexture(GL_TEXTURE0 + channel_index);
+                glBindTexture(GL_TEXTURE_2D, texture);
+                char uniform_name[24] = {};
+                snprintf(uniform_name, sizeof(uniform_name), "iChannel%d", channel_index);
+                rev::shader::SetInt(pass_state.program,
+                                    rev::shader::GetUniformLocation(pass_state.program, uniform_name), channel_index);
+            }
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            pass_state.front = destination;
+        }
+
+        RuntimePipelinePassState& image = state.passes[rev::runtime::ShaderPassImage];
+        if (!pipeline.passes[rev::runtime::ShaderPassImage].enabled) return false;
+        glBindFramebuffer_rt(0x8D40, scene_fbo_ready ? scene_fbo : 0);
+        glViewport(0, 0, config.width, config.height);
+        if (blend_layer) {
+            glEnable(GL_BLEND);
+            ApplyShaderLayerBlendMode(blend_mode, opacity);
+        } else if (opacity < 0.9999f) {
+            // A reduced source alpha has no visual effect when blending is
+            // disabled. Alpha-composite the bottom pipeline layer so authored
+            // opacity curves and fade envelopes can fade it against black.
+            glEnable(GL_BLEND);
+            ApplyShaderLayerBlendMode(0, opacity);
+        } else {
+            glDisable(GL_BLEND);
+        }
+        rev::shader::Use(sprite_shader);
+        const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
+        rev::shader::SetVec2(sprite_shader, uniforms.position, 0.0f, 0.0f);
+        rev::shader::SetVec2(sprite_shader, uniforms.size, 1.0f, 1.0f);
+        rev::shader::SetFloat(sprite_shader, uniforms.rotation, 0.0f);
+        rev::shader::SetFloat(sprite_shader, uniforms.opacity, opacity);
+        rev::shader::SetVec3(sprite_shader, uniforms.color, 1.0f, 1.0f, 1.0f);
+        rev::shader::SetVec4(sprite_shader, uniforms.uv_rect, 0.0f, 0.0f, 1.0f, 1.0f);
+        rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_flip_v"), 0.0f);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, image.textures[image.front]);
+        rev::shader::SetInt(sprite_shader, uniforms.texture, 0);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        // Restore the shared sprite shader's atlas/image convention after
+        // sampling the pipeline render target with inverted V coordinates.
+        rev::shader::SetFloat(sprite_shader,
+                              rev::shader::GetUniformLocation(sprite_shader, "u_flip_v"), 1.0f);
+        return true;
+    };
 
     rev::shader::Program* post_shader = nullptr;
     if (scene_fbo_ready) {
@@ -3025,6 +3687,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     // Compile mesh shader
 #if HIMYM_USE_MESH
     rev::shader::Program* mesh_shader = nullptr;
+    rev::mesh::ShadowMap mesh_shadow = {};
     rev::mesh::Mesh* mesh_objs[kMaxMeshCues] = {};
     if (has_mesh) {
         mesh_shader = rev::shader::CompileFromSource(mesh_vertex_shader_src, mesh_fragment_shader_src);
@@ -3063,6 +3726,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                     mesh_obj->imported_light_pos[0] = ir->light_pos[0];
                                     mesh_obj->imported_light_pos[1] = ir->light_pos[1];
                                     mesh_obj->imported_light_pos[2] = ir->light_pos[2];
+                                    memcpy(mesh_obj->imported_light_direction, ir->light_direction, sizeof(ir->light_direction));
+                                    mesh_obj->imported_light_type = ir->light_type;
+                                    mesh_obj->imported_light_node_index = ir->light_node_index;
                                     mesh_obj->emissive_color[0] = ir->material.emissive[0];
                                     mesh_obj->emissive_color[1] = ir->material.emissive[1];
                                     mesh_obj->emissive_color[2] = ir->material.emissive[2];
@@ -3089,6 +3755,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                         if (tex_path[0] == '\0') continue;
                                         rev::runtime::ImageTexture tex{};
                                         if (rev::runtime::LoadImageTexture(tex_path, &tex)) {
+                                            rev::runtime::SetImageTextureWrap(tex.texture_id,
+                                                ir->materials[mat_i].base_color_wrap_s,
+                                                ir->materials[mat_i].base_color_wrap_t);
                                             material_textures[mat_i] = tex.texture_id;
                                         }
                                     }
@@ -3147,6 +3816,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                 mesh_obj->imported_light_pos[0] = ir->light_pos[0];
                                 mesh_obj->imported_light_pos[1] = ir->light_pos[1];
                                 mesh_obj->imported_light_pos[2] = ir->light_pos[2];
+                                memcpy(mesh_obj->imported_light_direction, ir->light_direction, sizeof(ir->light_direction));
+                                mesh_obj->imported_light_type = ir->light_type;
+                                mesh_obj->imported_light_node_index = ir->light_node_index;
                                 mesh_obj->emissive_color[0] = ir->material.emissive[0];
                                 mesh_obj->emissive_color[1] = ir->material.emissive[1];
                                 mesh_obj->emissive_color[2] = ir->material.emissive[2];
@@ -3171,6 +3843,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                     if (tex_path[0] == '\0') continue;
                                     rev::runtime::ImageTexture tex{};
                                     if (rev::runtime::LoadImageTexture(tex_path, &tex)) {
+                                        rev::runtime::SetImageTextureWrap(tex.texture_id,
+                                            ir->materials[mat_i].base_color_wrap_s,
+                                            ir->materials[mat_i].base_color_wrap_t);
                                         material_textures[mat_i] = tex.texture_id;
                                     }
                                 }
@@ -3499,8 +4174,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         const int kWarmupFrames = 2;
         const double warmup_begin = rev::platform::GetTime();
 
-        typedef void (*PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
-        typedef void (*PFNGLUNIFORM4FVPROC)(int, int, const float*);
+        typedef void (APIENTRY *PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
+        typedef void (APIENTRY *PFNGLUNIFORM4FVPROC)(int, int, const float*);
         auto glUniformMatrix4fv_fn = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
         auto glUniform4fv_fn = (PFNGLUNIFORM4FVPROC)wglGetProcAddress("glUniform4fv");
 
@@ -3527,6 +4202,25 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     rev::shader::SetVec2(shader_state->prog, shader_state->u_resolution,
                                          static_cast<float>(config.width),
                                          static_cast<float>(config.height));
+                }
+                if (shader_state->i_resolution >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->i_resolution,
+                                         static_cast<float>(config.width),
+                                         static_cast<float>(config.height), 1.0f);
+                }
+                if (shader_state->i_time >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->i_time, 0.0f);
+                if (shader_state->i_time_delta >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->i_time_delta, 0.0f);
+                if (shader_state->i_frame >= 0) rev::shader::SetInt(shader_state->prog, shader_state->i_frame, 0);
+                if (shader_state->i_mouse >= 0) {
+                    int mouse_x = 0, mouse_y = 0;
+                    rev::platform::GetMousePosition(window, &mouse_x, &mouse_y);
+                    rev::shader::SetVec4(shader_state->prog, shader_state->i_mouse,
+                                         static_cast<float>(mouse_x),
+                                         static_cast<float>(config.height - mouse_y), 0.0f, 0.0f);
+                }
+                for (int channel = 0; channel < 4; ++channel) {
+                    if (shader_state->i_channels[channel] >= 0)
+                        rev::shader::SetInt(shader_state->prog, shader_state->i_channels[channel], 4 + channel);
                 }
                 if (shader_state->u_palette_low >= 0) {
                     rev::shader::SetVec3(shader_state->prog, shader_state->u_palette_low,
@@ -3711,6 +4405,25 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (loc_vpos >= 0) rev::shader::SetVec3(mesh_shader, loc_vpos, camera_eye[0], camera_eye[1], camera_eye[2]);
 
                     Mat4Model(model_mat, mesh_cue.pos, mesh_cue.rot, mesh_cue.scale);
+                    float light_direction[3] = {0.0f, -1.0f, 0.0f};
+                    const bool directional_light = mesh_cue.use_imported_light &&
+                        mesh_obj->has_imported_light && mesh_obj->imported_light_type == 1;
+                    if (directional_light) {
+                        memcpy(light_direction, mesh_obj->imported_light_direction, sizeof(light_direction));
+                        if (node_delta_mats && mesh_obj->imported_light_node_index >= 0 &&
+                            mesh_obj->imported_light_node_index < (int)mesh_obj->imported_node_count) {
+                            const float* d = &node_delta_mats[mesh_obj->imported_light_node_index * 16];
+                            const float x=light_direction[0], y=light_direction[1], z=light_direction[2];
+                            light_direction[0]=d[0]*x+d[4]*y+d[8]*z;
+                            light_direction[1]=d[1]*x+d[5]*y+d[9]*z;
+                            light_direction[2]=d[2]*x+d[6]*y+d[10]*z;
+                        }
+                        rev::mesh::RenderDirectionalShadow(&mesh_shadow, mesh_obj, model_mat, light_direction);
+                        rev::shader::Use(mesh_shader);
+                    }
+                    rev::shader::SetInt(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_directional"), directional_light ? 1 : 0);
+                    rev::shader::SetVec3(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_direction"), light_direction[0], light_direction[1], light_direction[2]);
+                    rev::mesh::BindDirectionalShadow(directional_light ? &mesh_shadow : nullptr, mesh_shader);
                     if (glUniformMatrix4fv_fn && loc_model >= 0) glUniformMatrix4fv_fn(loc_model, 1, 0, model_mat);
 
                     float light_pos[3] = {3.0f, 5.0f, 4.0f};
@@ -3861,6 +4574,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         audio_state->stop.store(false, std::memory_order_release);
 
         if (waveOutOpen(&audio_state->wave_out, WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL) == MMSYSERR_NOERROR) {
+            g_shader_audio_state = audio_state;
             audio_thread = CreateThread(nullptr, 0, AudioThreadProc, audio_state, 0, nullptr);
             LOGV("Audio started: %d Hz stereo\n", kAudioSampleRate);
         } else {
@@ -3875,12 +4589,53 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     double start_time = rev::platform::GetTime();
     double prev_time = start_time;
     int debug_frame = 0;
+    int shader_frame = 0;
+    int menu_selection = 0;
+    int active_menu_scene = -1;
+    int menu_return_scene = -1;
+    int menu_destination_scene = -1;
+    bool previous_up = false, previous_down = false, previous_enter = false, previous_mouse = false;
 
     while (rev::platform::PollEvents(window) && !window->should_close) {
         double current_time = rev::platform::GetTime();
         float time = static_cast<float>(current_time - start_time);
         float dt = static_cast<float>(current_time - prev_time);
         prev_time = current_time;
+
+        // A scene entered from an interactive menu is a temporary destination,
+        // not the next step in the linear timeline. Return to its originating
+        // menu when its authored scene interval expires.
+        if (menu_return_scene >= 0 && menu_return_scene < scene_navigation_count &&
+            menu_destination_scene >= 0 && menu_destination_scene < scene_navigation_count) {
+            const rev::runtime::SceneNavigation& destination = scene_navigation[menu_destination_scene];
+            float previous_time = time - dt;
+            if (previous_time >= destination.start_time && previous_time < destination.end_time &&
+                time >= destination.end_time) {
+                time = scene_navigation[menu_return_scene].start_time;
+                start_time = current_time - time;
+                menu_return_scene = -1;
+                menu_destination_scene = -1;
+#if HIMYM_USE_XM
+                finished_music_index = -1;
+#endif
+            }
+        }
+
+        // Interactive menu scenes own the clock until the user activates an
+        // item. Wrap only that scene, preserving the rest of the timeline.
+        for (int menu_index = 0; menu_index < scene_menu_count; ++menu_index) {
+            int scene_index = scene_menus[menu_index].scene_index;
+            if (scene_index < 0 || scene_index >= scene_navigation_count) continue;
+            const rev::runtime::SceneNavigation& scene = scene_navigation[scene_index];
+            float duration = scene.end_time - scene.start_time;
+            float previous_time = time - dt;
+            if (duration > 0.0f && previous_time >= scene.start_time && previous_time < scene.end_time &&
+                time >= scene.end_time) {
+                time = scene.start_time + fmodf(time - scene.start_time, duration);
+                start_time = current_time - time;
+                break;
+            }
+        }
 
         // Wrap before cue selection and rendering. Rendering once at a time past
         // the final cue produces a blank frame at the loop boundary.
@@ -3906,6 +4661,66 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
 #endif
         }
+
+        int current_scene_index = -1;
+        for (int si = 0; si < scene_navigation_count; ++si) {
+            if (time >= scene_navigation[si].start_time && time < scene_navigation[si].end_time) {
+                current_scene_index = si; break;
+            }
+        }
+        RuntimeSceneMenu* active_menu = nullptr;
+        for (int mi = 0; mi < scene_menu_count; ++mi) {
+            if (scene_menus[mi].scene_index == current_scene_index) { active_menu = &scene_menus[mi]; break; }
+        }
+        if (current_scene_index != active_menu_scene) {
+            active_menu_scene = current_scene_index;
+            menu_selection = active_menu ? active_menu->menu.initial_item : 0;
+        }
+        bool up = rev::platform::IsKeyPressed(window, VK_UP);
+        bool down = rev::platform::IsKeyPressed(window, VK_DOWN);
+        bool enter = rev::platform::IsKeyPressed(window, VK_RETURN);
+        bool mouse = active_menu && active_menu->menu.mouse_enabled
+            ? rev::platform::IsMouseButtonPressed(window, 0) : false;
+        int activate_item = -1;
+        if (active_menu && active_menu->menu.item_count > 0) {
+            int item_count = active_menu->menu.item_count;
+            if (up && !previous_up) menu_selection = active_menu->menu.wrap
+                ? (menu_selection + item_count - 1) % item_count : (menu_selection > 0 ? menu_selection - 1 : 0);
+            if (down && !previous_down) menu_selection = active_menu->menu.wrap
+                ? (menu_selection + 1) % item_count : (menu_selection + 1 < item_count ? menu_selection + 1 : item_count - 1);
+            if (active_menu->menu.mouse_enabled) {
+                int mouse_x = 0, mouse_y = 0; rev::platform::GetMousePosition(window, &mouse_x, &mouse_y);
+                float nx = window->win_width > 0 ? (float)mouse_x / window->win_width : 0.0f;
+                float ny = window->win_height > 0 ? (float)mouse_y / window->win_height : 0.0f;
+                for (int i = 0; i < item_count; ++i) {
+                    const rev::runtime::MenuItem& item = active_menu->menu.items[i];
+                    if (nx >= item.x && nx <= item.x + item.width && ny >= item.y && ny <= item.y + item.height) {
+                        menu_selection = i;
+                        if (mouse && !previous_mouse) activate_item = i;
+                    }
+                }
+            }
+            if (menu_selection >= 0 && menu_selection < item_count &&
+                active_menu->menu.items[menu_selection].visual_type == 1) {
+                active_menu->sprite_animation_time[menu_selection] += dt;
+            }
+            if (enter && !previous_enter) activate_item = menu_selection;
+            if (activate_item >= 0) {
+                int target = active_menu->menu.items[activate_item].target_scene;
+                if (target >= 0 && target < scene_navigation_count) {
+                    menu_return_scene = current_scene_index;
+                    menu_destination_scene = target;
+                    time = scene_navigation[target].start_time;
+                    start_time = current_time - time;
+                    current_scene_index = target;
+                    active_menu_scene = -1;
+#if HIMYM_USE_XM
+                    finished_music_index = -1;
+#endif
+                }
+            }
+        }
+        previous_up = up; previous_down = down; previous_enter = enter; previous_mouse = mouse;
 
 #if HIMYM_USE_XM
         if (audio_state && loaded_music_player_count > 0) {
@@ -3973,6 +4788,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             active_music_index = -1;
                             audio_state->player.store(nullptr, std::memory_order_release);
                             music_finish_latched = true;
+                            if (menu_return_scene >= 0 && menu_return_scene < scene_navigation_count &&
+                                current_scene_index == menu_destination_scene) {
+                                time = scene_navigation[menu_return_scene].start_time;
+                                start_time = current_time - time;
+                                current_scene_index = menu_return_scene;
+                                active_menu_scene = -1;
+                                menu_return_scene = -1;
+                                menu_destination_scene = -1;
+                                finished_music_index = -1;
+                            }
                         } else if (!music_finish_latched) {
                             rev::xm::SetPosition(selected_player, 0, 0);
                             music_finish_latched = true;
@@ -4171,6 +4996,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 anim_fade = anim_fade + anim_fade_ramp * local_time;
 
                 float envelope = ComputeShaderCueEnvelope(local_time, cue_duration, cue.fade_in, cue.fade_out);
+                float composite_opacity = Clamp01(anim_opacity * envelope);
                 anim_fade *= envelope;
                 if (anim_exposure < 0.0f) anim_exposure = 0.0f;
                 if (anim_fade < 0.0f) anim_fade = 0.0f;
@@ -4185,7 +5011,32 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     ApplyShaderLayerBlendMode(cue.blend_mode, anim_opacity);
                 }
 
+                if (cue.shader_pipeline_index >= 0 &&
+                    render_shader_pipeline(cue.shader_pipeline_index, time, dt, shader_frame,
+                                           li != 0, cue.blend_mode, composite_opacity)) {
+                    continue;
+                }
+
                 rev::shader::Use(shader_state->prog);
+                if (shader_state->i_resolution >= 0) {
+                    rev::shader::SetVec3(shader_state->prog, shader_state->i_resolution,
+                                         static_cast<float>(config.width),
+                                         static_cast<float>(config.height), 1.0f);
+                }
+                if (shader_state->i_time >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->i_time, time);
+                if (shader_state->i_time_delta >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->i_time_delta, dt);
+                if (shader_state->i_frame >= 0) rev::shader::SetInt(shader_state->prog, shader_state->i_frame, shader_frame);
+                if (shader_state->i_mouse >= 0) {
+                    int mouse_x = 0, mouse_y = 0;
+                    rev::platform::GetMousePosition(window, &mouse_x, &mouse_y);
+                    rev::shader::SetVec4(shader_state->prog, shader_state->i_mouse,
+                                         static_cast<float>(mouse_x),
+                                         static_cast<float>(config.height - mouse_y), 0.0f, 0.0f);
+                }
+                for (int channel = 0; channel < 4; ++channel) {
+                    if (shader_state->i_channels[channel] >= 0)
+                        rev::shader::SetInt(shader_state->prog, shader_state->i_channels[channel], 4 + channel);
+                }
                 if (shader_state->u_time >= 0) {
                     rev::shader::SetFloat(shader_state->prog, shader_state->u_time, time);
                 }
@@ -4244,6 +5095,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 if (shader_state->u_noise_speed >= 0) rev::shader::SetVec2(shader_state->prog, shader_state->u_noise_speed, cue.noise.speed_x, cue.noise.speed_y);
                 if (shader_state->u_noise_seed >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_seed, cue.noise.seed);
                 if (shader_state->u_noise_contrast >= 0) rev::shader::SetFloat(shader_state->prog, shader_state->u_noise_contrast, cue.noise.contrast);
+#if HIMYM_USE_IMAGE_DECODER
                 if (glActiveTexture) {
                     int noise_map_count = 0;
                     for (int map_index = 0; map_index < 4; ++map_index) {
@@ -4261,6 +5113,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     }
                     glActiveTexture(GL_TEXTURE0);
                 }
+#else
+                if (shader_state->u_noise_map_count >= 0) {
+                    rev::shader::SetInt(shader_state->prog, shader_state->u_noise_map_count, 0);
+                }
+#endif
 
                 glDrawArrays(GL_TRIANGLES, 0, 3);
             }
@@ -4271,8 +5128,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         // --- Unified layered draw pass ---
         // Collect active image/text/scroll/mesh cues, sort by layer_order, draw in order.
         {
-            struct DrawEntry { int type; int layer; int cue_idx; }; // 0=image 1=text 2=mesh 3=scroll 4=animated sprite 5=pixel 6=emitter
-            DrawEntry entries[kMaxImageCues + kMaxAnimatedSpriteCues + kMaxPixelCues + kMaxPixelEmitterCues + kMaxTextCues + kMaxScrollTextCues + kMaxMeshCues]; int ne = 0;
+            struct DrawEntry { int type; int layer; int cue_idx; }; // 7=shader text
+            DrawEntry entries[kMaxImageCues + kMaxAnimatedSpriteCues + kMaxPixelCues + kMaxPixelEmitterCues + kMaxTextCues + kMaxScrollTextCues + kMaxShaderTextCues + kMaxMeshCues]; int ne = 0;
 
             for (int ii = 0; ii < image_cue_count; ++ii) {
                 ImageCue& icue = image_cues[ii];
@@ -4322,6 +5179,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 if (msh_active) entries[ne++] = {2, mesh_cue.layer_order, mi};
             }
 #endif
+            for (int si = 0; si < shader_text_cue_count; ++si) {
+                ShaderTextCue& cue = shader_text_cues[si];
+                if (shader_text_shader && cue.text[0] && time >= cue.cue_start && time <= cue.cue_end)
+                    entries[ne++] = {7, cue.layer_order, si};
+            }
 
             // Bubble sort ascending (lower layer_order draws first = further back)
             // Tie-break rule for same layer: mesh behind image behind text/scroll.
@@ -4607,8 +5469,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     }
 #endif
 
-                    float w = (draw_image_tex->width  * anim_scale) / (float)config.width  * 2.0f;
-                    float h = (draw_image_tex->height * anim_scale) / (float)config.height * 2.0f;
+                    const float viewport_scale = rev::runtime::ComputeAuthoredViewportScale(
+                        (float)config.width, (float)config.height);
+                    float w = (draw_image_tex->width  * anim_scale * viewport_scale) / (float)config.width  * 2.0f;
+                    float h = (draw_image_tex->height * anim_scale * viewport_scale) / (float)config.height * 2.0f;
                     float x =  (anim_x * 2.0f - 1.0f);
                     float y = -((anim_y * 2.0f) - 1.0f);
                     if (!IsSpriteVisible(x, y, w, h)) continue;
@@ -4670,7 +5534,6 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float anim_scale = cue.scale;
                     float anim_rotation = cue.rotation;
                     float anim_opacity = cue.opacity;
-                    float anim_frame = (float)cue.start_frame;
 
                     if (cue.curve_x >= 0 && cue.curve_x < curve_count) {
                         float t = elapsed_time / curves[cue.curve_x].duration;
@@ -4692,9 +5555,41 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         float t = elapsed_time / curves[cue.curve_opacity].duration;
                         anim_opacity = rev::curve::Evaluate(curves[cue.curve_opacity], t);
                     }
-                    if (cue.curve_frame >= 0 && cue.curve_frame < curve_count) {
-                        float t = elapsed_time / curves[cue.curve_frame].duration;
-                        anim_frame = rev::curve::Evaluate(curves[cue.curve_frame], t);
+
+                    float instance_x[rev::runtime::kMaxMenuItems] = {};
+                    float instance_y[rev::runtime::kMaxMenuItems] = {};
+                    float instance_elapsed[rev::runtime::kMaxMenuItems] = {};
+                    int instance_item[rev::runtime::kMaxMenuItems] = {};
+                    int instance_count = 0;
+                    int scene_sprite_index = -1;
+                    if (active_menu && current_scene_index >= 0 && current_scene_index < scene_navigation_count) {
+                        int ordinal = 0;
+                        const rev::runtime::SceneNavigation& active_scene = scene_navigation[current_scene_index];
+                        for (int candidate = 0; candidate < animated_sprite_cue_count; ++candidate) {
+                            if (animated_sprite_cues[candidate].cue_start >= active_scene.start_time &&
+                                animated_sprite_cues[candidate].cue_start < active_scene.end_time) {
+                                if (candidate == anim_idx) { scene_sprite_index = ordinal; break; }
+                                ++ordinal;
+                            }
+                        }
+                        for (int item_index = 0; item_index < active_menu->menu.item_count; ++item_index) {
+                            const rev::runtime::MenuItem& menu_item = active_menu->menu.items[item_index];
+                            if (menu_item.visual_type == 1 &&
+                                menu_item.animated_sprite_cue == scene_sprite_index) {
+                                instance_x[instance_count] = menu_item.image_x;
+                                instance_y[instance_count] = menu_item.image_y;
+                                instance_elapsed[instance_count] = active_menu->sprite_animation_time[item_index];
+                                instance_item[instance_count] = item_index;
+                                ++instance_count;
+                            }
+                        }
+                    }
+                    if (instance_count == 0) {
+                        instance_x[0] = anim_x;
+                        instance_y[0] = anim_y;
+                        instance_elapsed[0] = elapsed_time;
+                        instance_item[0] = -1;
+                        instance_count = 1;
                     }
 
                     int frame_count = 0;
@@ -4702,75 +5597,6 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (cue.frame_keys_csv[0]) ++frame_count;
                     if (frame_count <= 0) continue;
 
-                    int frame_idx = cue.start_frame;
-                    if (cue.fps > 0.0f && elapsed_time > 0.0f) {
-                        float frame_f = elapsed_time * cue.fps;
-                        if (cue.playback_mode == 1) {
-                            frame_idx = (int)frame_f;
-                            if (frame_idx >= frame_count) frame_idx = frame_count - 1;
-                        } else if (cue.playback_mode == 2 && frame_count > 1) {
-                            int period = frame_count * 2 - 2;
-                            int ping_idx = ((int)frame_f) % period;
-                            if (ping_idx < 0) ping_idx += period;
-                            frame_idx = (ping_idx >= frame_count) ? (period - ping_idx) : ping_idx;
-                        } else {
-                            frame_idx = ((int)frame_f) % frame_count;
-                            if (frame_idx < 0) frame_idx += frame_count;
-                        }
-                    }
-                    if (cue.curve_frame >= 0 && cue.curve_frame < curve_count) {
-                        frame_idx = (int)anim_frame;
-                    }
-                    if (frame_idx < 0) frame_idx = 0;
-                    if (frame_idx >= frame_count) frame_idx = frame_count - 1;
-
-                    char selected_key[256] = {};
-                    char selected_path[512] = {};
-                    ExtractCsvItemByIndex(cue.frame_keys_csv, frame_idx, selected_key, sizeof(selected_key));
-                    ExtractCsvItemByIndex(cue.frame_paths_csv, frame_idx, selected_path, sizeof(selected_path));
-                    if (!selected_key[0]) continue;
-
-                    ImageTexture frame_tex = {};
-                    bool frame_loaded = false;
-                    int webp_frame_count = 1;
-#ifdef HIMYM_PACKED_ASSETS
-                    const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(selected_key, kPackedAssets, kPackedAssetCount);
-                    if (pa) {
-                        frame_loaded = LoadImageTextureFromMemory(pa->data, pa->size, &frame_tex);
-                        webp_frame_count = GetImageFrameCountFromMemory(pa->data, pa->size);
-                        if (webp_frame_count > 1) {
-                            int webp_frame = (int)(elapsed_time * (cue.fps > 0.0f ? cue.fps : 12.0f)) % webp_frame_count;
-                            if (frame_loaded) glDeleteTextures(1, &frame_tex.texture_id);
-                            frame_tex = {};
-                            frame_loaded = LoadImageTextureFrameFromMemory(pa->data, pa->size,
-                                                                            webp_frame, &frame_tex);
-                        }
-                    }
-#else
-                    char frame_path[512] = {};
-                    ResolveRuntimeAssetPath(selected_path[0] ? selected_path : selected_key,
-                                            cues_path,
-                                            frame_path,
-                                            sizeof(frame_path));
-                    frame_loaded = LoadImageTexture(frame_path, &frame_tex);
-                    webp_frame_count = GetImageFrameCount(frame_path);
-                    if (webp_frame_count > 1) {
-                        int webp_frame = (int)(elapsed_time * (cue.fps > 0.0f ? cue.fps : 12.0f)) % webp_frame_count;
-                        if (frame_loaded) glDeleteTextures(1, &frame_tex.texture_id);
-                        frame_tex = {};
-                        frame_loaded = LoadImageTextureFrame(frame_path, webp_frame, &frame_tex);
-                    }
-#endif
-                    if (!frame_loaded || frame_tex.texture_id == 0) continue;
-
-                    float w = (frame_tex.width * anim_scale) / (float)config.width * 2.0f;
-                    float h = (frame_tex.height * anim_scale) / (float)config.height * 2.0f;
-                    float x = (anim_x * 2.0f - 1.0f);
-                    float y = -((anim_y * 2.0f) - 1.0f);
-                    if (!IsSpriteVisible(x, y, w, h)) {
-                        glDeleteTextures(1, &frame_tex.texture_id);
-                        continue;
-                    }
                     const SpriteUniformCache uniforms = GetSpriteUniformCache(sprite_shader);
                     int u_pos = uniforms.position;
                     int u_sz  = uniforms.size;
@@ -4778,27 +5604,105 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     int u_tex = uniforms.texture;
                     int u_opa = uniforms.opacity;
                     int u_col = uniforms.color;
-                    if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
-                    if (u_sz  >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
                     if (u_rot >= 0) rev::shader::SetFloat(sprite_shader, u_rot, anim_rotation);
                     if (u_tex >= 0) rev::shader::SetInt(sprite_shader, u_tex, 0);
                     if (u_opa >= 0) rev::shader::SetFloat(sprite_shader, u_opa,
                         anim_opacity * ComputeEffectOpacity(
                             cue.effect_type, cue.fade_in_start, cue.fade_in_end,
                             cue.fade_out_start, cue.fade_out_end, time));
-                    if (u_col >= 0) rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
                     if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
-                    if (!render_layer_post(frame_tex.texture_id, x, y, w, h, anim_rotation,
-                                           anim_opacity * ComputeEffectOpacity(
-                                               cue.effect_type, cue.fade_in_start, cue.fade_in_end,
-                                               cue.fade_out_start, cue.fade_out_end, time),
-                                           cue.post_effects, cue.post_effect_count, elapsed_time)) {
-                        glBindTexture(GL_TEXTURE_2D, frame_tex.texture_id);
-                        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+                    for (int instance = 0; instance < instance_count; ++instance) {
+                        const float animation_elapsed = instance_elapsed[instance];
+                        int frame_idx = cue.start_frame;
+                        if (cue.fps > 0.0f && animation_elapsed > 0.0f) {
+                            float frame_f = animation_elapsed * cue.fps;
+                            if (cue.playback_mode == 1) {
+                                frame_idx = (int)frame_f;
+                                if (frame_idx >= frame_count) frame_idx = frame_count - 1;
+                            } else if (cue.playback_mode == 2 && frame_count > 1) {
+                                int period = frame_count * 2 - 2;
+                                int ping_idx = ((int)frame_f) % period;
+                                if (ping_idx < 0) ping_idx += period;
+                                frame_idx = (ping_idx >= frame_count) ? (period - ping_idx) : ping_idx;
+                            } else {
+                                frame_idx = ((int)frame_f) % frame_count;
+                                if (frame_idx < 0) frame_idx += frame_count;
+                            }
+                        }
+                        if (cue.curve_frame >= 0 && cue.curve_frame < curve_count) {
+                            const rev::curve::Curve& frame_curve = curves[cue.curve_frame];
+                            float curve_time = frame_curve.duration > 0.0f
+                                ? animation_elapsed / frame_curve.duration : 0.0f;
+                            frame_idx = (int)rev::curve::Evaluate(frame_curve, curve_time);
+                        }
+                        if (frame_idx < 0) frame_idx = 0;
+                        if (frame_idx >= frame_count) frame_idx = frame_count - 1;
+
+                        char selected_key[256] = {};
+                        char selected_path[512] = {};
+                        ExtractCsvItemByIndex(cue.frame_keys_csv, frame_idx, selected_key, sizeof(selected_key));
+                        ExtractCsvItemByIndex(cue.frame_paths_csv, frame_idx, selected_path, sizeof(selected_path));
+                        if (!selected_key[0]) continue;
+
+                        ImageTexture frame_tex = {};
+                        bool frame_loaded = false;
+                        int webp_frame_count = 1;
+#ifdef HIMYM_PACKED_ASSETS
+                        const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(selected_key, kPackedAssets, kPackedAssetCount);
+                        if (pa) {
+                            frame_loaded = LoadImageTextureFromMemory(pa->data, pa->size, &frame_tex);
+                            webp_frame_count = GetImageFrameCountFromMemory(pa->data, pa->size);
+                            if (webp_frame_count > 1) {
+                                int webp_frame = (int)(animation_elapsed * (cue.fps > 0.0f ? cue.fps : 12.0f)) % webp_frame_count;
+                                if (frame_loaded) glDeleteTextures(1, &frame_tex.texture_id);
+                                frame_tex = {};
+                                frame_loaded = LoadImageTextureFrameFromMemory(pa->data, pa->size, webp_frame, &frame_tex);
+                            }
+                        }
+#else
+                        char frame_path[512] = {};
+                        ResolveRuntimeAssetPath(selected_path[0] ? selected_path : selected_key,
+                                                cues_path, frame_path, sizeof(frame_path));
+                        frame_loaded = LoadImageTexture(frame_path, &frame_tex);
+                        webp_frame_count = GetImageFrameCount(frame_path);
+                        if (webp_frame_count > 1) {
+                            int webp_frame = (int)(animation_elapsed * (cue.fps > 0.0f ? cue.fps : 12.0f)) % webp_frame_count;
+                            if (frame_loaded) glDeleteTextures(1, &frame_tex.texture_id);
+                            frame_tex = {};
+                            frame_loaded = LoadImageTextureFrame(frame_path, webp_frame, &frame_tex);
+                        }
+#endif
+                        if (!frame_loaded || frame_tex.texture_id == 0) continue;
+
+                        float w = (frame_tex.width * anim_scale) / (float)config.width * 2.0f;
+                        float h = (frame_tex.height * anim_scale) / (float)config.height * 2.0f;
+                        float x = instance_x[instance] * 2.0f - 1.0f;
+                        float y = -(instance_y[instance] * 2.0f - 1.0f);
+                        if (!IsSpriteVisible(x, y, w, h)) { glDeleteTextures(1, &frame_tex.texture_id); continue; }
+                        if (u_sz >= 0) rev::shader::SetVec2(sprite_shader, u_sz, w, h);
+                        if (u_pos >= 0) rev::shader::SetVec2(sprite_shader, u_pos, x, y);
+                        bool selected = active_menu && instance_item[instance] == menu_selection;
+                        if (u_col >= 0) {
+                            if (selected)
+                                rev::shader::SetVec3(sprite_shader, u_col,
+                                    active_menu->menu.highlight_color[0], active_menu->menu.highlight_color[1],
+                                    active_menu->menu.highlight_color[2]);
+                            else
+                                rev::shader::SetVec3(sprite_shader, u_col, 1.0f, 1.0f, 1.0f);
+                        }
+                        if (!render_layer_post(frame_tex.texture_id, x, y, w, h, anim_rotation,
+                                               anim_opacity * ComputeEffectOpacity(
+                                                   cue.effect_type, cue.fade_in_start, cue.fade_in_end,
+                                                   cue.fade_out_start, cue.fade_out_end, time),
+                                               cue.post_effects, cue.post_effect_count, animation_elapsed)) {
+                            glBindTexture(GL_TEXTURE_2D, frame_tex.texture_id);
+                            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                        }
+                        render_asset_shaders(x, y, w, h, anim_rotation, animation_elapsed,
+                                             cue.shaders, cue.shader_count, frame_tex.texture_id);
+                        glDeleteTextures(1, &frame_tex.texture_id);
                     }
-                    render_asset_shaders(x, y, w, h, anim_rotation, elapsed_time,
-                                         cue.shaders, cue.shader_count, frame_tex.texture_id);
-                    glDeleteTextures(1, &frame_tex.texture_id);
 
                 }
 #if HIMYM_USE_PIXEL
@@ -5149,6 +6053,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (cue.visual_source == 1) glDeleteTextures(1, &emitter_texture);
                 }
 #endif
+                else if (entries[ei].type == 7) {
+                    ShaderTextCue& cue = shader_text_cues[entries[ei].cue_idx];
+                    glBindVertexArray(vao);
+                    if (depth_on) { glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); depth_on = false; }
+                    if (!blend_on) { glEnable(GL_BLEND); blend_on = true; }
+                    ApplySpriteBlendMode(cue.blend_mode);
+                    DrawShaderText(shader_text_shader, cue, time,
+                                   (float)config.width, (float)config.height,
+                                   curves, curve_count);
+                }
                 else if (entries[ei].type == 1) {
                     // Text sprite
                     int text_idx = entries[ei].cue_idx;
@@ -5400,11 +6314,15 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         return v;
                     };
 
-                    float size_scale = cue.size > 0.0f ? anim_size / cue.size : 1.0f;
+                    const float viewport_text_scale = rev::runtime::ComputeTextViewportScale(
+                        (float)config.width, (float)config.height);
+                    float size_scale = (cue.size > 0.0f ? anim_size / cue.size : 1.0f) *
+                        viewport_text_scale;
                     float travel = rev::runtime::ComputeScrollTextTravel(
                         &scroll_text_atlases[scroll_idx], cue.text, cue.direction,
                         size_scale, cue.spacing, cue.wrap_gap,
-                        (float)config.width, (float)config.height);
+                        (float)config.width, (float)config.height,
+                        anim_x, anim_y, cue.loop_mode);
                     float wrapped = elapsed_time * anim_speed;
                     if (cue.loop_mode == 0) {
                         float speed_abs = fabsf(anim_speed);
@@ -5443,7 +6361,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (effective_size < 4.0f) effective_size = 4.0f;
 
                     char glyph_scroll_text[512] = {};
-                    if (cue.direction <= 1) {
+                    if (cue.direction <= 1 && cue.loop_mode == 0) {
                         snprintf(glyph_scroll_text, sizeof(glyph_scroll_text), "%s   %s", cue.text, cue.text);
                     } else {
                         strncpy_s(glyph_scroll_text, sizeof(glyph_scroll_text), cue.text, _TRUNCATE);
@@ -5464,7 +6382,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         cue.fade_out_start, cue.fade_out_end,
                         time);
                     float opacity = clamp01(anim_opacity * fade_mul * (1.0f + cue.shadow * 0.1f));
-                    float glyph_scale = cue.size > 0.0f ? (anim_size / cue.size) : 1.0f;
+                    float glyph_scale = (cue.size > 0.0f ? (anim_size / cue.size) : 1.0f) *
+                        viewport_text_scale;
 
                     float spacing_mul = (cue.spacing <= 0.01f) ? 0.01f : cue.spacing;
                     float scroll_x = anim_x + dir_x * wrapped + jitter_x + distortion;
@@ -5700,7 +6619,26 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         anim_fov, aspect);
                     Mat4LookAt(view_mat, eye, center, up_v);
                     Mat4Model(model_mat, anim_pos, anim_rot, anim_scale);  // Use animated transform
-                    typedef void (*PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
+                    float light_direction[3] = {0.0f, -1.0f, 0.0f};
+                    const bool directional_light = mesh_cue.use_imported_light &&
+                        mesh_obj->has_imported_light && mesh_obj->imported_light_type == 1;
+                    if (directional_light) {
+                        memcpy(light_direction, mesh_obj->imported_light_direction, sizeof(light_direction));
+                        if (node_delta_mats && mesh_obj->imported_light_node_index >= 0 &&
+                            mesh_obj->imported_light_node_index < (int)mesh_obj->imported_node_count) {
+                            const float* d = &node_delta_mats[mesh_obj->imported_light_node_index * 16];
+                            const float x=light_direction[0], y=light_direction[1], z=light_direction[2];
+                            light_direction[0]=d[0]*x+d[4]*y+d[8]*z;
+                            light_direction[1]=d[1]*x+d[5]*y+d[9]*z;
+                            light_direction[2]=d[2]*x+d[6]*y+d[10]*z;
+                        }
+                        rev::mesh::RenderDirectionalShadow(&mesh_shadow, mesh_obj, model_mat, light_direction);
+                        rev::shader::Use(mesh_shader);
+                    }
+                    rev::shader::SetInt(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_directional"), directional_light ? 1 : 0);
+                    rev::shader::SetVec3(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_direction"), light_direction[0], light_direction[1], light_direction[2]);
+                    rev::mesh::BindDirectionalShadow(directional_light ? &mesh_shadow : nullptr, mesh_shader);
+                    typedef void (APIENTRY *PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
                     auto glUniformMatrix4fv_fn = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
                     int loc_model = rev::shader::GetUniformLocation(mesh_shader, "u_model");
                     if (mesh_cue.use_imported_camera && mesh_obj->has_imported_camera) {
@@ -5788,7 +6726,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         mesh_cue.fade_in_start, mesh_cue.fade_in_end,
                         mesh_cue.fade_out_start, mesh_cue.fade_out_end, time);
                     float cue_col[4] = {anim_color[0], anim_color[1], anim_color[2], anim_color[3] * opa};
-                    typedef void (*PFNGLUNIFORM4FVPROC)(int, int, const float*);
+                    typedef void (APIENTRY *PFNGLUNIFORM4FVPROC)(int, int, const float*);
                     auto glUniform4fv_fn = (PFNGLUNIFORM4FVPROC)wglGetProcAddress("glUniform4fv");
                     if (loc_color >= 0 && glUniform4fv_fn) {
                         glUniform4fv_fn(loc_color, 1, cue_col);
@@ -6226,8 +7164,84 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
         }
 
+        // Code-only menu highlight and scene-entry wipe are drawn last so they
+        // cover the complete composited frame without adding shader assets.
+        int overlay_w = window->win_width > 0 ? window->win_width : config.width;
+        int overlay_h = window->win_height > 0 ? window->win_height : config.height;
+        if (active_menu) {
+            int active_menu_index = (int)(active_menu - scene_menus);
+            glBindVertexArray(vao);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            rev::shader::Use(sprite_shader);
+            rev::shader::SetInt(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_texture"), 0);
+            rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_opacity"), 1.0f);
+            rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_rotation"), 0.0f);
+            rev::shader::SetFloat(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_flip_v"), 1.0f);
+            rev::shader::SetVec4(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_uv_rect"), 0, 0, 1, 1);
+            if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
+            for (int item_index = 0; item_index < active_menu->menu.item_count; ++item_index) {
+                const rev::runtime::MenuItem& item = active_menu->menu.items[item_index];
+                const TextTexture& texture = scene_menu_textures[active_menu_index][item_index];
+                if (!texture.texture_id) continue;
+                // Button bounds control input/highlight. Fit the label inside
+                // them without stretching the rasterized text texture.
+                float label_width = item.width;
+                float label_height = item.height;
+                float texture_aspect = texture.height > 0 ? (float)texture.width / (float)texture.height : 1.0f;
+                float bounds_aspect = item.height > 0.0f ? item.width / item.height : texture_aspect;
+                if (texture_aspect > bounds_aspect) label_height = label_width / texture_aspect;
+                else label_width = label_height * texture_aspect;
+                float label_x = item.x + (item.width - label_width) * 0.5f;
+                float label_y = item.y + (item.height - label_height) * 0.5f;
+                float half_w = label_width;
+                float half_h = label_height;
+                float center_x = label_x * 2.0f - 1.0f + half_w;
+                float center_y = 1.0f - label_y * 2.0f - half_h;
+                rev::shader::SetVec2(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_position"), center_x, center_y);
+                rev::shader::SetVec2(sprite_shader, rev::shader::GetUniformLocation(sprite_shader, "u_size"), half_w, half_h);
+                glBindTexture(GL_TEXTURE_2D, texture.texture_id);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            }
+            glDisable(GL_BLEND);
+        }
+        if (active_menu && menu_selection >= 0 && menu_selection < active_menu->menu.item_count &&
+            active_menu->menu.items[menu_selection].visual_type == 0) {
+            const rev::runtime::MenuItem& item = active_menu->menu.items[menu_selection];
+            glEnable(GL_SCISSOR_TEST);
+            glClearColor(active_menu->menu.highlight_color[0], active_menu->menu.highlight_color[1],
+                         active_menu->menu.highlight_color[2], 1.0f);
+            int hx = (int)(item.x * overlay_w), hy = (int)((1.0f - item.y - item.height) * overlay_h);
+            int hw = (int)(item.width * overlay_w), hh = (int)(item.height * overlay_h);
+            int border = 3;
+            const int rects[4][4] = {{hx, hy, hw, border}, {hx, hy + hh - border, hw, border},
+                                     {hx, hy, border, hh}, {hx + hw - border, hy, border, hh}};
+            for (int ri = 0; ri < 4; ++ri) {
+                glScissor(rects[ri][0], rects[ri][1], rects[ri][2], rects[ri][3]);
+                glClear(GL_COLOR_BUFFER_BIT);
+            }
+            glDisable(GL_SCISSOR_TEST);
+        }
+        if (current_scene_index >= 0 && current_scene_index < scene_navigation_count) {
+            const rev::runtime::SceneNavigation& scene = scene_navigation[current_scene_index];
+            float elapsed = time - scene.start_time;
+            if (scene.wipe_type != rev::runtime::SceneWipeNone && scene.wipe_duration > 0.0f &&
+                elapsed >= 0.0f && elapsed < scene.wipe_duration) {
+                float remaining = 1.0f - elapsed / scene.wipe_duration;
+                int x = 0, y = 0, w = overlay_w, h = overlay_h;
+                if (scene.wipe_type == rev::runtime::SceneWipeLeft) w = (int)(overlay_w * remaining);
+                else if (scene.wipe_type == rev::runtime::SceneWipeRight) { w = (int)(overlay_w * remaining); x = overlay_w - w; }
+                else if (scene.wipe_type == rev::runtime::SceneWipeUp) h = (int)(overlay_h * remaining);
+                else if (scene.wipe_type == rev::runtime::SceneWipeDown) { h = (int)(overlay_h * remaining); y = overlay_h - h; }
+                glEnable(GL_SCISSOR_TEST); glScissor(x, y, w, h);
+                glClearColor(scene.wipe_color[0], scene.wipe_color[1], scene.wipe_color[2], 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT); glDisable(GL_SCISSOR_TEST);
+            }
+        }
+
         // Swap buffers
         rev::platform::SwapBuffers(window);
+        ++shader_frame;
         
         // Exit on ESC. On duration end, either loop or stop based on metadata.
         if (rev::platform::IsKeyPressed(window, VK_ESCAPE)) {
@@ -6243,6 +7257,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     // Cleanup audio
 #if HIMYM_USE_XM
     if (audio_state) {
+        g_shader_audio_state = nullptr;
         audio_state->stop.store(true, std::memory_order_release);
         if (audio_thread) {
             WaitForSingleObject(audio_thread, 2000);
@@ -6258,9 +7273,28 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         }
     }
 #endif
+    for (int menu_index = 0; menu_index < scene_menu_count; ++menu_index)
+        for (int item_index = 0; item_index < scene_menus[menu_index].menu.item_count; ++item_index)
+            if (scene_menu_textures[menu_index][item_index].texture_id)
+                glDeleteTextures(1, &scene_menu_textures[menu_index][item_index].texture_id);
+    if (runtime_shader_audio_texture)
+        glDeleteTextures(1, &runtime_shader_audio_texture);
+    for (int pipeline_index = 0; pipeline_index < shader_pipeline_count; ++pipeline_index) {
+        for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+            RuntimePipelinePassState& pass = runtime_pipelines[pipeline_index].passes[pass_index];
+            if (pass.program) rev::shader::DestroyProgram(pass.program);
+            if (pass.textures[0] || pass.textures[1]) glDeleteTextures(2, pass.textures);
+            if ((pass.fbos[0] || pass.fbos[1]) && glDeleteFramebuffers_rt)
+                glDeleteFramebuffers_rt(2, pass.fbos);
+            for (int channel = 0; channel < rev::runtime::kMaxShaderChannels; ++channel)
+                if (pass.channel_textures[channel].texture_id)
+                    glDeleteTextures(1, &pass.channel_textures[channel].texture_id);
+        }
+    }
     if (sprite_shader) {
         rev::shader::DestroyProgram(sprite_shader);
     }
+    if (shader_text_shader) rev::shader::DestroyProgram(shader_text_shader);
     if (post_shader) {
         rev::shader::DestroyProgram(post_shader);
     }
@@ -6304,6 +7338,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     if (mesh_shader) {
         rev::shader::DestroyProgram(mesh_shader);
     }
+    rev::mesh::DestroyShadowMap(&mesh_shadow);
     for (int mi = 0; mi < mesh_cue_count; ++mi) {
         if (mesh_objs[mi]) {
             rev::mesh::DestroyMesh(mesh_objs[mi]);
@@ -6317,6 +7352,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             shader_programs[i].prog = nullptr;
         }
     }
+#if HIMYM_USE_IMAGE_DECODER
     for (int cue_index = 0; cue_index < shader_cue_count; ++cue_index) {
         for (int map_index = 0; map_index < 4; ++map_index) {
             if (shader_noise_textures[cue_index][map_index].texture_id != 0) {
@@ -6325,6 +7361,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
         }
     }
+#endif
     if (scene_texture) glDeleteTextures(1, &scene_texture);
     if (post_texture) glDeleteTextures(1, &post_texture);
     if (history_texture) glDeleteTextures(1, &history_texture);
@@ -6341,7 +7378,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         rev::curve::DestroyCurve(curves[i]);
     }
     
+#if HIMYM_USE_IMAGE_DECODER
     Gdiplus::GdiplusShutdown(gdiplusToken);
+#endif
     
     if (g_logfile) {
         fflush(g_logfile);

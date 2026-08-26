@@ -64,6 +64,25 @@ HiMYM bakes each imported mesh node's glTF world transform into its vertices.
 Normals are transformed with the inverse-transpose, so non-uniform object scale
 is supported. Imported cameras retain glTF's local `-Z` forward direction.
 
+Base-color textures honor the glTF texture-coordinate set and
+`KHR_texture_transform` offset, rotation, scale, and `texCoord` override emitted
+by Blender's Texture Coordinate and Mapping nodes. The transform is baked into
+the imported vertices to keep editor and packed playback compact and identical.
+Texture wrapping follows the glTF sampler; Blender's Repeat mode therefore
+continues to tile when transformed UVs leave the 0-to-1 range.
+
+## Imported lights and compact shadows
+
+Enable **Use glTF Light** on a mesh cue to use the first punctual light in the
+active glTF scene. Point and spot lights retain the compact positional lighting
+path. A Blender Sun exports as a directional light; HiMYM imports its world
+direction and renders a fixed 1024x1024 depth map for that imported mesh. The
+shadow pass is automatic, uses 3x3 percentage-closer filtering, and is identical
+in editor preview and standalone playback. It deliberately provides self-shadowing
+only: geometry from separate mesh cues does not cast into the imported mesh's map.
+Additional lights, cascades, point-light cubemap shadows, and Blender Eevee/Cycles
+shadow settings are outside this compact contract.
+
 ## Imported cameras
 
 When **Use glTF Camera** is enabled on a mesh cue, HiMYM uses the first camera

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string>
 
 // Define missing GL constants
 #ifndef GL_COMPILE_STATUS
@@ -68,10 +69,12 @@ static PFNGLUNIFORM4FPROC glUniform4f = nullptr;
 static PFNGLUNIFORM1IPROC glUniform1i = nullptr;
 static PFNGLUNIFORMMATRIX4FVPROC glUniformMatrix4fv = nullptr;
 
+#ifndef HIMYM_CRINKLER_BUILD
 static std::once_flag g_gl_load_once;
+#endif
+static bool g_gl_functions_ready = false;
 
-static void LoadGLFunctions() {
-    std::call_once(g_gl_load_once, []() {
+static void LoadGLFunctionsDirect() {
         glCreateShader = (PFNGLCREATESHADERPROC)wglGetProcAddress("glCreateShader");
         glShaderSource = (PFNGLSHADERSOURCEPROC)wglGetProcAddress("glShaderSource");
         glCompileShader = (PFNGLCOMPILESHADERPROC)wglGetProcAddress("glCompileShader");
@@ -92,11 +95,58 @@ static void LoadGLFunctions() {
         glUniform4f = (PFNGLUNIFORM4FPROC)wglGetProcAddress("glUniform4f");
         glUniform1i = (PFNGLUNIFORM1IPROC)wglGetProcAddress("glUniform1i");
         glUniformMatrix4fv = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
-    });
+        g_gl_functions_ready = glCreateShader && glShaderSource && glCompileShader &&
+            glGetShaderiv && glGetShaderInfoLog && glCreateProgram && glAttachShader &&
+            glLinkProgram && glGetProgramiv && glGetProgramInfoLog && glUseProgram &&
+            glDeleteShader && glDeleteProgram && glGetUniformLocation && glUniform1f &&
+            glUniform2f && glUniform3f && glUniform4f && glUniform1i && glUniformMatrix4fv;
+}
+
+static void LoadGLFunctions() {
+#ifdef HIMYM_CRINKLER_BUILD
+    // The competition runtime initializes and renders on one thread. Avoid
+    // std::call_once here because the modern MSVC helper is forwarded through
+    // a kernel32 API-set cycle that Crinkler 3.0b cannot resolve.
+    if (!g_gl_functions_ready) LoadGLFunctionsDirect();
+#else
+    std::call_once(g_gl_load_once, LoadGLFunctionsDirect);
+#endif
 }
 
 namespace rev {
 namespace shader {
+
+static const char* SkipUtf8Bom(const char* source) {
+    if (source && (unsigned char)source[0] == 0xEF &&
+        (unsigned char)source[1] == 0xBB && (unsigned char)source[2] == 0xBF)
+        return source + 3;
+    return source;
+}
+
+FragmentSourceVersionStatus GetFragmentSourceVersionStatus(const char* fragment_src) {
+    const char* source = SkipUtf8Bom(fragment_src);
+    if (!source) return FragmentSourceVersionMissing;
+    const char* version = strstr(source, "#version");
+    if (!version) return FragmentSourceVersionMissing;
+    const char* line_end = strpbrk(version, "\r\n");
+    const size_t line_length = line_end ? (size_t)(line_end - version) : strlen(version);
+    std::string directive(version, line_length);
+    return directive.find("330 core") != std::string::npos
+        ? FragmentSourceVersionReady : FragmentSourceVersionConverted;
+}
+
+static std::string NormalizeFragmentVersion(const char* fragment_src) {
+    const char* source = SkipUtf8Bom(fragment_src);
+    if (!source) return {};
+    const char* version = strstr(source, "#version");
+    if (!version)
+        return std::string("#version 330 core\n") + source;
+    const char* line_end = strpbrk(version, "\r\n");
+    std::string prefix(source, (size_t)(version - source));
+    if (!line_end) return std::string("#version 330 core\n") + prefix;
+    while (*line_end == '\r' || *line_end == '\n') ++line_end;
+    return std::string("#version 330 core\n") + prefix + line_end;
+}
 
 static GLuint CompileShader(GLenum type, const char* source) {
     GLuint shader = glCreateShader(type);
@@ -120,6 +170,42 @@ static GLuint CompileShader(GLenum type, const char* source) {
 
 Program* CompileFromSource(const char* vertex_src, const char* fragment_src) {
     LoadGLFunctions();
+    if (!g_gl_functions_ready || !vertex_src || !fragment_src) {
+        OutputDebugStringA("Required OpenGL 3.3 shader functions are unavailable.\n");
+        return nullptr;
+    }
+
+    // Normalize imported desktop/ES Shadertoy sources to the engine's OpenGL
+    // 3.3 contract before adding the mainImage bridge.
+    std::string normalized_fragment = NormalizeFragmentVersion(fragment_src);
+    fragment_src = normalized_fragment.c_str();
+
+    // Accept the conventional Shadertoy entry point directly.  Keep this
+    // adaptation here so editor preview, standalone playback, and packed
+    // playback compile exactly the same source contract.
+    std::string adapted_fragment;
+    if (fragment_src && strstr(fragment_src, "mainImage") && !strstr(fragment_src, "void main(")) {
+        const char* version_end = strchr(fragment_src, '\n');
+        if (version_end) {
+            adapted_fragment.assign(fragment_src, static_cast<size_t>(version_end - fragment_src + 1));
+            adapted_fragment +=
+                "in vec2 uv;\n"
+                "out vec4 fragColor;\n"
+                "uniform vec3 iResolution;\n"
+                "uniform float iTime;\n"
+                "uniform float iTimeDelta;\n"
+                "uniform int iFrame;\n"
+                "uniform vec4 iMouse;\n"
+                "uniform sampler2D iChannel0;\n"
+                "uniform sampler2D iChannel1;\n"
+                "uniform sampler2D iChannel2;\n"
+                "uniform sampler2D iChannel3;\n";
+            adapted_fragment += version_end + 1;
+            adapted_fragment +=
+                "\nvoid main() { mainImage(fragColor, uv * iResolution.xy); }\n";
+            fragment_src = adapted_fragment.c_str();
+        }
+    }
     
     // Compile vertex shader
     GLuint vertex_shader = CompileShader(GL_VERTEX_SHADER, vertex_src);

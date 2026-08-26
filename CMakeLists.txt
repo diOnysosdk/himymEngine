@@ -8,6 +8,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(HIMYM_RELEASE_PROFILE "GENERAL" CACHE STRING
     "Release profile: GENERAL for normal demos, INTRO for size-limited packed intros")
 set_property(CACHE HIMYM_RELEASE_PROFILE PROPERTY STRINGS GENERAL INTRO)
+set(HIMYM_CRINKLER_EXECUTABLE "" CACHE FILEPATH
+    "Optional Crinkler executable used only by the Win32 competition-size packed target")
+set(HIMYM_CRINKLER_COMPMODE "SLOW" CACHE STRING
+    "Crinkler compression mode for competition-size builds")
+set_property(CACHE HIMYM_CRINKLER_COMPMODE PROPERTY STRINGS INSTANT FAST SLOW VERYSLOW)
+string(TOUPPER "${HIMYM_CRINKLER_COMPMODE}" HIMYM_CRINKLER_COMPMODE)
+if(NOT HIMYM_CRINKLER_COMPMODE MATCHES "^(INSTANT|FAST|SLOW|VERYSLOW)$")
+    message(FATAL_ERROR "HIMYM_CRINKLER_COMPMODE must be INSTANT, FAST, SLOW, or VERYSLOW")
+endif()
 string(TOUPPER "${HIMYM_RELEASE_PROFILE}" HIMYM_RELEASE_PROFILE)
 if(NOT HIMYM_RELEASE_PROFILE STREQUAL "GENERAL" AND
    NOT HIMYM_RELEASE_PROFILE STREQUAL "INTRO")
@@ -17,19 +26,47 @@ message(STATUS "HiMYM Release profile: ${HIMYM_RELEASE_PROFILE}")
 
 # Build configuration
 if(MSVC)
+    if(HIMYM_CRINKLER_EXECUTABLE)
+        if(CMAKE_VERSION VERSION_LESS 3.29)
+            message(FATAL_ERROR "Crinkler builds require CMake 3.29 or newer")
+        endif()
+        if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
+            message(FATAL_ERROR
+                "Crinkler only produces 32-bit executables. Configure a separate tree with -A Win32.")
+        endif()
+        if(NOT EXISTS "${HIMYM_CRINKLER_EXECUTABLE}")
+            message(FATAL_ERROR "Crinkler executable not found: ${HIMYM_CRINKLER_EXECUTABLE}")
+        endif()
+        set(CMAKE_CXX_USING_LINKER_crinkler "${HIMYM_CRINKLER_EXECUTABLE}")
+        if(CMAKE_VERSION VERSION_LESS 4.0)
+            set(CMAKE_CXX_USING_LINKER_MODE TOOL)
+        endif()
+        message(STATUS "HiMYM Crinkler competition linker: ${HIMYM_CRINKLER_EXECUTABLE}")
+    endif()
     if(HIMYM_RELEASE_PROFILE STREQUAL "INTRO")
         # Visual Studio's default C++ flags contain /GR and /EHsc. Remove them
         # before selecting the size profile so cl.exe does not emit override
         # warnings for every translation unit.
         string(REPLACE "/GR" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
         string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-        set(CMAKE_CXX_FLAGS_RELEASE "/O1 /Os /GS- /GL /Gy /Gw /GR- /EHs-c- /MT")
-        set(CMAKE_C_FLAGS_RELEASE "/O1 /Os /GS- /GL /Gy /Gw /MT")
+        if(HIMYM_CRINKLER_EXECUTABLE)
+            # Crinkler consumes ordinary COFF objects and cannot consume MSVC
+            # whole-program optimization (/GL) objects.
+            set(CMAKE_CXX_FLAGS_RELEASE "/O1 /Os /GS- /Gy /Gw /GR- /EHs-c- /MT")
+            set(CMAKE_C_FLAGS_RELEASE "/O1 /Os /GS- /Gy /Gw /MT")
+        else()
+            set(CMAKE_CXX_FLAGS_RELEASE "/O1 /Os /GS- /GL /Gy /Gw /GR- /EHs-c- /MT")
+            set(CMAKE_C_FLAGS_RELEASE "/O1 /Os /GS- /GL /Gy /Gw /MT")
+        endif()
     else()
         set(CMAKE_CXX_FLAGS_RELEASE "/O2 /GS /GL /Gy /Gw /MT")
         set(CMAKE_C_FLAGS_RELEASE "/O2 /GS /GL /Gy /Gw /MT")
     endif()
-    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/LTCG /INCREMENTAL:NO /OPT:REF /OPT:ICF /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
+    if(HIMYM_CRINKLER_EXECUTABLE)
+        set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /MANIFEST:NO")
+    else()
+        set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/LTCG /INCREMENTAL:NO /OPT:REF /OPT:ICF /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
+    endif()
 else()
     if(HIMYM_RELEASE_PROFILE STREQUAL "INTRO")
         set(CMAKE_CXX_FLAGS_RELEASE "-Os -fno-exceptions -fno-rtti -ffunction-sections -fdata-sections")
@@ -102,6 +139,14 @@ target_link_libraries(packed_feature_manifest_tests PRIVATE rev_pack)
 if(MSVC)
     set_target_properties(packed_feature_manifest_tests PROPERTIES
         LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup"
+    )
+endif()
+
+add_executable(shader_pipeline_tests tests/shader_pipeline_tests.cpp)
+target_link_libraries(shader_pipeline_tests PRIVATE rev_runtime)
+if(MSVC)
+    set_target_properties(shader_pipeline_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 endif()
 

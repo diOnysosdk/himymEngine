@@ -8,12 +8,358 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <string>
+#include <vector>
 #include <windows.h>
 #include <gdiplus.h>
 #include "imgui.h"
 
 namespace rev {
 namespace editor {
+
+struct NumberedImageFrame {
+    std::string filename;
+    unsigned long long number;
+};
+
+static bool DiscoverNumberedImageSequence(const char* selected_path,
+                                          std::vector<NumberedImageFrame>* frames,
+                                          std::string* directory) {
+    if (!selected_path || !frames || !directory) return false;
+    const char* separator = strrchr(selected_path, '\\');
+    if (!separator) separator = strrchr(selected_path, '/');
+    const char* filename = separator ? separator + 1 : selected_path;
+
+    const char* extension = strrchr(filename, '.');
+    if (!extension || extension == filename) return false;
+    const char* digits_end = extension;
+    const char* digits_start = digits_end;
+    while (digits_start > filename && digits_start[-1] >= '0' && digits_start[-1] <= '9') --digits_start;
+    if (digits_start == digits_end) return false;
+
+    const size_t prefix_length = (size_t)(digits_start - filename);
+    const size_t digit_count = (size_t)(digits_end - digits_start);
+    if (separator) directory->assign(selected_path, (size_t)(separator - selected_path));
+    else *directory = ".";
+
+    std::string pattern = *directory + "\\*" + extension;
+    WIN32_FIND_DATAA found = {};
+    HANDLE find = FindFirstFileA(pattern.c_str(), &found);
+    if (find == INVALID_HANDLE_VALUE) return false;
+
+    do {
+        if (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        const char* candidate = found.cFileName;
+        const char* candidate_extension = strrchr(candidate, '.');
+        if (!candidate_extension || _stricmp(candidate_extension, extension) != 0) continue;
+        if ((size_t)(candidate_extension - candidate) != prefix_length + digit_count) continue;
+        if (_strnicmp(candidate, filename, prefix_length) != 0) continue;
+
+        bool numeric = true;
+        unsigned long long number = 0;
+        for (size_t i = 0; i < digit_count; ++i) {
+            const char value = candidate[prefix_length + i];
+            if (value < '0' || value > '9') { numeric = false; break; }
+            number = number * 10 + (unsigned long long)(value - '0');
+        }
+        if (numeric) frames->push_back({candidate, number});
+    } while (FindNextFileA(find, &found));
+    FindClose(find);
+
+    std::sort(frames->begin(), frames->end(), [](const NumberedImageFrame& a, const NumberedImageFrame& b) {
+        if (a.number != b.number) return a.number < b.number;
+        return _stricmp(a.filename.c_str(), b.filename.c_str()) < 0;
+    });
+    return !frames->empty();
+}
+
+static bool AppendAnimatedSpriteFrames(EditorContext* editor, AnimatedSpriteCue* cue,
+                                       const std::string& source_directory,
+                                       const std::vector<NumberedImageFrame>& frames) {
+    if (!editor || !editor->project || !cue || frames.empty()) return false;
+    std::string keys = cue->frame_keys_csv;
+    std::string paths = cue->frame_paths_csv;
+    for (const NumberedImageFrame& frame : frames) {
+        if (!keys.empty()) keys += ';';
+        if (!paths.empty()) paths += ';';
+        keys += frame.filename;
+        paths += frame.filename;
+    }
+    if (keys.size() >= sizeof(cue->frame_keys_csv) || paths.size() >= sizeof(cue->frame_paths_csv)) {
+        printf("[ANIM_SPRITE] Sequence has too many frames for the cue buffers.\n");
+        return false;
+    }
+
+    if (editor->project->assets_path[0]) {
+        for (const NumberedImageFrame& frame : frames) {
+            const std::string source_path = source_directory + "\\" + frame.filename;
+            char destination[640] = {};
+            snprintf(destination, sizeof(destination), "%s\\%s", editor->project->assets_path, frame.filename.c_str());
+            if (!CopyFileA(source_path.c_str(), destination, FALSE)) {
+                printf("[ANIM_SPRITE] Warning: could not copy %s (err=%lu)\n", source_path.c_str(), GetLastError());
+            }
+        }
+    }
+    strcpy_s(cue->frame_keys_csv, keys.c_str());
+    strcpy_s(cue->frame_paths_csv, paths.c_str());
+    return true;
+}
+
+static bool InspectPipelineShaderVersion(const EditorContext* editor, const char* declared_path,
+                                         rev::shader::FragmentSourceVersionStatus* status) {
+    if (!editor || !editor->project || !declared_path || !declared_path[0] || !status) return false;
+    char resolved[640] = {};
+    if (strchr(declared_path, ':') || declared_path[0] == '\\' || declared_path[0] == '/') {
+        strncpy_s(resolved, declared_path, _TRUNCATE);
+    } else if (editor->project->workspace_path[0]) {
+        snprintf(resolved, sizeof(resolved), "%s\\%s", editor->project->workspace_path, declared_path);
+    }
+    FILE* file = nullptr;
+    fopen_s(&file, resolved, "rb");
+    if (!file && editor->project->assets_path[0]) {
+        snprintf(resolved, sizeof(resolved), "%s\\%s", editor->project->assets_path, declared_path);
+        fopen_s(&file, resolved, "rb");
+    }
+    if (!file) return false;
+    fseek(file, 0, SEEK_END);
+    const long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    if (size <= 0) { fclose(file); return false; }
+    std::string source((size_t)size, '\0');
+    const bool loaded = fread(&source[0], 1, (size_t)size, file) == (size_t)size;
+    fclose(file);
+    if (!loaded) return false;
+    *status = rev::shader::GetFragmentSourceVersionStatus(source.c_str());
+    return true;
+}
+
+struct PipelineSourceEditorState {
+    bool request_open = false;
+    bool open = false;
+    bool dirty = false;
+    int pipeline_index = -1;
+    int pass_index = -1;
+    char filename[128] = {};
+    char error[256] = {};
+    std::vector<char> source;
+};
+
+static PipelineSourceEditorState g_pipeline_source_editor;
+static constexpr size_t kPipelineSourceEditorCapacity = 512 * 1024;
+
+static bool ResolvePipelineShaderPath(const EditorContext* editor, const char* declared_path,
+                                      char* resolved, size_t resolved_size) {
+    if (!editor || !editor->project || !declared_path || !declared_path[0] ||
+        !resolved || resolved_size == 0) return false;
+    resolved[0] = '\0';
+    if (strchr(declared_path, ':') || declared_path[0] == '\\' || declared_path[0] == '/') {
+        strncpy_s(resolved, resolved_size, declared_path, _TRUNCATE);
+    } else if (editor->project->workspace_path[0]) {
+        snprintf(resolved, resolved_size, "%s\\%s", editor->project->workspace_path, declared_path);
+    }
+    DWORD attributes = resolved[0] ? GetFileAttributesA(resolved) : INVALID_FILE_ATTRIBUTES;
+    if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return true;
+
+    const char* filename = strrchr(declared_path, '/');
+    const char* backslash = strrchr(declared_path, '\\');
+    if (!filename || (backslash && backslash > filename)) filename = backslash;
+    filename = filename ? filename + 1 : declared_path;
+    if (editor->project->assets_path[0]) {
+        snprintf(resolved, resolved_size, "%s\\%s", editor->project->assets_path, filename);
+        attributes = GetFileAttributesA(resolved);
+        return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+    }
+    return false;
+}
+
+static bool ReadPipelineShaderSource(const EditorContext* editor, const char* declared_path,
+                                     std::vector<char>* source) {
+    if (!source) return false;
+    char resolved[640] = {};
+    if (!ResolvePipelineShaderPath(editor, declared_path, resolved, sizeof(resolved))) return false;
+    FILE* file = nullptr;
+    fopen_s(&file, resolved, "rb");
+    if (!file) return false;
+    fseek(file, 0, SEEK_END);
+    const long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    if (size < 0 || (size_t)size >= kPipelineSourceEditorCapacity) {
+        fclose(file);
+        return false;
+    }
+    source->assign(kPipelineSourceEditorCapacity, '\0');
+    const bool loaded = size == 0 || fread(source->data(), 1, (size_t)size, file) == (size_t)size;
+    fclose(file);
+    return loaded;
+}
+
+static bool IsValidPipelineShaderFilename(const char* filename) {
+    if (!filename || !filename[0] || !strcmp(filename, ".") || !strcmp(filename, "..")) return false;
+    if (strpbrk(filename, "\\/:*?\"<>|")) return false;
+    const size_t length = strlen(filename);
+    return length > 0 && filename[length - 1] != ' ' && filename[length - 1] != '.';
+}
+
+static bool EnsurePipelineShaderExtension(char* filename, size_t filename_size) {
+    const char* extension = strrchr(filename, '.');
+    if (extension && (!_stricmp(extension, ".glsl") || !_stricmp(extension, ".frag") ||
+                      !_stricmp(extension, ".fs"))) return true;
+    if (strlen(filename) + strlen(".glsl") >= filename_size) return false;
+    strcat_s(filename, filename_size, ".glsl");
+    return true;
+}
+
+static void BeginPipelineSourceEditor(EditorContext* editor, int pipeline_index, int pass_index,
+                                      bool create_new) {
+    if (!editor || !editor->project || pipeline_index < 0 ||
+        pipeline_index >= editor->project->shader_pipeline_count || pass_index < 0 ||
+        pass_index >= rev::runtime::kMaxShaderPasses) return;
+    PipelineSourceEditorState& state = g_pipeline_source_editor;
+    state = {};
+    state.pipeline_index = pipeline_index;
+    state.pass_index = pass_index;
+    state.source.assign(kPipelineSourceEditorCapacity, '\0');
+    const rev::runtime::ShaderPass& pass =
+        editor->project->shader_pipelines[pipeline_index].passes[pass_index];
+
+    if (!create_new && pass.source_path[0]) {
+        const char* filename = strrchr(pass.source_path, '/');
+        const char* backslash = strrchr(pass.source_path, '\\');
+        if (!filename || (backslash && backslash > filename)) filename = backslash;
+        filename = filename ? filename + 1 : pass.source_path;
+        strncpy_s(state.filename, filename, _TRUNCATE);
+        if (!ReadPipelineShaderSource(editor, pass.source_path, &state.source)) {
+            snprintf(state.error, sizeof(state.error), "Could not read %s. Paste replacement source or discard.",
+                     pass.source_path);
+        }
+    } else {
+        const char* pass_slug = pass_index == rev::runtime::ShaderPassImage ? "image" :
+            pass_index == rev::runtime::ShaderPassBufferA ? "buffer_a" :
+            pass_index == rev::runtime::ShaderPassBufferB ? "buffer_b" :
+            pass_index == rev::runtime::ShaderPassBufferC ? "buffer_c" : "buffer_d";
+        snprintf(state.filename, sizeof(state.filename), "pipeline_%d_%s.glsl",
+                 pipeline_index + 1, pass_slug);
+        if (editor->project->assets_path[0]) {
+            char candidate[640] = {};
+            snprintf(candidate, sizeof(candidate), "%s\\%s",
+                     editor->project->assets_path, state.filename);
+            for (int suffix = 2; GetFileAttributesA(candidate) != INVALID_FILE_ATTRIBUTES; ++suffix) {
+                snprintf(state.filename, sizeof(state.filename), "pipeline_%d_%s_%d.glsl",
+                         pipeline_index + 1, pass_slug, suffix);
+                snprintf(candidate, sizeof(candidate), "%s\\%s",
+                         editor->project->assets_path, state.filename);
+            }
+        }
+        static const char* shader_template =
+            "#version 330 core\n\n"
+            "void mainImage(out vec4 fragColor, in vec2 fragCoord)\n"
+            "{\n"
+            "    vec2 uv = fragCoord / iResolution.xy;\n"
+            "    fragColor = vec4(uv, 0.5 + 0.5 * sin(iTime), 1.0);\n"
+            "}\n";
+        strcpy_s(state.source.data(), state.source.size(), shader_template);
+        state.dirty = true;
+    }
+    state.request_open = true;
+}
+
+static bool SavePipelineSourceEditor(EditorContext* editor) {
+    PipelineSourceEditorState& state = g_pipeline_source_editor;
+    state.error[0] = '\0';
+    if (!editor || !editor->project || state.pipeline_index < 0 ||
+        state.pipeline_index >= editor->project->shader_pipeline_count || state.pass_index < 0 ||
+        state.pass_index >= rev::runtime::kMaxShaderPasses) {
+        strcpy_s(state.error, "The shader pass is no longer available.");
+        return false;
+    }
+    if (!editor->project->assets_path[0]) {
+        strcpy_s(state.error, "Save the project first so project_assets has a known location.");
+        return false;
+    }
+    if (!EnsurePipelineShaderExtension(state.filename, sizeof(state.filename))) {
+        strcpy_s(state.error, "The filename is too long to add the .glsl extension.");
+        return false;
+    }
+    if (!IsValidPipelineShaderFilename(state.filename)) {
+        strcpy_s(state.error, "Enter a plain filename without path characters.");
+        return false;
+    }
+    const DWORD attributes = GetFileAttributesA(editor->project->assets_path);
+    if (attributes == INVALID_FILE_ATTRIBUTES && !CreateDirectoryA(editor->project->assets_path, nullptr)) {
+        snprintf(state.error, sizeof(state.error), "Could not create project_assets (error %lu).", GetLastError());
+        return false;
+    }
+    char destination[640] = {};
+    snprintf(destination, sizeof(destination), "%s\\%s", editor->project->assets_path, state.filename);
+    FILE* file = nullptr;
+    fopen_s(&file, destination, "wb");
+    if (!file) {
+        snprintf(state.error, sizeof(state.error), "Could not write %s.", destination);
+        return false;
+    }
+    const size_t source_size = strlen(state.source.data());
+    const bool written = fwrite(state.source.data(), 1, source_size, file) == source_size;
+    fclose(file);
+    if (!written) {
+        snprintf(state.error, sizeof(state.error), "Could not finish writing %s.", destination);
+        return false;
+    }
+    rev::runtime::ShaderPass& pass =
+        editor->project->shader_pipelines[state.pipeline_index].passes[state.pass_index];
+    snprintf(pass.source_path, sizeof(pass.source_path), "project_assets/%s", state.filename);
+    editor->project->modified = true;
+    state.dirty = false;
+    InvalidatePreviewShaderPipeline(state.pipeline_index);
+    printf("[SHADER PIPELINE] Saved source: %s\n", destination);
+    return true;
+}
+
+static void RenderPipelineSourceEditor(EditorContext* editor) {
+    PipelineSourceEditorState& state = g_pipeline_source_editor;
+    if (state.request_open) {
+        ImGui::OpenPopup("GLSL Source Editor");
+        state.request_open = false;
+        state.open = true;
+    }
+    bool keep_open = state.open;
+    ImGui::SetNextWindowSize(ImVec2(920.0f, 720.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::BeginPopupModal("GLSL Source Editor", &keep_open, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::TextUnformatted("Paste Shadertoy mainImage code or edit the complete GLSL fragment source.");
+        if (ImGui::InputText("Filename", state.filename, sizeof(state.filename))) state.dirty = true;
+        ImVec2 editor_size(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y - 78.0f);
+        if (editor_size.y < 240.0f) editor_size.y = 240.0f;
+        if (ImGui::InputTextMultiline("##glsl_source", state.source.data(), state.source.size(), editor_size,
+                                      ImGuiInputTextFlags_AllowTabInput)) state.dirty = true;
+        if (state.error[0])
+            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.25f, 1.0f), "%s", state.error);
+        else if (state.dirty)
+            ImGui::TextDisabled("Unsaved changes - closing this window saves them to project_assets.");
+        else
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, 1.0f), "Saved to project_assets.");
+
+        if (ImGui::Button("Save", ImVec2(120.0f, 0.0f))) SavePipelineSourceEditor(editor);
+        ImGui::SameLine();
+        if (ImGui::Button("Save & Close", ImVec2(140.0f, 0.0f)) && SavePipelineSourceEditor(editor)) {
+            state.open = false;
+            keep_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard & Close", ImVec2(140.0f, 0.0f))) {
+            state.open = false;
+            keep_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (state.open && !keep_open) {
+        if (!state.dirty || SavePipelineSourceEditor(editor)) {
+            state.open = false;
+        } else {
+            state.request_open = true;
+        }
+    }
+}
 
 static void CloseCueSettingsForRecording(EditorContext* editor)
 {
@@ -422,10 +768,18 @@ void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int
             ImGui::InputInt("Track##layer_timing_track", &timing_track);
             if (timing_track < 0) timing_track = 0;
             if (timing_track >= editor->project->trigger_track_count) timing_track = editor->project->trigger_track_count - 1;
-            if (ImGui::Button("Load recorded timings##layer_timing")) {
-                int curve_index = CreateTriggerTimingCurve(editor, timing_track);
+            int* timing_field = timing_fields[timing_target];
+            const bool has_timing_curve = *timing_field >= 0 &&
+                *timing_field < editor->project->curve_count;
+            const char* timing_button_label = has_timing_curve
+                ? "Edit timing curve##layer_timing"
+                : "Load recorded timings##layer_timing";
+            if (ImGui::Button(timing_button_label)) {
+                int curve_index = has_timing_curve
+                    ? *timing_field
+                    : CreateTriggerTimingCurve(editor, timing_track);
                 if (curve_index >= 0) {
-                    *timing_fields[timing_target] = curve_index;
+                    *timing_field = curve_index;
                     editor->editing_curve_index = curve_index;
                     editor->editing_curve_cue_type = cue_type;
                     editor->editing_curve_field = -1;
@@ -433,6 +787,22 @@ void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int
                              "Layer Effect %s timing", timing_names[timing_target]);
                     editor->curve_editor_modal_request_open = true;
                     if (modified) *modified = true;
+                }
+            }
+            if (has_timing_curve) {
+                ImGui::SameLine();
+                if (ImGui::Button("Reload from track##layer_timing")) {
+                    int curve_index = CreateTriggerTimingCurve(editor, timing_track);
+                    if (curve_index >= 0) {
+                        *timing_field = curve_index;
+                        editor->editing_curve_index = curve_index;
+                        editor->editing_curve_cue_type = cue_type;
+                        editor->editing_curve_field = -1;
+                        snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label),
+                                 "Layer Effect %s timing", timing_names[timing_target]);
+                        editor->curve_editor_modal_request_open = true;
+                        if (modified) *modified = true;
+                    }
                 }
             }
             ImGui::SameLine();
@@ -504,6 +874,23 @@ static void RenderAssetShaders(EditorContext* editor, AssetShader* shaders, int*
             AssetShaderToShaderCue(shader, &editor->editing_shader);
             editor->shader_modal_request_open = true;
         }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(*shader_count >= rev::runtime::kMaxAssetShaders);
+        if (ImGui::SmallButton("+")) {
+            AssetShader duplicate = shader;
+            duplicate.order = *shader_count;
+            shaders[*shader_count] = duplicate;
+            ++*shader_count;
+            if (modified) *modified = true;
+            ImGui::EndDisabled();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip(*shader_count < rev::runtime::kMaxAssetShaders
+                ? "Duplicate this asset shader"
+                : "Maximum asset shader count reached");
         ImGui::SameLine();
         if (ImGui::SmallButton("X")) {
             for (int move = i; move + 1 < *shader_count; ++move) shaders[move] = shaders[move + 1];
@@ -586,6 +973,9 @@ static void MarkCurveUsed(bool* used, int curve_index) {
     }
 }
 
+static void MarkLayerPostEffectCurves(bool* used, const LayerPostEffect& effect);
+static void MarkAssetShaderCurves(bool* used, const AssetShader& shader);
+
 void BuildCurveUsageMap(ProjectData* project, bool* used) {
     if (!project || !used) return;
 
@@ -632,6 +1022,10 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, cue->curve_y);
             MarkCurveUsed(used, cue->curve_scale);
             MarkCurveUsed(used, cue->curve_opacity);
+            for (int e = 0; e < cue->post_effect_count; ++e)
+                MarkLayerPostEffectCurves(used, cue->post_effects[e]);
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index)
+                MarkAssetShaderCurves(used, cue->shaders[shader_index]);
         }
 
         for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
@@ -641,6 +1035,22 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, cue->curve_scale);
             MarkCurveUsed(used, cue->curve_opacity);
             MarkCurveUsed(used, cue->curve_frame);
+            for (int e = 0; e < cue->post_effect_count; ++e)
+                MarkLayerPostEffectCurves(used, cue->post_effects[e]);
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index)
+                MarkAssetShaderCurves(used, cue->shaders[shader_index]);
+        }
+
+        for (int i = 0; i < scene->pixel_cue_count; ++i) {
+            PixelCue* cue = &scene->pixel_cues[i];
+            MarkCurveUsed(used, cue->curve_x); MarkCurveUsed(used, cue->curve_y);
+            MarkCurveUsed(used, cue->curve_scale); MarkCurveUsed(used, cue->curve_rotation);
+            MarkCurveUsed(used, cue->curve_opacity); MarkCurveUsed(used, cue->curve_frame);
+            MarkCurveUsed(used, cue->curve_palette_offset);
+            for (int e = 0; e < cue->post_effect_count; ++e)
+                MarkLayerPostEffectCurves(used, cue->post_effects[e]);
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index)
+                MarkAssetShaderCurves(used, cue->shaders[shader_index]);
         }
 
         for (int i = 0; i < scene->text_cue_count; ++i) {
@@ -670,6 +1080,19 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, cue->curve_wave_length);
             MarkCurveUsed(used, cue->curve_jitter_amp);
             MarkCurveUsed(used, cue->curve_jitter_freq);
+        }
+
+        for (int i = 0; i < scene->shader_text_cue_count; ++i) {
+            ShaderTextCue* cue = &scene->shader_text_cues[i];
+            MarkCurveUsed(used, cue->curve_x);
+            MarkCurveUsed(used, cue->curve_y);
+            MarkCurveUsed(used, cue->curve_size);
+            MarkCurveUsed(used, cue->curve_color_r);
+            MarkCurveUsed(used, cue->curve_color_g);
+            MarkCurveUsed(used, cue->curve_color_b);
+            MarkCurveUsed(used, cue->curve_opacity);
+            MarkCurveUsed(used, cue->curve_speed);
+            MarkCurveUsed(used, cue->curve_spacing);
         }
 
         for (int i = 0; i < scene->mesh_cue_count; ++i) {
@@ -704,6 +1127,8 @@ void BuildCurveUsageMap(ProjectData* project, bool* used) {
             MarkCurveUsed(used, effect->curve_color_a);
             MarkCurveUsed(used, effect->curve_amount);
         }
+        for (int i = 0; i < scene->scene_layer_post_effect_count; ++i)
+            MarkLayerPostEffectCurves(used, scene->scene_layer_post_effects[i]);
     }
 }
 
@@ -939,6 +1364,21 @@ static int BuildCurveTargetsForCurrentCue(EditorContext* editor,
                 add_target("Scroll Jitter Freq", &cue->curve_jitter_freq, cue->jitter_freq);
             }
             break;
+        case CueTypeShaderText:
+            if (cue_index >= scene->shader_text_cue_count) break;
+            {
+                ShaderTextCue* cue = &scene->shader_text_cues[cue_index];
+                add_target("Shader Text X", &cue->curve_x, cue->x);
+                add_target("Shader Text Y", &cue->curve_y, cue->y);
+                add_target("Shader Text Height", &cue->curve_size, cue->size);
+                add_target("Shader Text Color R", &cue->curve_color_r, cue->color.r);
+                add_target("Shader Text Color G", &cue->curve_color_g, cue->color.g);
+                add_target("Shader Text Color B", &cue->curve_color_b, cue->color.b);
+                add_target("Shader Text Opacity", &cue->curve_opacity, cue->opacity);
+                add_target("Shader Text Speed", &cue->curve_speed, cue->speed);
+                add_target("Shader Text Spacing", &cue->curve_spacing, cue->spacing);
+            }
+            break;
         case CueTypeMusic:
             {
                 AudioEffects* audio = &editor->project->audio_effects;
@@ -1087,10 +1527,15 @@ static void RenderTriggerTimingAssignment(EditorContext* editor,
     ImGui::Combo("Track", &selected_track, TriggerTrackComboGetter,
                  editor->project->trigger_tracks, editor->project->trigger_track_count);
 
-    if (ImGui::Button("Load recorded timings")) {
-        int curve_index = CreateTriggerTimingCurve(editor, selected_track);
+    int* selected_curve_field = targets[selected_target].curve_field;
+    const bool has_timing_curve = selected_curve_field &&
+        *selected_curve_field >= 0 && *selected_curve_field < editor->project->curve_count;
+    if (ImGui::Button(has_timing_curve ? "Edit timing curve" : "Load recorded timings")) {
+        int curve_index = has_timing_curve
+            ? *selected_curve_field
+            : CreateTriggerTimingCurve(editor, selected_track);
         if (curve_index >= 0) {
-            *targets[selected_target].curve_field = curve_index;
+            *selected_curve_field = curve_index;
             editor->editing_curve_index = curve_index;
             editor->editing_curve_cue_type = editor->selected_cue_type;
             snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label),
@@ -1100,9 +1545,96 @@ static void RenderTriggerTimingAssignment(EditorContext* editor,
             if (modified) *modified = true;
         }
     }
+    if (has_timing_curve) {
+        ImGui::SameLine();
+        if (ImGui::Button("Reload from track")) {
+            int curve_index = CreateTriggerTimingCurve(editor, selected_track);
+            if (curve_index >= 0) {
+                *selected_curve_field = curve_index;
+                editor->editing_curve_index = curve_index;
+                editor->editing_curve_cue_type = editor->selected_cue_type;
+                snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label),
+                         "%s timing", targets[selected_target].label);
+                editor->curve_editor_modal_request_open = true;
+                editor->project->modified = true;
+                if (modified) *modified = true;
+            }
+        }
+    }
     ImGui::SameLine();
     ImGui::TextDisabled("Nodes only; edit values in Curve Editor");
     ImGui::PopID();
+}
+
+static void MarkLayerPostEffectCurves(bool* used, const LayerPostEffect& effect) {
+    MarkCurveUsed(used, effect.curve_intensity); MarkCurveUsed(used, effect.curve_threshold);
+    MarkCurveUsed(used, effect.curve_radius); MarkCurveUsed(used, effect.curve_color_r);
+    MarkCurveUsed(used, effect.curve_color_g); MarkCurveUsed(used, effect.curve_color_b);
+    MarkCurveUsed(used, effect.curve_color_a); MarkCurveUsed(used, effect.curve_amount);
+}
+
+static void MarkAssetShaderCurves(bool* used, const AssetShader& shader) {
+    MarkCurveUsed(used, shader.curve_speed); MarkCurveUsed(used, shader.curve_intensity);
+    MarkCurveUsed(used, shader.curve_warp); MarkCurveUsed(used, shader.curve_exposure);
+    MarkCurveUsed(used, shader.curve_fade); MarkCurveUsed(used, shader.curve_opacity);
+    MarkCurveUsed(used, shader.curve_exposure_ramp); MarkCurveUsed(used, shader.curve_fade_ramp);
+    MarkCurveUsed(used, shader.curve_palette_low_r); MarkCurveUsed(used, shader.curve_palette_low_g);
+    MarkCurveUsed(used, shader.curve_palette_low_b); MarkCurveUsed(used, shader.curve_palette_mid_r);
+    MarkCurveUsed(used, shader.curve_palette_mid_g); MarkCurveUsed(used, shader.curve_palette_mid_b);
+    MarkCurveUsed(used, shader.curve_palette_high_r); MarkCurveUsed(used, shader.curve_palette_high_g);
+    MarkCurveUsed(used, shader.curve_palette_high_b);
+}
+
+static void RefreshOpenCueAfterCurveDelete(EditorContext* editor)
+{
+    if (!editor || editor->selected_scene_index < 0 || editor->selected_cue_index < 0) return;
+    SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
+    if (!scene) return;
+
+    const int cue_index = editor->selected_cue_index;
+    switch (editor->selected_cue_type) {
+        case CueTypeShader:
+            if (cue_index < scene->shader_cue_count) editor->editing_shader = scene->shader_cues[cue_index];
+            break;
+        case CueTypeImage:
+            if (cue_index < scene->image_cue_count) editor->editing_image = scene->image_cues[cue_index];
+            break;
+        case CueTypeAnimatedSprite:
+            if (cue_index < scene->animated_sprite_cue_count)
+                editor->editing_animated_sprite = scene->animated_sprite_cues[cue_index];
+            break;
+        case CueTypeText:
+            if (cue_index < scene->text_cue_count) editor->editing_text = scene->text_cues[cue_index];
+            break;
+        case CueTypeScrollText:
+            if (cue_index < scene->scroll_text_cue_count)
+                editor->editing_scroll_text = scene->scroll_text_cues[cue_index];
+            break;
+        case CueTypeMesh:
+            if (cue_index < scene->mesh_cue_count) editor->editing_mesh = scene->mesh_cues[cue_index];
+            break;
+        case CueTypePixel:
+            if (cue_index < scene->pixel_cue_count) editor->editing_pixel = scene->pixel_cues[cue_index];
+            break;
+        default:
+            break;
+    }
+
+    if (editor->shader_modal_asset_mode && editor->shader_modal_asset_index >= 0) {
+        AssetShader* shader = nullptr;
+        if (editor->shader_modal_asset_cue_type == CueTypeImage && cue_index < scene->image_cue_count &&
+            editor->shader_modal_asset_index < scene->image_cues[cue_index].shader_count) {
+            shader = &scene->image_cues[cue_index].shaders[editor->shader_modal_asset_index];
+        } else if (editor->shader_modal_asset_cue_type == CueTypeAnimatedSprite &&
+                   cue_index < scene->animated_sprite_cue_count &&
+                   editor->shader_modal_asset_index < scene->animated_sprite_cues[cue_index].shader_count) {
+            shader = &scene->animated_sprite_cues[cue_index].shaders[editor->shader_modal_asset_index];
+        } else if (editor->shader_modal_asset_cue_type == CueTypePixel && cue_index < scene->pixel_cue_count &&
+                   editor->shader_modal_asset_index < scene->pixel_cues[cue_index].shader_count) {
+            shader = &scene->pixel_cues[cue_index].shaders[editor->shader_modal_asset_index];
+        }
+        if (shader) editor->editing_asset_shader = *shader;
+    }
 }
 
 void RenderCurveEditorModal(EditorContext* editor) {
@@ -1727,80 +2259,9 @@ void RenderCurveEditorModal(EditorContext* editor) {
             ImGui::Separator();
             
             if (ImGui::Button("Yes, Delete", ImVec2(120, 0))) {
-                // Delete the curve by resetting the field to -1
-                int curve_index = editor->editing_curve_index;
-                int cue_type = editor->editing_curve_cue_type;
-                
-                if (editor->selected_scene_index >= 0 && editor->selected_cue_index >= 0) {
-                    SceneBlock* scene = GetScene(editor, editor->selected_scene_index);
-                    if (scene) {
-                        // Reset curve field to -1 based on cue type
-                        if (cue_type == CueTypeShader && editor->selected_cue_index < scene->shader_cue_count) {
-                            // Shader cue
-                            ShaderCue* cue = &scene->shader_cues[editor->selected_cue_index];
-                            if (cue->curve_speed == curve_index) cue->curve_speed = -1;
-                            if (cue->curve_intensity == curve_index) cue->curve_intensity = -1;
-                            if (cue->curve_warp == curve_index) cue->curve_warp = -1;
-                            if (cue->curve_exposure == curve_index) cue->curve_exposure = -1;
-                            if (cue->curve_fade == curve_index) cue->curve_fade = -1;
-                            if (cue->curve_palette_low_r == curve_index) cue->curve_palette_low_r = -1;
-                            if (cue->curve_palette_low_g == curve_index) cue->curve_palette_low_g = -1;
-                            if (cue->curve_palette_low_b == curve_index) cue->curve_palette_low_b = -1;
-                            if (cue->curve_palette_mid_r == curve_index) cue->curve_palette_mid_r = -1;
-                            if (cue->curve_palette_mid_g == curve_index) cue->curve_palette_mid_g = -1;
-                            if (cue->curve_palette_mid_b == curve_index) cue->curve_palette_mid_b = -1;
-                            if (cue->curve_palette_high_r == curve_index) cue->curve_palette_high_r = -1;
-                            if (cue->curve_palette_high_g == curve_index) cue->curve_palette_high_g = -1;
-                            if (cue->curve_palette_high_b == curve_index) cue->curve_palette_high_b = -1;
-                            if (cue->curve_opacity == curve_index) cue->curve_opacity = -1;
-                            if (cue->curve_exposure_ramp == curve_index) cue->curve_exposure_ramp = -1;
-                            if (cue->curve_fade_ramp == curve_index) cue->curve_fade_ramp = -1;
-                            editor->editing_shader = *cue; // Update editing copy
-                        } else if (cue_type == CueTypeImage && editor->selected_cue_index < scene->image_cue_count) {
-                            // Image cue
-                            ImageCue* cue = &scene->image_cues[editor->selected_cue_index];
-                            if (cue->curve_x == curve_index) cue->curve_x = -1;
-                            if (cue->curve_y == curve_index) cue->curve_y = -1;
-                            if (cue->curve_scale == curve_index) cue->curve_scale = -1;
-                            if (cue->curve_rotation == curve_index) cue->curve_rotation = -1;
-                            if (cue->curve_opacity == curve_index) cue->curve_opacity = -1;
-                            editor->editing_image = *cue; // Update editing copy
-                        } else if (cue_type == CueTypeText && editor->selected_cue_index < scene->text_cue_count) {
-                            // Text cue
-                            TextCue* cue = &scene->text_cues[editor->selected_cue_index];
-                            if (cue->curve_size == curve_index) cue->curve_size = -1;
-                            if (cue->curve_color_r == curve_index) cue->curve_color_r = -1;
-                            if (cue->curve_color_g == curve_index) cue->curve_color_g = -1;
-                            if (cue->curve_color_b == curve_index) cue->curve_color_b = -1;
-                            if (cue->curve_x == curve_index) cue->curve_x = -1;
-                            if (cue->curve_y == curve_index) cue->curve_y = -1;
-                            editor->editing_text = *cue; // Update editing copy
-                        } else if (cue_type == CueTypeMesh && editor->selected_cue_index < scene->mesh_cue_count) {
-                            // Mesh cue
-                            MeshCue* cue = &scene->mesh_cues[editor->selected_cue_index];
-                            if (cue->curve_mesh_size == curve_index) cue->curve_mesh_size = -1;
-                            if (cue->curve_pos_x == curve_index) cue->curve_pos_x = -1;
-                            if (cue->curve_pos_y == curve_index) cue->curve_pos_y = -1;
-                            if (cue->curve_pos_z == curve_index) cue->curve_pos_z = -1;
-                            if (cue->curve_rot_x == curve_index) cue->curve_rot_x = -1;
-                            if (cue->curve_rot_y == curve_index) cue->curve_rot_y = -1;
-                            if (cue->curve_rot_z == curve_index) cue->curve_rot_z = -1;
-                            if (cue->curve_scale_x == curve_index) cue->curve_scale_x = -1;
-                            if (cue->curve_scale_y == curve_index) cue->curve_scale_y = -1;
-                            if (cue->curve_scale_z == curve_index) cue->curve_scale_z = -1;
-                            if (cue->curve_color_r == curve_index) cue->curve_color_r = -1;
-                            if (cue->curve_color_g == curve_index) cue->curve_color_g = -1;
-                            if (cue->curve_color_b == curve_index) cue->curve_color_b = -1;
-                            if (cue->curve_color_a == curve_index) cue->curve_color_a = -1;
-                            if (cue->curve_metallic == curve_index) cue->curve_metallic = -1;
-                            if (cue->curve_roughness == curve_index) cue->curve_roughness = -1;
-                            if (cue->curve_fov == curve_index) cue->curve_fov = -1;
-                            editor->editing_mesh = *cue; // Update editing copy
-                        }
-                        editor->project->modified = true;
-                    }
+                if (DeleteProjectCurve(editor, editor->editing_curve_index)) {
+                    RefreshOpenCueAfterCurveDelete(editor);
                 }
-                
                 editor->curve_editor_modal_open = false;
                 ImGui::CloseCurrentPopup();
                 ImGui::CloseCurrentPopup();
@@ -1939,6 +2400,203 @@ void RenderShaderModal(EditorContext* editor) {
             ImGui::EndCombo();
         }
         ImGui::TextDisabled("%s", current_preset_description);
+
+        if (!editor->shader_modal_asset_mode && ImGui::CollapsingHeader("Shadertoy Pipeline")) {
+            const char* pipeline_preview = "Preset only";
+            if (cue->shader_pipeline_index >= 0 &&
+                cue->shader_pipeline_index < editor->project->shader_pipeline_count)
+                pipeline_preview = editor->project->shader_pipelines[cue->shader_pipeline_index].name;
+            if (ImGui::BeginCombo("Pipeline", pipeline_preview)) {
+                if (ImGui::Selectable("Preset only", cue->shader_pipeline_index < 0)) {
+                    cue->shader_pipeline_index = -1;
+                    AutoSave();
+                }
+                for (int pipeline_index = 0; pipeline_index < editor->project->shader_pipeline_count; ++pipeline_index) {
+                    const bool selected = cue->shader_pipeline_index == pipeline_index;
+                    if (ImGui::Selectable(editor->project->shader_pipelines[pipeline_index].name, selected)) {
+                        cue->shader_pipeline_index = pipeline_index;
+                        AutoSave();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (editor->project->shader_pipeline_count < rev::runtime::kMaxShaderPipelines &&
+                ImGui::Button("Create Pipeline")) {
+                const int pipeline_index = editor->project->shader_pipeline_count++;
+                rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+                rev::runtime::InitializeShaderPipeline(&pipeline);
+                snprintf(pipeline.name, sizeof(pipeline.name), "Pipeline %d", pipeline_index + 1);
+                pipeline.passes[rev::runtime::ShaderPassImage].enabled = true;
+                cue->shader_pipeline_index = pipeline_index;
+                AutoSave();
+            }
+
+            if (cue->shader_pipeline_index >= 0 &&
+                cue->shader_pipeline_index < editor->project->shader_pipeline_count) {
+                rev::runtime::ShaderPipeline& pipeline =
+                    editor->project->shader_pipelines[cue->shader_pipeline_index];
+                auto BrowsePipelineAsset = [&](char* destination, size_t destination_size,
+                                               const char* filter) -> bool {
+                    OPENFILENAMEA ofn = {};
+                    char filepath[512] = {};
+                    ofn.lStructSize = sizeof(ofn);
+                    ofn.hwndOwner = (HWND)editor->window->hwnd;
+                    ofn.lpstrFile = filepath;
+                    ofn.nMaxFile = (DWORD)sizeof(filepath);
+                    ofn.lpstrFilter = filter;
+                    ofn.nFilterIndex = 1;
+                    ofn.lpstrInitialDir = editor->project->assets_path[0]
+                        ? editor->project->assets_path : editor->startup_dir;
+                    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+                    if (!GetOpenFileNameA(&ofn)) return false;
+                    const char* filename = strrchr(filepath, '\\');
+                    if (!filename) filename = strrchr(filepath, '/');
+                    filename = filename ? filename + 1 : filepath;
+                    if (editor->project->assets_path[0]) {
+                        char copied_path[640] = {};
+                        snprintf(copied_path, sizeof(copied_path), "%s\\%s",
+                                 editor->project->assets_path, filename);
+                        if (_stricmp(filepath, copied_path) != 0 && !CopyFileA(filepath, copied_path, FALSE)) {
+                            printf("[SHADER PIPELINE] Could not copy %s (err=%lu)\n", filepath, GetLastError());
+                            return false;
+                        }
+                        snprintf(destination, destination_size, "project_assets/%s", filename);
+                    } else {
+                        strncpy_s(destination, destination_size, filepath, _TRUNCATE);
+                        for (char* p = destination; *p; ++p) if (*p == '\\') *p = '/';
+                    }
+                    AutoSave();
+                    return true;
+                };
+                if (ImGui::InputText("Pipeline Name", pipeline.name, sizeof(pipeline.name))) AutoSave();
+                static const char* pass_names[rev::runtime::kMaxShaderPasses] = {
+                    "Image", "Buffer A", "Buffer B", "Buffer C", "Buffer D"
+                };
+                static const char* channel_names[] = {
+                    "None", "Texture", "Buffer A", "Buffer B", "Buffer C", "Buffer D",
+                    "Self Previous Frame", "Audio Spectrum"
+                };
+                for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+                    rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+                    ImGui::PushID(pass_index);
+                    if (ImGui::TreeNode(pass_names[pass_index])) {
+                        if (ImGui::Checkbox("Enabled", &pass.enabled)) AutoSave();
+                        if (ImGui::SliderFloat("Resolution Scale", &pass.resolution_scale, 0.125f, 1.0f, "%.3f")) AutoSave();
+                        if (ImGui::InputText("GLSL Source", pass.source_path, sizeof(pass.source_path))) AutoSave();
+                        ImGui::SameLine();
+                        if (ImGui::Button("Browse GLSL") &&
+                            BrowsePipelineAsset(pass.source_path, sizeof(pass.source_path),
+                                                "GLSL Fragment Shader\0*.glsl;*.frag;*.fs\0All Files\0*.*\0"))
+                            InvalidatePreviewShaderPipeline(cue->shader_pipeline_index);
+                        ImGui::SameLine();
+                        if (ImGui::Button("New / Paste GLSL"))
+                            BeginPipelineSourceEditor(editor, cue->shader_pipeline_index, pass_index, true);
+                        if (pass.source_path[0]) {
+                            ImGui::SameLine();
+                            if (ImGui::Button("Edit GLSL"))
+                                BeginPipelineSourceEditor(editor, cue->shader_pipeline_index, pass_index, false);
+                        }
+                        if (pass.enabled && pass.source_path[0]) {
+                            rev::shader::FragmentSourceVersionStatus version_status =
+                                rev::shader::FragmentSourceVersionReady;
+                            if (!InspectPipelineShaderVersion(editor, pass.source_path, &version_status)) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.25f, 1.0f),
+                                                   "GLSL source cannot be read");
+                            } else if (version_status == rev::shader::FragmentSourceVersionMissing) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f),
+                                                   "Missing #version: HiMYM adds #version 330 core in memory");
+                            } else if (version_status == rev::shader::FragmentSourceVersionConverted) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.25f, 1.0f),
+                                                   "Version converted to #version 330 core in memory");
+                            } else {
+                                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, 1.0f),
+                                                   "GLSL version: #version 330 core");
+                            }
+                        }
+                        for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                            rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+                            ImGui::PushID(channel_index);
+                            char channel_label[32] = {};
+                            snprintf(channel_label, sizeof(channel_label), "Channel %d", channel_index);
+                            const int channel_count = (int)_countof(channel_names);
+                            if (channel.kind < 0 || channel.kind >= channel_count) channel.kind = 0;
+                            if (ImGui::Combo(channel_label, &channel.kind, channel_names, channel_count)) AutoSave();
+                            if (channel.kind == rev::runtime::ShaderChannelTexture &&
+                                ImGui::InputText("Texture Path", channel.asset_path, sizeof(channel.asset_path))) AutoSave();
+                            if (channel.kind == rev::runtime::ShaderChannelTexture) {
+                                ImGui::SameLine();
+                                if (ImGui::Button("Load Texture") &&
+                                    BrowsePipelineAsset(channel.asset_path, sizeof(channel.asset_path),
+                                                        "Images\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0All Files\0*.*\0"))
+                                    InvalidatePreviewShaderPipeline(cue->shader_pipeline_index);
+                                ImGui::SameLine();
+                                if (ImGui::Button("Clear Texture")) {
+                                    channel.asset_path[0] = '\0';
+                                    AutoSave();
+                                    InvalidatePreviewShaderPipeline(cue->shader_pipeline_index);
+                                }
+                            } else if (channel.kind >= rev::runtime::ShaderChannelBufferA &&
+                                       channel.kind <= rev::runtime::ShaderChannelBufferD) {
+                                const int referenced_pass_index = rev::runtime::ShaderPassBufferA +
+                                    (channel.kind - rev::runtime::ShaderChannelBufferA);
+                                rev::runtime::ShaderPass& referenced_pass = pipeline.passes[referenced_pass_index];
+                                ImGui::TextDisabled("Uses %s output%s", pass_names[referenced_pass_index],
+                                    referenced_pass.enabled ? "" : " (pass is disabled)");
+                                if (ImGui::Button("Load Buffer GLSL") &&
+                                    BrowsePipelineAsset(referenced_pass.source_path,
+                                                        sizeof(referenced_pass.source_path),
+                                                        "GLSL Fragment Shader\0*.glsl;*.frag;*.fs\0All Files\0*.*\0")) {
+                                    referenced_pass.enabled = true;
+                                    AutoSave();
+                                    InvalidatePreviewShaderPipeline(cue->shader_pipeline_index);
+                                }
+                                ImGui::SameLine();
+                                if (ImGui::Button("New / Paste Buffer GLSL")) {
+                                    referenced_pass.enabled = true;
+                                    AutoSave();
+                                    BeginPipelineSourceEditor(editor, cue->shader_pipeline_index,
+                                                              referenced_pass_index, true);
+                                }
+                                if (referenced_pass.source_path[0]) {
+                                    ImGui::SameLine();
+                                    if (ImGui::Button("Edit Buffer GLSL"))
+                                        BeginPipelineSourceEditor(editor, cue->shader_pipeline_index,
+                                                                  referenced_pass_index, false);
+                                }
+                            } else if (channel.kind == rev::runtime::ShaderChannelSelfPreviousFrame) {
+                                ImGui::TextDisabled("Uses this pass's previous-frame output.");
+                                if (ImGui::Button("Load This Pass GLSL") &&
+                                    BrowsePipelineAsset(pass.source_path, sizeof(pass.source_path),
+                                                        "GLSL Fragment Shader\0*.glsl;*.frag;*.fs\0All Files\0*.*\0"))
+                                    InvalidatePreviewShaderPipeline(cue->shader_pipeline_index);
+                                ImGui::SameLine();
+                                if (ImGui::Button("New / Paste This Pass GLSL"))
+                                    BeginPipelineSourceEditor(editor, cue->shader_pipeline_index, pass_index, true);
+                                if (pass.source_path[0]) {
+                                    ImGui::SameLine();
+                                    if (ImGui::Button("Edit This Pass GLSL"))
+                                        BeginPipelineSourceEditor(editor, cue->shader_pipeline_index,
+                                                                  pass_index, false);
+                                }
+                            } else if (channel.kind == rev::runtime::ShaderChannelAudioSpectrum) {
+                                ImGui::TextDisabled("Uses the live 512x2 XM audio spectrum texture.");
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+                int pass_order[rev::runtime::kMaxShaderPasses] = {};
+                char pipeline_error[256] = {};
+                const int pass_count = rev::runtime::BuildShaderPassOrder(
+                    &pipeline, pass_order, pipeline_error, sizeof(pipeline_error));
+                if (pass_count < 0)
+                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.25f, 1.0f), "%s", pipeline_error);
+                else
+                    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, 1.0f), "Valid pipeline: %d enabled pass(es)", pass_count);
+            }
+        }
         
         ImGui::Separator();
         
@@ -2237,7 +2895,10 @@ void RenderShaderModal(EditorContext* editor) {
             editor->shader_modal_asset_mode = false;
             ImGui::CloseCurrentPopup();
         }
-        
+
+        // Keep this nested under Shader Parameters so ImGui preserves the
+        // parent modal while the source editor is active.
+        RenderPipelineSourceEditor(editor);
         ImGui::EndPopup();
     } else {
         // If popup was closed, reset the flag
@@ -2934,6 +3595,31 @@ void RenderAnimatedSpriteModal(EditorContext* editor) {
                 AutoSave();
             }
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Add Numbered Sequence")) {
+            OPENFILENAMEA ofn = {};
+            char filepath[512] = {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = (HWND)editor->window->hwnd;
+            ofn.lpstrFile = filepath;
+            ofn.nMaxFile = sizeof(filepath);
+            ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp;*.webp\0PNG\0*.png\0JPEG\0*.jpg;*.jpeg\0WebP\0*.webp\0All Files\0*.*\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrInitialDir = "assets";
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+            if (GetOpenFileNameA(&ofn)) {
+                std::vector<NumberedImageFrame> frames;
+                std::string source_directory;
+                if (!DiscoverNumberedImageSequence(filepath, &frames, &source_directory)) {
+                    printf("[ANIM_SPRITE] No numbered image sequence found for %s. Expected names such as 0001.png or drop_0001.png.\n", filepath);
+                } else if (AppendAnimatedSpriteFrames(editor, cue, source_directory, frames)) {
+                    printf("[ANIM_SPRITE] Added %zu numbered frames from %s.\n", frames.size(), source_directory.c_str());
+                    AutoSave();
+                }
+            }
+        }
+        ImGui::TextDisabled("Sequence: matching prefix + trailing digits + extension (for example 0001.png or drop_0001.png)");
 
         ImGui::Separator();
         ImGui::Text("Position (0.0-1.0):");
@@ -4010,6 +4696,9 @@ void RenderMeshModal(EditorContext* editor) {
                         mesh->imported_light_pos[0] = ir->light_pos[0];
                         mesh->imported_light_pos[1] = ir->light_pos[1];
                         mesh->imported_light_pos[2] = ir->light_pos[2];
+                        memcpy(mesh->imported_light_direction, ir->light_direction, sizeof(ir->light_direction));
+                        mesh->imported_light_type = ir->light_type;
+                        mesh->imported_light_node_index = ir->light_node_index;
                         mesh->emissive_color[0] = ir->material.emissive[0];
                         mesh->emissive_color[1] = ir->material.emissive[1];
                         mesh->emissive_color[2] = ir->material.emissive[2];
@@ -4031,6 +4720,9 @@ void RenderMeshModal(EditorContext* editor) {
                             if (!tex_path[0]) continue;
                             rev::runtime::ImageTexture tex = {};
                             if (rev::runtime::LoadImageTexture(tex_path, &tex)) {
+                                rev::runtime::SetImageTextureWrap(tex.texture_id,
+                                    ir->materials[mat_i].base_color_wrap_s,
+                                    ir->materials[mat_i].base_color_wrap_t);
                                 material_textures[mat_i] = tex.texture_id;
                             }
                         }
@@ -5324,6 +6016,98 @@ void RenderPixelEmitterModal(EditorContext* editor) {
     } else if (editor->pixel_emitter_modal_open) {
         editor->pixel_emitter_modal_open = false;
     }
+}
+
+void RenderShaderTextModal(EditorContext* editor) {
+    if (!editor || !editor->project || editor->selected_scene_index < 0 ||
+        editor->selected_scene_index >= editor->project->scene_count) return;
+    SceneBlock* scene = &editor->project->scenes[editor->selected_scene_index];
+    if (editor->selected_cue_type != CueTypeShaderText || editor->selected_cue_index < 0 ||
+        editor->selected_cue_index >= scene->shader_text_cue_count) return;
+    if (editor->shader_text_modal_request_open) {
+        editor->editing_shader_text = scene->shader_text_cues[editor->selected_cue_index];
+        ImGui::OpenPopup("Shader Text Cue");
+        editor->shader_text_modal_request_open = false;
+        editor->shader_text_modal_open = true;
+    }
+    if (ImGui::BeginPopupModal("Shader Text Cue", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ShaderTextCue& cue = editor->editing_shader_text;
+        bool changed = false;
+        auto ShowCurveButton = [&](const char* id, int* editing_field, int* actual_field,
+                                   float base_value, const char* label) {
+            ImGui::SameLine();
+            if (*editing_field >= 0) {
+                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "[C%d]", *editing_field);
+                ImGui::SameLine();
+            }
+            if (ImGui::SmallButton(id)) {
+                scene->shader_text_cues[editor->selected_cue_index] = cue;
+                if (*actual_field < 0) *actual_field = AcquireCurveSlot(editor, base_value, nullptr);
+                *editing_field = *actual_field;
+                if (*actual_field >= 0 && *actual_field < editor->project->curve_count) {
+                    editor->editing_curve_index = *actual_field;
+                    editor->editing_curve_cue_type = CueTypeShaderText;
+                    editor->editing_curve_field = -1;
+                    snprintf(editor->editing_curve_label, sizeof(editor->editing_curve_label), "%s", label);
+                    editor->curve_editor_modal_request_open = true;
+                    editor->project->modified = true;
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add/edit animation curve");
+        };
+        ShaderTextCue& actual = scene->shader_text_cues[editor->selected_cue_index];
+        changed |= ImGui::InputTextMultiline("Text", cue.text, sizeof(cue.text), ImVec2(500, 90));
+        const char* modes[] = {"Static", "Horizontal scroll"};
+        changed |= ImGui::Combo("Mode", &cue.mode, modes, 2);
+        changed |= ImGui::SliderFloat("X", &cue.x, 0.0f, 1.0f);
+        ShowCurveButton("+##shader_text_x", &cue.curve_x, &actual.curve_x, cue.x, "Shader Text X");
+        changed |= ImGui::SliderFloat("Y", &cue.y, 0.0f, 1.0f);
+        ShowCurveButton("+##shader_text_y", &cue.curve_y, &actual.curve_y, cue.y, "Shader Text Y");
+        changed |= ImGui::SliderFloat("Height (px)", &cue.size, 7.0f, 280.0f);
+        ShowCurveButton("+##shader_text_size", &cue.curve_size, &actual.curve_size, cue.size, "Shader Text Height");
+        changed |= ImGui::ColorEdit3("Color", &cue.color.r);
+        ShowCurveButton("R curve##shader_text_r", &cue.curve_color_r, &actual.curve_color_r, cue.color.r, "Shader Text Color R");
+        ShowCurveButton("G curve##shader_text_g", &cue.curve_color_g, &actual.curve_color_g, cue.color.g, "Shader Text Color G");
+        ShowCurveButton("B curve##shader_text_b", &cue.curve_color_b, &actual.curve_color_b, cue.color.b, "Shader Text Color B");
+        changed |= ImGui::SliderFloat("Opacity", &cue.opacity, 0.0f, 1.0f);
+        ShowCurveButton("+##shader_text_opacity", &cue.curve_opacity, &actual.curve_opacity, cue.opacity, "Shader Text Opacity");
+        changed |= ImGui::SliderFloat("Spacing", &cue.spacing, 0.25f, 3.0f);
+        ShowCurveButton("+##shader_text_spacing", &cue.curve_spacing, &actual.curve_spacing, cue.spacing, "Shader Text Spacing");
+        if (cue.mode == 0) {
+            const char* align[] = {"Left", "Center", "Right"};
+            changed |= ImGui::Combo("Alignment", &cue.alignment, align, 3);
+        } else {
+            const char* direction[] = {"Left", "Right"};
+            changed |= ImGui::Combo("Direction", &cue.direction, direction, 2);
+            changed |= ImGui::SliderFloat("Speed (px/s)", &cue.speed, 0.0f, 500.0f);
+            ShowCurveButton("+##shader_text_speed", &cue.curve_speed, &actual.curve_speed, cue.speed, "Shader Text Speed");
+            const char* loops[] = {"Loop", "Clamp"};
+            changed |= ImGui::Combo("Motion", &cue.loop_mode, loops, 2);
+        }
+        changed |= ImGui::InputFloat("Start", &cue.cue_start);
+        changed |= ImGui::InputFloat("End", &cue.cue_end);
+        changed |= ImGui::InputFloat("Fade in", &cue.fade_in);
+        changed |= ImGui::InputFloat("Fade out", &cue.fade_out);
+        changed |= ImGui::SliderInt("Layer", &cue.layer_order, -10, 10);
+        const char* blends[] = {"Alpha", "Additive", "Multiply", "Screen"};
+        changed |= ImGui::Combo("Blend", &cue.blend_mode, blends, 4);
+        if (changed) {
+            scene->shader_text_cues[editor->selected_cue_index] = cue;
+            editor->project->modified = true;
+        }
+        static int shader_text_target = 0;
+        static int shader_text_curve = 0;
+        RenderCurveReuseSection(editor, "shader_text_curve_reuse", CueTypeShaderText,
+                                &shader_text_target, &shader_text_curve);
+        // Curve reuse edits the scene-owned cue; keep the modal copy aligned so
+        // the next parameter edit cannot overwrite a newly assigned curve.
+        cue = actual;
+        if (ImGui::Button("Close", ImVec2(240, 0))) {
+            editor->shader_text_modal_open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    } else if (editor->shader_text_modal_open) editor->shader_text_modal_open = false;
 }
 
 } // namespace editor

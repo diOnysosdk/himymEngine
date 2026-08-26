@@ -40,6 +40,7 @@ Copy-Item -LiteralPath (Join-Path $repository_root "tools\blender\himym_blender.
 Copy-Item -LiteralPath (Join-Path $repository_root "tools\blender\himym_template.blend") -Destination $blender_output
 Copy-Item -LiteralPath (Join-Path $repository_root "PR\guides\BLENDER_GLTF_GUIDE.md") -Destination $blender_output
 Copy-Item -LiteralPath (Join-Path $repository_root "PR\guides\EDITOR_GUIDE.md") -Destination $docs_output
+Copy-Item -LiteralPath (Join-Path $repository_root "PR\guides\SHADER_GUIDE.md") -Destination $docs_output
 Copy-Item -LiteralPath (Join-Path $repository_root "PACKED_RUNTIME_SIZE.md") -Destination $docs_output
 Copy-Item -LiteralPath (Join-Path $repository_root "ROADMAP.md") -Destination $docs_output
 

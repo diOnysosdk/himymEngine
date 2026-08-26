@@ -80,6 +80,12 @@ int main(int argc, char** argv) {
               Near(transformed.normal[1], -0.447214f) &&
               Near(transformed.normal[2], 0.0f),
               "non-uniform node scale must use inverse-transpose normal transformation");
+        const rev::mesh::Vertex& uv_vertex = result->mesh->vertices[0];
+        Check(Near(uv_vertex.uv[0], -1.4f) && Near(uv_vertex.uv[1], 0.7f),
+              "base-color texCoord override and KHR_texture_transform must be baked into UVs");
+        Check(result->materials && result->materials[0].base_color_wrap_s == 10497 &&
+              result->materials[0].base_color_wrap_t == 33648,
+              "base-color glTF sampler wrapping");
         Check(result->mesh->imported_node_count >= 1,
               "fixture imported node metadata");
         if (result->mesh->imported_node_count >= 1) {
@@ -103,6 +109,12 @@ int main(int argc, char** argv) {
     }
 
     Check(result->has_camera, "fixture camera import");
+    Check(result->has_light && result->light_type == 1,
+          "first imported directional light type");
+    Check(Near(result->light_direction[0], 0.0f) &&
+          Near(result->light_direction[1], 1.0f) &&
+          Near(result->light_direction[2], 0.0f),
+          "directional light world direction from glTF node rotation");
     Check(Near(result->camera_pos[0], 4.0f) &&
           Near(result->camera_pos[1], 5.0f) &&
           Near(result->camera_pos[2], 6.0f),

@@ -19,6 +19,7 @@ void RenderProperties(EditorContext* editor);
 void RenderAssetBrowser(EditorContext* editor);
 void RenderCurveEditor(EditorContext* editor);
 int CreateTriggerTimingCurve(EditorContext* editor, int track_index);
+bool DeleteProjectCurve(EditorContext* editor, int curve_index);
 void RenderTriggerRecorder(EditorContext* editor);
 
 // Modal Dialog Functions (editor_modals.cpp)
@@ -29,6 +30,7 @@ void RenderImageModal(EditorContext* editor);
 void RenderAnimatedSpriteModal(EditorContext* editor);
 void RenderTextModal(EditorContext* editor);
 void RenderScrollTextModal(EditorContext* editor);
+void RenderShaderTextModal(EditorContext* editor);
 void RenderMeshModal(EditorContext* editor);
 void RenderLayerPostEffects(EditorContext* editor, LayerPostEffect* effects, int* effect_count,
 							bool* modified, const char* id_prefix, int cue_type, int cue_index);

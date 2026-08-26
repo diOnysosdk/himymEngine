@@ -1,6 +1,6 @@
 ---
 name: himym-runtime
-description: Implement or review HiMYM playback/runtime behavior. Use for shared cue structs and parsers, minimal_intro, packed assets, Win32/WGL frame flow, GDI+ image/text loading, XM/WinMM playback, curves, triggers, runtime layering, timing, cursor lifecycle, or size-sensitive runtime fixes.
+description: Implement or review HiMYM playback/runtime behavior. Use for shared cue structs and parsers, minimal_intro, packed assets, scene wipes, interactive menu navigation, Win32/WGL frame flow, GDI+ image/text loading, XM/WinMM playback, curves, triggers, runtime layering, timing, cursor lifecycle, or size-sensitive runtime fixes.
 ---
 
 # HiMYM runtime
@@ -14,4 +14,31 @@ Read `AGENTS.md` and use `$himym-codebase-map` when ownership is unclear.
 5. Keep release behavior deterministic and packed-asset friendly.
 6. Validate the smallest affected target, then packed/editor targets for cross-layer changes.
 
+For optional competition builds, preserve the normal x64 artifact first. Treat
+Crinkler as an x86 replacement linker: WGL-loaded function pointers require
+`APIENTRY`, all linked objects must be ordinary COFF rather than LTCG, pragma-
+only default libraries must be made explicit, and reuse layouts must be
+regenerated when packed manifests change.
+
 Do not duplicate shared types or texture helpers. Preserve `curve_* == -1`, GDI+ requirements, modern GL loading through `wglGetProcAddress`, GL state restoration, and cue-driven XM startup. Avoid speculative abstractions and report meaningful binary/dependency costs.
+
+Evaluate Shader Text Cue X, Y, height, RGB, opacity, spacing, and speed curves from cue-local time; missing assignments remain -1 for old project and cues.txt rows.
+
+Treat image-cue source dimensions as 1920x1080-authored pixels. Scale them uniformly to the runtime viewport while leaving normalized positions unchanged.
+
+Composite Shadertoy pipelines with the evaluated opacity curve multiplied by
+the cue fade envelope. A partially opaque first layer must alpha-blend against
+the cleared scene instead of only writing reduced alpha. Treat shader-text and
+scrolling-text pixel values as authored at 1920x1080 and scale them uniformly
+to the runtime viewport without moving normalized anchors.
+
+For interactive navigation, preserve the originating menu as explicit session
+state. Menu scenes loop until activation or exit; destinations return to that
+origin on authored scene expiry or non-looping XM completion. Treat sprite
+menu visuals as instances of scene-local animated-sprite cues with menu-owned
+position, hit bounds, target, and selection tint.
+Keep a separate animation clock per sprite menu item. Advance only the selected
+item, freeze it when selection leaves, and resume its stored clock on re-entry;
+do not derive menu-instance frames from the looping scene clock.
+Gate hover and click handling on the authored per-menu mouse option. Keep that
+option disabled by default and do not gate keyboard navigation with it.

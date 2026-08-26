@@ -4,6 +4,37 @@ Text cues expose an **Alignment** selector with Left, Center, and Right options.
 
 When **Loop Intro** is enabled, preview and exported runtime wrap at the project's total scene duration. Cue end times beyond that duration do not extend the loop; they are useful for persistent layers but cannot prevent text or shader cues from restarting on the next pass.
 
+Image-cue dimensions, shader-text metrics, and scrolling-text metrics are
+authored against the editor's 1920x1080 canvas. Windowed runtime sizes such as
+960x540 scale source-image dimensions, glyph size, pixel-based shader-text
+speed, atlas travel, and baked scroll sprites uniformly; normalized anchors
+keep the same composition placement.
+
+For Shadertoy pipeline cues, **Opacity**, an assigned opacity curve, and the
+cue's fade-in/fade-out envelope are combined by the compositor. This works for
+the first/background shader layer as well as overlays and does not require an
+opacity uniform in the imported GLSL. Other preset parameter sliders affect a
+custom pipeline only when its GLSL explicitly implements the corresponding
+uniform or behavior.
+
+Shader Text Cue provides curve buttons for X, Y, pixel height, color R/G/B,
+opacity, spacing, and horizontal-scroll speed. Curves use time relative to the
+cue start and behave the same in editor preview, standalone playback, and
+packed playback. Older project and `cues.txt` rows load with these assignments
+unassigned.
+
+Each Image, Animated Sprite, Pixel, Pixel Emitter, Text, Scroll Text, Shader
+Text, and Mesh row has **C** (copy parameters) and **P** (paste parameters)
+buttons. Copy a source row, then press **P** on another row of the same type.
+Paste transfers timing, fades, transforms, colors, shaders, effects, and other
+type-specific settings while preserving the destination image, frames, text,
+font assets, emitter visual source, or mesh asset/type. Assigned curves are
+duplicated, so editing a pasted cue's curve does not change the source cue.
+Asset Shader rows inside Image, Animated Sprite, and Pixel cue modals also have
+a **+** button that duplicates the shader preset and all of its current settings.
+Shader Text Cue rows have the same **+** duplication control as other visual
+cue rows; the copy opens immediately so its text or animation can be adjusted.
+
 **Walkthrough of the native C++17/ImGui scene authoring tool**
 
 ## Overview
@@ -54,6 +85,11 @@ The HiMYM editor is the native `editor_app.exe` authoring application. It manage
 
 ## Core Workflows
 
+The **Build > Competition Size Build (Crinkler)** submenu provides 64 KiB,
+128 KiB, and custom executable-size budgets plus FAST, SLOW, and VERYSLOW
+compression modes. The normal packed x64 artifact is preserved first;
+the selected budget is enforced against the separate Crinkler x86 executable.
+
 ### Workflow 1: Create New Scene
 
 1. **Click "+ Scene"** (bottom left)
@@ -79,6 +115,56 @@ for their authored scene window even if an individual cue ends. The next scene s
 own stack at the scene boundary; effects do not carry across scenes unless they are authored in
 both scene stacks.
 
+### Workflow 1c: Scene wipes and interactive disc menus
+
+Select a scene and use **Scene Transition** to choose an entry wipe (left, right, up, or down),
+its duration, and its solid wipe color. The wipe is evaluated from the scene's absolute start,
+so it runs during normal playback and after an interactive jump.
+
+To turn a scene into a music-disc or diskmag menu, open **Interactive Menu**, enable it, and add
+one item for each destination scene. Each item stores a target scene index and normalized
+`Position`/`Size` bounds. Every menu item renders its own label using the compact runtime text
+texture path; ordinary Text cues remain available for headings and decorative typography.
+The standalone runtime always supports Up/Down and Enter. **Enable mouse control** is a per-menu
+checkbox, off by default; when enabled, hover selects and left-click activates. Activating an item seeks to the
+target scene start, where normal scene cues and the target scene's Music cue take over. Enable an
+interactive menu on a destination scene as well when it needs a return/back entry.
+
+While an interactive menu scene is active, its local scene time loops automatically. The project
+does not advance to the following scene until the user activates a destination item; Escape still
+exits immediately. Editor playback uses the same scene-local looping rule.
+
+Activating an item starts a menu session and remembers the interactive scene that launched it.
+The selected destination returns to that exact menu scene when either its authored scene duration
+expires or its non-looping XM cue finishes. It never falls through into the following timeline
+scene. This works for a master menu at any scene index, not only scene zero.
+
+Each item has a **Visual** option. **Label button** uses the generated menu label texture.
+**Animated sprite** references an Animated Sprite cue owned by the same scene; the sprite itself is
+the visible button/icon, with selection indicated by its highlight tint rather than a box. The
+existing cue controls frames, FPS, playback mode, scale, curves, effects, and packing; the menu
+item's Image X/Y controls the position of that menu instance.
+The menu item retains invisible normalized input bounds and its destination. Deleting a referenced
+sprite cue clears the menu reference, and deleting an earlier sprite cue adjusts later indices.
+Sprite-mode items expose **Image X** and **Image Y** in the menu item itself. These values override
+the referenced cue's position in that interactive scene without modifying the reusable sprite cue;
+the invisible input bounds follow the menu-owned image centre.
+Several items may reference the same Animated Sprite cue. The runtime instances its current frame
+once per referencing item, so every item keeps independent Image X/Y, target, hit bounds, and
+selection tint without duplicating animation assets or authored cue data.
+The editor preview also renders every shared-cue instance at its own Image X/Y and overlays its
+input rectangle plus a centre cross, so overlapping or not-yet-positioned items remain visible
+while authoring. Newly added items start at the centre of their staggered input bounds rather than
+all starting at the canvas centre.
+In runtime playback, only the currently selected sprite menu item advances its frame animation.
+Moving the selection away freezes that item on its current frame; selecting it again resumes from
+the same frame instead of restarting. Every item keeps its own animation clock even when several
+items reference the same Animated Sprite cue. The editor preview animates the configured initial
+selection and shows the other instances in their paused state.
+
+Menu labels must not contain `|` or `,`, because those characters delimit the compact JSON/export
+rows. Scene indices follow the order shown in the scene list and are zero-based.
+
 For **Fade In / Fade Out**, **Intensity** is the maximum black fade, while
 **Fade In Duration** and **Fade Out Duration** control the scene-local envelope.
 The scene remains fully visible between those two fades; adding the effect does
@@ -87,6 +173,13 @@ is assigned, that curve directly controls the black-fade amount and replaces the
 automatic duration envelope (`1` is black and `0` is fully visible).
 
 ### Workflow 2: Add Shader to Scene
+
+For custom GLSL, Shadertoy imports, Buffer A-D pipelines, feedback, texture
+channels, and audio-reactive shaders, see [SHADER_GUIDE.md](SHADER_GUIDE.md).
+Pipeline passes can import a file with **Browse GLSL**, create or paste code in
+the built-in editor with **New / Paste GLSL**, and reopen assigned sources with
+**Edit GLSL**. Built-in editor saves go directly to the project's
+`project_assets` directory and refresh the preview shader.
 
 1. **Select scene** in timeline
 2. **Click shader "+ Cue"** button
@@ -127,13 +220,26 @@ automatic duration envelope (`1` is black and `0` is fully visible).
 
 **Result**: Text appears with fade effect during specified timing.
 
+### Scrolling Text Travel
+
+Scrolling text measures its glyph extent automatically; do not add leading or
+trailing spaces to push it offscreen. In **Clamp** mode HiMYM renders one copy
+and calculates travel from the authored starting position until the final glyph
+has fully cleared the destination edge. **Loop** mode repeats the text and uses
+**Wrap Gap** as the separation between cycles. Direction selects the movement
+axis; X/Y provide the starting position and cross-axis placement.
+
 ### Workflow 4b: Add Animated Sprite Overlay
 
 1. **Select scene** in timeline
 2. **Click "+ Animated Sprite Cue"** in Properties
 3. In animated sprite modal:
    - **Sprite Name**: friendly label (e.g., `logo_burst`)
-   - **Frames**: add image frames (Browse copies files into `{project}_assets/`)
+   - **Add Frame**: select one image; the editor copies it into `{project}_assets/`
+   - **Add Numbered Sequence**: select any frame in a numbered series and the
+     editor discovers, numerically sorts, and copies the complete series. Names
+     must share an extension, prefix, and trailing digit width, for example
+     `0001.png` ... `0030.png` or `drop_0001.png` ... `drop_0030.png`
    - **Playback**: set `FPS`, `Mode` (`Loop` / `Once` / `PingPong`), and `Start Frame`
    - **Transform**: set X/Y/Scale/Opacity
    - **Timing**: set cue start/end and optional fade window
@@ -296,6 +402,15 @@ checkbox must be enabled for its animated values to affect the music.
 ### cues.txt Format (excerpt)
 
 ```
+[scenes]
+# name|start|end|wipe_type|wipe_duration|wipe_r|wipe_g|wipe_b
+Main Menu|0.000|12.000|1|0.500|0.000|0.000|0.000
+Track One|12.000|42.000|0|0.000|0.000|0.000|0.000
+
+[scene_menus]
+# scene_index|wrap|initial_item|highlight_rgba,mouse_enabled|item_count|label,target,x,y,w,h,visual_type,animated_sprite_cue,image_x,image_y...
+0|1|0|1.000,0.800,0.200,1.000,0|2|Track One,1,0.100,0.300,0.250,0.100,0,-1,0.225,0.350|Track Two,2,0.100,0.450,0.250,0.100,1,0,0.225,0.500
+
 [shader_cues]
 shader_scene_id|palette_low_r|...|shader_cue_start_s|shader_cue_end_s|...
 0|0.1|0.3|0.8|0.45|0.25|0.7|0.8|0.2|0.6|1.0|1.0|0.5|0.76|0.02|0.04|-0.04|0.0|10.0|0.5|0.5|0|1.0|0|0
@@ -319,6 +434,12 @@ logo_burst|frame_00.png;frame_01.png;frame_02.png|Salute_assets/frame_00.png;Sal
 # scene_start|scene_end|effect_count|type,enabled,order,intensity,threshold,radius,color_r,color_g,color_b,color_a,start_time,end_time,curve_intensity,curve_threshold,curve_radius,curve_color_r,curve_color_g,curve_color_b,curve_color_a,curve_amount,blend_mode...
 0.000|10.000|1|0,1,0,1.000,0.500,1.000,1.000,1.000,1.000,1.000,0.000,10.000,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,0
 ```
+
+`wipe_type` is `0` for none and `1`-`4` for left, right, up, and down. Menu
+`visual_type` is `0` for a label button and `1` for an animated-sprite icon;
+`animated_sprite_cue` is a scene-local index. Older rows without these fields
+retain their defaults when imported. `mouse_enabled` is `0` by default and `1`
+when hover/left-click navigation is explicitly enabled for that menu.
 
 The row's `scene_start` and `scene_end` are absolute project times. Each packed effect's
 `start_time` and `end_time` remains scene-local, so the runtime subtracts `scene_start` before
@@ -349,8 +470,10 @@ evaluating the stack belonging to the active scene interval.
 
 **Result**: Full workflow in one click!
 
-The project Properties panel also controls the compiled runtime window. `Fullscreen` and
-`Title` are exported in `[metadata]` and applied by the runtime. `Build > Build Screen Saver
+The project Properties panel also controls the compiled runtime window. `Fullscreen`,
+`Window Size`, and `Title` are exported in `[metadata]` and applied by the runtime. Windowed
+output is a centered, borderless 16:9 window selectable at 1920x1080, 960x540, 480x270, or
+240x135. `Build > Build Screen Saver
 (.scr)` runs the packed build and copies the standalone executable to
 `bin/Release/minimal_intro.scr`. Windows screen savers are executables with a `.scr`
 extension; Windows launches this artifact with `/s`, which forces fullscreen mode.

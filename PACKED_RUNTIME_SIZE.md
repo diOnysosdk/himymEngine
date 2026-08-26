@@ -7,6 +7,40 @@ reconfigures CMake after packing, then builds `minimal_intro_packed`.
 
 The external-cue `minimal_intro` target remains universal.
 
+The optional Crinkler workflow produces a separate Win32
+`minimal_intro_competition.exe`. It reuses the same generated packed manifests
+but does not replace the supported x64 `minimal_intro_packed.exe`. Crinkler is
+a replacement linker rather than an x64 post-link compressor, so its isolated
+build disables `/GL` and `/LTCG` and requires competition-machine smoke tests.
+The wrapper preserves Crinkler's generated reuse layout and automatically
+splits code into multiple parts when the uncompressed 64 KiB part limit is hit.
+It fingerprints both packed manifests so feature or project changes regenerate
+that layout. XM-enabled builds also disable libxm IPO in the Crinkler tree and
+link WinMM explicitly; the supported normal build retains its existing flags.
+Every OpenGL function pointer obtained from `wglGetProcAddress` is declared
+with `APIENTRY`. This is a competition correctness requirement: missing
+`__stdcall` annotations are masked on x64 but corrupt the x86 stack, often as
+brief shader flicker followed by black output. Shader-pipeline and mesh paths
+must therefore receive an actual x86 playback check, not link-only validation.
+
+The editor's 64 KiB, 128 KiB, and custom choices are final executable budgets,
+independent of Crinkler's 64 KiB uncompressed-part ceiling. The wrapper checks
+that an existing competition executable is writable before linking and reports
+the running/stale process directly. In Crinkler builds, `rev_mesh` uses a small
+single-threaded guarded GL loader rather than `std::call_once` to avoid the
+Win32 InitOnce API-set forwarding cycle; the normal x64 loader remains unchanged.
+
+The 64 KiB uncompressed-part ceiling also applies to data and text. Reuse-file
+partitioning can move independent sections, but cannot split one oversized
+embedded asset section. Very large images, music, meshes, font atlases, or GLSL
+sources remain project-specific risks until packed assets are emitted in
+chunkable sections.
+
+Image-cue dimensions, shader text, and scrolling text pixel metrics are authored
+at 1920x1080. The preview and both runtimes scale source-image dimensions,
+glyph size, pixel speed, and atlas travel by the smaller viewport-axis ratio,
+preserving normalized placement at 960x540 and other window sizes.
+
 ## Feature mapping
 
 | Exported content | C++ flag | Optional target dependency |
@@ -16,8 +50,27 @@ The external-cue `minimal_intro` target remains universal.
 | Pixel-emitter cue | `HIMYM_USE_PARTICLES` | `rev_particles` |
 | Any mesh cue | `HIMYM_USE_MESH` | `rev_mesh` |
 | External mesh with `mesh_type == 4` | `HIMYM_USE_GLTF` | `rev_gltf` and `rev_mesh` |
+| Image cue | `HIMYM_USE_IMAGE` | none; prunes image cue parsing, state, and rendering |
+| Text cue or interactive menu | `HIMYM_USE_TEXT` | none; prunes text/menu parsing, state, and rendering |
+| Any image-decoding consumer | `HIMYM_USE_IMAGE_DECODER` | none; prunes GDI+/WIC code and imports when absent |
 | Animated-sprite cue | `HIMYM_USE_ANIMATED_SPRITE` | none; prunes runtime code |
 | Scrolling-text cue | `HIMYM_USE_SCROLL_TEXT` | none; prunes runtime code |
+
+Scene metadata and interactive-menu rows are code-only packed cue data and do
+not select an optional library. A sprite-mode menu item references an existing
+scene-local animated-sprite cue; that cue selects
+`HIMYM_USE_ANIMATED_SPRITE` and supplies the packed frame assets. Reusing the
+same cue for several menu icons therefore adds item rows, not duplicate images.
+
+`HIMYM_USE_IMAGE_DECODER` is enabled by image and text cues, scrolling text,
+animated sprites, image-backed particle emitters, shader-pipeline texture
+channels, and interactive menus. Primitive-only particles and shader pipelines
+without texture channels do not retain GDI+/WIC. The external-cue runtime keeps
+all decoding paths for development compatibility.
+
+Packed builds also disable verbose environment-variable, console, and debug-log
+handling by default. Configure with `-DHIMYM_PACKED_DIAGNOSTICS=ON` when a packed
+diagnostic build is needed; this changes diagnostics only, not authored output.
 
 Particle emitters do not enable mesh by themselves. Mesh attachment projection
 is compiled only when the same project also contains mesh cues.
@@ -28,6 +81,12 @@ enabled image, animated-sprite, or pixel asset shaders. Preset 0 is retained as
 the deterministic fallback when a project has no shader cue. The universal
 47-preset registry remains available to the editor and external-cue runtime,
 but is not linked into a current-format packed runtime.
+
+Project-owned Shadertoy pipelines are discovered independently from the preset
+registry. The packer embeds only enabled Image/Buffer A-D GLSL sources and
+referenced texture channels. Previous-frame feedback and audio-spectrum
+channels add no packed asset bytes; they use runtime render targets and the
+active XM sample snapshot respectively.
 
 Post-effect GLSL is specialized independently. The packer collects enabled
 effect types from global post-effect rows, scene-layer stacks, and image,
@@ -53,6 +112,22 @@ uncompressed PE file sizes and include the identical embedded project data.
 Total optional-system reduction in this controlled build: **152,576 bytes**.
 Alignment and link-time optimization mean subsystem deltas should not be
 treated as perfectly additive across unrelated projects.
+
+## Shader-pipeline-only trimming
+
+Measured August 20, 2026 from `E:\Demos\shaderfromnet`, which contains one
+project-owned shader pipeline and no image, text, sprite, pixel, particle,
+music, mesh, or texture-channel rows. Both builds used the GENERAL profile and
+the identical 10,806-byte embedded payload.
+
+| Runtime | EXE bytes | Non-asset remainder |
+|---|---:|---:|
+| Before image/text/decoder and diagnostic gating | 158,208 | 147,402 |
+| After gating | 96,768 | 85,962 |
+
+The new manifest-driven paths removed **61,440 bytes (38.8%)** without changing
+the shader source or authored cues. The post-change linker map contains no live
+image/text loader or GDI+ import symbols.
 
 For a representative shader/text-only project (`demos/lilbox`), the generated
 manifest selected only `rev_curve`, `rev_platform`, `rev_runtime`, and
@@ -225,3 +300,15 @@ x64/PE32+. It reaches its PE parser but terminates with an internal
 x86-64 support, so kkrunchy is not a compatible compressor for the current x64
 release target. The local downloaded copy is kept only under ignored
 `build/tools/kkrunchy` and is not shipped in the editor release.
+
+## Shader text cue
+
+`Shader Text Cue` is the compact alternative to the GDI+/glyph-atlas text and
+scroll-text cues. It renders an embedded 5x7 ASCII font directly with GLSL and
+supports static alignment or looping/clamped horizontal scrolling. It has no
+font, image, atlas, WIC, or GDI+ dependency.
+
+The packer emits `HIMYM_USE_SHADER_TEXT`/`HIMYM_PACKED_USE_SHADER_TEXT` only
+when `[shader_text_cues]` contains rows. This flag does not enable
+`HIMYM_USE_TEXT` or `HIMYM_USE_IMAGE_DECODER`, so a shader-text-only intro
+keeps the decoder-free runtime path.

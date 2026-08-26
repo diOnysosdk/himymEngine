@@ -14,8 +14,12 @@ struct ExpectedFeatures {
     bool particles;
     bool mesh;
     bool gltf;
+    bool image;
+    bool text;
+    bool image_decoder;
     bool animated_sprite;
     bool scroll_text;
+    bool shader_text;
 };
 
 int failures = 0;
@@ -111,8 +115,12 @@ void RunCase(const std::filesystem::path& root,
         {"PARTICLES", expected.particles},
         {"MESH", expected.mesh},
         {"GLTF", expected.gltf},
+        {"IMAGE", expected.image},
+        {"TEXT", expected.text},
+        {"IMAGE_DECODER", expected.image_decoder},
         {"ANIMATED_SPRITE", expected.animated_sprite},
         {"SCROLL_TEXT", expected.scroll_text},
+        {"SHADER_TEXT", expected.shader_text},
     };
     for (const FeatureCheck& feature : features) {
         CheckFlag(header, case_name, "#define HIMYM_USE_", feature.name,
@@ -153,23 +161,34 @@ int main() {
     RunCase(root, "shader", "[shader_cues]\n18|0|1\n", {}, false, 18);
     RunCase(root, "asset_shader",
             "[image_cues]\nasset|asset.bin|0|0|1|1|0|1|0|0|0|0|0|0|-1|-1|-1|-1|0|0|-1|0|1|5,1\n",
-            {}, true, 5);
+            {false, false, false, false, false, true, false, true}, true, 5);
     RunCase(root, "scene_post_effect",
             "[scene_layer_post_effects]\n0|10|1|12,1\n",
             {}, false, 0, 12);
     RunCase(root, "asset_post_effect",
             "[image_cues]\nasset|asset.bin|0|0|1|1|0|1|0|0|0|0|0|0|-1|-1|-1|-1|0|0|-1|1|3,1|0\n",
-            {}, true, 0, 3);
+            {false, false, false, false, false, true, false, true}, true, 0, 3);
     RunCase(root, "animated_sprite", "[animated_sprite_cues]\nasset|asset.bin\n",
-            {false, false, false, false, false, true, false}, true);
+            {false, false, false, false, false, false, false, true, true, false}, true);
     RunCase(root, "scroll_text", "[scroll_text_cues]\nscroll row\n",
-            {false, false, false, false, false, false, true}, false);
+            {false, false, false, false, false, false, false, true, false, true}, false);
+    RunCase(root, "shader_text", "[shader_text_cues]\nshader text row\n",
+            {false, false, false, false, false, false, false, false, false, false, true}, false);
+    RunCase(root, "text", "[text_cues]\ntext row\n",
+            {false, false, false, false, false, false, true, true}, false);
+    RunCase(root, "scene_menu", "[scene_menus]\nmenu row\n",
+            {false, false, false, false, false, false, true, true}, false);
+    RunCase(root, "shader_texture_channel",
+            "[shader_pipeline_channels]\n0|0|0|1|asset.bin\n",
+            {false, false, false, false, false, false, false, true}, true);
     RunCase(root, "xm", "[music_cues]\nmusic|asset.bin\n",
             {true, false, false, false, false}, true);
     RunCase(root, "pixel", "[pixel_cues]\npixels|asset.bin\n",
             {false, true, false, false, false}, true);
     RunCase(root, "particle", "[pixel_emitter_cues]\nnone|unused|1\n",
             {false, false, true, false, false}, false);
+    RunCase(root, "particle_image", "[pixel_emitter_cues]\nimage|asset.bin|0\n",
+            {false, false, true, false, false, false, false, true}, true);
     RunCase(root, "procedural_mesh", "[mesh_cues]\nmesh||0\n",
             {false, false, false, true, false}, false);
     RunCase(root, "gltf", "[mesh_cues]\nmodel|asset.bin|4\n",

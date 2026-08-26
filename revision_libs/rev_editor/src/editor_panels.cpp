@@ -10,6 +10,248 @@ namespace editor {
 
 namespace {
 
+struct CueParameterClipboard {
+    int cue_type = -1;
+    ImageCue image = {};
+    AnimatedSpriteCue animated_sprite = {};
+    PixelCue pixel = {};
+    PixelEmitterCue emitter = {};
+    TextCue text = {};
+    ScrollTextCue scroll_text = {};
+    ShaderTextCue shader_text = {};
+    MeshCue mesh = {};
+};
+
+static CueParameterClipboard g_cue_parameter_clipboard;
+
+static int CloneClipboardCurve(ProjectData* project, int source_index,
+                               int cloned_indices[rev::runtime::kMaxCurves], bool* failed)
+{
+    if (source_index < 0) return -1;
+    if (!project || source_index >= project->curve_count) return -1;
+    if (cloned_indices[source_index] >= -1) return cloned_indices[source_index];
+    if (project->curve_count >= rev::runtime::kMaxCurves) {
+        if (failed) *failed = true;
+        cloned_indices[source_index] = -1;
+        return -1;
+    }
+
+    const rev::curve::Curve& source = project->curves[source_index];
+    const int destination_index = project->curve_count++;
+    rev::curve::Curve& destination = project->curves[destination_index];
+    destination = rev::curve::CreateCurve(source.point_count > 0 ? source.point_count : 2);
+    destination.duration = source.duration;
+    destination.wrap_mode = source.wrap_mode;
+    for (int point_index = 0; point_index < source.point_count; ++point_index)
+        rev::curve::AddPoint(destination, source.points[point_index]);
+    cloned_indices[source_index] = destination_index;
+    return destination_index;
+}
+
+static void CloneClipboardCurveFields(ProjectData* project, int** fields, int field_count,
+                                      int cloned_indices[rev::runtime::kMaxCurves], bool* failed)
+{
+    for (int i = 0; i < field_count; ++i)
+        *fields[i] = CloneClipboardCurve(project, *fields[i], cloned_indices, failed);
+}
+
+static void CloneClipboardEffectCurves(ProjectData* project, LayerPostEffect* effects,
+                                       int effect_count, int cloned_indices[rev::runtime::kMaxCurves],
+                                       bool* failed)
+{
+    for (int i = 0; i < effect_count; ++i) {
+        int* fields[] = {
+            &effects[i].curve_intensity, &effects[i].curve_threshold, &effects[i].curve_radius,
+            &effects[i].curve_color_r, &effects[i].curve_color_g, &effects[i].curve_color_b,
+            &effects[i].curve_color_a, &effects[i].curve_amount
+        };
+        CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, failed);
+    }
+}
+
+static void CloneClipboardShaderCurves(ProjectData* project, AssetShader* shaders,
+                                       int shader_count, int cloned_indices[rev::runtime::kMaxCurves],
+                                       bool* failed)
+{
+    for (int i = 0; i < shader_count; ++i) {
+        int* fields[] = {
+            &shaders[i].curve_speed, &shaders[i].curve_intensity, &shaders[i].curve_warp,
+            &shaders[i].curve_exposure, &shaders[i].curve_fade, &shaders[i].curve_opacity,
+            &shaders[i].curve_exposure_ramp, &shaders[i].curve_fade_ramp,
+            &shaders[i].curve_palette_low_r, &shaders[i].curve_palette_low_g, &shaders[i].curve_palette_low_b,
+            &shaders[i].curve_palette_mid_r, &shaders[i].curve_palette_mid_g, &shaders[i].curve_palette_mid_b,
+            &shaders[i].curve_palette_high_r, &shaders[i].curve_palette_high_g, &shaders[i].curve_palette_high_b
+        };
+        CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, failed);
+    }
+}
+
+static void InitializeClipboardCurveMap(int cloned_indices[rev::runtime::kMaxCurves])
+{
+    for (int i = 0; i < rev::runtime::kMaxCurves; ++i) cloned_indices[i] = -2;
+}
+
+static bool CopySelectedCueParameters(EditorContext* editor, SceneBlock* scene)
+{
+    if (!editor || !scene || editor->selected_cue_index < 0) return false;
+    const int index = editor->selected_cue_index;
+    g_cue_parameter_clipboard.cue_type = editor->selected_cue_type;
+    switch (editor->selected_cue_type) {
+        case CueTypeImage: if (index < scene->image_cue_count) g_cue_parameter_clipboard.image = scene->image_cues[index]; else return false; break;
+        case CueTypeAnimatedSprite: if (index < scene->animated_sprite_cue_count) g_cue_parameter_clipboard.animated_sprite = scene->animated_sprite_cues[index]; else return false; break;
+        case CueTypePixel: if (index < scene->pixel_cue_count) g_cue_parameter_clipboard.pixel = scene->pixel_cues[index]; else return false; break;
+        case CueTypePixelEmitter: if (index < scene->pixel_emitter_cue_count) g_cue_parameter_clipboard.emitter = scene->pixel_emitter_cues[index]; else return false; break;
+        case CueTypeText: if (index < scene->text_cue_count) g_cue_parameter_clipboard.text = scene->text_cues[index]; else return false; break;
+        case CueTypeScrollText: if (index < scene->scroll_text_cue_count) g_cue_parameter_clipboard.scroll_text = scene->scroll_text_cues[index]; else return false; break;
+        case CueTypeShaderText: if (index < scene->shader_text_cue_count) g_cue_parameter_clipboard.shader_text = scene->shader_text_cues[index]; else return false; break;
+        case CueTypeMesh: if (index < scene->mesh_cue_count) g_cue_parameter_clipboard.mesh = scene->mesh_cues[index]; else return false; break;
+        default: g_cue_parameter_clipboard.cue_type = -1; return false;
+    }
+    snprintf(editor->build_status_message, sizeof(editor->build_status_message), "Copied cue parameters");
+    editor->build_status_timer = 3.0f;
+    return true;
+}
+
+static bool PasteSelectedCueParameters(EditorContext* editor, SceneBlock* scene)
+{
+    if (!editor || !editor->project || !scene || editor->selected_cue_index < 0 ||
+        g_cue_parameter_clipboard.cue_type != editor->selected_cue_type) return false;
+    ProjectData* project = editor->project;
+    const int index = editor->selected_cue_index;
+    int cloned_indices[rev::runtime::kMaxCurves];
+    InitializeClipboardCurveMap(cloned_indices);
+    bool curve_clone_failed = false;
+
+    switch (editor->selected_cue_type) {
+        case CueTypeImage: {
+            if (index >= scene->image_cue_count) return false;
+            ImageCue identity = scene->image_cues[index];
+            ImageCue& cue = scene->image_cues[index]; cue = g_cue_parameter_clipboard.image;
+            strcpy_s(cue.asset_key, identity.asset_key); strcpy_s(cue.asset_path, identity.asset_path);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_rotation, &cue.curve_opacity};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            CloneClipboardEffectCurves(project, cue.post_effects, cue.post_effect_count, cloned_indices, &curve_clone_failed);
+            CloneClipboardShaderCurves(project, cue.shaders, cue.shader_count, cloned_indices, &curve_clone_failed);
+            editor->editing_image = cue;
+        } break;
+        case CueTypeAnimatedSprite: {
+            if (index >= scene->animated_sprite_cue_count) return false;
+            AnimatedSpriteCue identity = scene->animated_sprite_cues[index];
+            AnimatedSpriteCue& cue = scene->animated_sprite_cues[index]; cue = g_cue_parameter_clipboard.animated_sprite;
+            strcpy_s(cue.sprite_name, identity.sprite_name); strcpy_s(cue.frame_keys_csv, identity.frame_keys_csv); strcpy_s(cue.frame_paths_csv, identity.frame_paths_csv);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_rotation, &cue.curve_opacity, &cue.curve_frame};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            CloneClipboardEffectCurves(project, cue.post_effects, cue.post_effect_count, cloned_indices, &curve_clone_failed);
+            CloneClipboardShaderCurves(project, cue.shaders, cue.shader_count, cloned_indices, &curve_clone_failed);
+            editor->editing_animated_sprite = cue;
+        } break;
+        case CueTypePixel: {
+            if (index >= scene->pixel_cue_count) return false;
+            PixelCue identity = scene->pixel_cues[index];
+            PixelCue& cue = scene->pixel_cues[index]; cue = g_cue_parameter_clipboard.pixel;
+            strcpy_s(cue.asset_key, identity.asset_key); strcpy_s(cue.asset_path, identity.asset_path);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_rotation, &cue.curve_opacity, &cue.curve_frame, &cue.curve_palette_offset};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            CloneClipboardEffectCurves(project, cue.post_effects, cue.post_effect_count, cloned_indices, &curve_clone_failed);
+            CloneClipboardShaderCurves(project, cue.shaders, cue.shader_count, cloned_indices, &curve_clone_failed);
+            editor->editing_pixel = cue;
+        } break;
+        case CueTypePixelEmitter: {
+            if (index >= scene->pixel_emitter_cue_count) return false;
+            PixelEmitterCue identity = scene->pixel_emitter_cues[index];
+            PixelEmitterCue& cue = scene->pixel_emitter_cues[index]; cue = g_cue_parameter_clipboard.emitter;
+            strcpy_s(cue.asset_key, identity.asset_key); strcpy_s(cue.asset_path, identity.asset_path);
+            cue.visual_source = identity.visual_source; cue.primitive_shape = identity.primitive_shape;
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_scale, &cue.curve_rotation, &cue.curve_opacity,
+                &cue.curve_emission_rate, &cue.curve_speed_min, &cue.curve_speed_max, &cue.curve_lifetime_min,
+                &cue.curve_lifetime_max, &cue.curve_scale_min, &cue.curve_scale_max};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            CloneClipboardEffectCurves(project, cue.post_effects, cue.post_effect_count, cloned_indices, &curve_clone_failed);
+            CloneClipboardShaderCurves(project, cue.shaders, cue.shader_count, cloned_indices, &curve_clone_failed);
+            editor->editing_pixel_emitter = cue;
+        } break;
+        case CueTypeText: {
+            if (index >= scene->text_cue_count) return false;
+            TextCue identity = scene->text_cues[index]; TextCue& cue = scene->text_cues[index]; cue = g_cue_parameter_clipboard.text;
+            strcpy_s(cue.text, identity.text); strcpy_s(cue.font_name, identity.font_name);
+            strcpy_s(cue.baked_asset_key, identity.baked_asset_key); strcpy_s(cue.baked_asset_path, identity.baked_asset_path);
+            strcpy_s(cue.glyph_atlas_key, identity.glyph_atlas_key); strcpy_s(cue.glyph_atlas_path, identity.glyph_atlas_path);
+            strcpy_s(cue.glyph_meta_key, identity.glyph_meta_key); strcpy_s(cue.glyph_meta_path, identity.glyph_meta_path);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_size, &cue.curve_rotation, &cue.curve_color_r, &cue.curve_color_g, &cue.curve_color_b};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            editor->editing_text = cue;
+        } break;
+        case CueTypeScrollText: {
+            if (index >= scene->scroll_text_cue_count) return false;
+            ScrollTextCue identity = scene->scroll_text_cues[index]; ScrollTextCue& cue = scene->scroll_text_cues[index]; cue = g_cue_parameter_clipboard.scroll_text;
+            strcpy_s(cue.text, identity.text); strcpy_s(cue.font_name, identity.font_name);
+            strcpy_s(cue.baked_asset_key, identity.baked_asset_key); strcpy_s(cue.baked_asset_path, identity.baked_asset_path);
+            strcpy_s(cue.glyph_atlas_key, identity.glyph_atlas_key); strcpy_s(cue.glyph_atlas_path, identity.glyph_atlas_path);
+            strcpy_s(cue.glyph_meta_key, identity.glyph_meta_key); strcpy_s(cue.glyph_meta_path, identity.glyph_meta_path);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_speed, &cue.curve_size, &cue.curve_rotation,
+                &cue.curve_opacity, &cue.curve_color_r, &cue.curve_color_g, &cue.curve_color_b, &cue.curve_wave_amp,
+                &cue.curve_wave_freq, &cue.curve_wave_length, &cue.curve_jitter_amp, &cue.curve_jitter_freq};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            editor->editing_scroll_text = cue;
+        } break;
+        case CueTypeShaderText: {
+            if (index >= scene->shader_text_cue_count) return false;
+            ShaderTextCue identity = scene->shader_text_cues[index]; ShaderTextCue& cue = scene->shader_text_cues[index]; cue = g_cue_parameter_clipboard.shader_text;
+            strcpy_s(cue.text, identity.text);
+            int* fields[] = {&cue.curve_x, &cue.curve_y, &cue.curve_size, &cue.curve_color_r, &cue.curve_color_g,
+                &cue.curve_color_b, &cue.curve_opacity, &cue.curve_speed, &cue.curve_spacing};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            editor->editing_shader_text = cue;
+        } break;
+        case CueTypeMesh: {
+            if (index >= scene->mesh_cue_count) return false;
+            MeshCue identity = scene->mesh_cues[index]; MeshCue& cue = scene->mesh_cues[index]; cue = g_cue_parameter_clipboard.mesh;
+            strcpy_s(cue.asset_key, identity.asset_key); strcpy_s(cue.asset_path, identity.asset_path); cue.mesh_type = identity.mesh_type;
+            int* fields[] = {&cue.curve_pos_x, &cue.curve_pos_y, &cue.curve_pos_z, &cue.curve_rot_x, &cue.curve_rot_y,
+                &cue.curve_rot_z, &cue.curve_scale_x, &cue.curve_scale_y, &cue.curve_scale_z, &cue.curve_color_r,
+                &cue.curve_color_g, &cue.curve_color_b, &cue.curve_color_a, &cue.curve_mesh_size,
+                &cue.curve_metallic, &cue.curve_roughness, &cue.curve_fov};
+            CloneClipboardCurveFields(project, fields, (int)_countof(fields), cloned_indices, &curve_clone_failed);
+            editor->editing_mesh = cue;
+        } break;
+        default: return false;
+    }
+
+    project->modified = true;
+    snprintf(editor->build_status_message, sizeof(editor->build_status_message), "%s",
+             curve_clone_failed ? "Pasted parameters; some curves could not be cloned (curve limit reached)"
+                                : "Pasted parameters and cloned curves");
+    editor->build_status_timer = 4.0f;
+    return true;
+}
+
+static void DrawCueParameterClipboardButtons(EditorContext* editor, SceneBlock* scene,
+                                             int cue_type, int cue_index)
+{
+    ImGui::SameLine();
+    if (ImGui::SmallButton("C")) {
+        editor->selected_cue_type = cue_type;
+        editor->selected_cue_index = cue_index;
+        CopySelectedCueParameters(editor, scene);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Copy this cue's parameters");
+
+    ImGui::SameLine();
+    const bool can_paste = g_cue_parameter_clipboard.cue_type == cue_type;
+    ImGui::BeginDisabled(!can_paste);
+    if (ImGui::SmallButton("P")) {
+        editor->selected_cue_type = cue_type;
+        editor->selected_cue_index = cue_index;
+        PasteSelectedCueParameters(editor, scene);
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip(can_paste
+            ? "Paste parameters; keep this cue's asset/content and clone curves"
+            : "Copy parameters from another cue of this type first");
+}
+
 static int CreateCurveFromTriggerTrack(EditorContext* editor, int track_index)
 {
     if (!editor || !editor->project || track_index < 0 ||
@@ -44,6 +286,23 @@ static int CreateCurveFromTriggerTrack(EditorContext* editor, int track_index)
     rev::curve::SortPoints(curve);
     editor->project->modified = true;
     return curve_index;
+}
+
+static float GetRecordingSceneStart(const ProjectData* project, float timeline_time)
+{
+    if (!project || project->scene_count <= 0) return timeline_time;
+
+    float scene_start = 0.0f;
+    for (int scene_index = 0; scene_index < project->scene_count; ++scene_index) {
+        const float scene_end = scene_start + project->scenes[scene_index].duration;
+        const bool is_last_scene = scene_index == project->scene_count - 1;
+        if (timeline_time < scene_end || (is_last_scene && timeline_time <= scene_end)) {
+            return scene_start;
+        }
+        scene_start = scene_end;
+    }
+
+    return timeline_time;
 }
 
 static bool AppendTriggerTrackToCurve(EditorContext* editor, int track_index, int curve_index)
@@ -116,6 +375,28 @@ void UpdateCurveRefAfterDelete(int* ref, int deleted_curve)
     }
 }
 
+void UpdateAssetShaderCurveRefs(AssetShader* shader, int deleted_curve)
+{
+    if (!shader) return;
+    UpdateCurveRefAfterDelete(&shader->curve_speed, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_intensity, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_warp, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_exposure, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_fade, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_opacity, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_exposure_ramp, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_fade_ramp, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_low_r, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_low_g, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_low_b, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_mid_r, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_mid_g, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_mid_b, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_high_r, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_high_g, deleted_curve);
+    UpdateCurveRefAfterDelete(&shader->curve_palette_high_b, deleted_curve);
+}
+
 void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
 {
     if (!project || deleted_curve < 0) return;
@@ -172,6 +453,9 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
                 UpdateCurveRefAfterDelete(&effect->curve_color_b, deleted_curve);
                 UpdateCurveRefAfterDelete(&effect->curve_color_a, deleted_curve);
             }
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index) {
+                UpdateAssetShaderCurveRefs(&cue->shaders[shader_index], deleted_curve);
+            }
         }
 
         for (int i = 0; i < scene->animated_sprite_cue_count; ++i) {
@@ -191,6 +475,34 @@ void ReindexCurveReferencesAfterDelete(ProjectData* project, int deleted_curve)
                 UpdateCurveRefAfterDelete(&effect->curve_color_g, deleted_curve);
                 UpdateCurveRefAfterDelete(&effect->curve_color_b, deleted_curve);
                 UpdateCurveRefAfterDelete(&effect->curve_color_a, deleted_curve);
+            }
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index) {
+                UpdateAssetShaderCurveRefs(&cue->shaders[shader_index], deleted_curve);
+            }
+        }
+
+        for (int i = 0; i < scene->pixel_cue_count; ++i) {
+            PixelCue* cue = &scene->pixel_cues[i];
+            UpdateCurveRefAfterDelete(&cue->curve_x, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_y, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_scale, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_rotation, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_opacity, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_frame, deleted_curve);
+            UpdateCurveRefAfterDelete(&cue->curve_palette_offset, deleted_curve);
+            for (int e = 0; e < cue->post_effect_count; ++e) {
+                LayerPostEffect* effect = &cue->post_effects[e];
+                UpdateCurveRefAfterDelete(&effect->curve_intensity, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_threshold, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_radius, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_r, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_g, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_b, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_color_a, deleted_curve);
+                UpdateCurveRefAfterDelete(&effect->curve_amount, deleted_curve);
+            }
+            for (int shader_index = 0; shader_index < cue->shader_count; ++shader_index) {
+                UpdateAssetShaderCurveRefs(&cue->shaders[shader_index], deleted_curve);
             }
         }
 
@@ -562,6 +874,25 @@ int CreateTriggerTimingCurve(EditorContext* editor, int track_index)
     return CreateCurveFromTriggerTrack(editor, track_index);
 }
 
+bool DeleteProjectCurve(EditorContext* editor, int curve_index)
+{
+    if (!editor || !editor->project || curve_index < 0 ||
+        curve_index >= editor->project->curve_count) return false;
+
+    rev::curve::DestroyCurve(editor->project->curves[curve_index]);
+    for (int i = curve_index; i < editor->project->curve_count - 1; ++i) {
+        editor->project->curves[i] = editor->project->curves[i + 1];
+        memcpy(editor->project->curve_names[i], editor->project->curve_names[i + 1],
+               sizeof(editor->project->curve_names[i]));
+    }
+    --editor->project->curve_count;
+    ReindexCurveReferencesAfterDelete(editor->project, curve_index);
+    editor->selected_curve_index = -1;
+    editor->editing_curve_index = -1;
+    editor->project->modified = true;
+    return true;
+}
+
 void RenderTimeline(EditorContext* editor) {
     if (!editor || !editor->project) return;
 
@@ -825,6 +1156,19 @@ void RenderProperties(EditorContext* editor) {
             editor->project->runtime_fullscreen = runtime_fullscreen;
             editor->project->modified = true;
         }
+        if (!runtime_fullscreen) {
+            static const char* kWindowSizes[] = {
+                "1920 x 1080", "960 x 540", "480 x 270", "240 x 135"
+            };
+            int size_index = editor->project->runtime_window_divisor == 2 ? 1 :
+                             editor->project->runtime_window_divisor == 4 ? 2 :
+                             editor->project->runtime_window_divisor == 8 ? 3 : 0;
+            if (ImGui::Combo("Window Size", &size_index, kWindowSizes, 4)) {
+                editor->project->runtime_window_divisor = 1 << size_index;
+                editor->project->modified = true;
+            }
+            ImGui::TextDisabled("Windowed runtime is borderless and centered.");
+        }
         char runtime_title[128] = {};
         strncpy_s(runtime_title, sizeof(runtime_title), editor->project->runtime_title, _TRUNCATE);
         if (ImGui::InputText("Title", runtime_title, sizeof(runtime_title))) {
@@ -855,6 +1199,137 @@ void RenderProperties(EditorContext* editor) {
                     scene->duration = duration;
                     editor->project->total_duration += duration;
                     editor->project->modified = true;
+                }
+            }
+
+            ImGui::Separator();
+            if (ImGui::CollapsingHeader("Scene Transition", ImGuiTreeNodeFlags_DefaultOpen)) {
+                static const char* wipe_names[] = { "None", "Left", "Right", "Up", "Down" };
+                if (ImGui::Combo("Entry wipe", &scene->wipe_type, wipe_names, IM_ARRAYSIZE(wipe_names)))
+                    editor->project->modified = true;
+                if (scene->wipe_type != rev::runtime::SceneWipeNone) {
+                    if (ImGui::DragFloat("Wipe duration", &scene->wipe_duration, 0.05f, 0.05f, 10.0f, "%.2fs"))
+                        editor->project->modified = true;
+                    if (ImGui::ColorEdit3("Wipe color", scene->wipe_color)) editor->project->modified = true;
+                }
+            }
+
+            if (ImGui::CollapsingHeader("Interactive Menu", ImGuiTreeNodeFlags_DefaultOpen)) {
+                bool menu_enabled = scene->menu.enabled != 0;
+                if (ImGui::Checkbox("Enable menu", &menu_enabled)) {
+                    scene->menu.enabled = menu_enabled ? 1 : 0;
+                    editor->project->modified = true;
+                }
+                if (scene->menu.enabled) {
+                    bool wrap = scene->menu.wrap != 0;
+                    if (ImGui::Checkbox("Wrap selection", &wrap)) {
+                        scene->menu.wrap = wrap ? 1 : 0;
+                        editor->project->modified = true;
+                    }
+                    bool mouse_enabled = scene->menu.mouse_enabled != 0;
+                    if (ImGui::Checkbox("Enable mouse control", &mouse_enabled)) {
+                        scene->menu.mouse_enabled = mouse_enabled ? 1 : 0;
+                        editor->project->modified = true;
+                    }
+                    if (ImGui::ColorEdit4("Highlight", scene->menu.highlight_color)) editor->project->modified = true;
+                    if (ImGui::Button("+ Add scene item") && scene->menu.item_count < rev::runtime::kMaxMenuItems) {
+                        int item_index = scene->menu.item_count++;
+                        rev::runtime::MenuItem& item = scene->menu.items[item_index];
+                        item = {};
+                        item.animated_sprite_cue = -1;
+                        snprintf(item.label, sizeof(item.label), "Scene %d", item_index + 1);
+                        item.target_scene = editor->project->scene_count > 1 ? 1 : 0;
+                        if (item_index > 0) {
+                            const rev::runtime::MenuItem& previous = scene->menu.items[item_index - 1];
+                            item.x = previous.x;
+                            item.y = previous.y + previous.height + 0.02f;
+                            item.width = previous.width;
+                            item.height = previous.height;
+                        } else {
+                            item.x = 0.25f; item.y = 0.3f;
+                            item.width = 0.5f; item.height = 0.065f;
+                        }
+                        if (item.y + item.height > 1.0f) item.y = 1.0f - item.height;
+                        item.image_x = item.x + item.width * 0.5f;
+                        item.image_y = item.y + item.height * 0.5f;
+                        editor->project->modified = true;
+                    }
+                    for (int menu_index = 0; menu_index < scene->menu.item_count; ++menu_index) {
+                        rev::runtime::MenuItem& item = scene->menu.items[menu_index];
+                        ImGui::PushID(menu_index);
+                        char item_header[96] = {};
+                        snprintf(item_header, sizeof(item_header), "Item %d: %s", menu_index + 1,
+                                 item.label[0] ? item.label : "(untitled)");
+                        if (ImGui::TreeNodeEx("##menu_item", ImGuiTreeNodeFlags_None, "%s", item_header)) {
+                            if (ImGui::InputText("Label", item.label, sizeof(item.label))) editor->project->modified = true;
+                            static const char* visual_names[] = { "Label button", "Animated sprite" };
+                            if (ImGui::Combo("Visual", &item.visual_type, visual_names, IM_ARRAYSIZE(visual_names)))
+                                editor->project->modified = true;
+                            if (item.visual_type == 1) {
+                                const char* sprite_name = "(select animated sprite cue)";
+                                if (item.animated_sprite_cue >= 0 &&
+                                    item.animated_sprite_cue < scene->animated_sprite_cue_count) {
+                                    const AnimatedSpriteCue& sprite = scene->animated_sprite_cues[item.animated_sprite_cue];
+                                    sprite_name = sprite.sprite_name[0] ? sprite.sprite_name : "Animated Sprite";
+                                }
+                                if (ImGui::BeginCombo("Sprite cue", sprite_name)) {
+                                    for (int sprite_index = 0; sprite_index < scene->animated_sprite_cue_count; ++sprite_index) {
+                                        const AnimatedSpriteCue& sprite = scene->animated_sprite_cues[sprite_index];
+                                        const char* name = sprite.sprite_name[0] ? sprite.sprite_name : "Animated Sprite";
+                                        if (ImGui::Selectable(name, sprite_index == item.animated_sprite_cue)) {
+                                            item.animated_sprite_cue = sprite_index;
+                                            item.image_x = sprite.x;
+                                            item.image_y = sprite.y;
+                                            item.x = item.image_x - item.width * 0.5f;
+                                            item.y = item.image_y - item.height * 0.5f;
+                                            editor->project->modified = true;
+                                        }
+                                    }
+                                    ImGui::EndCombo();
+                                }
+                                if (ImGui::SliderFloat("Image X", &item.image_x, 0.0f, 1.0f, "%.3f")) {
+                                    item.x = item.image_x - item.width * 0.5f;
+                                    editor->project->modified = true;
+                                }
+                                if (ImGui::SliderFloat("Image Y", &item.image_y, 0.0f, 1.0f, "%.3f")) {
+                                    item.y = item.image_y - item.height * 0.5f;
+                                    editor->project->modified = true;
+                                }
+                                ImGui::TextDisabled("The sprite is the button. Bounds are invisible mouse/selection geometry.");
+                            }
+                            if (editor->project->scene_count > 0) {
+                                if (item.target_scene < 0) item.target_scene = 0;
+                                if (item.target_scene >= editor->project->scene_count)
+                                    item.target_scene = editor->project->scene_count - 1;
+                                const char* target_name = editor->project->scenes[item.target_scene].name;
+                                if (ImGui::BeginCombo("Target scene", target_name)) {
+                                    for (int target = 0; target < editor->project->scene_count; ++target) {
+                                        if (ImGui::Selectable(editor->project->scenes[target].name,
+                                                              target == item.target_scene)) {
+                                            item.target_scene = target;
+                                            editor->project->modified = true;
+                                        }
+                                    }
+                                    ImGui::EndCombo();
+                                }
+                            }
+                            if (ImGui::SliderFloat("X", &item.x, 0.0f, 1.0f, "%.3f")) editor->project->modified = true;
+                            if (ImGui::SliderFloat("Y", &item.y, 0.0f, 1.0f, "%.3f")) editor->project->modified = true;
+                            if (ImGui::SliderFloat("Width", &item.width, 0.01f, 1.0f, "%.3f")) editor->project->modified = true;
+                            if (ImGui::SliderFloat("Height", &item.height, 0.01f, 1.0f, "%.3f")) editor->project->modified = true;
+                            if (ImGui::Button("Remove item")) {
+                                for (int j = menu_index; j + 1 < scene->menu.item_count; ++j)
+                                    scene->menu.items[j] = scene->menu.items[j + 1];
+                                --scene->menu.item_count;
+                                --menu_index;
+                                editor->project->modified = true;
+                            }
+                            ImGui::TreePop();
+                        }
+                        ImGui::Separator();
+                        ImGui::PopID();
+                    }
+                    ImGui::TextDisabled("Menu scenes loop until an item is activated or the runtime exits.");
                 }
             }
 
@@ -1263,6 +1738,18 @@ void RenderProperties(EditorContext* editor) {
                 editor->scroll_text_modal_request_open = true;
                 editor->project->modified = true;
             }
+
+            if (ImGui::Button("+ Shader Text Cue")) {
+                ShaderTextCue cue;
+                rev::runtime::InitializeShaderTextCue(&cue);
+                cue.cue_end = scene->duration;
+                int new_index = AddShaderTextCue(scene, cue);
+                editor->editing_shader_text = scene->shader_text_cues[new_index];
+                editor->selected_cue_index = new_index;
+                editor->selected_cue_type = CueTypeShaderText;
+                editor->shader_text_modal_request_open = true;
+                editor->project->modified = true;
+            }
             
             if (ImGui::Button("+ Music Cue")) {
                 MusicCue cue = {};
@@ -1329,6 +1816,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypeImage;
                         editor->image_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeImage, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         ImageCue cue = scene->image_cues[i];
@@ -1362,6 +1850,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypeAnimatedSprite;
                         editor->animated_sprite_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeAnimatedSprite, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         AnimatedSpriteCue cue = scene->animated_sprite_cues[i];
@@ -1394,6 +1883,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypePixel;
                         editor->pixel_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypePixel, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         PixelCue cue = scene->pixel_cues[i];
@@ -1428,6 +1918,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypePixelEmitter;
                         editor->pixel_emitter_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypePixelEmitter, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         int new_index = AddPixelEmitterCue(scene, cue);
@@ -1461,6 +1952,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypeText;
                         editor->text_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeText, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         TextCue cue = scene->text_cues[i];
@@ -1497,6 +1989,7 @@ void RenderProperties(EditorContext* editor) {
                     if (ImGui::IsItemHovered() && scene->scroll_text_cues[i].text[0] != '\0') {
                         ImGui::SetTooltip("%s", scene->scroll_text_cues[i].text);
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeScrollText, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         ScrollTextCue cue = scene->scroll_text_cues[i];
@@ -1512,6 +2005,36 @@ void RenderProperties(EditorContext* editor) {
                         DeleteScrollTextCue(scene, i);
                         editor->project->modified = true;
                         CleanupDeletedCueResources(editor);
+                    }
+                    ImGui::PopID();
+                }
+            }
+
+            if (scene->shader_text_cue_count > 0) {
+                ImGui::Text("Shader Text Cues:");
+                for (int i = 0; i < scene->shader_text_cue_count; ++i) {
+                    ImGui::PushID(3600 + i);
+                    if (ImGui::Button(scene->shader_text_cues[i].text[0] ? scene->shader_text_cues[i].text : "(shader text)")) {
+                        editor->editing_shader_text = scene->shader_text_cues[i];
+                        editor->selected_cue_index = i;
+                        editor->selected_cue_type = CueTypeShaderText;
+                        editor->shader_text_modal_request_open = true;
+                    }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeShaderText, i);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("+")) {
+                        ShaderTextCue cue = scene->shader_text_cues[i];
+                        int new_index = AddShaderTextCue(scene, cue);
+                        editor->editing_shader_text = scene->shader_text_cues[new_index];
+                        editor->selected_cue_index = new_index;
+                        editor->selected_cue_type = CueTypeShaderText;
+                        editor->shader_text_modal_request_open = true;
+                        editor->project->modified = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X")) {
+                        DeleteShaderTextCue(scene, i);
+                        editor->project->modified = true;
                     }
                     ImGui::PopID();
                 }
@@ -1568,6 +2091,7 @@ void RenderProperties(EditorContext* editor) {
                         editor->selected_cue_type = CueTypeMesh;
                         editor->mesh_modal_request_open = true;
                     }
+                    DrawCueParameterClipboardButtons(editor, scene, CueTypeMesh, i);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("+")) {
                         MeshCue cue = *mc;
@@ -1601,13 +2125,28 @@ void RenderAssetBrowser(EditorContext* editor) {
     
     bool asset_browser_visible = ImGui::Begin("Asset Browser", &editor->show_asset_browser);
     if (asset_browser_visible) {
-        ImGui::Text("Assets Folder");
+        if (!editor->project || !editor->project->assets_path[0]) {
+            ImGui::TextDisabled("Save or open a project to create its asset folder.");
+            ImGui::End();
+            return;
+        }
+
+        const char* assets_path = editor->project->assets_path;
+        auto BuildSearchPattern = [assets_path](char* pattern, size_t pattern_size,
+                                                 const char* wildcard) {
+            snprintf(pattern, pattern_size, "%s\\%s", assets_path, wildcard);
+        };
+
+        ImGui::Text("Project Assets Folder");
+        ImGui::TextWrapped("%s", assets_path);
         ImGui::Separator();
         
         // Categories
         if (ImGui::CollapsingHeader("Music (.xm)", ImGuiTreeNodeFlags_DefaultOpen)) {
             WIN32_FIND_DATAA find_data;
-            HANDLE h_find = FindFirstFileA("assets/*.xm", &find_data);
+            char pattern[1024];
+            BuildSearchPattern(pattern, sizeof(pattern), "*.xm");
+            HANDLE h_find = FindFirstFileA(pattern, &find_data);
             
             if (h_find != INVALID_HANDLE_VALUE) {
                 do {
@@ -1628,7 +2167,9 @@ void RenderAssetBrowser(EditorContext* editor) {
             
             // PNG files
             WIN32_FIND_DATAA find_data;
-            HANDLE h_find = FindFirstFileA("assets/*.png", &find_data);
+            char pattern[1024];
+            BuildSearchPattern(pattern, sizeof(pattern), "*.png");
+            HANDLE h_find = FindFirstFileA(pattern, &find_data);
             
             if (h_find != INVALID_HANDLE_VALUE) {
                 found_any = true;
@@ -1643,7 +2184,8 @@ void RenderAssetBrowser(EditorContext* editor) {
             }
             
             // JPG files
-            h_find = FindFirstFileA("assets/*.jpg", &find_data);
+            BuildSearchPattern(pattern, sizeof(pattern), "*.jpg");
+            h_find = FindFirstFileA(pattern, &find_data);
             
             if (h_find != INVALID_HANDLE_VALUE) {
                 found_any = true;
@@ -1658,7 +2200,8 @@ void RenderAssetBrowser(EditorContext* editor) {
             }
 
             // WebP files
-            h_find = FindFirstFileA("assets/*.webp", &find_data);
+            BuildSearchPattern(pattern, sizeof(pattern), "*.webp");
+            h_find = FindFirstFileA(pattern, &find_data);
 
             if (h_find != INVALID_HANDLE_VALUE) {
                 found_any = true;
@@ -1680,11 +2223,13 @@ void RenderAssetBrowser(EditorContext* editor) {
         if (ImGui::CollapsingHeader("Shaders (.glsl, .vert, .frag)")) {
             bool found_any = false;
             
-            const char* patterns[] = {"assets/*.glsl", "assets/*.vert", "assets/*.frag"};
+            const char* wildcards[] = {"*.glsl", "*.vert", "*.frag"};
             
             for (int i = 0; i < 3; ++i) {
                 WIN32_FIND_DATAA find_data;
-                HANDLE h_find = FindFirstFileA(patterns[i], &find_data);
+                char pattern[1024];
+                BuildSearchPattern(pattern, sizeof(pattern), wildcards[i]);
+                HANDLE h_find = FindFirstFileA(pattern, &find_data);
                 
                 if (h_find != INVALID_HANDLE_VALUE) {
                     found_any = true;
@@ -1706,7 +2251,9 @@ void RenderAssetBrowser(EditorContext* editor) {
         
         if (ImGui::CollapsingHeader("All Files")) {
             WIN32_FIND_DATAA find_data;
-            HANDLE h_find = FindFirstFileA("assets/*.*", &find_data);
+            char pattern[1024];
+            BuildSearchPattern(pattern, sizeof(pattern), "*.*");
+            HANDLE h_find = FindFirstFileA(pattern, &find_data);
             
             if (h_find != INVALID_HANDLE_VALUE) {
                 do {
@@ -1750,20 +2297,7 @@ void RenderCurveEditor(EditorContext* editor) {
         
         ImGui::SameLine();
         if (editor->selected_curve_index >= 0 && ImGui::Button("Delete Curve")) {
-            if (editor->selected_curve_index < editor->project->curve_count) {
-                const int deleted_curve = editor->selected_curve_index;
-                rev::curve::DestroyCurve(editor->project->curves[editor->selected_curve_index]);
-                // Shift remaining curves
-                for (int i = editor->selected_curve_index; i < editor->project->curve_count - 1; ++i) {
-                    editor->project->curves[i] = editor->project->curves[i + 1];
-                    memcpy(editor->project->curve_names[i], editor->project->curve_names[i + 1],
-                           sizeof(editor->project->curve_names[i]));
-                }
-                editor->project->curve_count--;
-                ReindexCurveReferencesAfterDelete(editor->project, deleted_curve);
-                editor->selected_curve_index = -1;
-                editor->project->modified = true;
-            }
+            DeleteProjectCurve(editor, editor->selected_curve_index);
         }
         
         ImGui::SameLine();
@@ -2480,7 +3014,7 @@ void RenderTriggerRecorder(EditorContext* editor) {
             track->timing.bpm = editor->recording_bpm;
             track->timing.beat_offset = editor->recording_beat_offset;
             editor->recording_track_index = index;
-            editor->current_time = 0.0f;
+            editor->current_time = GetRecordingSceneStart(editor->project, editor->current_time);
             editor->playing = true;
             editor->trigger_recording = true;
             editor->project->modified = true;

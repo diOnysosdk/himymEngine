@@ -17,6 +17,214 @@
 namespace rev {
 namespace runtime {
 
+void InitializeShaderTextCue(ShaderTextCue* cue) {
+    if (!cue) return;
+    memset(cue, 0, sizeof(*cue));
+    strcpy_s(cue->text, "SHADER TEXT");
+    cue->x = 0.5f;
+    cue->y = 0.5f;
+    cue->size = 56.0f;
+    cue->color = {1.0f, 0.85f, 0.35f};
+    cue->opacity = 1.0f;
+    cue->alignment = 1;
+    cue->speed = 42.0f;
+    cue->spacing = 1.0f;
+    cue->cue_end = 10.0f;
+    cue->fade_in = 0.15f;
+    cue->fade_out = 0.15f;
+    cue->curve_x = -1;
+    cue->curve_y = -1;
+    cue->curve_size = -1;
+    cue->curve_color_r = -1;
+    cue->curve_color_g = -1;
+    cue->curve_color_b = -1;
+    cue->curve_opacity = -1;
+    cue->curve_speed = -1;
+    cue->curve_spacing = -1;
+}
+
+bool GetShaderTextGlyph(unsigned char c, unsigned int* a, unsigned int* b) {
+    unsigned int x = 0, y = 0;
+#define GLYPH(ch, lo, hi) case ch: x = lo##u; y = hi##u; break
+    switch (c) {
+    GLYPH('A',589284910,17); GLYPH('B',589252158,30); GLYPH('C',554189327,15); GLYPH('D',588826174,30);
+    GLYPH('E',554648095,31); GLYPH('F',554648095,16); GLYPH('G',589021711,15); GLYPH('H',589284913,17);
+    GLYPH('I',138547342,14); GLYPH('J',606144583,12); GLYPH('K',625758801,17); GLYPH('L',554189328,31);
+    GLYPH('M',588961649,17); GLYPH('N',588896049,17); GLYPH('O',588826158,14); GLYPH('P',554649150,16);
+    GLYPH('Q',626574894,13); GLYPH('R',625952318,17); GLYPH('S',35078671,30); GLYPH('T',138547359,4);
+    GLYPH('U',588826161,14); GLYPH('V',353945137,4); GLYPH('W',727369265,10); GLYPH('X',581052977,17);
+    GLYPH('Y',138553905,4); GLYPH('Z',545392703,31);
+    GLYPH('a',586201088,15); GLYPH('b',589093392,30); GLYPH('c',554187776,15); GLYPH('d',588887073,15);
+    GLYPH('e',569948160,15); GLYPH('f',277750054,8); GLYPH('g',49858016,14); GLYPH('h',589093392,17);
+    GLYPH('i',138555396,14); GLYPH('j',606148610,12); GLYPH('k',696928784,18); GLYPH('l',138547340,14);
+    GLYPH('m',727377920,21); GLYPH('n',589092864,17); GLYPH('o',588822528,14); GLYPH('p',568915968,16);
+    GLYPH('q',49855488,1); GLYPH('r',554489856,16); GLYPH('s',48774144,30); GLYPH('t',310669576,6);
+    GLYPH('u',655934464,13); GLYPH('v',353944576,4); GLYPH('w',727237632,10); GLYPH('x',340083712,17);
+    GLYPH('y',49857536,14); GLYPH('z',272727040,31);
+    GLYPH('0',597347886,14); GLYPH('1',138547588,14); GLYPH('2',272696878,31); GLYPH('3',35062846,30);
+    GLYPH('4',100214978,2); GLYPH('5',35602975,30); GLYPH('6',589251086,14); GLYPH('7',276957247,8);
+    GLYPH('8',588727854,14); GLYPH('9',35112494,14);
+    GLYPH(' ',0,0); GLYPH('.',201326592,6); GLYPH(',',207618048,4); GLYPH('!',4329604,4);
+    GLYPH('?',4261422,4); GLYPH(':',207624384,0); GLYPH(';',207624384,4); GLYPH('-',1015808,0);
+    GLYPH('_',0,31); GLYPH('+',139432064,0); GLYPH('/',17043521,0); GLYPH('\\',1118480,0);
+    GLYPH('"',10570,0); GLYPH('\'',4228,0); GLYPH('(',142876802,2); GLYPH(')',136382600,8);
+    GLYPH('[',277094670,14); GLYPH(']',69273678,14); GLYPH('=',1016800,0); GLYPH('*',720353952,0);
+    GLYPH('#',368409930,10); GLYPH('%',224662361,0); GLYPH('&',626283084,13); GLYPH('@',561700398,14);
+    default: x = 4261422u; y = 4u; break;
+    }
+#undef GLYPH
+    if (a) *a = x;
+    if (b) *b = y;
+    return c >= 32 && c <= 126;
+}
+
+const char* GetShaderTextVertexSource() {
+    return R"(#version 330 core
+out vec2 uv; uniform vec2 u_position; uniform vec2 u_size;
+void main(){float x=-1.0+float((gl_VertexID&1)<<1);float y=-1.0+float((gl_VertexID>>1)<<1);
+uv=vec2((x+1.0)*.5,(y+1.0)*.5);gl_Position=vec4(u_position+vec2(x,y)*u_size,.999,1.0);})";
+}
+
+const char* GetShaderTextFragmentSource() {
+    return R"(#version 330 core
+in vec2 uv;out vec4 fragColor;uniform float u_rows[7];uniform vec4 u_color;
+void main(){ivec2 p=ivec2(floor(uv*vec2(5.0,7.0)));int row=clamp(6-p.y,0,6);
+float bit=mod(floor(u_rows[row]/exp2(float(4-p.x))),2.0);fragColor=vec4(u_color.rgb,u_color.a*bit);})";
+}
+
+void InitializeShaderPipeline(ShaderPipeline* pipeline) {
+    if (!pipeline) return;
+    memset(pipeline, 0, sizeof(*pipeline));
+    for (int pass_index = 0; pass_index < kMaxShaderPasses; ++pass_index) {
+        pipeline->passes[pass_index].kind = pass_index;
+        pipeline->passes[pass_index].resolution_scale = 1.0f;
+    }
+}
+
+static int ChannelBufferPass(int channel_kind) {
+    if (channel_kind >= ShaderChannelBufferA && channel_kind <= ShaderChannelBufferD)
+        return channel_kind - ShaderChannelBufferA + ShaderPassBufferA;
+    return -1;
+}
+
+int BuildShaderPassOrder(const ShaderPipeline* pipeline,
+                         int order[kMaxShaderPasses],
+                         char* error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (!pipeline || !order) return -1;
+
+    int indegree[kMaxShaderPasses] = {};
+    bool edge[kMaxShaderPasses][kMaxShaderPasses] = {};
+    int enabled_count = 0;
+    for (int pass_index = 0; pass_index < kMaxShaderPasses; ++pass_index) {
+        const ShaderPass& pass = pipeline->passes[pass_index];
+        if (!pass.enabled) continue;
+        ++enabled_count;
+        if (!pass.source_path[0] || pass.resolution_scale <= 0.0f || pass.resolution_scale > 1.0f) {
+            if (error && error_size)
+                snprintf(error, error_size, "Pass %d needs source and resolution scale in (0, 1]", pass_index);
+            return -1;
+        }
+        for (int channel = 0; channel < kMaxShaderChannels; ++channel) {
+            const ShaderChannel& input = pass.channels[channel];
+            const int dependency = ChannelBufferPass(input.kind);
+            if (input.kind == ShaderChannelTexture && !input.asset_path[0]) {
+                if (error && error_size) snprintf(error, error_size, "Pass %d channel %d has no texture", pass_index, channel);
+                return -1;
+            }
+            if (dependency >= 0) {
+                if (!pipeline->passes[dependency].enabled) {
+                    if (error && error_size) snprintf(error, error_size, "Pass %d depends on disabled buffer %d", pass_index, dependency);
+                    return -1;
+                }
+                if (dependency == pass_index) {
+                    if (error && error_size) snprintf(error, error_size, "Pass %d must use self-feedback, not a direct self dependency", pass_index);
+                    return -1;
+                }
+                if (!edge[dependency][pass_index]) {
+                    edge[dependency][pass_index] = true;
+                    ++indegree[pass_index];
+                }
+            }
+        }
+    }
+
+    int written = 0;
+    bool emitted[kMaxShaderPasses] = {};
+    while (written < enabled_count) {
+        int next = -1;
+        for (int pass_index = ShaderPassBufferA; pass_index < kMaxShaderPasses; ++pass_index) {
+            if (pipeline->passes[pass_index].enabled && !emitted[pass_index] && indegree[pass_index] == 0) {
+                next = pass_index;
+                break;
+            }
+        }
+        if (next < 0 && pipeline->passes[ShaderPassImage].enabled &&
+            !emitted[ShaderPassImage] && indegree[ShaderPassImage] == 0)
+            next = ShaderPassImage;
+        if (next < 0) {
+            if (error && error_size) snprintf(error, error_size, "Shader pass dependency cycle");
+            return -1;
+        }
+        order[written++] = next;
+        emitted[next] = true;
+        for (int consumer = 0; consumer < kMaxShaderPasses; ++consumer)
+            if (edge[next][consumer]) --indegree[consumer];
+    }
+    return written;
+}
+
+void BuildShaderAudioTexture(const float* stereo_samples, int frame_count,
+                             unsigned char output[kShaderAudioTextureWidth * 2]) {
+    if (!output) return;
+    memset(output, 0, kShaderAudioTextureWidth * 2);
+    if (!stereo_samples || frame_count <= 0) return;
+
+    const int sample_frames = frame_count < kShaderAudioSampleFrames
+        ? frame_count : kShaderAudioSampleFrames;
+    float mono[kShaderAudioSampleFrames] = {};
+    for (int i = 0; i < sample_frames; ++i)
+        mono[i] = 0.5f * (stereo_samples[i * 2] + stereo_samples[i * 2 + 1]);
+
+    constexpr float kTwoPi = 6.2831853071795864769f;
+    float windowed[kShaderAudioSampleFrames] = {};
+    for (int i = 0; i < sample_frames; ++i) {
+        const float window = sample_frames > 1
+            ? 0.5f - 0.5f * cosf(kTwoPi * (float)i / (float)(sample_frames - 1)) : 1.0f;
+        windowed[i] = mono[i] * window;
+    }
+    for (int bin = 0; bin < kShaderAudioTextureWidth; ++bin) {
+        const float step = kTwoPi * (float)bin / (float)kShaderAudioSampleFrames;
+        const float rotation_cos = cosf(step);
+        const float rotation_sin = sinf(step);
+        float oscillator_cos = 1.0f;
+        float oscillator_sin = 0.0f;
+        float real = 0.0f;
+        float imaginary = 0.0f;
+        for (int i = 0; i < sample_frames; ++i) {
+            const float sample = windowed[i];
+            real += sample * oscillator_cos;
+            imaginary -= sample * oscillator_sin;
+            const float next_cos = oscillator_cos * rotation_cos - oscillator_sin * rotation_sin;
+            oscillator_sin = oscillator_sin * rotation_cos + oscillator_cos * rotation_sin;
+            oscillator_cos = next_cos;
+        }
+        float magnitude = sqrtf(real * real + imaginary * imaginary) * (2.0f / (float)sample_frames);
+        magnitude = sqrtf(magnitude * 4.0f);
+        if (magnitude > 1.0f) magnitude = 1.0f;
+        output[bin] = (unsigned char)(magnitude * 255.0f + 0.5f);
+    }
+
+    for (int x = 0; x < kShaderAudioTextureWidth; ++x) {
+        const int source_index = sample_frames > 1
+            ? (x * (sample_frames - 1)) / (kShaderAudioTextureWidth - 1) : 0;
+        float waveform = mono[source_index] * 0.5f + 0.5f;
+        if (waveform < 0.0f) waveform = 0.0f;
+        if (waveform > 1.0f) waveform = 1.0f;
+        output[kShaderAudioTextureWidth + x] = (unsigned char)(waveform * 255.0f + 0.5f);
+    }
+}
+
 void InitializeAudioEffects(AudioEffects* effects)
 {
     if (!effects) return;
@@ -624,6 +832,19 @@ static bool UploadRgbaTexture(const unsigned char* pixels, int width, int height
     return true;
 }
 
+void SetImageTextureWrap(unsigned int texture_id, int wrap_s, int wrap_t)
+{
+    if (!texture_id) return;
+    const int repeat = 10497;
+    const int clamp = 33071;
+    const int mirror = 33648;
+    if (wrap_s != repeat && wrap_s != clamp && wrap_s != mirror) wrap_s = repeat;
+    if (wrap_t != repeat && wrap_t != clamp && wrap_t != mirror) wrap_t = repeat;
+    glBindTexture(GL_TEXTURE_2D, texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_s);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_t);
+}
+
 static bool LoadWicImageTextureFromStream(IStream* stream, int frame_index,
                                           ImageTexture* tex, int* out_frame_count)
 {
@@ -1106,10 +1327,24 @@ bool CreateTextGlyphAtlas(const char* font_name, float size, TextGlyphAtlas* atl
     return atlas->texture_id != 0;
 }
 
+float ComputeAuthoredViewportScale(float viewport_width, float viewport_height)
+{
+    if (viewport_width <= 0.0f || viewport_height <= 0.0f) return 1.0f;
+    const float scale_x = viewport_width / 1920.0f;
+    const float scale_y = viewport_height / 1080.0f;
+    return scale_x < scale_y ? scale_x : scale_y;
+}
+
+float ComputeTextViewportScale(float viewport_width, float viewport_height)
+{
+    return ComputeAuthoredViewportScale(viewport_width, viewport_height);
+}
+
 float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
                               int direction, float size_scale, float spacing,
                               float wrap_gap, float viewport_width,
-                              float viewport_height)
+                              float viewport_height, float start_x,
+                              float start_y, int loop_mode)
 {
     if (!atlas || !text || viewport_width <= 0.0f || viewport_height <= 0.0f) {
         return 1.0f + wrap_gap;
@@ -1119,21 +1354,28 @@ float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
     if (spacing < 0.01f) spacing = 0.01f;
     if (wrap_gap < 0.0f) wrap_gap = 0.0f;
 
-    float travel = 0.0f;
+    float extent = 0.0f;
     if (direction <= 1) {
         for (const unsigned char* p = (const unsigned char*)text; *p && *p != '\n'; ++p) {
             const TextGlyph* glyph = FindTextGlyph(atlas, *p);
-            if (glyph) travel += glyph->advance * spacing * size_scale;
+            if (glyph) extent += glyph->advance * spacing * size_scale;
         }
-        const TextGlyph* space = FindTextGlyph(atlas, ' ');
-        if (space) travel += space->advance * spacing * size_scale * 3.0f;
-        travel = travel * 2.0f / viewport_width + wrap_gap;
+        extent = extent * 2.0f / viewport_width;
     } else {
         int line_count = 1;
         for (const char* p = text; *p; ++p) {
             if (*p == '\n') ++line_count;
         }
-        travel = (float)line_count * atlas->line_height * size_scale * 2.0f / viewport_height + wrap_gap;
+        extent = (float)line_count * atlas->line_height * size_scale * 2.0f / viewport_height;
+    }
+
+    float travel = extent + wrap_gap;
+    if (loop_mode != 0) {
+        const float half_extent = extent * 0.5f;
+        if (direction == 0) travel = start_x + half_extent + 1.0f + wrap_gap;
+        else if (direction == 1) travel = 1.0f - start_x + half_extent + wrap_gap;
+        else if (direction == 2) travel = start_y + half_extent + 1.0f + wrap_gap;
+        else travel = 1.0f - start_y + half_extent + wrap_gap;
     }
 
     return travel < 0.001f ? 0.001f : travel;

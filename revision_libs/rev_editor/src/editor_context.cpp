@@ -2,6 +2,7 @@
 #include "rev_shader.h"
 #include "rev_pack.h"
 #include "rev_mesh.h"
+#include "rev_mesh_shadow.h"
 #include "rev_gltf.h"
 #include "rev_xm.h"
 #include "rev_pixel.h"
@@ -71,6 +72,8 @@ struct EditorAudioState {
     std::atomic<bool> playing{false};
     std::atomic<unsigned int> generation{0};
     std::mutex player_mutex;
+    std::mutex shader_audio_mutex;
+    float shader_audio_samples[rev::runtime::kShaderAudioSampleFrames * 2] = {};
     rev::xm::Player* player = nullptr;
     char cue_key[512] = {};
     float cue_start = 0.0f;
@@ -252,10 +255,18 @@ static void ParseShaderNoiseMapPaths(const char* line, char paths[4][512]) {
 
 static void FillEditorAudioBuffer(EditorAudioState* state, float* output, int frame_count) {
     memset(output, 0, (size_t)frame_count * 2 * sizeof(float));
-    if (!state->playing.load(std::memory_order_acquire)) return;
-
-    std::lock_guard<std::mutex> lock(state->player_mutex);
-    if (state->player) rev::xm::Update(state->player, output, frame_count);
+    if (state->playing.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lock(state->player_mutex);
+        if (state->player) rev::xm::Update(state->player, output, frame_count);
+    }
+    const int captured_frames = frame_count < rev::runtime::kShaderAudioSampleFrames
+        ? frame_count : rev::runtime::kShaderAudioSampleFrames;
+    const int first_frame = frame_count - captured_frames;
+    std::lock_guard<std::mutex> audio_lock(state->shader_audio_mutex);
+    memset(state->shader_audio_samples, 0, sizeof(state->shader_audio_samples));
+    memcpy(state->shader_audio_samples,
+           output + (size_t)first_frame * 2,
+           (size_t)captured_frames * 2 * sizeof(float));
 }
 
 void UpdateEditorAudioEffects(EditorContext* editor) {
@@ -1224,6 +1235,9 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->editing_scroll_text.curve_wave_length = -1;
     editor->editing_scroll_text.curve_jitter_amp = -1;
     editor->editing_scroll_text.curve_jitter_freq = -1;
+    editor->shader_text_modal_open = false;
+    editor->shader_text_modal_request_open = false;
+    rev::runtime::InitializeShaderTextCue(&editor->editing_shader_text);
     editor->installed_fonts = nullptr;
     editor->installed_font_count = 0;
     editor->mesh_modal_open = false;
@@ -1300,6 +1314,9 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     }
     editor->project->curve_count = 0;
     editor->project->trigger_track_count = 0;
+    editor->project->shader_pipeline_count = 0;
+    for (int i = 0; i < rev::runtime::kMaxShaderPipelines; ++i)
+        rev::runtime::InitializeShaderPipeline(&editor->project->shader_pipelines[i]);
     
     editor->project->modified = false;
     editor->project->total_duration = 0.0f;
@@ -1307,6 +1324,7 @@ EditorContext* CreateEditor(rev::platform::Window* window) {
     editor->project->loop_music = false;
     editor->project->music_persist_across_scenes = false;
     editor->project->runtime_fullscreen = true;
+    editor->project->runtime_window_divisor = 1;
     strncpy_s(editor->project->runtime_title, sizeof(editor->project->runtime_title), "HiMYM - Minimal Intro Test", _TRUNCATE);
     rev::runtime::InitializeAudioEffects(&editor->project->audio_effects);
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
@@ -1343,6 +1361,7 @@ void DestroyEditor(EditorContext* editor) {
             delete[] scene->pixel_emitter_cues;
             delete[] scene->text_cues;
             delete[] scene->scroll_text_cues;
+            delete[] scene->shader_text_cues;
             delete[] scene->music_cues;
             delete[] scene->mesh_cues;
             delete[] scene->post_effects;
@@ -1467,6 +1486,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
     bool in_pixel_emitter_cues = false;
     bool in_text_cues = false;
     bool in_scroll_text_cues = false;
+    bool in_shader_text_cues = false;
     bool in_music_cues = false;
     bool in_mesh_cues = false;
     bool in_post_effects = false;
@@ -1476,8 +1496,12 @@ bool LoadProject(EditorContext* editor, const char* path) {
     bool in_trigger_tracks = false;
     bool in_trigger_events = false;
     TriggerTrack* current_trigger_track = nullptr;
+    rev::runtime::ShaderPipeline* current_shader_pipeline = nullptr;
+    rev::runtime::ShaderPass* current_shader_pass = nullptr;
+    rev::runtime::ShaderChannel* current_shader_channel = nullptr;
     
     ShaderCue current_shader_cue = {};
+    current_shader_cue.shader_pipeline_index = -1;
     // Initialize shader curve fields to -1 (no curve)
     current_shader_cue.curve_speed = current_shader_cue.curve_intensity = current_shader_cue.curve_warp = -1;
     current_shader_cue.curve_exposure = current_shader_cue.curve_fade = -1;
@@ -1570,6 +1594,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
     current_scroll_text_cue.curve_wave_length = -1;
     current_scroll_text_cue.curve_jitter_amp = -1;
     current_scroll_text_cue.curve_jitter_freq = -1;
+    ShaderTextCue current_shader_text_cue;
+    rev::runtime::InitializeShaderTextCue(&current_shader_text_cue);
     MusicCue current_music_cue = {};
     MeshCue current_mesh_cue = {};
     current_mesh_cue.scale[0] = current_mesh_cue.scale[1] = current_mesh_cue.scale[2] = 1.0f;
@@ -1630,6 +1656,49 @@ bool LoadProject(EditorContext* editor, const char* path) {
         if (strstr(start, "\"runtime_title\":")) {
             ParseJsonStringValue(start, editor->project->runtime_title,
                                  sizeof(editor->project->runtime_title));
+            continue;
+        }
+        if (sscanf_s(start, "\"runtime_window_divisor\": %d", &editor->project->runtime_window_divisor) == 1) {
+            if (editor->project->runtime_window_divisor != 1 && editor->project->runtime_window_divisor != 2 &&
+                editor->project->runtime_window_divisor != 4 && editor->project->runtime_window_divisor != 8) {
+                editor->project->runtime_window_divisor = 1;
+            }
+            continue;
+        }
+        if (strstr(start, "\"pipeline_name\":")) {
+            if (editor->project->shader_pipeline_count < rev::runtime::kMaxShaderPipelines) {
+                current_shader_pipeline = &editor->project->shader_pipelines[editor->project->shader_pipeline_count++];
+                rev::runtime::InitializeShaderPipeline(current_shader_pipeline);
+                ParseJsonStringValue(start, current_shader_pipeline->name, sizeof(current_shader_pipeline->name));
+                current_shader_pass = nullptr;
+                current_shader_channel = nullptr;
+            }
+            continue;
+        }
+        int pipeline_value = 0;
+        if (current_shader_pipeline && sscanf_s(start, "\"pass_kind\": %d", &pipeline_value) == 1) {
+            current_shader_pass = (pipeline_value >= 0 && pipeline_value < rev::runtime::kMaxShaderPasses)
+                ? &current_shader_pipeline->passes[pipeline_value] : nullptr;
+            current_shader_channel = nullptr;
+            continue;
+        }
+        if (current_shader_pass && sscanf_s(start, "\"pass_enabled\": %d", &pipeline_value) == 1) {
+            current_shader_pass->enabled = pipeline_value != 0;
+            continue;
+        }
+        if (current_shader_pass && sscanf_s(start, "\"pass_resolution_scale\": %f", &current_shader_pass->resolution_scale) == 1) continue;
+        if (current_shader_pass && strstr(start, "\"pass_source_path\":")) {
+            ParseJsonStringValue(start, current_shader_pass->source_path, sizeof(current_shader_pass->source_path));
+            continue;
+        }
+        if (current_shader_pass && sscanf_s(start, "\"channel_index\": %d", &pipeline_value) == 1) {
+            current_shader_channel = (pipeline_value >= 0 && pipeline_value < rev::runtime::kMaxShaderChannels)
+                ? &current_shader_pass->channels[pipeline_value] : nullptr;
+            continue;
+        }
+        if (current_shader_channel && sscanf_s(start, "\"channel_kind\": %d", &current_shader_channel->kind) == 1) continue;
+        if (current_shader_channel && strstr(start, "\"channel_asset_path\":")) {
+            ParseJsonStringValue(start, current_shader_channel->asset_path, sizeof(current_shader_channel->asset_path));
             continue;
         }
         if (sscanf_s(start, "\"audio_gain_enabled\": %d", &bool_value) == 1) {
@@ -1743,6 +1812,39 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_post_effects = false;
             in_scene_layer_post_effects = false;
         }
+
+        if (in_scenes && current_scene && indent == 6) {
+            if (sscanf_s(start, "\"wipe_type\": %d", &current_scene->wipe_type) == 1) continue;
+            if (sscanf_s(start, "\"wipe_duration\": %f", &current_scene->wipe_duration) == 1) continue;
+            if (sscanf_s(start, "\"wipe_color\": [%f, %f, %f]",
+                         &current_scene->wipe_color[0], &current_scene->wipe_color[1],
+                         &current_scene->wipe_color[2]) == 3) continue;
+            if (sscanf_s(start, "\"menu_enabled\": %d", &current_scene->menu.enabled) == 1) continue;
+            if (sscanf_s(start, "\"menu_wrap\": %d", &current_scene->menu.wrap) == 1) continue;
+            if (sscanf_s(start, "\"menu_mouse_enabled\": %d", &current_scene->menu.mouse_enabled) == 1) continue;
+            if (sscanf_s(start, "\"menu_initial_item\": %d", &current_scene->menu.initial_item) == 1) continue;
+            if (sscanf_s(start, "\"menu_highlight_color\": [%f, %f, %f, %f]",
+                         &current_scene->menu.highlight_color[0], &current_scene->menu.highlight_color[1],
+                         &current_scene->menu.highlight_color[2], &current_scene->menu.highlight_color[3]) == 4) continue;
+            if (strstr(start, "\"menu_item\":") && current_scene->menu.item_count < rev::runtime::kMaxMenuItems) {
+                rev::runtime::MenuItem& item = current_scene->menu.items[current_scene->menu.item_count];
+                char encoded_label[128] = {};
+                item.animated_sprite_cue = -1;
+                int parsed = sscanf_s(start, "\"menu_item\": \"%63[^|]|%d|%f|%f|%f|%f|%d|%d|%f|%f",
+                             encoded_label, (unsigned)_countof(encoded_label), &item.target_scene,
+                             &item.x, &item.y, &item.width, &item.height,
+                             &item.visual_type, &item.animated_sprite_cue, &item.image_x, &item.image_y);
+                if (parsed >= 6) {
+                    if (parsed < 10) {
+                        item.image_x = item.x + item.width * 0.5f;
+                        item.image_y = item.y + item.height * 0.5f;
+                    }
+                    strncpy_s(item.label, sizeof(item.label), encoded_label, _TRUNCATE);
+                    ++current_scene->menu.item_count;
+                }
+                continue;
+            }
+        }
         
         // Section detection
         if (strstr(start, "\"shader_cues\":")) {
@@ -1809,6 +1911,7 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_scroll_text_cues = true;
             in_music_cues = false;
         } else if (strstr(start, "\"music_cues\":")) {
+            in_shader_text_cues = false;
             in_shader_cues = false;
             in_image_cues = false;
             in_animated_sprite_cues = false;
@@ -1818,6 +1921,11 @@ bool LoadProject(EditorContext* editor, const char* path) {
             in_scroll_text_cues = false;
             in_music_cues = true;
             in_mesh_cues = false;
+        } else if (strstr(start, "\"shader_text_cues\":")) {
+            in_shader_cues = in_image_cues = in_animated_sprite_cues = false;
+            in_pixel_cues = in_pixel_emitter_cues = in_text_cues = in_scroll_text_cues = false;
+            in_music_cues = in_mesh_cues = false;
+            in_shader_text_cues = true;
         } else if (strstr(start, "\"mesh_cues\":")) {
             in_shader_cues = false;
             in_image_cues = false;
@@ -2069,6 +2177,8 @@ bool LoadProject(EditorContext* editor, const char* path) {
                 ParseJsonStringValue(start, current_shader_cue.shader_name, sizeof(current_shader_cue.shader_name));
             } else if (strstr(start, "\"shader_scene_id\":")) {
                 sscanf_s(start, "\"shader_scene_id\": %d", &current_shader_cue.shader_scene_id);
+            } else if (strstr(start, "\"shader_pipeline_index\":")) {
+                sscanf_s(start, "\"shader_pipeline_index\": %d", &current_shader_cue.shader_pipeline_index);
             } else if (strstr(start, "\"palette_low\":")) {
                 sscanf_s(start, "\"palette_low\": [%f, %f, %f]",
                     &current_shader_cue.palette_low.r,
@@ -2668,6 +2778,40 @@ bool LoadProject(EditorContext* editor, const char* path) {
             }
         }
 
+        if (in_shader_text_cues && current_scene) {
+            if (strstr(start, "\"text\":")) ParseJsonStringValue(start, current_shader_text_cue.text, sizeof(current_shader_text_cue.text));
+            else if (strstr(start, "\"x\":")) sscanf_s(start, "\"x\": %f", &current_shader_text_cue.x);
+            else if (strstr(start, "\"y\":")) sscanf_s(start, "\"y\": %f", &current_shader_text_cue.y);
+            else if (strstr(start, "\"size\":")) sscanf_s(start, "\"size\": %f", &current_shader_text_cue.size);
+            else if (strstr(start, "\"color\":")) sscanf_s(start, "\"color\": [%f, %f, %f]", &current_shader_text_cue.color.r, &current_shader_text_cue.color.g, &current_shader_text_cue.color.b);
+            else if (strstr(start, "\"opacity\":")) sscanf_s(start, "\"opacity\": %f", &current_shader_text_cue.opacity);
+            else if (strstr(start, "\"mode\":")) sscanf_s(start, "\"mode\": %d", &current_shader_text_cue.mode);
+            else if (strstr(start, "\"alignment\":")) sscanf_s(start, "\"alignment\": %d", &current_shader_text_cue.alignment);
+            else if (strstr(start, "\"direction\":")) sscanf_s(start, "\"direction\": %d", &current_shader_text_cue.direction);
+            else if (strstr(start, "\"loop_mode\":")) sscanf_s(start, "\"loop_mode\": %d", &current_shader_text_cue.loop_mode);
+            else if (strstr(start, "\"speed\":")) sscanf_s(start, "\"speed\": %f", &current_shader_text_cue.speed);
+            else if (strstr(start, "\"spacing\":")) sscanf_s(start, "\"spacing\": %f", &current_shader_text_cue.spacing);
+            else if (strstr(start, "\"cue_start\":")) sscanf_s(start, "\"cue_start\": %f", &current_shader_text_cue.cue_start);
+            else if (strstr(start, "\"cue_end\":")) sscanf_s(start, "\"cue_end\": %f", &current_shader_text_cue.cue_end);
+            else if (strstr(start, "\"fade_in\":")) sscanf_s(start, "\"fade_in\": %f", &current_shader_text_cue.fade_in);
+            else if (strstr(start, "\"fade_out\":")) sscanf_s(start, "\"fade_out\": %f", &current_shader_text_cue.fade_out);
+            else if (strstr(start, "\"layer_order\":")) sscanf_s(start, "\"layer_order\": %d", &current_shader_text_cue.layer_order);
+            else if (strstr(start, "\"blend_mode\":")) sscanf_s(start, "\"blend_mode\": %d", &current_shader_text_cue.blend_mode);
+            else if (strstr(start, "\"curve_x\":")) sscanf_s(start, "\"curve_x\": %d", &current_shader_text_cue.curve_x);
+            else if (strstr(start, "\"curve_y\":")) sscanf_s(start, "\"curve_y\": %d", &current_shader_text_cue.curve_y);
+            else if (strstr(start, "\"curve_size\":")) sscanf_s(start, "\"curve_size\": %d", &current_shader_text_cue.curve_size);
+            else if (strstr(start, "\"curve_color_r\":")) sscanf_s(start, "\"curve_color_r\": %d", &current_shader_text_cue.curve_color_r);
+            else if (strstr(start, "\"curve_color_g\":")) sscanf_s(start, "\"curve_color_g\": %d", &current_shader_text_cue.curve_color_g);
+            else if (strstr(start, "\"curve_color_b\":")) sscanf_s(start, "\"curve_color_b\": %d", &current_shader_text_cue.curve_color_b);
+            else if (strstr(start, "\"curve_opacity\":")) sscanf_s(start, "\"curve_opacity\": %d", &current_shader_text_cue.curve_opacity);
+            else if (strstr(start, "\"curve_speed\":")) sscanf_s(start, "\"curve_speed\": %d", &current_shader_text_cue.curve_speed);
+            else if (strstr(start, "\"curve_spacing\":")) sscanf_s(start, "\"curve_spacing\": %d", &current_shader_text_cue.curve_spacing);
+            else if (indent == 8 && start[0] == '}' && current_shader_text_cue.text[0]) {
+                AddShaderTextCue(current_scene, current_shader_text_cue);
+                rev::runtime::InitializeShaderTextCue(&current_shader_text_cue);
+            }
+        }
+
         // Parse music cue fields
         if (in_music_cues && current_scene) {
             if (strstr(start, "\"asset_key\":")) {
@@ -3144,6 +3288,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
     char escaped_runtime_title[256] = {};
     JsonEscapeString(editor->project->runtime_title, escaped_runtime_title, sizeof(escaped_runtime_title));
     fprintf(f, "  \"runtime_fullscreen\": %d,\n", editor->project->runtime_fullscreen ? 1 : 0);
+    fprintf(f, "  \"runtime_window_divisor\": %d,\n", editor->project->runtime_window_divisor);
     fprintf(f, "  \"runtime_title\": \"%s\",\n", escaped_runtime_title);
     fprintf(f, "  \"audio_gain_enabled\": %d,\n", editor->project->audio_effects.gain_enabled);
     fprintf(f, "  \"audio_gain_db\": %.3f,\n", editor->project->audio_effects.gain_db);
@@ -3167,6 +3312,31 @@ bool SaveProject(EditorContext* editor, const char* path) {
     fprintf(f, "  \"audio_curve_eq_low_db\": %d,\n", editor->project->audio_effects.curve_eq_low_db);
     fprintf(f, "  \"audio_curve_eq_mid_db\": %d,\n", editor->project->audio_effects.curve_eq_mid_db);
     fprintf(f, "  \"audio_curve_eq_high_db\": %d,\n", editor->project->audio_effects.curve_eq_high_db);
+    fprintf(f, "  \"shader_pipelines\": [\n");
+    for (int pipeline_index = 0; pipeline_index < editor->project->shader_pipeline_count; ++pipeline_index) {
+        const rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+        char escaped_pipeline_name[128] = {};
+        JsonEscapeString(pipeline.name, escaped_pipeline_name, sizeof(escaped_pipeline_name));
+        fprintf(f, "    {\n      \"pipeline_name\": \"%s\",\n      \"passes\": [\n", escaped_pipeline_name);
+        for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+            const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+            char escaped_source[1024] = {};
+            JsonEscapeString(pass.source_path, escaped_source, sizeof(escaped_source));
+            fprintf(f, "        {\n          \"pass_kind\": %d,\n          \"pass_enabled\": %d,\n          \"pass_resolution_scale\": %.3f,\n          \"pass_source_path\": \"%s\",\n          \"channels\": [\n",
+                    pass.kind, pass.enabled ? 1 : 0, pass.resolution_scale, escaped_source);
+            for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                const rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+                char escaped_asset[1024] = {};
+                JsonEscapeString(channel.asset_path, escaped_asset, sizeof(escaped_asset));
+                fprintf(f, "            {\n              \"channel_index\": %d,\n              \"channel_kind\": %d,\n              \"channel_asset_path\": \"%s\"\n            }%s\n",
+                        channel_index, channel.kind, escaped_asset,
+                        channel_index + 1 < rev::runtime::kMaxShaderChannels ? "," : "");
+            }
+            fprintf(f, "          ]\n        }%s\n", pass_index + 1 < rev::runtime::kMaxShaderPasses ? "," : "");
+        }
+        fprintf(f, "      ]\n    }%s\n", pipeline_index + 1 < editor->project->shader_pipeline_count ? "," : "");
+    }
+    fprintf(f, "  ],\n");
     fprintf(f, "  \"scenes\": [\n");
     
     // Save scenes
@@ -3177,6 +3347,25 @@ bool SaveProject(EditorContext* editor, const char* path) {
         fprintf(f, "    {\n");
         fprintf(f, "      \"name\": \"%s\",\n", escaped_scene_name);
         fprintf(f, "      \"duration\": %.3f,\n", scene->duration);
+        fprintf(f, "      \"wipe_type\": %d,\n", scene->wipe_type);
+        fprintf(f, "      \"wipe_duration\": %.3f,\n", scene->wipe_duration);
+        fprintf(f, "      \"wipe_color\": [%.3f, %.3f, %.3f],\n",
+                scene->wipe_color[0], scene->wipe_color[1], scene->wipe_color[2]);
+        fprintf(f, "      \"menu_enabled\": %d,\n", scene->menu.enabled);
+        fprintf(f, "      \"menu_wrap\": %d,\n", scene->menu.wrap);
+        fprintf(f, "      \"menu_mouse_enabled\": %d,\n", scene->menu.mouse_enabled);
+        fprintf(f, "      \"menu_initial_item\": %d,\n", scene->menu.initial_item);
+        fprintf(f, "      \"menu_highlight_color\": [%.3f, %.3f, %.3f, %.3f],\n",
+                scene->menu.highlight_color[0], scene->menu.highlight_color[1],
+                scene->menu.highlight_color[2], scene->menu.highlight_color[3]);
+        for (int menu_index = 0; menu_index < scene->menu.item_count; ++menu_index) {
+            const rev::runtime::MenuItem& item = scene->menu.items[menu_index];
+            char escaped_label[128] = {};
+            JsonEscapeString(item.label, escaped_label, sizeof(escaped_label));
+            fprintf(f, "      \"menu_item\": \"%s|%d|%.3f|%.3f|%.3f|%.3f|%d|%d|%.3f|%.3f\",\n",
+                    escaped_label, item.target_scene, item.x, item.y, item.width, item.height,
+                    item.visual_type, item.animated_sprite_cue, item.image_x, item.image_y);
+        }
         
         // Shader cues
         fprintf(f, "      \"shader_cues\": [\n");
@@ -3187,6 +3376,7 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "        {\n");
             fprintf(f, "          \"shader_name\": \"%s\",\n", escaped_shader_name);
             fprintf(f, "          \"shader_scene_id\": %d,\n", cue->shader_scene_id);
+            fprintf(f, "          \"shader_pipeline_index\": %d,\n", cue->shader_pipeline_index);
             fprintf(f, "          \"palette_low\": [%.3f, %.3f, %.3f],\n", 
                 cue->palette_low.r, cue->palette_low.g, cue->palette_low.b);
             fprintf(f, "          \"palette_mid\": [%.3f, %.3f, %.3f],\n",
@@ -3568,7 +3758,27 @@ bool SaveProject(EditorContext* editor, const char* path) {
             fprintf(f, "        }%s\n", (i < scene->scroll_text_cue_count - 1) ? "," : "");
         }
         fprintf(f, "      ],\n");
-        
+
+        fprintf(f, "      \"shader_text_cues\": [\n");
+        for (int i = 0; i < scene->shader_text_cue_count; ++i) {
+            ShaderTextCue* cue = &scene->shader_text_cues[i];
+            char escaped_text[1024] = {};
+            JsonEscapeString(cue->text, escaped_text, sizeof(escaped_text));
+            fprintf(f, "        {\n");
+            fprintf(f, "          \"text\": \"%s\",\n", escaped_text);
+            fprintf(f, "          \"x\": %.3f,\n          \"y\": %.3f,\n          \"size\": %.3f,\n", cue->x, cue->y, cue->size);
+            fprintf(f, "          \"color\": [%.3f, %.3f, %.3f],\n", cue->color.r, cue->color.g, cue->color.b);
+            fprintf(f, "          \"opacity\": %.3f,\n          \"mode\": %d,\n          \"alignment\": %d,\n", cue->opacity, cue->mode, cue->alignment);
+            fprintf(f, "          \"direction\": %d,\n          \"loop_mode\": %d,\n          \"speed\": %.3f,\n          \"spacing\": %.3f,\n", cue->direction, cue->loop_mode, cue->speed, cue->spacing);
+            fprintf(f, "          \"cue_start\": %.3f,\n          \"cue_end\": %.3f,\n          \"fade_in\": %.3f,\n          \"fade_out\": %.3f,\n", cue->cue_start, cue->cue_end, cue->fade_in, cue->fade_out);
+            fprintf(f, "          \"layer_order\": %d,\n          \"blend_mode\": %d,\n", cue->layer_order, cue->blend_mode);
+            fprintf(f, "          \"curve_x\": %d,\n          \"curve_y\": %d,\n          \"curve_size\": %d,\n", cue->curve_x, cue->curve_y, cue->curve_size);
+            fprintf(f, "          \"curve_color_r\": %d,\n          \"curve_color_g\": %d,\n          \"curve_color_b\": %d,\n", cue->curve_color_r, cue->curve_color_g, cue->curve_color_b);
+            fprintf(f, "          \"curve_opacity\": %d,\n          \"curve_speed\": %d,\n          \"curve_spacing\": %d\n", cue->curve_opacity, cue->curve_speed, cue->curve_spacing);
+            fprintf(f, "        }%s\n", i + 1 < scene->shader_text_cue_count ? "," : "");
+        }
+        fprintf(f, "      ],\n");
+
         // Music cues
         fprintf(f, "      \"music_cues\": [\n");
         for (int i = 0; i < scene->music_cue_count; ++i) {
@@ -3786,6 +3996,7 @@ bool NewProject(EditorContext* editor) {
         delete[] scene->pixel_emitter_cues;
         delete[] scene->text_cues;
         delete[] scene->scroll_text_cues;
+        delete[] scene->shader_text_cues;
         delete[] scene->music_cues;
         delete[] scene->mesh_cues;
         delete[] scene->post_effects;
@@ -3803,12 +4014,16 @@ bool NewProject(EditorContext* editor) {
         editor->project->curve_count = 0;
     }
     editor->project->trigger_track_count = 0;
+    editor->project->shader_pipeline_count = 0;
+    for (int i = 0; i < rev::runtime::kMaxShaderPipelines; ++i)
+        rev::runtime::InitializeShaderPipeline(&editor->project->shader_pipelines[i]);
     
     editor->project->total_duration = 0.0f;  // Will be updated as scenes are added
     editor->project->loop_intro = false;
     editor->project->loop_music = false;
     editor->project->music_persist_across_scenes = false;
     editor->project->runtime_fullscreen = true;
+    editor->project->runtime_window_divisor = 1;
     strncpy_s(editor->project->runtime_title, sizeof(editor->project->runtime_title), "HiMYM - Minimal Intro Test", _TRUNCATE);
     memset(editor->project->project_path, 0, sizeof(editor->project->project_path));
     memset(editor->project->workspace_path, 0, sizeof(editor->project->workspace_path));
@@ -3997,6 +4212,9 @@ void RenderUI(EditorContext* editor) {
     if (editor->scroll_text_modal_open || editor->scroll_text_modal_request_open) {
         RenderScrollTextModal(editor);
     }
+    if (editor->shader_text_modal_open || editor->shader_text_modal_request_open) {
+        RenderShaderTextModal(editor);
+    }
 
     if (editor->mesh_modal_open || editor->mesh_modal_request_open) {
         RenderMeshModal(editor);
@@ -4126,6 +4344,19 @@ static bool ProjectMeshUsesAssetFile(const ProjectData* project, const MeshCue* 
 static bool ProjectUsesAssetFile(const ProjectData* project, const char* file_name) {
     if (!project || !file_name || !file_name[0]) return false;
 
+    for (int pipeline_index = 0; pipeline_index < project->shader_pipeline_count; ++pipeline_index) {
+        const rev::runtime::ShaderPipeline& pipeline = project->shader_pipelines[pipeline_index];
+        for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+            const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+            if (AssetNameMatches(file_name, pass.source_path)) return true;
+            for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                const rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+                if (channel.kind == rev::runtime::ShaderChannelTexture &&
+                    AssetNameMatches(file_name, channel.asset_path)) return true;
+            }
+        }
+    }
+
     for (int scene_index = 0; scene_index < project->scene_count; ++scene_index) {
         const SceneBlock* scene = &project->scenes[scene_index];
         for (int i = 0; i < scene->shader_cue_count; ++i) {
@@ -4232,6 +4463,8 @@ void CleanupDeletedCueResources(EditorContext* editor) {
     editor->text_modal_request_open = false;
     editor->scroll_text_modal_open = false;
     editor->scroll_text_modal_request_open = false;
+    editor->shader_text_modal_open = false;
+    editor->shader_text_modal_request_open = false;
     editor->mesh_modal_open = false;
     editor->mesh_modal_request_open = false;
 
@@ -4250,6 +4483,10 @@ void CleanupDeletedCueResources(EditorContext* editor) {
 void RenderMenuBar(EditorContext* editor) {
     if (!editor) return;
     bool open_about = false;
+    bool open_custom_competition_limit = false;
+    static int competition_mode_index = 1;
+    static int custom_competition_size_kb = 128;
+    static const char* competition_modes[] = { "FAST", "SLOW", "VERYSLOW" };
     
     // ImGui menu bar
     if (ImGui::BeginMainMenuBar()) {
@@ -4395,6 +4632,28 @@ void RenderMenuBar(EditorContext* editor) {
             if (ImGui::MenuItem("Pack, Build and Run")) {
                 PackBuildAndRun(editor);
             }
+            if (ImGui::BeginMenu("Competition Size Build (Crinkler)")) {
+                if (ImGui::MenuItem("64 KiB")) {
+                    BuildCompetitionSize(editor, 64, competition_modes[competition_mode_index]);
+                }
+                if (ImGui::MenuItem("128 KiB")) {
+                    BuildCompetitionSize(editor, 128, competition_modes[competition_mode_index]);
+                }
+                if (ImGui::MenuItem("Custom Limit...")) {
+                    open_custom_competition_limit = true;
+                }
+                ImGui::Separator();
+                if (ImGui::BeginMenu("Compression Mode")) {
+                    for (int mode_index = 0; mode_index < 3; ++mode_index) {
+                        if (ImGui::MenuItem(competition_modes[mode_index], nullptr,
+                                            competition_mode_index == mode_index)) {
+                            competition_mode_index = mode_index;
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::MenuItem("Build Screen Saver (.scr)")) {
                 BuildScreenSaver(editor);
             }
@@ -4414,12 +4673,41 @@ void RenderMenuBar(EditorContext* editor) {
     if (open_about) {
         ImGui::OpenPopup("About HiMYM");
     }
+    if (open_custom_competition_limit) {
+        ImGui::OpenPopup("Custom Crinkler Size Limit");
+    }
+    if (ImGui::BeginPopupModal("Custom Crinkler Size Limit", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::InputInt("Size limit (KiB)", &custom_competition_size_kb);
+        if (custom_competition_size_kb < 1) custom_competition_size_kb = 1;
+        ImGui::Text("Compression mode: %s", competition_modes[competition_mode_index]);
+        if (ImGui::Button("Build")) {
+            BuildCompetitionSize(editor, custom_competition_size_kb,
+                                 competition_modes[competition_mode_index]);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
     if (ImGui::BeginPopupModal("About HiMYM", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Created by Dennis \"diOnysos/TiTAN/Equinox\" Kjaer");
         ImGui::Spacing();
         ImGui::TextLinkOpenURL(
-            "https://www.linkedin.com/in/dennis-kjaer-christensen/",
+            "Linkedin",
             "https://www.linkedin.com/in/dennis-kjaer-christensen/");
+        ImGui::Spacing();
+        ImGui::TextLinkOpenURL(
+            "Discord",
+            "https://discord.gg/A5awRJxnde");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Greetings to alpha testers");
+        ImGui::BulletText("M3RL0CKSH0LM3S");
+        ImGui::BulletText("m4v3d");
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(100.0f, 0.0f))) {
             ImGui::CloseCurrentPopup();
@@ -4443,7 +4731,10 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     NewProject(editor);
     
     char line[1024];
-    enum Section { NONE, SHADER_CUES, IMAGE_CUES, ANIMATED_SPRITE_CUES, PIXEL_CUES, PIXEL_EMITTER_CUES, TEXT_CUES, SCROLL_TEXT_CUES, MUSIC_CUES, POST_EFFECTS, CURVES, METADATA };
+    enum Section { NONE, SHADER_CUES, SHADER_PIPELINE_CUES, SHADER_PIPELINES,
+        SHADER_PIPELINE_PASSES, SHADER_PIPELINE_CHANNELS, IMAGE_CUES,
+        ANIMATED_SPRITE_CUES, PIXEL_CUES, PIXEL_EMITTER_CUES, TEXT_CUES,
+        SCROLL_TEXT_CUES, SHADER_TEXT_CUES, MUSIC_CUES, POST_EFFECTS, CURVES, METADATA };
     Section current_section = NONE;
     
     float total_duration = 10.0f; // Default
@@ -4451,6 +4742,7 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
     int music_loop_setting = 0;
     int music_persist_setting = 0;
     int runtime_fullscreen_setting = 1;
+    int runtime_window_divisor_setting = 1;
     char runtime_title_setting[128] = "HiMYM - Minimal Intro Test";
     AudioEffects audio_effects = {};
     rev::runtime::InitializeAudioEffects(&audio_effects);
@@ -4463,12 +4755,17 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         
         // Section detection
         if (strstr(start, "[shader_cues]")) { current_section = SHADER_CUES; continue; }
+        if (strstr(start, "[shader_pipeline_cues]")) { current_section = SHADER_PIPELINE_CUES; continue; }
+        if (strstr(start, "[shader_pipelines]")) { current_section = SHADER_PIPELINES; continue; }
+        if (strstr(start, "[shader_pipeline_passes]")) { current_section = SHADER_PIPELINE_PASSES; continue; }
+        if (strstr(start, "[shader_pipeline_channels]")) { current_section = SHADER_PIPELINE_CHANNELS; continue; }
         if (strstr(start, "[image_cues]")) { current_section = IMAGE_CUES; continue; }
         if (strstr(start, "[animated_sprite_cues]")) { current_section = ANIMATED_SPRITE_CUES; continue; }
         if (strstr(start, "[pixel_cues]")) { current_section = PIXEL_CUES; continue; }
         if (strstr(start, "[pixel_emitter_cues]")) { current_section = PIXEL_EMITTER_CUES; continue; }
         if (strstr(start, "[text_cues]")) { current_section = TEXT_CUES; continue; }
         if (strstr(start, "[scroll_text_cues]")) { current_section = SCROLL_TEXT_CUES; continue; }
+        if (strstr(start, "[shader_text_cues]")) { current_section = SHADER_TEXT_CUES; continue; }
         if (strstr(start, "[music_cues]")) { current_section = MUSIC_CUES; continue; }
         if (strstr(start, "[post_effects]")) { current_section = POST_EFFECTS; continue; }
         if (strstr(start, "[curves]")) { current_section = CURVES; continue; }
@@ -4485,6 +4782,8 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
             } else if (sscanf_s(start, "music_persist=%d", &music_persist_setting) == 1) {
                 // parsed below
             } else if (sscanf_s(start, "runtime_fullscreen=%d", &runtime_fullscreen_setting) == 1) {
+                // parsed below
+            } else if (sscanf_s(start, "runtime_window_divisor=%d", &runtime_window_divisor_setting) == 1) {
                 // parsed below
             } else if (strncmp(start, "runtime_title=", 14) == 0) {
                 strncpy_s(runtime_title_setting, sizeof(runtime_title_setting), start + 14, _TRUNCATE);
@@ -4583,6 +4882,59 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
                 
                 printf("[ImportFromCues] Imported shader cue: id=%d name='%s' %.2f-%.2f\n",
                        shader_id, cue.shader_name, abs_start, abs_end);
+            }
+            continue;
+        }
+
+        if (current_section == SHADER_PIPELINE_CUES) {
+            int cue_index = -1, pipeline_index = -1;
+            if (sscanf_s(start, "%d|%d", &cue_index, &pipeline_index) == 2 &&
+                editor->project->scene_count > 0 && cue_index >= 0 &&
+                cue_index < editor->project->scenes[0].shader_cue_count) {
+                editor->project->scenes[0].shader_cues[cue_index].shader_pipeline_index = pipeline_index;
+            }
+            continue;
+        }
+        if (current_section == SHADER_PIPELINES) {
+            int pipeline_index = -1;
+            char name[64] = {};
+            if (sscanf_s(start, "%d|%63[^\r\n]", &pipeline_index, name, (unsigned)_countof(name)) == 2 &&
+                pipeline_index >= 0 && pipeline_index < rev::runtime::kMaxShaderPipelines) {
+                rev::runtime::InitializeShaderPipeline(&editor->project->shader_pipelines[pipeline_index]);
+                strncpy_s(editor->project->shader_pipelines[pipeline_index].name, name, _TRUNCATE);
+                if (editor->project->shader_pipeline_count <= pipeline_index)
+                    editor->project->shader_pipeline_count = pipeline_index + 1;
+            }
+            continue;
+        }
+        if (current_section == SHADER_PIPELINE_PASSES) {
+            int pipeline_index = -1, pass_index = -1, enabled = 0;
+            float scale = 1.0f;
+            char source[512] = {};
+            if (sscanf_s(start, "%d|%d|%d|%f|%511[^\r\n]", &pipeline_index, &pass_index,
+                         &enabled, &scale, source, (unsigned)_countof(source)) == 5 &&
+                pipeline_index >= 0 && pipeline_index < rev::runtime::kMaxShaderPipelines &&
+                pass_index >= 0 && pass_index < rev::runtime::kMaxShaderPasses) {
+                rev::runtime::ShaderPass& pass = editor->project->shader_pipelines[pipeline_index].passes[pass_index];
+                pass.kind = pass_index;
+                pass.enabled = enabled != 0;
+                pass.resolution_scale = scale;
+                if (strcmp(source, "-") != 0) strncpy_s(pass.source_path, source, _TRUNCATE);
+            }
+            continue;
+        }
+        if (current_section == SHADER_PIPELINE_CHANNELS) {
+            int pipeline_index = -1, pass_index = -1, channel_index = -1, kind = 0;
+            char asset[512] = {};
+            if (sscanf_s(start, "%d|%d|%d|%d|%511[^\r\n]", &pipeline_index, &pass_index,
+                         &channel_index, &kind, asset, (unsigned)_countof(asset)) == 5 &&
+                pipeline_index >= 0 && pipeline_index < rev::runtime::kMaxShaderPipelines &&
+                pass_index >= 0 && pass_index < rev::runtime::kMaxShaderPasses &&
+                channel_index >= 0 && channel_index < rev::runtime::kMaxShaderChannels) {
+                rev::runtime::ShaderChannel& channel = editor->project->shader_pipelines[pipeline_index]
+                    .passes[pass_index].channels[channel_index];
+                channel.kind = kind;
+                if (strcmp(asset, "-") != 0) strncpy_s(channel.asset_path, asset, _TRUNCATE);
             }
             continue;
         }
@@ -4837,6 +5189,27 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
 
         // Parse scroll text cues:
         // text|font_name|x|y|size|color_r|color_g|color_b|cue_start|cue_end|fade_in_start|fade_in_end|fade_out_start|fade_out_end|layer_order|blend_mode|style_id|direction|speed|spacing|wave_amp|wave_freq|glow|opacity|wrap_gap|slant_deg|jitter_amp|jitter_freq|shadow|outline|curve_x|curve_y|curve_speed|curve_size|curve_opacity|curve_color_r|curve_color_g|curve_color_b|curve_wave_amp|curve_wave_freq|curve_jitter_amp|curve_jitter_freq|loop_mode|chroma_shift|distortion|bake_mode|baked_asset_key|baked_asset_path|wave_length|curve_wave_length
+        if (current_section == SHADER_TEXT_CUES) {
+            char* pipe = strchr(start, '|');
+            if (!pipe) continue;
+            *pipe = 0;
+            ShaderTextCue cue;
+            rev::runtime::InitializeShaderTextCue(&cue);
+            char decoded[512] = {}; const char* src = start; char* dst = decoded;
+            while (*src && dst < decoded + 511) { if (src[0] == '\\' && src[1] == 'n') { *dst++ = '\n'; src += 2; } else *dst++ = *src++; }
+            strncpy_s(cue.text, decoded, _TRUNCATE);
+            int parsed = sscanf_s(pipe + 1, "%f|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%f|%f|%f|%f|%f|%f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
+                &cue.x, &cue.y, &cue.size, &cue.color.r, &cue.color.g, &cue.color.b,
+                &cue.opacity, &cue.mode, &cue.alignment, &cue.direction, &cue.loop_mode,
+                &cue.speed, &cue.spacing, &cue.cue_start, &cue.cue_end, &cue.fade_in,
+                &cue.fade_out, &cue.layer_order, &cue.blend_mode,
+                &cue.curve_x, &cue.curve_y, &cue.curve_size,
+                &cue.curve_color_r, &cue.curve_color_g, &cue.curve_color_b,
+                &cue.curve_opacity, &cue.curve_speed, &cue.curve_spacing);
+            if (parsed >= 15) AddShaderTextCue(&editor->project->scenes[0], cue);
+            continue;
+        }
+
         if (current_section == SCROLL_TEXT_CUES) {
             char* p1 = strchr(start, '|');
             if (!p1) continue;
@@ -5025,6 +5398,11 @@ bool ImportFromCues(EditorContext* editor, const char* cues_path) {
         editor->project->loop_music = (music_loop_setting != 0);
         editor->project->music_persist_across_scenes = (music_persist_setting != 0);
         editor->project->runtime_fullscreen = (runtime_fullscreen_setting != 0);
+        editor->project->runtime_window_divisor = runtime_window_divisor_setting;
+        if (editor->project->runtime_window_divisor != 1 && editor->project->runtime_window_divisor != 2 &&
+            editor->project->runtime_window_divisor != 4 && editor->project->runtime_window_divisor != 8) {
+            editor->project->runtime_window_divisor = 1;
+        }
         strncpy_s(editor->project->runtime_title, sizeof(editor->project->runtime_title), runtime_title_setting, _TRUNCATE);
         editor->project->audio_effects = audio_effects;
     }
@@ -5083,6 +5461,37 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     FILE* f = nullptr;
     fopen_s(&f, output_path, "w");
     if (!f) return false;
+
+    fprintf(f, "[scenes]\n");
+    fprintf(f, "# name|start|end|wipe_type|wipe_duration|wipe_r|wipe_g|wipe_b\n");
+    float exported_scene_start = 0.0f;
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        const SceneBlock* scene = &editor->project->scenes[scene_idx];
+        fprintf(f, "%s|%.3f|%.3f|%d|%.3f|%.3f|%.3f|%.3f\n", scene->name,
+                exported_scene_start, exported_scene_start + scene->duration,
+                scene->wipe_type, scene->wipe_duration, scene->wipe_color[0],
+                scene->wipe_color[1], scene->wipe_color[2]);
+        exported_scene_start += scene->duration;
+    }
+
+    fprintf(f, "\n[scene_menus]\n");
+    fprintf(f, "# scene_index|wrap|initial_item|highlight_rgba,mouse_enabled|item_count|label,target,x,y,w,h...\n");
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        const SceneBlock* scene = &editor->project->scenes[scene_idx];
+        if (!scene->menu.enabled) continue;
+        fprintf(f, "%d|%d|%d|%.3f,%.3f,%.3f,%.3f,%d|%d", scene_idx, scene->menu.wrap,
+                scene->menu.initial_item, scene->menu.highlight_color[0], scene->menu.highlight_color[1],
+                scene->menu.highlight_color[2], scene->menu.highlight_color[3], scene->menu.mouse_enabled,
+                scene->menu.item_count);
+        for (int item_idx = 0; item_idx < scene->menu.item_count; ++item_idx) {
+            const rev::runtime::MenuItem& item = scene->menu.items[item_idx];
+            fprintf(f, "|%s,%d,%.3f,%.3f,%.3f,%.3f,%d,%d,%.3f,%.3f", item.label, item.target_scene,
+                    item.x, item.y, item.width, item.height, item.visual_type,
+                    item.animated_sprite_cue, item.image_x, item.image_y);
+        }
+        fprintf(f, "\n");
+    }
+    fprintf(f, "\n");
 
     // [shader_cues] section
     fprintf(f, "[shader_cues]\n");
@@ -5147,6 +5556,47 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
         }
     }
     
+    fprintf(f, "\n");
+
+    fprintf(f, "[shader_pipeline_cues]\n");
+    fprintf(f, "# shader_cue_index|shader_pipeline_index\n");
+    shader_cue_id = 0;
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        SceneBlock* scene = &editor->project->scenes[scene_idx];
+        for (int cue_idx = 0; cue_idx < scene->shader_cue_count; ++cue_idx, ++shader_cue_id) {
+            if (scene->shader_cues[cue_idx].shader_pipeline_index >= 0)
+                fprintf(f, "%d|%d\n", shader_cue_id, scene->shader_cues[cue_idx].shader_pipeline_index);
+        }
+    }
+    fprintf(f, "\n[shader_pipelines]\n");
+    fprintf(f, "# pipeline_index|name\n");
+    for (int pipeline_index = 0; pipeline_index < editor->project->shader_pipeline_count; ++pipeline_index)
+        fprintf(f, "%d|%s\n", pipeline_index, editor->project->shader_pipelines[pipeline_index].name);
+
+    fprintf(f, "\n[shader_pipeline_passes]\n");
+    fprintf(f, "# pipeline_index|pass_kind|enabled|resolution_scale|source_path\n");
+    for (int pipeline_index = 0; pipeline_index < editor->project->shader_pipeline_count; ++pipeline_index) {
+        const rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+        for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+            const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+            fprintf(f, "%d|%d|%d|%.3f|%s\n", pipeline_index, pass_index,
+                    pass.enabled ? 1 : 0, pass.resolution_scale,
+                    pass.source_path[0] ? pass.source_path : "-");
+        }
+    }
+
+    fprintf(f, "\n[shader_pipeline_channels]\n");
+    fprintf(f, "# pipeline_index|pass_kind|channel_index|channel_kind|asset_path\n");
+    for (int pipeline_index = 0; pipeline_index < editor->project->shader_pipeline_count; ++pipeline_index) {
+        const rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+        for (int pass_index = 0; pass_index < rev::runtime::kMaxShaderPasses; ++pass_index) {
+            for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+                const rev::runtime::ShaderChannel& channel = pipeline.passes[pass_index].channels[channel_index];
+                fprintf(f, "%d|%d|%d|%d|%s\n", pipeline_index, pass_index, channel_index,
+                        channel.kind, channel.asset_path[0] ? channel.asset_path : "-");
+            }
+        }
+    }
     fprintf(f, "\n");
 
     // [post_effects] section. Times are absolute in the exported timeline.
@@ -5583,6 +6033,29 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     }
 
     fprintf(f, "\n");
+    fprintf(f, "[shader_text_cues]\n");
+    fprintf(f, "# text|x|y|size|r|g|b|opacity|mode|alignment|direction|loop|speed|spacing|start|end|fade_in|fade_out|layer|blend|curve_x|curve_y|curve_size|curve_r|curve_g|curve_b|curve_opacity|curve_speed|curve_spacing\n");
+    for (int scene_idx = 0; scene_idx < editor->project->scene_count; ++scene_idx) {
+        SceneBlock* scene = &editor->project->scenes[scene_idx];
+        float scene_start = 0.0f;
+        for (int i = 0; i < scene_idx; ++i) scene_start += editor->project->scenes[i].duration;
+        for (int cue_idx = 0; cue_idx < scene->shader_text_cue_count; ++cue_idx) {
+            ShaderTextCue* cue = &scene->shader_text_cues[cue_idx];
+            char encoded[1024] = {}; char* dst = encoded;
+            for (const char* src = cue->text; *src && dst < encoded + 1022; ++src) {
+                if (*src == '\n') { *dst++ = '\\'; *dst++ = 'n'; } else *dst++ = *src;
+            }
+            fprintf(f, "%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d\n",
+                    encoded, cue->x, cue->y, cue->size, cue->color.r, cue->color.g, cue->color.b,
+                    cue->opacity, cue->mode, cue->alignment, cue->direction, cue->loop_mode,
+                    cue->speed, cue->spacing, scene_start + cue->cue_start, scene_start + cue->cue_end,
+                    cue->fade_in, cue->fade_out, cue->layer_order, cue->blend_mode,
+                    cue->curve_x, cue->curve_y, cue->curve_size,
+                    cue->curve_color_r, cue->curve_color_g, cue->curve_color_b,
+                    cue->curve_opacity, cue->curve_speed, cue->curve_spacing);
+        }
+    }
+    fprintf(f, "\n");
     
     // [music_cues] section
     fprintf(f, "[music_cues]\n");
@@ -5728,6 +6201,7 @@ bool ExportProject(EditorContext* editor, const char* output_path) {
     fprintf(f, "music_loop=%d\n", editor->project->loop_music ? 1 : 0);
     fprintf(f, "music_persist=%d\n", editor->project->music_persist_across_scenes ? 1 : 0);
     fprintf(f, "runtime_fullscreen=%d\n", editor->project->runtime_fullscreen ? 1 : 0);
+    fprintf(f, "runtime_window_divisor=%d\n", editor->project->runtime_window_divisor);
     fprintf(f, "runtime_title=%s\n", editor->project->runtime_title);
     fprintf(f, "audio_gain_enabled=%d\n", editor->project->audio_effects.gain_enabled);
     fprintf(f, "audio_gain_db=%.3f\n", editor->project->audio_effects.gain_db);
@@ -5838,7 +6312,8 @@ bool BuildAndRun(EditorContext* editor) {
         cues_path,
         packed_header_path,
         pack_cache_path,
-        editor->startup_dir
+        editor->project->workspace_path[0] ? editor->project->workspace_path
+                                           : editor->startup_dir
     );
     if (!pack_result.ok) {
         printf("ERROR: Packing failed: %s\n", pack_result.error);
@@ -5986,7 +6461,7 @@ bool PackProject(EditorContext* editor) {
     return true;
 }
 
-bool PackBuildAndRun(EditorContext* editor) {
+static bool PackBuildPacked(EditorContext* editor, bool launch_after_build) {
     if (!editor) return false;
 
     SanitizeWindowsSdkEnvironmentForBuild();
@@ -6039,7 +6514,8 @@ bool PackBuildAndRun(EditorContext* editor) {
         cues_path,              // cues source (project-relative)
         packed_header_path,     // output header (absolute path to build dir)
         pack_cache_path,        // checksum cache next to project
-        editor->startup_dir     // exported cue asset paths are workspace-root-relative
+        editor->project->workspace_path[0] ? editor->project->workspace_path
+                                           : editor->startup_dir
     );
 
     if (!pack_result.ok) {
@@ -6086,6 +6562,19 @@ bool PackBuildAndRun(EditorContext* editor) {
                                                      project_packed_path,
                                                      sizeof(project_packed_path));
 
+    if (!launch_after_build) {
+        if (!copied_packed) {
+            strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                      "Normal packed build succeeded, but project output copy failed.", _TRUNCATE);
+            editor->build_status_timer = 10.0f;
+            return false;
+        }
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                  "Normal packed x64 build complete.", _TRUNCATE);
+        editor->build_status_timer = 5.0f;
+        return true;
+    }
+
     // Step 4: Launch — absolute exe path + cues_path as argv[1]
     strncpy_s(editor->build_status_message, sizeof(editor->build_status_message), "Launching packed intro...", _TRUNCATE);
     editor->build_status_timer = 3.0f;
@@ -6124,6 +6613,92 @@ bool PackBuildAndRun(EditorContext* editor) {
     }
 
     return (run_result == 0);
+}
+
+bool PackBuildAndRun(EditorContext* editor) {
+    return PackBuildPacked(editor, true);
+}
+
+bool BuildCompetitionSize(EditorContext* editor, int size_limit_kb, const char* competition_mode) {
+    if (!editor || size_limit_kb < 1 || !competition_mode) return false;
+
+    SanitizeWindowsSdkEnvironmentForBuild();
+    printf("\n=== Competition Size Build (Crinkler) ===\n");
+
+    char crinkler_path[512] = {};
+    DWORD env_length = GetEnvironmentVariableA("CRINKLER_EXE", crinkler_path,
+                                               (DWORD)sizeof(crinkler_path));
+    if (env_length == 0 || env_length >= sizeof(crinkler_path) ||
+        !FileExists(crinkler_path)) {
+        crinkler_path[0] = '\0';
+        char local_path[512] = {};
+        snprintf(local_path, sizeof(local_path), "%s\\tools\\crinkler\\crinkler.exe",
+                 editor->startup_dir);
+        if (FileExists(local_path)) {
+            strncpy_s(crinkler_path, sizeof(crinkler_path), local_path, _TRUNCATE);
+        } else {
+            DWORD found_length = SearchPathA(nullptr, "crinkler.exe", nullptr,
+                                             (DWORD)sizeof(crinkler_path), crinkler_path, nullptr);
+            if (found_length == 0 || found_length >= sizeof(crinkler_path)) {
+                crinkler_path[0] = '\0';
+            }
+        }
+    }
+
+    if (!crinkler_path[0]) {
+        OPENFILENAMEA ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = (HWND)editor->window->hwnd;
+        ofn.lpstrFile = crinkler_path;
+        ofn.nMaxFile = sizeof(crinkler_path);
+        ofn.lpstrFilter = "Crinkler Executable\0crinkler.exe\0Executable Files\0*.exe\0All Files\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.lpstrTitle = "Locate crinkler.exe";
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+        if (!GetOpenFileNameA(&ofn)) {
+            strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                      "Competition build cancelled: select crinkler.exe to continue.", _TRUNCATE);
+            editor->build_status_timer = 8.0f;
+            return false;
+        }
+    }
+
+    if (!PackBuildPacked(editor, false)) return false;
+
+    char release_dir[512] = {};
+    if (!EnsureProjectOutputReleaseDir(editor, release_dir, sizeof(release_dir))) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                  "Could not create project output directory.", _TRUNCATE);
+        editor->build_status_timer = 10.0f;
+        return false;
+    }
+
+    char command[2048] = {};
+    snprintf(command, sizeof(command),
+             "powershell -NoProfile -ExecutionPolicy Bypass -File \"%s\\tools\\build_crinkler_competition.ps1\" "
+             "-CrinklerPath \"%s\" "
+             "-SourceBuildDirectory \"%s\\build\" -PackedManifestDirectory \"%s\\build\" "
+             "-CompetitionBuildDirectory \"%s\\build\\crinkler-win32\" -OutputDirectory \"%s\" "
+             "-SizeLimitKB %d -CompetitionMode %s",
+             editor->startup_dir, crinkler_path, editor->startup_dir, editor->startup_dir,
+             editor->startup_dir, release_dir, size_limit_kb, competition_mode);
+
+    snprintf(editor->build_status_message, sizeof(editor->build_status_message),
+             "Building Crinkler %d KiB target (%s)...", size_limit_kb, competition_mode);
+    editor->build_status_timer = 8.0f;
+    int result = system(command);
+    if (result != 0) {
+        strncpy_s(editor->build_status_message, sizeof(editor->build_status_message),
+                  "Competition build failed; normal packed output was preserved.", _TRUNCATE);
+        editor->build_status_timer = 12.0f;
+        return false;
+    }
+
+    snprintf(editor->build_status_message, sizeof(editor->build_status_message),
+             "Competition build complete: Crinkler x86 fits %d KiB (%s).",
+             size_limit_kb, competition_mode);
+    editor->build_status_timer = 10.0f;
+    return true;
 }
 
 bool BuildScreenSaver(EditorContext* editor) {
@@ -6183,6 +6758,15 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
     
     strncpy_s(scene->name, sizeof(scene->name), name, _TRUNCATE);
     scene->duration = duration;
+    scene->wipe_type = rev::runtime::SceneWipeNone;
+    scene->wipe_duration = 0.5f;
+    scene->wipe_color[0] = scene->wipe_color[1] = scene->wipe_color[2] = 0.0f;
+    scene->menu = {};
+    scene->menu.wrap = 1;
+    scene->menu.highlight_color[0] = 1.0f;
+    scene->menu.highlight_color[1] = 0.8f;
+    scene->menu.highlight_color[2] = 0.1f;
+    scene->menu.highlight_color[3] = 0.35f;
     
     scene->shader_cues = nullptr;
     scene->shader_cue_count = 0;
@@ -6211,6 +6795,9 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
     scene->scroll_text_cues = nullptr;
     scene->scroll_text_cue_count = 0;
     scene->scroll_text_cue_capacity = 0;
+    scene->shader_text_cues = nullptr;
+    scene->shader_text_cue_count = 0;
+    scene->shader_text_cue_capacity = 0;
     
     scene->music_cues = nullptr;
     scene->music_cue_count = 0;
@@ -6248,6 +6835,13 @@ int AddScene(EditorContext* editor, const char* name, float duration) {
 void DeleteScene(EditorContext* editor, int scene_index) {
     if (!editor || scene_index < 0 || scene_index >= editor->project->scene_count) return;
     
+    for (int si = 0; si < editor->project->scene_count; ++si) {
+        SceneMenu& menu = editor->project->scenes[si].menu;
+        for (int mi = 0; mi < menu.item_count; ++mi) {
+            if (menu.items[mi].target_scene == scene_index) menu.items[mi].target_scene = 0;
+            else if (menu.items[mi].target_scene > scene_index) --menu.items[mi].target_scene;
+        }
+    }
     SceneBlock* scene = &editor->project->scenes[scene_index];
     
     // Update total duration
@@ -6261,6 +6855,7 @@ void DeleteScene(EditorContext* editor, int scene_index) {
     delete[] scene->pixel_emitter_cues;
     delete[] scene->text_cues;
     delete[] scene->scroll_text_cues;
+    delete[] scene->shader_text_cues;
     delete[] scene->music_cues;
     delete[] scene->mesh_cues;
     delete[] scene->post_effects;
@@ -6295,6 +6890,15 @@ void MoveScene(EditorContext* editor, int from_index, int to_index) {
     }
     
     editor->project->scenes[to_index] = temp;
+    for (int si = 0; si < editor->project->scene_count; ++si) {
+        SceneMenu& menu = editor->project->scenes[si].menu;
+        for (int mi = 0; mi < menu.item_count; ++mi) {
+            int& target = menu.items[mi].target_scene;
+            if (target == from_index) target = to_index;
+            else if (from_index < to_index && target > from_index && target <= to_index) --target;
+            else if (from_index > to_index && target >= to_index && target < from_index) ++target;
+        }
+    }
     editor->project->modified = true;
 }
 
@@ -6449,6 +7053,21 @@ int AddScrollTextCue(SceneBlock* scene, const ScrollTextCue& cue) {
     return index;
 }
 
+int AddShaderTextCue(SceneBlock* scene, const ShaderTextCue& cue) {
+    if (!scene) return -1;
+    if (scene->shader_text_cue_count >= scene->shader_text_cue_capacity) {
+        int capacity = scene->shader_text_cue_capacity ? scene->shader_text_cue_capacity * 2 : 4;
+        ShaderTextCue* cues = new ShaderTextCue[capacity];
+        for (int i = 0; i < scene->shader_text_cue_count; ++i) cues[i] = scene->shader_text_cues[i];
+        delete[] scene->shader_text_cues;
+        scene->shader_text_cues = cues;
+        scene->shader_text_cue_capacity = capacity;
+    }
+    int index = scene->shader_text_cue_count++;
+    scene->shader_text_cues[index] = cue;
+    return index;
+}
+
 int AddMusicCue(SceneBlock* scene, const MusicCue& cue) {
     if (!scene) return -1;
     
@@ -6491,6 +7110,12 @@ void DeleteImageCue(SceneBlock* scene, int cue_index) {
 void DeleteAnimatedSpriteCue(SceneBlock* scene, int cue_index) {
     if (!scene || cue_index < 0 || cue_index >= scene->animated_sprite_cue_count) return;
 
+    for (int menu_index = 0; menu_index < scene->menu.item_count; ++menu_index) {
+        rev::runtime::MenuItem& item = scene->menu.items[menu_index];
+        if (item.animated_sprite_cue == cue_index) item.animated_sprite_cue = -1;
+        else if (item.animated_sprite_cue > cue_index) --item.animated_sprite_cue;
+    }
+
     for (int i = cue_index; i < scene->animated_sprite_cue_count - 1; ++i) {
         scene->animated_sprite_cues[i] = scene->animated_sprite_cues[i + 1];
     }
@@ -6531,6 +7156,13 @@ void DeleteScrollTextCue(SceneBlock* scene, int cue_index) {
         scene->scroll_text_cues[i] = scene->scroll_text_cues[i + 1];
     }
     scene->scroll_text_cue_count--;
+}
+
+void DeleteShaderTextCue(SceneBlock* scene, int cue_index) {
+    if (!scene || cue_index < 0 || cue_index >= scene->shader_text_cue_count) return;
+    for (int i = cue_index; i + 1 < scene->shader_text_cue_count; ++i)
+        scene->shader_text_cues[i] = scene->shader_text_cues[i + 1];
+    --scene->shader_text_cue_count;
 }
 
 void DeleteMusicCue(SceneBlock* scene, int cue_index) {
@@ -6910,10 +7542,12 @@ static bool DrawPreviewGlyphRun(rev::shader::Program* program,
     int u_col = rev::shader::GetUniformLocation(program, "u_color_tint");
     int u_rot = rev::shader::GetUniformLocation(program, "u_rotation");
     int u_uv = rev::shader::GetUniformLocation(program, "u_uv_rect");
+    int u_flip_v = rev::shader::GetUniformLocation(program, "u_flip_v");
     if (u_tex >= 0) rev::shader::SetInt(program, u_tex, 0);
     if (u_opa >= 0) rev::shader::SetFloat(program, u_opa, opacity);
     if (u_col >= 0) rev::shader::SetVec3(program, u_col, r, g, b);
     if (u_rot >= 0) rev::shader::SetFloat(program, u_rot, rotation);
+    if (u_flip_v >= 0) rev::shader::SetFloat(program, u_flip_v, 1.0f);
     if (spacing < 0.01f) spacing = 0.01f;
     auto MeasureLineWidth = [&](const unsigned char* line_start) {
         float width = 0.0f;
@@ -7055,15 +7689,18 @@ out vec3 v_frag_pos;
 out vec3 v_normal;
 out vec2 v_uv;
 out vec3 v_noise_pos;
+out vec4 v_light_space_pos;
 uniform mat4 u_model;
 uniform mat4 u_view;
 uniform mat4 u_projection;
+uniform mat4 u_light_matrix;
 void main() {
     vec4 world_pos = u_model * vec4(a_pos, 1.0);
     v_frag_pos = world_pos.xyz;
     v_normal   = mat3(transpose(inverse(u_model))) * a_normal;
     v_uv       = a_uv;
     v_noise_pos = a_pos;
+    v_light_space_pos = u_light_matrix * world_pos;
     gl_Position = u_projection * u_view * world_pos;
 }
 )";
@@ -7074,8 +7711,13 @@ in vec3 v_frag_pos;
 in vec3 v_normal;
 in vec2 v_uv;
 in vec3 v_noise_pos;
+in vec4 v_light_space_pos;
 out vec4 fragColor;
 uniform vec3  u_light_pos;
+uniform vec3  u_light_direction;
+uniform int   u_light_directional;
+uniform sampler2D u_shadow_map;
+uniform int u_shadow_enabled;
 uniform vec3  u_view_pos;
 uniform vec4  u_color;
 uniform float u_metallic;
@@ -7114,6 +7756,19 @@ float material_noise(vec3 p) {
     }
     return norm > 0.0 ? sum / norm : 0.0;
 }
+
+float shadow_visibility(vec3 normal, vec3 light_dir) {
+    if (u_shadow_enabled == 0) return 1.0;
+    vec3 p = v_light_space_pos.xyz / v_light_space_pos.w;
+    p = p * 0.5 + 0.5;
+    if (p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 1.0;
+    float bias = max(0.0015 * (1.0 - dot(normal, light_dir)), 0.0003);
+    vec2 texel = 1.0 / vec2(textureSize(u_shadow_map, 0));
+    float visible = 0.0;
+    for (int x=-1;x<=1;++x) for(int y=-1;y<=1;++y)
+        visible += p.z - bias <= texture(u_shadow_map, p.xy + vec2(x,y)*texel).r ? 1.0 : 0.0;
+    return visible / 9.0;
+}
 void main() {
     vec3  base = u_color.rgb;
     float alpha = u_color.a;
@@ -7127,7 +7782,7 @@ void main() {
     float material_roughness = u_noise_target == 2
         ? mix(u_roughness, noise_value, u_noise_strength) : u_roughness;
     vec3  norm     = normalize(v_normal);
-    vec3  ldir     = normalize(u_light_pos - v_frag_pos);
+    vec3  ldir     = u_light_directional != 0 ? normalize(-u_light_direction) : normalize(u_light_pos - v_frag_pos);
     vec3  vdir     = normalize(u_view_pos  - v_frag_pos);
     vec3  hdir     = normalize(ldir + vdir);
     // Ambient
@@ -7141,7 +7796,8 @@ void main() {
     vec3  spec        = spec_col * spec_fac * (1.0 - material_roughness * 0.85);
     vec3  emissive    = u_emissive_color * u_emissive_strength;
     if (u_noise_target == 3) emissive *= mix(1.0, noise_value, u_noise_strength);
-    vec3  result      = base * (ambient + diff) + spec + emissive;
+    float visibility  = shadow_visibility(norm, ldir);
+    vec3  result      = base * (ambient + diff * visibility) + spec * visibility + emissive;
     fragColor = vec4(result, alpha);
 }
 )";
@@ -7151,6 +7807,268 @@ void main() {
 
 static rev::shader::Program* g_preview_shader_cache[128] = {};
 static rev::shader::Program* g_asset_shader_cache[128] = {};
+static rev::mesh::ShadowMap g_preview_mesh_shadow = {};
+
+struct PreviewPipelinePassState {
+    rev::shader::Program* program;
+    unsigned int fbos[2];
+    unsigned int textures[2];
+    int width;
+    int height;
+    int front;
+};
+
+struct PreviewPipelineState {
+    bool initialized;
+    bool valid;
+    uint32_t fingerprint;
+    int order[rev::runtime::kMaxShaderPasses];
+    int order_count;
+    PreviewPipelinePassState passes[rev::runtime::kMaxShaderPasses];
+};
+
+static PreviewPipelineState g_preview_pipeline_cache[rev::runtime::kMaxShaderPipelines] = {};
+static unsigned int g_preview_shader_audio_texture = 0;
+static int g_preview_shader_audio_frame = -1;
+
+static unsigned int UpdatePreviewShaderAudioTexture(EditorContext* editor, int frame) {
+    if (g_preview_shader_audio_texture && g_preview_shader_audio_frame == frame)
+        return g_preview_shader_audio_texture;
+    float samples[rev::runtime::kShaderAudioSampleFrames * 2] = {};
+    EditorAudioState* audio = editor ? (EditorAudioState*)editor->audio_state : nullptr;
+    if (audio) {
+        std::lock_guard<std::mutex> lock(audio->shader_audio_mutex);
+        memcpy(samples, audio->shader_audio_samples, sizeof(samples));
+    }
+    unsigned char pixels[rev::runtime::kShaderAudioTextureWidth * 2] = {};
+    rev::runtime::BuildShaderAudioTexture(samples, rev::runtime::kShaderAudioSampleFrames, pixels);
+    if (!g_preview_shader_audio_texture) {
+        glGenTextures(1, &g_preview_shader_audio_texture);
+        glBindTexture(GL_TEXTURE_2D, g_preview_shader_audio_texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, 0x8229, rev::runtime::kShaderAudioTextureWidth, 2,
+                     0, 0x1903, GL_UNSIGNED_BYTE, pixels);
+    } else {
+        glBindTexture(GL_TEXTURE_2D, g_preview_shader_audio_texture);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, rev::runtime::kShaderAudioTextureWidth, 2,
+                        0x1903, GL_UNSIGNED_BYTE, pixels);
+    }
+    g_preview_shader_audio_frame = frame;
+    return g_preview_shader_audio_texture;
+}
+
+static uint32_t HashPreviewPipeline(const rev::runtime::ShaderPipeline& pipeline, int width, int height) {
+    uint32_t hash = 2166136261u;
+    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&pipeline);
+    for (size_t i = 0; i < sizeof(pipeline); ++i) {
+        hash ^= bytes[i];
+        hash *= 16777619u;
+    }
+    hash ^= (uint32_t)width;
+    hash *= 16777619u;
+    hash ^= (uint32_t)height;
+    hash *= 16777619u;
+    return hash;
+}
+
+static void DestroyPreviewPipelineState(PreviewPipelineState* state) {
+    if (!state) return;
+    typedef void (*PFNGLDELETEFRAMEBUFFERSPROC)(int, const unsigned int*);
+    auto glDeleteFramebuffers =
+        (PFNGLDELETEFRAMEBUFFERSPROC)wglGetProcAddress("glDeleteFramebuffers");
+    for (PreviewPipelinePassState& pass : state->passes) {
+        if (pass.program) rev::shader::DestroyProgram(pass.program);
+        if (pass.textures[0] || pass.textures[1]) glDeleteTextures(2, pass.textures);
+        if (glDeleteFramebuffers && (pass.fbos[0] || pass.fbos[1]))
+            glDeleteFramebuffers(2, pass.fbos);
+    }
+    *state = {};
+}
+
+void InvalidatePreviewShaderPipeline(int pipeline_index) {
+    if (pipeline_index < 0 || pipeline_index >= rev::runtime::kMaxShaderPipelines) return;
+    DestroyPreviewPipelineState(&g_preview_pipeline_cache[pipeline_index]);
+}
+
+static bool LoadPreviewPipelineSource(EditorContext* editor, const char* declared_path,
+                                      std::string* source) {
+    if (!editor || !editor->project || !declared_path || !declared_path[0] || !source) return false;
+    char resolved[640] = {};
+    if (strchr(declared_path, ':') || declared_path[0] == '\\' || declared_path[0] == '/') {
+        strncpy_s(resolved, declared_path, _TRUNCATE);
+    } else {
+        if (editor->project->workspace_path[0])
+            snprintf(resolved, sizeof(resolved), "%s\\%s", editor->project->workspace_path, declared_path);
+        if (!FileExists(resolved) && editor->project->assets_path[0])
+            snprintf(resolved, sizeof(resolved), "%s\\%s", editor->project->assets_path, declared_path);
+    }
+    if (!resolved[0] || !FileExists(resolved)) return false;
+    FILE* file = nullptr;
+    fopen_s(&file, resolved, "rb");
+    if (!file) return false;
+    fseek(file, 0, SEEK_END);
+    const long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    if (size <= 0) { fclose(file); return false; }
+    source->resize((size_t)size);
+    const bool ok = fread(&(*source)[0], 1, (size_t)size, file) == (size_t)size;
+    fclose(file);
+    return ok;
+}
+
+static bool EnsurePreviewPipeline(EditorContext* editor, int pipeline_index) {
+    if (!editor || !editor->project || pipeline_index < 0 ||
+        pipeline_index >= editor->project->shader_pipeline_count ||
+        pipeline_index >= rev::runtime::kMaxShaderPipelines) return false;
+    const rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+    PreviewPipelineState& state = g_preview_pipeline_cache[pipeline_index];
+    const uint32_t fingerprint = HashPreviewPipeline(pipeline, editor->preview_width, editor->preview_height);
+    if (state.initialized && state.fingerprint == fingerprint) return state.valid;
+    DestroyPreviewPipelineState(&state);
+    state.initialized = true;
+    state.fingerprint = fingerprint;
+
+    typedef void (*PFNGLGENFRAMEBUFFERSPROC)(int, unsigned int*);
+    typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int, unsigned int);
+    typedef void (*PFNGLFRAMEBUFFERTEXTURE2DPROC)(unsigned int, unsigned int, unsigned int, unsigned int, int);
+    typedef unsigned int (*PFNGLCHECKFRAMEBUFFERSTATUSPROC)(unsigned int);
+    auto glGenFramebuffers = (PFNGLGENFRAMEBUFFERSPROC)wglGetProcAddress("glGenFramebuffers");
+    auto glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)wglGetProcAddress("glBindFramebuffer");
+    auto glFramebufferTexture2D = (PFNGLFRAMEBUFFERTEXTURE2DPROC)wglGetProcAddress("glFramebufferTexture2D");
+    auto glCheckFramebufferStatus = (PFNGLCHECKFRAMEBUFFERSTATUSPROC)wglGetProcAddress("glCheckFramebufferStatus");
+    if (!glGenFramebuffers || !glBindFramebuffer || !glFramebufferTexture2D || !glCheckFramebufferStatus)
+        return false;
+
+    char error[256] = {};
+    state.order_count = rev::runtime::BuildShaderPassOrder(&pipeline, state.order, error, sizeof(error));
+    if (state.order_count <= 0) return false;
+    state.valid = true;
+    for (int order_index = 0; state.valid && order_index < state.order_count; ++order_index) {
+        const int pass_index = state.order[order_index];
+        const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+        PreviewPipelinePassState& target = state.passes[pass_index];
+        std::string source;
+        if (!LoadPreviewPipelineSource(editor, pass.source_path, &source)) { state.valid = false; break; }
+        target.program = rev::shader::CompileFromSource(preview_vertex_shader, source.c_str());
+        if (!target.program) { state.valid = false; break; }
+        target.width = (int)(editor->preview_width * pass.resolution_scale);
+        target.height = (int)(editor->preview_height * pass.resolution_scale);
+        if (target.width < 1) target.width = 1;
+        if (target.height < 1) target.height = 1;
+        glGenFramebuffers(2, target.fbos);
+        glGenTextures(2, target.textures);
+        for (int buffer = 0; buffer < 2; ++buffer) {
+            glBindTexture(GL_TEXTURE_2D, target.textures[buffer]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, target.width, target.height,
+                         0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glBindFramebuffer(0x8D40, target.fbos[buffer]);
+            glFramebufferTexture2D(0x8D40, 0x8CE0, GL_TEXTURE_2D, target.textures[buffer], 0);
+            if (glCheckFramebufferStatus(0x8D40) != 0x8CD5) state.valid = false;
+            glClearColor(0, 0, 0, 0);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
+    }
+    glBindFramebuffer(0x8D40, editor->preview_fbo);
+    glViewport(0, 0, editor->preview_width, editor->preview_height);
+    return state.valid;
+}
+
+static bool RenderPreviewPipeline(EditorContext* editor, int pipeline_index, float time,
+                                  float time_delta, int frame, bool blend_layer,
+                                  int blend_mode, float opacity) {
+    if (!EnsurePreviewPipeline(editor, pipeline_index) || !editor->sprite_shader) return false;
+    typedef void (*PFNGLBINDFRAMEBUFFERPROC)(unsigned int, unsigned int);
+    typedef void (*PFNGLACTIVETEXTUREPROC)(unsigned int);
+    auto glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)wglGetProcAddress("glBindFramebuffer");
+    auto glActiveTexture = (PFNGLACTIVETEXTUREPROC)wglGetProcAddress("glActiveTexture");
+    if (!glBindFramebuffer || !glActiveTexture) return false;
+    PreviewPipelineState& state = g_preview_pipeline_cache[pipeline_index];
+    const rev::runtime::ShaderPipeline& pipeline = editor->project->shader_pipelines[pipeline_index];
+    for (int order_index = 0; order_index < state.order_count; ++order_index) {
+        const int pass_index = state.order[order_index];
+        const rev::runtime::ShaderPass& pass = pipeline.passes[pass_index];
+        PreviewPipelinePassState& target = state.passes[pass_index];
+        const int previous = target.front;
+        const int destination = 1 - previous;
+        glBindFramebuffer(0x8D40, target.fbos[destination]);
+        glViewport(0, 0, target.width, target.height);
+        glDisable(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        rev::shader::Use(target.program);
+        rev::shader::SetVec3(target.program, rev::shader::GetUniformLocation(target.program, "iResolution"),
+                             (float)target.width, (float)target.height, 1.0f);
+        rev::shader::SetFloat(target.program, rev::shader::GetUniformLocation(target.program, "iTime"), time);
+        rev::shader::SetFloat(target.program, rev::shader::GetUniformLocation(target.program, "iTimeDelta"), time_delta);
+        rev::shader::SetInt(target.program, rev::shader::GetUniformLocation(target.program, "iFrame"), frame);
+        rev::shader::SetVec4(target.program, rev::shader::GetUniformLocation(target.program, "iMouse"), 0, 0, 0, 0);
+        for (int channel_index = 0; channel_index < rev::runtime::kMaxShaderChannels; ++channel_index) {
+            const rev::runtime::ShaderChannel& channel = pass.channels[channel_index];
+            unsigned int texture = 0;
+            if (channel.kind == rev::runtime::ShaderChannelTexture)
+                texture = GetEditorNoiseTexture(editor, channel.asset_path);
+            else if (channel.kind >= rev::runtime::ShaderChannelBufferA &&
+                     channel.kind <= rev::runtime::ShaderChannelBufferD) {
+                const int source_index = channel.kind - rev::runtime::ShaderChannelBufferA + rev::runtime::ShaderPassBufferA;
+                PreviewPipelinePassState& source = state.passes[source_index];
+                texture = source.textures[source.front];
+            } else if (channel.kind == rev::runtime::ShaderChannelSelfPreviousFrame) {
+                texture = target.textures[previous];
+            } else if (channel.kind == rev::runtime::ShaderChannelAudioSpectrum) {
+                texture = UpdatePreviewShaderAudioTexture(editor, frame);
+            }
+            glActiveTexture(0x84C0u + (unsigned int)channel_index);
+            glBindTexture(GL_TEXTURE_2D, texture);
+            char uniform_name[24] = {};
+            snprintf(uniform_name, sizeof(uniform_name), "iChannel%d", channel_index);
+            rev::shader::SetInt(target.program,
+                                rev::shader::GetUniformLocation(target.program, uniform_name), channel_index);
+        }
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        target.front = destination;
+    }
+
+    PreviewPipelinePassState& image = state.passes[rev::runtime::ShaderPassImage];
+    glBindFramebuffer(0x8D40, editor->preview_fbo);
+    glViewport(0, 0, editor->preview_width, editor->preview_height);
+    if (blend_layer) {
+        glEnable(GL_BLEND);
+        ApplyShaderLayerBlendMode(blend_mode, opacity);
+    } else if (opacity < 0.9999f) {
+        // The bottom pipeline layer is drawn over the cleared scene. It still
+        // needs alpha compositing for cue opacity and fade envelopes to affect
+        // RGB; writing a reduced source alpha with blending disabled does not.
+        glEnable(GL_BLEND);
+        ApplyShaderLayerBlendMode(0, opacity);
+    } else {
+        glDisable(GL_BLEND);
+    }
+    rev::shader::Program* sprite = (rev::shader::Program*)editor->sprite_shader;
+    rev::shader::Use(sprite);
+    rev::shader::SetVec2(sprite, rev::shader::GetUniformLocation(sprite, "u_position"), 0, 0);
+    rev::shader::SetVec2(sprite, rev::shader::GetUniformLocation(sprite, "u_size"), 1, 1);
+    rev::shader::SetFloat(sprite, rev::shader::GetUniformLocation(sprite, "u_rotation"), 0);
+    rev::shader::SetFloat(sprite, rev::shader::GetUniformLocation(sprite, "u_opacity"), opacity);
+    rev::shader::SetVec3(sprite, rev::shader::GetUniformLocation(sprite, "u_color_tint"), 1, 1, 1);
+    rev::shader::SetVec4(sprite, rev::shader::GetUniformLocation(sprite, "u_uv_rect"), 0, 0, 1, 1);
+    rev::shader::SetFloat(sprite, rev::shader::GetUniformLocation(sprite, "u_flip_v"), 0);
+    glActiveTexture(0x84C0);
+    glBindTexture(GL_TEXTURE_2D, image.textures[image.front]);
+    rev::shader::SetInt(sprite, rev::shader::GetUniformLocation(sprite, "u_texture"), 0);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    // The shared sprite shader expects normal image/text atlas orientation
+    // outside this FBO composite. Do not leak the pipeline's render-target flip.
+    rev::shader::SetFloat(sprite, rev::shader::GetUniformLocation(sprite, "u_flip_v"), 1.0f);
+    return true;
+}
 
 static rev::shader::Program* GetOrCompilePreviewShaderProgram(int shader_id) {
     if (shader_id < 0 || shader_id >= g_shader_preset_count) return nullptr;
@@ -7273,6 +8191,52 @@ static void RenderAssetShaderOverlays(const AssetShader* shaders, int shader_cou
     }
 }
 
+static void DrawPreviewShaderText(rev::shader::Program* program, const ShaderTextCue& cue,
+                                  float time, float width, float height,
+                                  const rev::curve::Curve* curves, int curve_count) {
+    if (!program || !cue.text[0]) return;
+    float local = time - cue.cue_start;
+    auto Evaluate = [&](int curve_index, float fallback) {
+        if (!curves || curve_index < 0 || curve_index >= curve_count || local < 0.0f) return fallback;
+        const rev::curve::Curve& curve = curves[curve_index];
+        return curve.duration > 0.0f ? rev::curve::Evaluate(curve, local / curve.duration) : fallback;
+    };
+    const float x = Evaluate(cue.curve_x, cue.x);
+    const float y = Evaluate(cue.curve_y, cue.y);
+    const float size = Evaluate(cue.curve_size, cue.size);
+    const float speed = Evaluate(cue.curve_speed, cue.speed);
+    const float spacing = Evaluate(cue.curve_spacing, cue.spacing);
+    const float color_r = Evaluate(cue.curve_color_r, cue.color.r);
+    const float color_g = Evaluate(cue.curve_color_g, cue.color.g);
+    const float color_b = Evaluate(cue.curve_color_b, cue.color.b);
+    float alpha = Evaluate(cue.curve_opacity, cue.opacity);
+    if (cue.fade_in > 0.0f && local < cue.fade_in) alpha *= local / cue.fade_in;
+    if (cue.fade_out > 0.0f && cue.cue_end - time < cue.fade_out) alpha *= (cue.cue_end - time) / cue.fade_out;
+    const float viewport_scale = rev::runtime::ComputeTextViewportScale(width, height);
+    const float glyph_height = size * viewport_scale;
+    float glyph_width = glyph_height * 5.0f / 7.0f;
+    float advance = glyph_height * 6.0f / 7.0f * (spacing > 0.01f ? spacing : 0.01f);
+    size_t length = strlen(cue.text);
+    float text_width = length ? advance * (float)length - advance + glyph_width : 0.0f;
+    float cursor = x * width;
+    if (cue.mode == 0) cursor -= cue.alignment == 1 ? text_width * 0.5f : cue.alignment == 2 ? text_width : 0.0f;
+    else { float travel = width + text_width, moved = local * speed * viewport_scale; if (cue.loop_mode == 0 && travel > 0.0f) moved = fmodf(moved, travel); else if (moved > travel) moved = travel; cursor = cue.direction == 1 ? -text_width + moved : width - moved; }
+    rev::shader::Use(program);
+    int up = rev::shader::GetUniformLocation(program, "u_position");
+    rev::shader::SetVec2(program, rev::shader::GetUniformLocation(program, "u_size"), glyph_width / width, glyph_height / height);
+    rev::shader::SetVec4(program, rev::shader::GetUniformLocation(program, "u_color"), color_r, color_g, color_b, alpha);
+    int rows[7]; for (int r = 0; r < 7; ++r) { char name[16]; sprintf_s(name, "u_rows[%d]", r); rows[r] = rev::shader::GetUniformLocation(program, name); }
+    for (size_t i = 0; i < length; ++i, cursor += advance) {
+        float center = cursor + glyph_width * 0.5f;
+        if (center + glyph_width * 0.5f < 0 || center - glyph_width * 0.5f > width) continue;
+        unsigned int packed, last; rev::runtime::GetShaderTextGlyph((unsigned char)cue.text[i], &packed, &last);
+        for (int r = 0; r < 6; ++r) rev::shader::SetFloat(program, rows[r], (float)((packed >> (r * 5)) & 31u));
+        rev::shader::SetFloat(program, rows[6], (float)(last & 31u));
+        rev::shader::SetVec2(program, up, center / width * 2.0f - 1.0f, 1.0f - y * 2.0f);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+}
+
 void InitializePreview(EditorContext* editor, int width, int height) {
     if (!editor || editor->preview_initialized) return;
     
@@ -7388,6 +8352,9 @@ void InitializePreview(EditorContext* editor, int width, int height) {
     rev::shader::SetVec4((rev::shader::Program*)editor->sprite_shader,
                          rev::shader::GetUniformLocation((rev::shader::Program*)editor->sprite_shader, "u_uv_rect"),
                          0.0f, 0.0f, 1.0f, 1.0f);
+    editor->shader_text_shader = rev::shader::CompileFromSource(
+        rev::runtime::GetShaderTextVertexSource(), rev::runtime::GetShaderTextFragmentSource());
+    if (!editor->shader_text_shader) { CleanupPreview(editor); return; }
 
     editor->post_shader = rev::shader::CompileFromSource(preview_vertex_shader, GetPostEffectFragmentSource());
     if (!editor->post_shader) {
@@ -7436,6 +8403,11 @@ void CleanupPreview(EditorContext* editor) {
         rev::shader::DestroyProgram((rev::shader::Program*)editor->mesh_shader);
         editor->mesh_shader = nullptr;
     }
+    if (editor->shader_text_shader) {
+        rev::shader::DestroyProgram((rev::shader::Program*)editor->shader_text_shader);
+        editor->shader_text_shader = nullptr;
+    }
+    rev::mesh::DestroyShadowMap(&g_preview_mesh_shadow);
     if (editor->post_shader) {
         rev::shader::DestroyProgram((rev::shader::Program*)editor->post_shader);
         editor->post_shader = nullptr;
@@ -7495,6 +8467,13 @@ void CleanupPreview(EditorContext* editor) {
             g_preview_shader_cache[i] = nullptr;
         }
     }
+    for (PreviewPipelineState& state : g_preview_pipeline_cache)
+        DestroyPreviewPipelineState(&state);
+    if (g_preview_shader_audio_texture) {
+        glDeleteTextures(1, &g_preview_shader_audio_texture);
+        g_preview_shader_audio_texture = 0;
+    }
+    g_preview_shader_audio_frame = -1;
 
     editor->preview_initialized = false;
 }
@@ -7604,8 +8583,10 @@ void RenderPreviewFrame(EditorContext* editor) {
             ShaderCue* cue = layers[li].cue;
             if (!cue) continue;
 
-            rev::shader::Program* prog = GetOrCompilePreviewShaderProgram(cue->shader_scene_id);
-            if (!prog) continue;
+            rev::shader::Program* prog = nullptr;
+            if (cue->shader_pipeline_index < 0)
+                prog = GetOrCompilePreviewShaderProgram(cue->shader_scene_id);
+            if (cue->shader_pipeline_index < 0 && !prog) continue;
 
             float speed = cue->speed;
             float intensity = cue->intensity;
@@ -7701,6 +8682,7 @@ void RenderPreviewFrame(EditorContext* editor) {
             }
 
             float envelope = ComputeShaderCueEnvelope(local_time, cue_duration, cue->fade_in, cue->fade_out);
+            float composite_opacity = Clamp01(opacity * envelope);
             float exposure = exposure_base + exposure_ramp * local_time;
             float fade = (fade_base + fade_ramp * local_time) * envelope;
             if (exposure < 0.0f) exposure = 0.0f;
@@ -7716,10 +8698,28 @@ void RenderPreviewFrame(EditorContext* editor) {
             // Fold layer opacity into fade for shaders that use fade as alpha/intensity.
             fade *= opacity;
 
+            if (cue->shader_pipeline_index >= 0 &&
+                RenderPreviewPipeline(editor, cue->shader_pipeline_index, editor->current_time,
+                                      1.0f / 60.0f, (int)(editor->current_time * 60.0f),
+                                      li != 0, cue->blend_mode, composite_opacity)) {
+                continue;
+            }
+
+            if (!prog) prog = GetOrCompilePreviewShaderProgram(cue->shader_scene_id);
+            if (!prog) continue;
+
             rev::shader::Use(prog);
             rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_time"), editor->current_time);
             rev::shader::SetVec2(prog, rev::shader::GetUniformLocation(prog, "u_resolution"),
                                  (float)editor->preview_width, (float)editor->preview_height);
+            rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "iResolution"),
+                                 (float)editor->preview_width, (float)editor->preview_height, 1.0f);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "iTime"), editor->current_time);
+            rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "iTimeDelta"), 1.0f / 60.0f);
+            rev::shader::SetInt(prog, rev::shader::GetUniformLocation(prog, "iFrame"),
+                                (int)(editor->current_time * 60.0f));
+            rev::shader::SetVec4(prog, rev::shader::GetUniformLocation(prog, "iMouse"),
+                                 0.0f, 0.0f, 0.0f, 0.0f);
             rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_low"),
                                  palette_low[0], palette_low[1], palette_low[2]);
             rev::shader::SetVec3(prog, rev::shader::GetUniformLocation(prog, "u_palette_mid"),
@@ -7758,6 +8758,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                     glBindTexture(GL_TEXTURE_2D, texture_id);
                     char uniform_name[32] = {};
                     snprintf(uniform_name, sizeof(uniform_name), "u_noise_map_%d", map_index);
+                    rev::shader::SetTextureUnit(prog,
+                        rev::shader::GetUniformLocation(prog, uniform_name), 4 + map_index);
+                    snprintf(uniform_name, sizeof(uniform_name), "iChannel%d", map_index);
                     rev::shader::SetTextureUnit(prog,
                         rev::shader::GetUniformLocation(prog, uniform_name), 4 + map_index);
                 }
@@ -7832,7 +8835,15 @@ void RenderPreviewFrame(EditorContext* editor) {
         int sp_col = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_color_tint") : -1;
 
         // Build unified draw list: type 0=image 1=text 2=mesh 3=scroll text 4=animated sprite 5=pixel 6=emitter
-        struct DrawItem { int type; void* cue; int layer_order; float scene_start_time; };
+        struct DrawItem {
+            int type;
+            void* cue;
+            int layer_order;
+            float scene_start_time;
+            const rev::runtime::MenuItem* menu_item = nullptr;
+            int menu_item_index = -1;
+            const rev::runtime::SceneMenu* menu = nullptr;
+        };
         static const int kMaxItems = 512;
         DrawItem items[kMaxItems];
         int item_count = 0;
@@ -7862,8 +8873,20 @@ void RenderPreviewFrame(EditorContext* editor) {
                 bool time_in_range = is_last_scene
                     ? (editor->current_time >= absolute_start && editor->current_time <= absolute_end)
                     : (editor->current_time >= absolute_start && editor->current_time < absolute_end);
-                if (time_in_range && cue->frame_keys_csv[0])
-                    items[item_count++] = { 4, cue, cue->layer_order, item_scene_start };
+                if (time_in_range && cue->frame_keys_csv[0]) {
+                    int menu_instance_count = 0;
+                    if (scene->menu.enabled) {
+                        for (int menu_index = 0; menu_index < scene->menu.item_count && item_count < kMaxItems; ++menu_index) {
+                            const rev::runtime::MenuItem& menu_item = scene->menu.items[menu_index];
+                            if (menu_item.visual_type == 1 && menu_item.animated_sprite_cue == i) {
+                                items[item_count++] = { 4, cue, cue->layer_order, item_scene_start, &menu_item, menu_index, &scene->menu };
+                                ++menu_instance_count;
+                            }
+                        }
+                    }
+                    if (menu_instance_count == 0 && item_count < kMaxItems)
+                        items[item_count++] = { 4, cue, cue->layer_order, item_scene_start };
+                }
             }
             for (int i = 0; i < scene->pixel_cue_count && item_count < kMaxItems; i++) {
                 PixelCue* cue = &scene->pixel_cues[i];
@@ -7909,6 +8932,13 @@ void RenderPreviewFrame(EditorContext* editor) {
                 if (time_in_range && cue->text[0])
                     items[item_count++] = { 3, cue, cue->layer_order, item_scene_start };
             }
+            for (int i = 0; i < scene->shader_text_cue_count && item_count < kMaxItems; ++i) {
+                ShaderTextCue* cue = &scene->shader_text_cues[i];
+                float absolute_start = item_scene_start + cue->cue_start;
+                float absolute_end = item_scene_start + cue->cue_end;
+                if (editor->current_time >= absolute_start && editor->current_time <= absolute_end && cue->text[0])
+                    items[item_count++] = { 7, cue, cue->layer_order, item_scene_start };
+            }
             for (int i = 0; i < scene->mesh_cue_count && item_count < kMaxItems; i++) {
                 MeshCue* cue = &scene->mesh_cues[i];
                 float end = (cue->cue_end < 0.0f) ? scene->duration : cue->cue_end;
@@ -7946,6 +8976,18 @@ void RenderPreviewFrame(EditorContext* editor) {
         for (int idx = 0; idx < item_count; idx++) {
             DrawItem& item = items[idx];
             glDisable(GL_CULL_FACE);
+
+            if (item.type == 7) {
+                glDisable(GL_DEPTH_TEST);
+                glEnable(GL_BLEND);
+                ShaderTextCue* cue = (ShaderTextCue*)item.cue;
+                ApplySpriteBlendMode(cue->blend_mode);
+                DrawPreviewShaderText((rev::shader::Program*)editor->shader_text_shader, *cue,
+                                      editor->current_time - item.scene_start_time,
+                                      (float)editor->preview_width, (float)editor->preview_height,
+                                      editor->project->curves, editor->project->curve_count);
+                continue;
+            }
 
             if (item.type == 0 || item.type == 1 || item.type == 3 || item.type == 4 || item.type == 5 || item.type == 6) {
                 // Sprite (image, text, scroll text, animated sprite)
@@ -8311,8 +9353,10 @@ void RenderPreviewFrame(EditorContext* editor) {
                     rev::runtime::ImageTexture rt_img{};
                     if (!rev::runtime::LoadImageTexture(full_path, &rt_img)) continue;
                     tex    = rt_img.texture_id;
-                    norm_w = (rt_img.width  * anim_scale) / editor->preview_width  * 2.0f;
-                    norm_h = (rt_img.height * anim_scale) / editor->preview_height * 2.0f;
+                    const float viewport_scale = rev::runtime::ComputeAuthoredViewportScale(
+                        (float)editor->preview_width, (float)editor->preview_height);
+                    norm_w = (rt_img.width  * anim_scale * viewport_scale) / editor->preview_width  * 2.0f;
+                    norm_h = (rt_img.height * anim_scale * viewport_scale) / editor->preview_height * 2.0f;
                     pos_x  =  (anim_x * 2.0f) - 1.0f;
                     pos_y  = -((anim_y * 2.0f) - 1.0f);
                     rotation = anim_rotation;
@@ -8327,7 +9371,6 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float anim_scale = cue->scale;
                     float anim_rotation = cue->rotation;
                     float anim_opacity = cue->opacity;
-                    float anim_frame = (float)cue->start_frame;
 
                     float absolute_cue_start = item.scene_start_time + cue->cue_start;
                     float elapsed_time = editor->current_time - absolute_cue_start;
@@ -8357,11 +9400,18 @@ void RenderPreviewFrame(EditorContext* editor) {
                             float t = elapsed_time / curve->duration;
                             anim_opacity = rev::curve::Evaluate(*curve, t);
                         }
-                        if (cue->curve_frame >= 0 && cue->curve_frame < editor->project->curve_count) {
-                            rev::curve::Curve* curve = &editor->project->curves[cue->curve_frame];
-                            float t = elapsed_time / curve->duration;
-                            anim_frame = rev::curve::Evaluate(*curve, t);
-                        }
+                    }
+
+                    if (item.menu_item) {
+                        anim_x = item.menu_item->image_x;
+                        anim_y = item.menu_item->image_y;
+                    }
+
+                    float frame_elapsed_time = elapsed_time;
+                    if (item.menu) {
+                        int selected = item.menu->initial_item;
+                        if (selected < 0 || selected >= item.menu->item_count) selected = 0;
+                        if (item.menu_item_index != selected) frame_elapsed_time = 0.0f;
                     }
 
                     int frame_count = 0;
@@ -8372,8 +9422,8 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (frame_count <= 0) continue;
 
                     int frame_idx = cue->start_frame;
-                    if (cue->fps > 0.0f && elapsed_time > 0.0f) {
-                        float frame_f = elapsed_time * cue->fps;
+                    if (cue->fps > 0.0f && frame_elapsed_time > 0.0f) {
+                        float frame_f = frame_elapsed_time * cue->fps;
                         if (cue->playback_mode == 1) {
                             int once_idx = (int)frame_f;
                             if (once_idx >= frame_count) once_idx = frame_count - 1;
@@ -8392,7 +9442,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                         }
                     }
                     if (cue->curve_frame >= 0 && cue->curve_frame < editor->project->curve_count) {
-                        frame_idx = (int)anim_frame;
+                        rev::curve::Curve* curve = &editor->project->curves[cue->curve_frame];
+                        float t = curve->duration > 0.0f ? frame_elapsed_time / curve->duration : 0.0f;
+                        frame_idx = (int)rev::curve::Evaluate(*curve, t);
                     }
                     if (frame_idx < 0) frame_idx = 0;
                     if (frame_idx >= frame_count) frame_idx = frame_count - 1;
@@ -8696,11 +9748,14 @@ void RenderPreviewFrame(EditorContext* editor) {
                     float scene_time = editor->current_time - item.scene_start_time;
                     rev::runtime::TextGlyphAtlas* atlas = EnsurePreviewAtlas(editor, true,
                         cue->font_name, cue->size);
-                    float size_scale = cue->size > 0.0f ? anim_size / cue->size : 1.0f;
+                    const float viewport_text_scale = rev::runtime::ComputeTextViewportScale(
+                        (float)editor->preview_width, (float)editor->preview_height);
+                    float size_scale = (cue->size > 0.0f ? anim_size / cue->size : 1.0f) *
+                        viewport_text_scale;
                     float travel = rev::runtime::ComputeScrollTextTravel(
                         atlas, cue->text, cue->direction, size_scale, cue->spacing,
                         cue->wrap_gap, (float)editor->preview_width,
-                        (float)editor->preview_height);
+                        (float)editor->preview_height, anim_x, anim_y, cue->loop_mode);
                     float wrapped = elapsed_time * anim_speed;
                     if (cue->loop_mode == 0) {
                         float speed_abs = fabsf(anim_speed);
@@ -8739,7 +9794,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (effective_size < 4.0f) effective_size = 4.0f;
 
                     char scroll_text_buffer[512] = {};
-                    if (cue->direction <= 1) {
+                    if (cue->direction <= 1 && cue->loop_mode == 0) {
                         snprintf(scroll_text_buffer, sizeof(scroll_text_buffer), "%s   %s", cue->text, cue->text);
                     } else {
                         strncpy_s(scroll_text_buffer, sizeof(scroll_text_buffer), cue->text, _TRUNCATE);
@@ -8757,7 +9812,7 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (atlas && glActiveTexture_fn) glActiveTexture_fn(0x84C0);
                     if (atlas && DrawPreviewGlyphRun(sprite_prog, atlas, scroll_text_buffer,
                         scroll_x - jitter_x, scroll_y - jitter_y - wave_offset,
-                        cue->size > 0.0f ? effective_size / cue->size : 1.0f,
+                        (cue->size > 0.0f ? effective_size / cue->size : 1.0f) * viewport_text_scale,
                         cue->spacing, scroll_opacity,
                         draw_r, draw_g, draw_b,
                         (float)editor->preview_width, (float)editor->preview_height,
@@ -8802,6 +9857,18 @@ void RenderPreviewFrame(EditorContext* editor) {
                     layer_effect_count = cue->post_effect_count;
                 }
 
+                if (sp_col >= 0) {
+                    int preview_menu_selection = item.menu ? item.menu->initial_item : -1;
+                    if (item.menu && (preview_menu_selection < 0 || preview_menu_selection >= item.menu->item_count))
+                        preview_menu_selection = 0;
+                    if (item.type == 4 && item.menu && item.menu_item_index == preview_menu_selection) {
+                        rev::shader::SetVec3(sprite_prog, sp_col, item.menu->highlight_color[0],
+                                             item.menu->highlight_color[1], item.menu->highlight_color[2]);
+                    } else {
+                        rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
+                    }
+                }
+
                 bool has_layer_post = editor->layer_fbo && editor->layer_texture && editor->post_shader &&
                     layer_effects && layer_effect_count > 0;
                 if (has_layer_post) {
@@ -8819,7 +9886,6 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
                     if (sp_rot >= 0) rev::shader::SetFloat(sprite_prog, sp_rot, rotation);
                     if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
-                    if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
                     int enabled[PostEffectCount] = {};
@@ -9003,7 +10069,6 @@ void RenderPreviewFrame(EditorContext* editor) {
                     if (sp_sz  >= 0) rev::shader::SetVec2(sprite_prog, sp_sz, norm_w, norm_h);
                     if (sp_rot >= 0) rev::shader::SetFloat(sprite_prog, sp_rot, rotation);
                     if (sp_opa >= 0) rev::shader::SetFloat(sprite_prog, sp_opa, opacity);
-                    if (sp_col >= 0) rev::shader::SetVec3(sprite_prog, sp_col, 1.0f, 1.0f, 1.0f);
                     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 }
                 if (item.type == 0) {
@@ -9311,6 +10376,27 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 }
 
                                 float draw_light[3] = {3.0f, 5.0f, 4.0f};
+                                float light_direction[3] = {0.0f, -1.0f, 0.0f};
+                                const bool directional_light = cue->use_imported_light &&
+                                    cached->has_imported_light && cached->imported_light_type == 1;
+                                if (directional_light) {
+                                    memcpy(light_direction, cached->imported_light_direction, sizeof(light_direction));
+                                    if (node_delta_mats && cached->imported_light_node_index >= 0 &&
+                                        cached->imported_light_node_index < (int)cached->imported_node_count) {
+                                        const float* d = &node_delta_mats[cached->imported_light_node_index * 16];
+                                        const float x=light_direction[0], y=light_direction[1], z=light_direction[2];
+                                        light_direction[0]=d[0]*x+d[4]*y+d[8]*z;
+                                        light_direction[1]=d[1]*x+d[5]*y+d[9]*z;
+                                        light_direction[2]=d[2]*x+d[6]*y+d[10]*z;
+                                    }
+                                    rev::mesh::RenderDirectionalShadow(&g_preview_mesh_shadow, cached, model, light_direction);
+                                    glBindFramebuffer(0x8D40, editor->preview_fbo);
+                                    glViewport(0, 0, editor->preview_width, editor->preview_height);
+                                    rev::shader::Use(mesh_prog);
+                                }
+                                rev::shader::SetInt(mesh_prog, rev::shader::GetUniformLocation(mesh_prog, "u_light_directional"), directional_light ? 1 : 0);
+                                rev::shader::SetVec3(mesh_prog, rev::shader::GetUniformLocation(mesh_prog, "u_light_direction"), light_direction[0], light_direction[1], light_direction[2]);
+                                rev::mesh::BindDirectionalShadow(directional_light ? &g_preview_mesh_shadow : nullptr, mesh_prog);
                                 if (cue->use_imported_light && cached->has_imported_light) {
                                     const float* light_delta = nullptr;
                                     if (node_delta_mats && cached->imported_light_node_index >= 0 &&
@@ -9508,6 +10594,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                                     mesh->imported_light_pos[0] = ir->light_pos[0];
                                     mesh->imported_light_pos[1] = ir->light_pos[1];
                                     mesh->imported_light_pos[2] = ir->light_pos[2];
+                                    memcpy(mesh->imported_light_direction, ir->light_direction, sizeof(ir->light_direction));
+                                    mesh->imported_light_type = ir->light_type;
+                                    mesh->imported_light_node_index = ir->light_node_index;
                                     mesh->emissive_color[0] = ir->material.emissive[0];
                                     mesh->emissive_color[1] = ir->material.emissive[1];
                                     mesh->emissive_color[2] = ir->material.emissive[2];
@@ -9531,6 +10620,9 @@ void RenderPreviewFrame(EditorContext* editor) {
                                         if (tex_path[0] == '\0') continue;
                                         rev::runtime::ImageTexture tex{};
                                         if (rev::runtime::LoadImageTexture(tex_path, &tex)) {
+                                            rev::runtime::SetImageTextureWrap(tex.texture_id,
+                                                ir->materials[mat_i].base_color_wrap_s,
+                                                ir->materials[mat_i].base_color_wrap_t);
                                             material_textures[mat_i] = tex.texture_id;
                                         }
                                     }
@@ -9601,6 +10693,27 @@ void RenderPreviewFrame(EditorContext* editor) {
                                 }
                                 
                                 float draw_light[3] = {3.0f, 5.0f, 4.0f};
+                                float light_direction[3] = {0.0f, -1.0f, 0.0f};
+                                const bool directional_light = cue->use_imported_light &&
+                                    mesh->has_imported_light && mesh->imported_light_type == 1;
+                                if (directional_light) {
+                                    memcpy(light_direction, mesh->imported_light_direction, sizeof(light_direction));
+                                    if (node_delta_mats && mesh->imported_light_node_index >= 0 &&
+                                        mesh->imported_light_node_index < (int)mesh->imported_node_count) {
+                                        const float* d = &node_delta_mats[mesh->imported_light_node_index * 16];
+                                        const float x=light_direction[0], y=light_direction[1], z=light_direction[2];
+                                        light_direction[0]=d[0]*x+d[4]*y+d[8]*z;
+                                        light_direction[1]=d[1]*x+d[5]*y+d[9]*z;
+                                        light_direction[2]=d[2]*x+d[6]*y+d[10]*z;
+                                    }
+                                    rev::mesh::RenderDirectionalShadow(&g_preview_mesh_shadow, mesh, model, light_direction);
+                                    glBindFramebuffer(0x8D40, editor->preview_fbo);
+                                    glViewport(0, 0, editor->preview_width, editor->preview_height);
+                                    rev::shader::Use(mesh_prog);
+                                }
+                                rev::shader::SetInt(mesh_prog, rev::shader::GetUniformLocation(mesh_prog, "u_light_directional"), directional_light ? 1 : 0);
+                                rev::shader::SetVec3(mesh_prog, rev::shader::GetUniformLocation(mesh_prog, "u_light_direction"), light_direction[0], light_direction[1], light_direction[2]);
+                                rev::mesh::BindDirectionalShadow(directional_light ? &g_preview_mesh_shadow : nullptr, mesh_prog);
                                 if (cue->use_imported_light && mesh->has_imported_light) {
                                     const float* light_delta = nullptr;
                                     if (node_delta_mats && mesh->imported_light_node_index >= 0 &&
@@ -10140,6 +11253,19 @@ void UpdatePlayback(EditorContext* editor, float delta_time) {
 
     if (editor->playing) {
         editor->current_time += delta_time;
+        float scene_start = 0.0f;
+        for (int scene_index = 0; editor->project && scene_index < editor->project->scene_count; ++scene_index) {
+            const SceneBlock& scene = editor->project->scenes[scene_index];
+            float scene_end = scene_start + scene.duration;
+            float previous_time = editor->current_time - delta_time;
+            if (scene.menu.enabled && scene.duration > 0.0f &&
+                previous_time >= scene_start && previous_time < scene_end &&
+                editor->current_time >= scene_end) {
+                editor->current_time = scene_start + fmodf(editor->current_time - scene_start, scene.duration);
+                break;
+            }
+            scene_start = scene_end;
+        }
     }
     
     // Clamp to project duration (use 10s default if duration is 0)
@@ -10299,7 +11425,53 @@ void RenderPreviewPanel(EditorContext* editor) {
         // FBO stays at 1920x1080 — ImGui scales the texture to fit the panel.
         // All size formulas (tex_pixels / preview_width * 2) produce the same
         // proportional result as the final product at every panel size.
+        ImVec2 image_min = ImGui::GetCursorScreenPos();
         ImGui::Image((ImTextureID)(intptr_t)preview_display_texture, ImVec2(w, h), ImVec2(0, 1), ImVec2(1, 0));
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        float scene_start = 0.0f;
+        for (int scene_index = 0; scene_index < editor->project->scene_count; ++scene_index) {
+            const SceneBlock& scene = editor->project->scenes[scene_index];
+            float scene_end = scene_start + scene.duration;
+            if (editor->current_time >= scene_start && editor->current_time < scene_end) {
+                if (scene.menu.enabled && scene.menu.item_count > 0) {
+                    int selected = scene.menu.initial_item;
+                    if (selected < 0 || selected >= scene.menu.item_count) selected = 0;
+                    ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(
+                        scene.menu.highlight_color[0], scene.menu.highlight_color[1],
+                        scene.menu.highlight_color[2], 1.0f));
+                    for (int item_index = 0; item_index < scene.menu.item_count; ++item_index) {
+                        const rev::runtime::MenuItem& item = scene.menu.items[item_index];
+                        ImVec2 a(image_min.x + item.x * w, image_min.y + item.y * h);
+                        ImVec2 b(a.x + item.width * w, a.y + item.height * h);
+                        if (item.visual_type == 0)
+                            draw_list->AddText(ImVec2(a.x + 8.0f, a.y + 5.0f), IM_COL32_WHITE, item.label);
+                        if (item_index == selected && item.visual_type == 0)
+                            draw_list->AddRect(a, b, color, 0.0f, 0, 3.0f);
+                        if (item.visual_type == 1) {
+                            ImU32 guide_color = item_index == selected ? color : IM_COL32(255, 255, 255, 90);
+                            draw_list->AddRect(a, b, guide_color, 0.0f, 0, item_index == selected ? 2.0f : 1.0f);
+                            ImVec2 centre(image_min.x + item.image_x * w, image_min.y + item.image_y * h);
+                            draw_list->AddLine(ImVec2(centre.x - 6.0f, centre.y), ImVec2(centre.x + 6.0f, centre.y), guide_color);
+                            draw_list->AddLine(ImVec2(centre.x, centre.y - 6.0f), ImVec2(centre.x, centre.y + 6.0f), guide_color);
+                        }
+                    }
+                }
+                float elapsed = editor->current_time - scene_start;
+                if (scene.wipe_type != rev::runtime::SceneWipeNone && scene.wipe_duration > 0.0f &&
+                    elapsed >= 0.0f && elapsed < scene.wipe_duration) {
+                    float remaining = 1.0f - elapsed / scene.wipe_duration;
+                    ImVec2 a = image_min, b(image_min.x + w, image_min.y + h);
+                    if (scene.wipe_type == rev::runtime::SceneWipeLeft) b.x = a.x + w * remaining;
+                    else if (scene.wipe_type == rev::runtime::SceneWipeRight) a.x = b.x - w * remaining;
+                    else if (scene.wipe_type == rev::runtime::SceneWipeUp) b.y = a.y + h * remaining;
+                    else if (scene.wipe_type == rev::runtime::SceneWipeDown) a.y = b.y - h * remaining;
+                    draw_list->AddRectFilled(a, b, ImGui::ColorConvertFloat4ToU32(ImVec4(
+                        scene.wipe_color[0], scene.wipe_color[1], scene.wipe_color[2], 1.0f)));
+                }
+                break;
+            }
+            scene_start = scene_end;
+        }
     } else {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Preview not initialized");
     }
@@ -10318,6 +11490,7 @@ void RandomizeShaderValues(ShaderCue* cue) {
 
 void ResetShaderValues(ShaderCue* cue) {
     if (!cue) return;
+    cue->shader_pipeline_index = -1;
     
     // Default palette - visible colors (shader ID 0 can be set to black for fades)
     cue->palette_low = {0.1f, 0.3f, 0.8f};    // Blue

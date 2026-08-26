@@ -1,6 +1,6 @@
 ---
 name: himym-editor
-description: Implement or review the HiMYM ImGui editor and authoring pipeline. Use for project JSON, scene/cue modals, timeline and curve UI, preview rendering, asset importing/copying, cues.txt export/import, project packing, Do It All, editor reliability, or authored data that must match runtime consumption.
+description: Implement or review the HiMYM ImGui editor and authoring pipeline. Use for project JSON, scene/cue modals, scene wipes, interactive menus, timeline and curve UI, preview rendering, asset importing/copying, cues.txt export/import, project packing, Do It All, editor reliability, or authored data that must match runtime consumption.
 ---
 
 # HiMYM editor
@@ -15,4 +15,27 @@ Read `AGENTS.md`, shared cue definitions, `rev_editor.h`, and the relevant edito
 6. Update parsers/rendering when exported semantics change.
 7. Build `himym_editor`; test headless or round-trip paths when affected.
 
+Competition Size Build is optional and must build/copy the supported normal
+x64 packed artifact before attempting Crinkler x86. Project asset or feature
+changes must invalidate the competition reuse layout; a competition failure
+must never remove or replace the normal output.
+Keep the 64 KiB, 128 KiB, and custom output budgets distinct from Crinkler's
+64 KiB uncompressed-part ceiling. Detect a locked competition executable before
+linking and tell the author to close the running intro or stale linker process.
+
+Preview image cues use 1920x1080-authored source-pixel dimensions and normalized anchors; scale dimensions uniformly to the preview viewport so runtime sizes preserve composition.
+
+Shader Text Cue curve buttons cover X, Y, height, RGB, opacity, spacing, and scroll speed. Persist every assignment through JSON and append it to the backward-compatible cues.txt row.
+
+The same-type cue parameter clipboard supports Image, Animated Sprite, Pixel,
+Pixel Emitter, Text, Scroll Text, Shader Text, and Mesh cues. Paste keeps the
+destination content/asset identity and deep-clones every assigned direct,
+post-effect, and asset-shader curve so source and destination remain editable
+independently.
+
 Do not redefine shared cues. Initialize new fields deliberately, preserve copied-asset cleanup coverage, keep save -> export -> pack -> build -> launch explicit, and avoid generalized UI frameworks or new dependencies.
+
+For menu authoring, keep ImGui IDs stable while labels are edited. Preserve
+scene-local animated-sprite references across save/load/export/import and clear
+or reindex them when cues are deleted. Menu-owned image position and hit bounds
+must remain independent for every item, including items sharing one sprite cue.

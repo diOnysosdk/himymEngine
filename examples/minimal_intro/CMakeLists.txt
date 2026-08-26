@@ -32,7 +32,14 @@ set(HIMYM_PACKED_USE_PIXEL ON)
 set(HIMYM_PACKED_USE_PARTICLES ON)
 set(HIMYM_PACKED_USE_MESH ON)
 set(HIMYM_PACKED_USE_GLTF ON)
-set(_himym_packed_features "${CMAKE_BINARY_DIR}/packed_features.cmake")
+set(HIMYM_PACKED_USE_IMAGE ON)
+set(HIMYM_PACKED_USE_TEXT ON)
+set(HIMYM_PACKED_USE_IMAGE_DECODER ON)
+set(HIMYM_PACKED_USE_SHADER_TEXT ON)
+option(HIMYM_PACKED_DIAGNOSTICS "Keep verbose logging and debug-file support in packed runtimes" OFF)
+set(HIMYM_PACKED_MANIFEST_DIR "${CMAKE_BINARY_DIR}" CACHE PATH
+    "Directory containing packed_assets.h and packed_features.cmake")
+set(_himym_packed_features "${HIMYM_PACKED_MANIFEST_DIR}/packed_features.cmake")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_himym_packed_features}")
 include("${_himym_packed_features}" OPTIONAL)
 if(HIMYM_PACKED_USE_GLTF)
@@ -65,14 +72,17 @@ if(HIMYM_PACKED_USE_GLTF)
 endif()
 target_link_libraries(minimal_intro_packed PRIVATE ${_himym_packed_libraries})
 
-target_compile_definitions(minimal_intro_packed PRIVATE HIMYM_PACKED_ASSETS)
+target_compile_definitions(minimal_intro_packed PRIVATE
+    HIMYM_PACKED_ASSETS
+    "HIMYM_PACKED_DIAGNOSTICS=$<BOOL:${HIMYM_PACKED_DIAGNOSTICS}>"
+)
 if(HIMYM_PACKED_USE_GLTF)
     target_compile_definitions(minimal_intro_packed PRIVATE REV_GLTF_AVAILABLE)
 endif()
 
 # Include CMAKE_BINARY_DIR so packed_assets.h and rev_pack.h can be found
 target_include_directories(minimal_intro_packed PRIVATE
-    ${CMAKE_BINARY_DIR}
+    ${HIMYM_PACKED_MANIFEST_DIR}
     ${CMAKE_SOURCE_DIR}/revision_libs/rev_pack/include
 )
 
@@ -85,6 +95,34 @@ if(MSVC)
         target_link_options(minimal_intro_packed PRIVATE
             "/MAP:${CMAKE_BINARY_DIR}/bin/$<CONFIG>/minimal_intro_packed.map"
             "/MAPINFO:EXPORTS"
+        )
+    endif()
+    if(HIMYM_CRINKLER_EXECUTABLE)
+        # Crinkler does not follow MSVC's embedded /DEFAULTLIB directives.
+        # CMake's Visual Studio generator compiles this target with /MD, so
+        # pass the matching modern x86 CRT import libraries explicitly.
+        target_link_libraries(minimal_intro_packed PRIVATE
+            msvcprt.lib
+            vcruntime.lib
+            ucrt.lib
+            msvcrt.lib
+        )
+        if(HIMYM_PACKED_USE_XM)
+            # Crinkler ignores main.cpp's embedded /DEFAULTLIB:winmm directive.
+            target_link_libraries(minimal_intro_packed PRIVATE winmm.lib)
+        endif()
+        set_property(TARGET minimal_intro_packed PROPERTY LINKER_TYPE crinkler)
+        set_target_properties(minimal_intro_packed PROPERTIES
+            OUTPUT_NAME "minimal_intro_competition"
+        )
+        target_link_options(minimal_intro_packed PRIVATE
+            /CRINKLER
+            "/COMPMODE:${HIMYM_CRINKLER_COMPMODE}"
+            /HASHSIZE:100
+            /REPLACEDLL:ole32=combase
+            "/REUSE:${CMAKE_BINARY_DIR}/crinkler_reuse.txt"
+            /REUSEMODE:PARTS
+            "/REPORT:${CMAKE_BINARY_DIR}/crinkler_report.html"
         )
     endif()
 endif()

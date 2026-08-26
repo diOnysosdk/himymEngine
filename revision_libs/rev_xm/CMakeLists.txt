@@ -5,6 +5,11 @@ project(rev_xm)
 # https://github.com/MikeEviscerate/libxm-windows
 message(STATUS "Building rev_xm with libxm-windows (C89-compatible)")
 add_subdirectory(third_party/libxm/src)
+# libxm enables IPO in its own CMake project. Crinkler consumes ordinary COFF
+# objects and cannot resolve the resulting MSVC LTCG archive members.
+if(HIMYM_CRINKLER_EXECUTABLE)
+    set_property(TARGET xm PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+endif()
 add_library(rev_xm STATIC src/xm_player.cpp)
 target_link_libraries(rev_xm PRIVATE xm)
 target_compile_definitions(rev_xm PRIVATE REV_XM_ENABLED=1)

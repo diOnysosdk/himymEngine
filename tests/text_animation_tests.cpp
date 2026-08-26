@@ -23,6 +23,15 @@ int main()
 {
     bool passed = true;
 
+    ShaderTextCue shader_text = {};
+    InitializeShaderTextCue(&shader_text);
+    passed &= Check(shader_text.curve_x == -1 && shader_text.curve_y == -1 &&
+                        shader_text.curve_size == -1 && shader_text.curve_color_r == -1 &&
+                        shader_text.curve_color_g == -1 && shader_text.curve_color_b == -1 &&
+                        shader_text.curve_opacity == -1 && shader_text.curve_speed == -1 &&
+                        shader_text.curve_spacing == -1,
+                    "shader text curve assignments default to unassigned");
+
     passed &= Check(NearlyEqual(ComputePostFadeIntensity(1.0f, 0.0f, 0.0f, 10.0f, 2.0f, 2.0f), 1.0f),
                     "post fade starts black");
     passed &= Check(NearlyEqual(ComputePostFadeIntensity(1.0f, 1.0f, 0.0f, 10.0f, 2.0f, 2.0f), 0.5f),
@@ -31,6 +40,33 @@ int main()
                     "post fade leaves scene visible between fades");
     passed &= Check(NearlyEqual(ComputePostFadeIntensity(1.0f, 9.0f, 0.0f, 10.0f, 2.0f, 2.0f), 0.5f),
                     "post fade-out interpolates");
+
+    TextGlyphAtlas scroll_atlas = {};
+    scroll_atlas.line_height = 50.0f;
+    scroll_atlas.glyphs['A'].codepoint = 'A';
+    scroll_atlas.glyphs['A'].advance = 100.0f;
+    passed &= Check(NearlyEqual(ComputeTextViewportScale(1920.0f, 1080.0f), 1.0f) &&
+                        NearlyEqual(ComputeTextViewportScale(960.0f, 540.0f), 0.5f),
+                    "authored text pixels scale with runtime resolution");
+    passed &= Check(NearlyEqual(ComputeAuthoredViewportScale(480.0f, 270.0f), 0.25f) &&
+                        NearlyEqual(ComputeAuthoredViewportScale(1920.0f, 1200.0f), 1.0f),
+                    "authored image pixels preserve normalized scene size");
+    passed &= Check(NearlyEqual(ComputeScrollTextTravel(
+                        &scroll_atlas, "AA", 0, 1.0f, 1.0f, 0.2f,
+                        1000.0f, 500.0f, 2.0f, 0.0f, 1), 3.4f),
+                    "clamped left scroll clears the viewport from authored start");
+    passed &= Check(NearlyEqual(ComputeScrollTextTravel(
+                        &scroll_atlas, "AA", 1, 1.0f, 1.0f, 0.2f,
+                        1000.0f, 500.0f, -2.0f, 0.0f, 1), 3.4f),
+                    "clamped right scroll clears the viewport from authored start");
+    passed &= Check(NearlyEqual(ComputeScrollTextTravel(
+                        &scroll_atlas, "AA", 0, 1.0f, 1.0f, 0.2f,
+                        1000.0f, 500.0f, 2.0f, 0.0f, 0), 0.6f),
+                    "looping scroll travel remains one text extent plus gap");
+    passed &= Check(NearlyEqual(ComputeScrollTextTravel(
+                        &scroll_atlas, "AA", 0, 0.5f, 1.0f, 0.2f,
+                        500.0f, 250.0f, 2.0f, 0.0f, 0), 0.6f),
+                    "scaled scroll text preserves normalized travel");
 
     AudioEffects authored_audio = {};
     InitializeAudioEffects(&authored_audio);

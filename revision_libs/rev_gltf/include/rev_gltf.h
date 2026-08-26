@@ -85,6 +85,8 @@ struct Material {
     char  normal_texture[512];
     char  metallic_roughness_texture[512];
     char  emissive_texture[512];
+    int   base_color_wrap_s; // glTF sampler wrapS (default REPEAT)
+    int   base_color_wrap_t; // glTF sampler wrapT (default REPEAT)
 };
 
 // ---------------------------------------------------------------------------
@@ -99,6 +101,8 @@ struct ImportResult {
     int              animation_count;
     bool             has_light;
     float            light_pos[3];
+    float            light_direction[3]; // world-space direction toward the scene
+    int              light_type;         // 0=unknown, 1=directional, 2=point, 3=spot
     int              light_node_index;
     bool             has_camera;
     float            camera_pos[3];

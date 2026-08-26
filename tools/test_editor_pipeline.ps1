@@ -28,6 +28,15 @@ Invoke-Native cmake @("--build", $build_root, "--config", $Configuration,
 if (Test-Path -LiteralPath $test_root) { Remove-Item -LiteralPath $test_root -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $assets_root, $cmake_root | Out-Null
 Copy-Item -Path (Join-Path $repository_root "Salute\project_assets\*") -Destination $assets_root
+$pipeline_shader = @'
+#version 330 core
+in vec2 uv;
+out vec4 fragColor;
+uniform sampler2D iChannel0;
+void main() { fragColor = texture(iChannel0, uv); }
+'@
+Set-Content -LiteralPath (Join-Path $assets_root "image.glsl") -Value $pipeline_shader -Encoding Ascii
+Set-Content -LiteralPath (Join-Path $assets_root "buffer_a.glsl") -Value $pipeline_shader -Encoding Ascii
 
 $saved_project = Join-Path $test_root "project.json"
 $exported_cues = Join-Path $test_root "cues.txt"
