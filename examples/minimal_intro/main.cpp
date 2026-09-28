@@ -444,6 +444,11 @@ struct NoiseTextureSettings {
     char paths[4][512];
 };
 
+// Keep standalone playback comfortably above the editor's normal authored cue
+// count. The editor owns shader cues dynamically, so this is the runtime cap
+// for the exported project as a whole (not a per-scene limit).
+static constexpr int kMaxShaderCues = 64;
+
 // Shader cue data structure (runtime-local; editor uses its own ShaderCue with more fields)
 struct ShaderCue {
     int shader_scene_id;
@@ -2833,8 +2838,8 @@ int main(int argc, char* argv[]) {
     if (g_logfile) fprintf(g_logfile, "Cues file: %s\n", cues_path);
 
     // Load ALL shader cues (multi-scene support)
-    ShaderCue shader_cues[16];  // Support up to 16 shader cues
-    int shader_cue_count = LoadAllShaderCues(cues_path, shader_cues, 16);
+    ShaderCue shader_cues[kMaxShaderCues];
+    int shader_cue_count = LoadAllShaderCues(cues_path, shader_cues, kMaxShaderCues);
     for (int i = 0; i < shader_cue_count; ++i) shader_cues[i].shader_pipeline_index = -1;
     LoadShaderPipelineCueRefs(cues_path, shader_cues, shader_cue_count);
     rev::runtime::ShaderPipeline shader_pipelines[rev::runtime::kMaxShaderPipelines];
@@ -2850,7 +2855,7 @@ int main(int argc, char* argv[]) {
     }
     LOGV("Loaded %d shader cue(s)\n", shader_cue_count);
 
-    ImageTexture shader_noise_textures[HIMYM_USE_IMAGE_DECODER ? 16 : 1][4] = {};
+    ImageTexture shader_noise_textures[HIMYM_USE_IMAGE_DECODER ? kMaxShaderCues : 1][4] = {};
 #if HIMYM_USE_IMAGE_DECODER
     for (int cue_index = 0; cue_index < shader_cue_count; ++cue_index) {
         for (int map_index = 0; map_index < 4; ++map_index) {
@@ -4863,9 +4868,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             float absolute_start;
             float absolute_end;
         };
-        ActiveShaderLayer active_layers[16];
+        ActiveShaderLayer active_layers[kMaxShaderCues];
         int active_layer_count = 0;
-        for (int i = 0; i < shader_cue_count && active_layer_count < 16; ++i) {
+        for (int i = 0; i < shader_cue_count && active_layer_count < kMaxShaderCues; ++i) {
             const ShaderCue& cue = shader_cues[i];
             float cue_end = cue.cue_end;
             if (cue_end < 0.0f) cue_end = total_duration;
