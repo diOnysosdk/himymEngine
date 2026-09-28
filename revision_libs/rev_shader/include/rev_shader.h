@@ -10,6 +10,16 @@ struct Program {
     uint32_t gl_program;
 };
 
+enum FragmentSourceVersionStatus {
+    FragmentSourceVersionReady = 0,
+    FragmentSourceVersionMissing = 1,
+    FragmentSourceVersionConverted = 2
+};
+
+// Reports whether compilation will preserve, prepend, or replace the GLSL
+// version directive. CompileFromSource always normalizes to GLSL 330 core.
+FragmentSourceVersionStatus GetFragmentSourceVersionStatus(const char* fragment_src);
+
 // Compilation
 Program* CompileFromSource(const char* vertex_src, const char* fragment_src);
 void DestroyProgram(Program* program);

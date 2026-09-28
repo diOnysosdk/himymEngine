@@ -29,6 +29,12 @@ the deterministic fallback when a project has no shader cue. The universal
 47-preset registry remains available to the editor and external-cue runtime,
 but is not linked into a current-format packed runtime.
 
+Project-owned Shadertoy pipelines are discovered independently from the preset
+registry. The packer embeds only enabled Image/Buffer A-D GLSL sources and
+referenced texture channels. Previous-frame feedback and audio-spectrum
+channels add no packed asset bytes; they use runtime render targets and the
+active XM sample snapshot respectively.
+
 Post-effect GLSL is specialized independently. The packer collects enabled
 effect types from global post-effect rows, scene-layer stacks, and image,
 animated-sprite, and pixel cue stacks, then removes every unreferenced

@@ -17,6 +17,7 @@ using rev::runtime::PixelCue;
 using rev::runtime::PixelEmitterCue;
 using rev::runtime::TextCue;
 using rev::runtime::ScrollTextCue;
+using rev::runtime::ShaderTextCue;
 using rev::runtime::TextAnimationConfig;
 using rev::runtime::TextRevealConfig;
 using rev::runtime::TextExitConfig;
@@ -26,6 +27,7 @@ using rev::runtime::TextAnimationUnitCharacter;
 using rev::runtime::TextStaggerOrderForward;
 using rev::runtime::TextEasingLinear;
 using rev::runtime::MusicCue;
+using rev::runtime::SceneMenu;
 using rev::runtime::AudioEffects;
 using rev::runtime::MeshCue;
 using rev::runtime::LayerPostEffect;
@@ -45,6 +47,7 @@ enum CueType {
     CueTypePixel = 7,
     CueTypePixelEmitter = 8,
     CueTypePostEffect = 9,
+    CueTypeShaderText = 10,
 };
 
 enum PostEffectType {
@@ -126,6 +129,7 @@ struct NoiseTextureSettings {
 // Shader cue data (per shader instance)
 struct ShaderCue {
     int shader_scene_id;           // Shader preset ID
+    int shader_pipeline_index = -1; // -1 = preset-only, otherwise project pipeline
     char shader_name[64];          // Friendly name
     
     // Palette colors
@@ -194,6 +198,10 @@ struct ShaderCue {
 struct SceneBlock {
     char name[64];              // Scene name (e.g., "Opening")
     float duration;             // Scene length in seconds
+    int wipe_type;              // SceneWipeType applied on entry
+    float wipe_duration;
+    float wipe_color[3];
+    SceneMenu menu;
     
     // Cue arrays
     ShaderCue* shader_cues;
@@ -223,6 +231,10 @@ struct SceneBlock {
     ScrollTextCue* scroll_text_cues;
     int scroll_text_cue_count;
     int scroll_text_cue_capacity;
+
+    ShaderTextCue* shader_text_cues;
+    int shader_text_cue_count;
+    int shader_text_cue_capacity;
     
     MusicCue* music_cues;
     int music_cue_count;
@@ -252,6 +264,11 @@ struct ProjectData {
     int curve_count;
     char curve_names[rev::runtime::kMaxCurves][128];
 
+    // Project-level Shadertoy pipelines. Shader cues will reference these by
+    // stable array index once authored persistence is enabled.
+    rev::runtime::ShaderPipeline shader_pipelines[rev::runtime::kMaxShaderPipelines];
+    int shader_pipeline_count;
+
     // Project-level music-synchronised trigger tracks.
     TriggerTrack trigger_tracks[kMaxTriggerTracks];
     int trigger_track_count;
@@ -268,6 +285,7 @@ struct ProjectData {
     bool  loop_music;           // true = loop active XM cue playback
     bool  music_persist_across_scenes; // true = keep current track across scene cuts unless a different cue track becomes active
     bool  runtime_fullscreen;   // true = launch compiled intro fullscreen
+    int   runtime_window_divisor; // windowed output: 1, 2, 4, or 8 relative to 1920x1080
     char  runtime_title[128];   // title shown by the compiled runtime window
     AudioEffects audio_effects;
 };
@@ -328,6 +346,7 @@ struct EditorContext {
     bool preview_initialized;
     void* preview_shader;            // rev::shader::Program* for fullscreen shader
     void* sprite_shader;             // rev::shader::Program* for sprite rendering
+    void* shader_text_shader;        // texture-free 5x7 text rendering
     void* mesh_shader;               // rev::shader::Program* for 3D mesh rendering
     void* post_shader;               // rev::shader::Program* for post-production effects
     int preview_current_shader_id;   // Currently compiled shader preset ID (-1 = none)
@@ -379,6 +398,10 @@ struct EditorContext {
     ScrollTextCue editing_scroll_text;
     bool scroll_text_modal_open;
     bool scroll_text_modal_request_open;
+
+    ShaderTextCue editing_shader_text;
+    bool shader_text_modal_open;
+    bool shader_text_modal_request_open;
     
     // Installed Windows fonts (for font picker)
     char** installed_fonts;
@@ -455,6 +478,7 @@ void RenderPixelModal(EditorContext* editor);
 void RenderPixelEmitterModal(EditorContext* editor);
 void RenderTextModal (EditorContext* editor);
 void RenderScrollTextModal(EditorContext* editor);
+void RenderShaderTextModal(EditorContext* editor);
 void RenderMeshModal (EditorContext* editor);
 void RenderProperties(EditorContext* editor);
 void RenderAssetBrowser(EditorContext* editor);
@@ -463,6 +487,7 @@ void RenderPreviewPanel(EditorContext* editor);
 // Preview viewport
 void InitializePreview(EditorContext* editor, int width, int height);
 void CleanupPreview(EditorContext* editor);
+void InvalidatePreviewShaderPipeline(int pipeline_index);
 void ResizePreview(EditorContext* editor, int width, int height);
 void RenderPreviewFrame(EditorContext* editor);
 void UpdatePlayback(EditorContext* editor, float delta_time);
@@ -483,6 +508,7 @@ int AddPixelCue(SceneBlock* scene, const PixelCue& cue);
 int AddPixelEmitterCue(SceneBlock* scene, const PixelEmitterCue& cue);
 int AddTextCue  (SceneBlock* scene, const TextCue&   cue);
 int AddScrollTextCue(SceneBlock* scene, const ScrollTextCue& cue);
+int AddShaderTextCue(SceneBlock* scene, const ShaderTextCue& cue);
 int AddMusicCue (SceneBlock* scene, const MusicCue&  cue);
 int AddMeshCue  (SceneBlock* scene, const MeshCue&   cue);
 int AddPostEffect(SceneBlock* scene, const PostEffect& effect);
@@ -495,6 +521,7 @@ void DeletePixelCue(SceneBlock* scene, int cue_index);
 void DeletePixelEmitterCue(SceneBlock* scene, int cue_index);
 void DeleteTextCue  (SceneBlock* scene, int cue_index);
 void DeleteScrollTextCue(SceneBlock* scene, int cue_index);
+void DeleteShaderTextCue(SceneBlock* scene, int cue_index);
 void DeleteMusicCue (SceneBlock* scene, int cue_index);
 void DeleteMeshCue  (SceneBlock* scene, int cue_index);
 
@@ -511,6 +538,9 @@ bool BuildAndRun(EditorContext* editor);
 bool PackProject(EditorContext* editor);
 // Pack assets into the exe (checksum-based, only re-packs changed files), then build and run.
 bool PackBuildAndRun(EditorContext* editor);
+// Preserve the normal packed x64 executable, then optionally produce a
+// separate Win32 Crinkler competition-size artifact under an explicit budget.
+bool BuildCompetitionSize(EditorContext* editor, int size_limit_kb, const char* competition_mode);
 // Build the packed runtime and copy it as a Windows screen saver (.scr).
 bool BuildScreenSaver(EditorContext* editor);
 

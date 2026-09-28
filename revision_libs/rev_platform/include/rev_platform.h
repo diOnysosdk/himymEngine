@@ -13,6 +13,7 @@ struct WindowConfig {
     int width = 1920;
     int height = 1080;
     bool fullscreen = true;
+    bool borderless = false;
     const char* title = "Intro";
 };
 
@@ -25,6 +26,15 @@ struct Window {
     MessageCallbackFn message_callback;
     int win_width;   // Current client framebuffer width in physical pixels.
     int win_height;  // Current client framebuffer height in physical pixels.
+};
+
+struct OpenGLInfo {
+    int major;
+    int minor;
+    const char* version;
+    const char* glsl_version;
+    const char* vendor;
+    const char* renderer;
 };
 
 // Lifecycle
@@ -48,6 +58,7 @@ void SetMessageCallback(Window* window, MessageCallbackFn callback);
 // OpenGL
 void* GetProcAddress(const char* name);
 bool LoadGLFunctions();  // Load core GL 3.3 functions
+bool GetOpenGLInfo(OpenGLInfo* info);
 
 }  // namespace platform
 }  // namespace rev

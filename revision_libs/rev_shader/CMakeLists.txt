@@ -14,6 +14,10 @@ target_link_libraries(rev_shader PRIVATE
     opengl32
 )
 
+if(HIMYM_CRINKLER_EXECUTABLE)
+    target_compile_definitions(rev_shader PRIVATE HIMYM_CRINKLER_BUILD)
+endif()
+
 # Size optimization
 if(MSVC)
     target_compile_options(rev_shader PRIVATE /W4)

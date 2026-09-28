@@ -2590,6 +2590,34 @@ float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}float n(vec
 in vec2 uv; out vec4 fragColor; uniform float u_time; uniform vec2 u_resolution; uniform vec3 u_palette_low,u_palette_mid,u_palette_high; uniform float u_speed,u_intensity,u_warp; uniform vec3 u_motion;
 float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}void main(){vec2 p=(uv*2.-1.)*vec2(u_resolution.x/u_resolution.y,1.)+u_motion.xy*.15;p*=4.+u_warp;vec2 id=floor(p),q=fract(p)-.5;float best=9.,second=9.,seed=0.;for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec2 o=vec2(x,y),pt=o+vec2(h(id+o),h(id+o+17.))-q;float d=dot(pt,pt);if(d<best){second=best;best=d;seed=h(id+o+31.);}else if(d<second)second=d;}float edge=smoothstep(.16,.01,second-best);float shine=pow(.5+.5*sin(seed*19.+u_time*u_speed+sqrt(best)*12.),6.);vec3 col=mix(u_palette_low,u_palette_mid,seed);col=mix(col,u_palette_high,max(edge*.35,shine*(.35+u_intensity*.45)));fragColor=vec4(max(col,vec3(0)),1.);}
 )"
+    },
+
+    {
+        47, "Shadertoy Neon Lattice", "Native mainImage raymarched neon lattice demonstrating the Shadertoy compatibility path", R"(
+#version 330 core
+void mainImage(out vec4 color, in vec2 fragCoord) {
+    vec2 p = (2.0 * fragCoord - iResolution.xy) / iResolution.y;
+    float t = iTime * 0.65;
+    vec3 ro = vec3(0.0, 0.0, -3.2);
+    vec3 rd = normalize(vec3(p, 1.65));
+    vec3 glow = vec3(0.0);
+    float travel = 0.0;
+    for (int step_index = 0; step_index < 64; ++step_index) {
+        vec3 q = ro + rd * travel;
+        q.xy *= mat2(cos(t * 0.21), -sin(t * 0.21), sin(t * 0.21), cos(t * 0.21));
+        q.xz *= mat2(cos(t * 0.13), -sin(t * 0.13), sin(t * 0.13), cos(t * 0.13));
+        vec3 cell = abs(mod(q + 0.5, 1.0) - 0.5);
+        float lattice = min(max(cell.x, cell.y), min(max(cell.y, cell.z), max(cell.z, cell.x))) - 0.035;
+        float pulse = 0.55 + 0.45 * sin(q.z * 3.0 - t * 4.0);
+        glow += (0.006 / max(abs(lattice), 0.002)) * mix(vec3(0.08, 0.35, 1.0), vec3(1.0, 0.08, 0.65), pulse);
+        travel += max(abs(lattice) * 0.55, 0.012);
+        if (travel > 9.0) break;
+    }
+    glow = 1.0 - exp(-glow * 0.085);
+    glow *= 1.0 - 0.18 * dot(p, p);
+    color = vec4(max(glow, vec3(0.0)), 1.0);
+}
+)"
     }
 };
 
@@ -2785,7 +2813,7 @@ ShaderCategory GetShaderCategory(int shader_id) {
             return ShaderCategorySpaceAndTunnels;
         case 1: case 5: case 9: case 14: case 16: case 17: case 22: case 24: case 31: case 34: case 39: case 40:
             return ShaderCategoryOrganicAndAtmospheric;
-        case 3: case 4: case 6: case 7: case 13: case 15: case 23: case 32: case 41: case 42:
+        case 3: case 4: case 6: case 7: case 13: case 15: case 23: case 32: case 41: case 42: case 47:
             return ShaderCategoryGeometricAndFractal;
         case 10: case 19: case 20: case 33: case 43: case 44:
             return ShaderCategoryRetroAndGlitch;

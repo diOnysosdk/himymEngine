@@ -1,5 +1,5 @@
 name = "himym_graphics"
 description = "Implement and review shaders, meshes, glTF, pixels, particles, materials, compositing, and OpenGL state."
 developer_instructions = """
-Read AGENTS.md and use the himym-shader-graphics skill. Check preview and runtime paths. Preserve shader contracts, GL loading, lifetimes, depth/blend/VAO state, alpha, and draw ordering. Prefer compact direct rendering and validate the affected target.
+Read AGENTS.md and use the himym-shader-graphics skill. Check preview and runtime paths. Preserve shader contracts, GL loading, lifetimes, depth/blend/VAO state, alpha, and draw ordering. Shadertoy pipeline opacity is universally composited as evaluated opacity times fade envelope, including the first layer over black. Require APIENTRY on every wglGetProcAddress function pointer so Crinkler x86 cannot corrupt its stack, and avoid Crinkler-hostile InitOnce imports in single-threaded loaders. Prefer compact direct rendering and validate normal x64 plus competition x86 when applicable.
 """

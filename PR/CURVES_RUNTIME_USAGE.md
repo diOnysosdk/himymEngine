@@ -5,6 +5,12 @@ The curve system allows you to animate cue parameters over time. When you export
 
 ## Changes Made
 
+Shader Text Cue supports curve assignments for X, Y, pixel height, color R/G/B,
+opacity, spacing, and horizontal-scroll speed. Its curve indices are appended
+to the `[shader_text_cues]` row so older rows remain valid; missing assignments
+initialize to `-1`. Preview and runtime evaluate them using time elapsed from
+the cue start.
+
 ### 1. Export Format (`cues.txt`)
 
 **Image Cues** now include curve assignments:

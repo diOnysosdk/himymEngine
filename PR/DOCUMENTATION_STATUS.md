@@ -26,6 +26,7 @@ These are the preferred documentation entry points. They can still drift, so ver
 | `../BUILD.md` | Current build and authoring-handoff workflow. |
 | `context/CODE_STYLE.md` | Current coding, build-profile, and completion rules. |
 | `guides/EDITOR_GUIDE.md` | Current C++/ImGui editor workflow. |
+| `guides/SHADER_GUIDE.md` | Current preset, built-in GLSL source editor, GLSL 330, Shadertoy, multipass, feedback, texture, and audio-channel authoring workflow. |
 | `guides/BLENDER_GLTF_GUIDE.md` | Current Blender 5.2/glTF axis and compact procedural-material contract. |
 | `CURVES_RUNTIME_USAGE.md` | Current curve consumption patterns. |
 
@@ -43,7 +44,6 @@ These contain useful principles or subsystem explanations alongside outdated lay
 | `architecture/API_REFERENCE.md` | Additional API notes. | Duplicate of the hyphenated API reference; prefer `API-REFERENCE.md`. |
 | `architecture/TECH-STACK.md` | Platform/dependency background. | Current library list, versions, profiles, and asset pipeline. |
 | `guides/MESH_GUIDE.md` | Mesh/glTF authoring concepts. | Current material-slot, transparency, animation, and import behavior. |
-| `guides/SHADER_GUIDE.md` | GLSL patterns and shader-authoring ideas. | Python-editor references, tool availability, paths, uniforms, and dispatch details. |
 | `guides/CONTROLS_KNOBS.md` | Naming philosophy and some timing concepts. | Old runtime layout, retired features, defaults, and scene-specific knobs. |
 | `context/PROJECT_GUIDELINES.md` | Size discipline, deterministic flow, Windows/compo priorities. | Its older `src/` layout and production-specific contracts. Root `AGENTS.md` wins. |
 | `context/OPENGL-EXPLAINER.md` | WGL/OpenGL background and common constraints. | Exact current renderer structure and shader pipeline. |

@@ -114,6 +114,20 @@ void AddMissingCueFamilies(rev::editor::ProjectData* project) {
     effect.curve_color_r = effect.curve_color_g = effect.curve_color_b = -1;
     effect.curve_color_a = effect.curve_amount = effect.trigger_track = -1;
     rev::editor::AddPostEffect(scene, effect);
+
+    rev::runtime::ShaderPipeline& pipeline = project->shader_pipelines[0];
+    rev::runtime::InitializeShaderPipeline(&pipeline);
+    strncpy_s(pipeline.name, "Regression Pipeline", _TRUNCATE);
+    pipeline.passes[rev::runtime::ShaderPassBufferA].enabled = true;
+    strncpy_s(pipeline.passes[rev::runtime::ShaderPassBufferA].source_path,
+              "project_assets/buffer_a.glsl", _TRUNCATE);
+    pipeline.passes[rev::runtime::ShaderPassImage].enabled = true;
+    strncpy_s(pipeline.passes[rev::runtime::ShaderPassImage].source_path,
+              "project_assets/image.glsl", _TRUNCATE);
+    pipeline.passes[rev::runtime::ShaderPassImage].channels[0].kind =
+        rev::runtime::ShaderChannelBufferA;
+    project->shader_pipeline_count = 1;
+    if (scene->shader_cue_count > 0) scene->shader_cues[0].shader_pipeline_index = 0;
 }
 
 bool HasEveryCueFamily(const rev::editor::ProjectData* project) {
@@ -127,8 +141,13 @@ bool HasEveryCueFamily(const rev::editor::ProjectData* project) {
         scroll += scene.scroll_text_cue_count; music += scene.music_cue_count;
         mesh += scene.mesh_cue_count; post += scene.post_effect_count;
     }
+    bool pipeline_ok = project->shader_pipeline_count == 1 &&
+        std::strcmp(project->shader_pipelines[0].name, "Regression Pipeline") == 0 &&
+        project->shader_pipelines[0].passes[rev::runtime::ShaderPassBufferA].enabled &&
+        project->shader_pipelines[0].passes[rev::runtime::ShaderPassImage].channels[0].kind ==
+            rev::runtime::ShaderChannelBufferA;
     return shader && image && sprite && pixel && particles && text && scroll &&
-           music && mesh && post && project->curve_count;
+           music && mesh && post && project->curve_count && pipeline_ok;
 }
 
 }  // namespace
@@ -160,6 +179,13 @@ int main(int argc, char** argv) {
     if (ok) ok = rev::editor::LoadProject(editor, argv[2]);
     if (ok) ok = HasEveryCueFamily(project);
     if (ok) ok = rev::editor::ExportProject(editor, argv[3]);
+    if (ok) ok = rev::editor::ImportFromCues(editor, argv[3]);
+    if (ok) ok = project->shader_pipeline_count == 1 &&
+        std::strcmp(project->shader_pipelines[0].name, "Regression Pipeline") == 0 &&
+        project->shader_pipelines[0].passes[rev::runtime::ShaderPassImage].channels[0].kind ==
+            rev::runtime::ShaderChannelBufferA && project->scene_count > 0 &&
+        project->scenes[0].shader_cue_count > 0 &&
+        project->scenes[0].shader_cues[0].shader_pipeline_index == 0;
 
     rev::editor::NewProject(editor);
     delete[] project->curves;

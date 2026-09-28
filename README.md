@@ -16,6 +16,7 @@ A comprehensive framework for creating demoscene intros and interactive demos. B
 - ✅ `rev_platform` - Win32 window + WGL OpenGL 3.3 context + high-precision timing + input
 - ✅ `rev_shader` - GLSL shader compilation, linking, and uniform management
 - ✅ `rev_xm` - XM module music playback
+- ✅ `rev_audio_file` - embedded/file-backed WAV and MP3 playback
 - ✅ `rev_curve` - Time-value curves with 6 easing modes
 - ✅ `rev_sequence` - Timeline system with cues, fading, and opacity
 - ✅ `rev_mesh` - 3D mesh loading (glTF) and rendering with Phong shading
@@ -116,7 +117,8 @@ himym/
 Cross-platform window creation with OpenGL 3.3 context, high-precision timing, and input handling.
 
 ### rev_shader
-GLSL vertex/fragment shader compilation, linking, and uniform management (float, vec2/3/4, mat4, int).
+GLSL 330 vertex/fragment compilation, Shadertoy `mainImage` adaptation and
+version normalization, linking, and uniform management.
 
 ### rev_xm
 XM module music playback with integration for timeline synchronization.
@@ -147,7 +149,7 @@ matrix utilities used by editor preview and standalone playback.
 
 ## Minimum Runtime
 
-Packed runtime size depends on authored cues and embedded assets. Optional XM,
+Packed runtime size depends on authored cues and embedded assets. Optional XM, WAV/MP3,
 pixel, particle, procedural-mesh, and glTF code is selected per project. See
 `PACKED_RUNTIME_SIZE.md` for controlled measurements; do not use old static
 per-library estimates for release planning.
@@ -156,10 +158,13 @@ per-library estimates for release planning.
 
 ### Runtime Capabilities
 - **Scene Timeline**: Cue-based sequencing with precise timing
-- **Shader Effects**: GLSL vertex/fragment shaders with curve-driven parameters
+- **Scene Navigation**: Directional entry wipes and interactive music-disc/diskmag menus with keyboard selection and optional per-menu mouse control
+- **Shader Effects**: Built-in GLSL presets plus project-owned Shadertoy Image/Buffer A-D pipelines with textures, feedback, and XM audio channels
+- **Portable Compositing**: Shadertoy cue opacity curves and fade envelopes work independently of custom GLSL, while text pixel metrics scale from the authored 1920x1080 canvas
 - **3D Rendering**: glTF mesh support with Phong lighting and material slots
 - **Animated Sprites**: Frame-sequence image cues with FPS, loop/once/pingpong playback, and curve-driven frame selection
-- **Text Rendering**: TTF font rendering with fade/animation curves
+- **Sprite Menu Icons**: Reuse one animated-sprite cue across independently positioned menu destinations
+- **Text Rendering**: TTF text plus texture-free 5x7 shader text with curve-driven position, height, RGB, opacity, spacing, and scroll speed
 - **Audio Sync**: XM music playback with timeline markers
 - **Animation Curves**: 6 easing modes for smooth parameter interpolation
 - **Transparency Support**: Per-layer alpha blending and fade control
@@ -167,9 +172,14 @@ per-library estimates for release planning.
 
 ### Editor Features
 - **Scene Authoring**: Timeline-based scene composition
-- **Shader Modal**: Interactive shader parameter tuning with randomization
-- **Animated Sprite Modal**: Frame list authoring with playback controls (FPS, mode, start frame) and per-parameter curves
+- **Interactive Menus**: Label buttons or animated-sprite icons with per-item position, hit bounds, and destination scene
+- **Shader Modal**: Preset tuning and validated Shadertoy multipass graph authoring with portable project assets
+- **Asset Shader Duplication**: Duplicate a configured per-asset shader directly with its row-level `+` control
+- **Shader Text Duplication**: Clone a Shader Text Cue from its row-level `+` control and immediately edit the copy
+- **Animated Sprite Modal**: Single-frame or automatically discovered numbered-sequence importing, playback controls, and per-parameter curves
 - **Curve Editor**: Visual animation curve creation and manipulation
+- **Cue Parameter Clipboard**: Copy timing, fades, transforms, colors, effects,
+  shaders, and curves between same-type visual cues while keeping destination content
 - **Asset Browser**: Browse and organize meshes, textures, and audio
 - **Live Preview**: See changes in real-time during authoring
 - **Export Pipeline**: One-click export to runtime-ready format
@@ -204,6 +214,7 @@ Comprehensive guides are in the `PR/` folder:
 2. **Add Scenes**
    - Create timeline with scenes
    - Configure shader effects, meshes, text, and audio
+   - Optionally configure entry wipes and an interactive master menu
 
 3. **Author Content**
    - Adjust shader parameters with curves

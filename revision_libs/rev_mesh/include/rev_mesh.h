@@ -61,6 +61,8 @@ struct Mesh {
     // Imported light placement from glTF (if present)
     bool     has_imported_light;
     float    imported_light_pos[3];
+    float    imported_light_direction[3];
+    int      imported_light_type;
     int      imported_light_node_index;
     // Imported camera placement from glTF (if present)
     bool     has_imported_camera;

@@ -36,11 +36,14 @@ New-Item -ItemType Directory -Force -Path $workspace, $pipeline_build | Out-Null
 $cases = @(
     @{ Name = "empty"; Cues = "[metadata]`n"; Asset = $false },
     @{ Name = "shader"; Cues = "[shader_cues]`n0|0|1`n"; Asset = $false },
+    @{ Name = "image"; Cues = "[image_cues]`nimage|asset.bin`n"; Asset = $true },
+    @{ Name = "text"; Cues = "[text_cues]`ntext row`n"; Asset = $false },
     @{ Name = "animated_sprite"; Cues = "[animated_sprite_cues]`nasset|asset.bin`n"; Asset = $true },
     @{ Name = "scroll_text"; Cues = "[scroll_text_cues]`nscroll row`n"; Asset = $false },
     @{ Name = "xm"; Cues = "[music_cues]`nmusic|asset.bin`n"; Asset = $true },
     @{ Name = "pixel"; Cues = "[pixel_cues]`npixels|asset.bin`n"; Asset = $true },
     @{ Name = "particle"; Cues = "[pixel_emitter_cues]`nnone|unused|1`n"; Asset = $false },
+    @{ Name = "particle_image"; Cues = "[pixel_emitter_cues]`nimage|asset.bin|0`n"; Asset = $true },
     @{ Name = "procedural_mesh"; Cues = "[mesh_cues]`nmesh||0`n"; Asset = $false },
     @{ Name = "gltf"; Cues = "[mesh_cues]`nmodel|asset.bin|4`n"; Asset = $true }
 )

@@ -88,6 +88,9 @@ automatic duration envelope (`1` is black and `0` is fully visible).
 
 ### Workflow 2: Add Shader to Scene
 
+For custom GLSL, Shadertoy imports, Buffer A-D pipelines, feedback, texture
+channels, and audio-reactive shaders, see [SHADER_GUIDE.md](SHADER_GUIDE.md).
+
 1. **Select scene** in timeline
 2. **Click shader "+ Cue"** button
 3. In shader modal:
@@ -126,6 +129,15 @@ automatic duration envelope (`1` is black and `0` is fully visible).
 4. **Apply & Close**
 
 **Result**: Text appears with fade effect during specified timing.
+
+### Scrolling Text Travel
+
+Scrolling text measures its glyph extent automatically; do not add leading or
+trailing spaces to push it offscreen. In **Clamp** mode HiMYM renders one copy
+and calculates travel from the authored starting position until the final glyph
+has fully cleared the destination edge. **Loop** mode repeats the text and uses
+**Wrap Gap** as the separation between cycles. Direction selects the movement
+axis; X/Y provide the starting position and cross-axis placement.
 
 ### Workflow 4b: Add Animated Sprite Overlay
 

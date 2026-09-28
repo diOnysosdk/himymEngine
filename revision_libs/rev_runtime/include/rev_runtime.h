@@ -46,6 +46,59 @@ constexpr int kMaxLayerPostEffects = 8;
 constexpr int kMaxAssetShaders = 4;
 constexpr int kMaxTriggerEvents = 4096;
 constexpr int kMaxTriggerTracks = 32;
+constexpr int kMaxShaderPipelines = 16;
+constexpr int kMaxShaderPasses = 5;
+constexpr int kMaxShaderChannels = 4;
+constexpr int kShaderAudioTextureWidth = 512;
+constexpr int kShaderAudioSampleFrames = 1024;
+
+enum ShaderPassKind {
+    ShaderPassImage = 0,
+    ShaderPassBufferA = 1,
+    ShaderPassBufferB = 2,
+    ShaderPassBufferC = 3,
+    ShaderPassBufferD = 4
+};
+
+enum ShaderChannelKind {
+    ShaderChannelNone = 0,
+    ShaderChannelTexture = 1,
+    ShaderChannelBufferA = 2,
+    ShaderChannelBufferB = 3,
+    ShaderChannelBufferC = 4,
+    ShaderChannelBufferD = 5,
+    ShaderChannelSelfPreviousFrame = 6,
+    ShaderChannelAudioSpectrum = 7
+};
+
+struct ShaderChannel {
+    int kind;
+    char asset_path[512];
+};
+
+struct ShaderPass {
+    int kind;
+    bool enabled;
+    float resolution_scale;
+    char source_path[512];
+    ShaderChannel channels[kMaxShaderChannels];
+};
+
+struct ShaderPipeline {
+    char name[64];
+    ShaderPass passes[kMaxShaderPasses];
+};
+
+void InitializeShaderPipeline(ShaderPipeline* pipeline);
+// Returns the enabled pass count, or -1 when the graph is invalid. Image is
+// always ordered last; buffer dependencies are ordered before their consumers.
+int BuildShaderPassOrder(const ShaderPipeline* pipeline,
+                         int order[kMaxShaderPasses],
+                         char* error, size_t error_size);
+// Builds a Shadertoy-compatible 512x2 R8 texture payload from interleaved
+// stereo samples: spectrum in row 0, waveform in row 1.
+void BuildShaderAudioTexture(const float* stereo_samples, int frame_count,
+                             unsigned char output[kShaderAudioTextureWidth * 2]);
 
 // Beat timing uses a quarter note as one beat. Trigger intervals are expressed
 // in quarter-note beats, so an eighth note is 0.5 and an eight-beat phrase is 8.
@@ -571,6 +624,81 @@ struct MusicCue {
     float cue_end;
 };
 
+// Texture-free 5x7 text rendered directly by a tiny glyph shader.
+// This cue deliberately has no font/image asset fields so packed projects can
+// use text without pulling in GDI+, WIC, or texture decoding.
+struct ShaderTextCue {
+    char     text[512];
+    float    x, y;          // Anchor in normalized screen space [0..1]
+    float    size;          // Glyph height in pixels
+    ColorRGB color;
+    float    opacity;
+    int      mode;          // 0=static, 1=horizontal scroll
+    int      alignment;     // 0=left, 1=center, 2=right (static mode)
+    int      direction;     // 0=left, 1=right (scroll mode)
+    int      loop_mode;     // 0=loop, 1=clamp
+    float    speed;         // Pixels per second
+    float    spacing;       // Advance multiplier
+    float    cue_start;
+    float    cue_end;
+    float    fade_in;
+    float    fade_out;
+    int      layer_order;
+    int      blend_mode;    // 0=alpha, 1=additive, 2=multiply, 3=screen
+    int      curve_x;
+    int      curve_y;
+    int      curve_size;
+    int      curve_color_r;
+    int      curve_color_g;
+    int      curve_color_b;
+    int      curve_opacity;
+    int      curve_speed;
+    int      curve_spacing;
+};
+
+// Scene navigation metadata. These rows remain code-only in packed builds.
+enum SceneWipeType {
+    SceneWipeNone = 0,
+    SceneWipeLeft = 1,
+    SceneWipeRight = 2,
+    SceneWipeUp = 3,
+    SceneWipeDown = 4,
+};
+
+struct SceneNavigation {
+    char name[64];
+    float start_time;
+    float end_time;
+    int wipe_type;
+    float wipe_duration;
+    float wipe_color[3];
+};
+
+struct MenuItem {
+    char label[64];
+    int target_scene;
+    int visual_type;          // 0=label button, 1=existing animated-sprite cue
+    int animated_sprite_cue;  // scene-local cue index, -1 when unassigned
+    float image_x;            // sprite-mode centre position [0..1]
+    float image_y;
+    float x;
+    float y;
+    float width;
+    float height;
+};
+
+constexpr int kMaxMenuItems = 32;
+
+struct SceneMenu {
+    int enabled;
+    int wrap;
+    int mouse_enabled;
+    int initial_item;
+    float highlight_color[4];
+    MenuItem items[kMaxMenuItems];
+    int item_count;
+};
+
 // 3-D mesh cue
 // mesh_type: 0=cube  1=sphere  2=plane  3=torus
 // pos/rot/scale: world transform (rot in degrees, Euler XYZ)
@@ -689,6 +817,11 @@ float QuantizeTriggerBeat(float beat, float interval_beats);
 float EvaluateTriggerPulse(const TriggerTrack* track, float time_seconds, float pulse_beats);
 bool AddTriggerEvent(TriggerTrack* track, float beat, int value);
 void InitializeTextAnimationConfig(TextAnimationConfig* config);
+void InitializeShaderTextCue(ShaderTextCue* cue);
+bool GetShaderTextGlyph(unsigned char character, unsigned int* rows_0_to_5,
+                        unsigned int* row_6);
+const char* GetShaderTextVertexSource();
+const char* GetShaderTextFragmentSource();
 bool ParseTextAnimationConfig(const char* serialized, TextAnimationConfig* config);
 void InitializeGlyphAnimationState(GlyphAnimationState* state);
 // timeline_time is relative to the cue/asset start; reveal and exit offsets use this local time.
@@ -703,6 +836,7 @@ void EvaluateTextGlyphAnimation(const TextAnimationConfig* config,
 
 // Load an image file and upload it to an OpenGL texture.
 bool LoadImageTexture(const char* path, ImageTexture* tex);
+void SetImageTextureWrap(unsigned int texture_id, int wrap_s, int wrap_t);
 
 // Load an image from a memory buffer (for packed-asset builds).
 bool LoadImageTextureFromMemory(const unsigned char* data, size_t size,
@@ -726,7 +860,13 @@ bool CreateTextGlyphAtlas(const char* font_name, float size, TextGlyphAtlas* atl
 float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
                               int direction, float size_scale, float spacing,
                               float wrap_gap, float viewport_width,
-                              float viewport_height);
+                              float viewport_height, float start_x,
+                              float start_y, int loop_mode);
+// Pixel metrics are authored against the editor's 1920x1080 canvas. Scale
+// them uniformly for other framebuffers while normalized anchors remain
+// unchanged.
+float ComputeAuthoredViewportScale(float viewport_width, float viewport_height);
+float ComputeTextViewportScale(float viewport_width, float viewport_height);
 bool SaveTextGlyphAtlas(const char* font_name, float size,
                         const char* image_path, const char* metadata_path);
 bool LoadTextGlyphAtlasFromMemory(const unsigned char* image_data, size_t image_size,
