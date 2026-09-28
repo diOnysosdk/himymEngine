@@ -2579,7 +2579,7 @@ void RenderShaderModal(EditorContext* editor) {
                                                                   pass_index, false);
                                 }
                             } else if (channel.kind == rev::runtime::ShaderChannelAudioSpectrum) {
-                                ImGui::TextDisabled("Uses the live 512x2 XM audio spectrum texture.");
+                                ImGui::TextDisabled("Uses the live 512x2 music audio spectrum texture.");
                             }
                             ImGui::PopID();
                         }
@@ -2937,7 +2937,7 @@ void RenderMusicModal(EditorContext* editor) {
             }
         };
         
-        ImGui::Text("XM Music File:");
+        ImGui::Text("Music File (XM, WAV, MP3):");
         ImGui::InputText("##musicfile", cue->asset_key, sizeof(cue->asset_key));
         ImGui::SameLine();
         if (ImGui::Button("Browse")) {
@@ -2948,7 +2948,7 @@ void RenderMusicModal(EditorContext* editor) {
             ofn.hwndOwner = (HWND)editor->window->hwnd;
             ofn.lpstrFile = filepath;
             ofn.nMaxFile = sizeof(filepath);
-            ofn.lpstrFilter = "XM Modules\0*.xm\0All Files\0*.*\0";
+            ofn.lpstrFilter = "Supported Audio\0*.xm;*.wav;*.wave;*.mp3\0XM Modules\0*.xm\0WAV Audio\0*.wav;*.wave\0MP3 Audio\0*.mp3\0All Files\0*.*\0";
             ofn.nFilterIndex = 1;
             ofn.lpstrInitialDir = "assets";
             ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
@@ -2960,7 +2960,7 @@ void RenderMusicModal(EditorContext* editor) {
 
                 strncpy_s(cue->asset_key, filename, _TRUNCATE);
 
-                // Copy XM file into project assets folder (same pattern as image cues)
+                // Copy the music file into the project assets folder.
                 if (editor->project->assets_path[0]) {
                     char dest_path[512] = {};
                     snprintf(dest_path, sizeof(dest_path), "%s\\%s",

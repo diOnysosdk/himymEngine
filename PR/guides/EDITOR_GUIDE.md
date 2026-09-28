@@ -253,7 +253,7 @@ axis; X/Y provide the starting position and cross-axis placement.
 1. **Click "+ Music"** button
 2. In music modal:
    - **Asset Key**: Give it a name (e.g., `main_track`)
-   - **Browse**: Opens file picker — selected XM file is **copied into `{project}_assets/`** and stored as a workspace-relative path
+   - **Browse**: Opens file picker — selected XM, WAV, or MP3 file is **copied into `{project}_assets/`** and stored as a workspace-relative path
    - **Start/End**: Music cue timing (usually 0.0 to scene end)
 
 The Music Settings window also provides project-wide gain, compressor, stereo
@@ -263,7 +263,7 @@ so they continue across scene boundaries and wrap with an intro loop. The effect
 checkbox must be enabled for its animated values to affect the music.
 3. **Apply & Close**
 
-**Result**: XM module plays during intro. The asset copy ensures the file is available for both regular and packed builds.
+**Result**: XM, WAV, or MP3 music plays during the intro. The asset copy ensures the file is available for both regular and packed builds; packed builds embed the referenced audio bytes and enable only the matching XM or file-audio runtime.
 
 ---
 
@@ -462,7 +462,7 @@ evaluating the stack belonging to the active scene interval.
 **Pack, Build and Run** — creates the standalone redistributable exe:
 1. **Save + Export** (same as above)
 2. **Pack**: `rev_pack` embeds referenced assets, cues, only the referenced fullscreen/enabled asset-shader preset sources, and a post-effect shader reduced to the enabled global/scene/asset effect types into `build/packed_assets.h`, then writes `build/packed_features.cmake`
-3. **Configure**: CMake reloads the feature manifest, removes unused XM, pixel, particle, mesh, and glTF target dependencies, and compiles out absent animated-sprite and scrolling-text runtime paths
+3. **Configure**: CMake reloads the feature manifest, removes unused XM, WAV/MP3, pixel, particle, mesh, and glTF target dependencies, and compiles out absent animated-sprite and scrolling-text runtime paths
 4. **Build**: Compiles `minimal_intro_packed` (PRE_BUILD touches `main.cpp` to force the fresh packed header include)
 5. **Run**: Launch `build\bin\Release\minimal_intro_packed.exe`
 
@@ -722,7 +722,7 @@ Set mesh type in Mesh Cue modal, adjust parameters.
 - Ensure Effect Start/End defines animation window
 
 ### "Music not playing"
-- Verify the XM file was copied to `{project}_assets/` via Browse (not just referenced by path)
+- Verify the XM, WAV, or MP3 file was copied to `{project}_assets/` via Browse (not just referenced by path)
 - Check `cues.txt` contains a `[music_cues]` section with the correct `asset_key|asset_path|cue_start|cue_end` line
 - Ensure `cue_end > cue_start` and both are within the scene duration
 - For the packed exe: check that `build/packed_assets.h` contains `HIMYM_HAS_PACKED_CUES`  

@@ -98,7 +98,10 @@ referenced globally, by a scene-layer stack, or by an image/sprite/pixel cue.
 
 The packer also writes `packed_features.cmake` beside the generated header.
 The editor reconfigures the existing build after packing so the packed target
-does not depend on unused XM, pixel, particle, mesh, or glTF libraries. When
+does not depend on unused XM, WAV/MP3, pixel, particle, mesh, or glTF libraries. WAV and
+MP3 music assets are embedded byte-for-byte like other project assets, and
+`rev_audio_file` plus the Windows Media Foundation imports are linked only when
+one of those formats is referenced. When
 using `pack_cli` directly, run `cmake -S . -B build` once after packing and
 before building `minimal_intro_packed`.
 

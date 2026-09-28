@@ -10,6 +10,13 @@
 #ifndef HIMYM_USE_XM
 #define HIMYM_USE_XM 1
 #endif
+#ifndef HIMYM_USE_AUDIO_FILE
+#ifdef HIMYM_PACKED_ASSETS
+#define HIMYM_USE_AUDIO_FILE 0
+#else
+#define HIMYM_USE_AUDIO_FILE 1
+#endif
+#endif
 #ifndef HIMYM_USE_PIXEL
 #define HIMYM_USE_PIXEL 1
 #endif
@@ -54,9 +61,9 @@
 
 #include "rev_platform.h"
 #include "rev_shader.h"
-#if HIMYM_USE_XM
-#include "rev_xm.h"
-#endif
+#define REV_MUSIC_USE_XM HIMYM_USE_XM
+#define REV_MUSIC_USE_AUDIO_FILE HIMYM_USE_AUDIO_FILE
+#include "rev_music_player.h"
 #include "rev_runtime.h"
 #if HIMYM_USE_PIXEL
 #include "rev_pixel.h"
@@ -164,7 +171,7 @@ static const int kPostEffectFade = 12;
 #if HIMYM_USE_IMAGE_DECODER
 #pragma comment(lib, "gdiplus.lib")
 #endif
-#if HIMYM_USE_XM
+#if HIMYM_USE_XM || HIMYM_USE_AUDIO_FILE
 #pragma comment(lib, "winmm.lib")
 #include <mmsystem.h>
 #endif
@@ -207,15 +214,15 @@ static constexpr bool g_verbose_logging = false;
 #define LOGV(...) ((void)0)
 #endif
 
-// ===== WinMM audio thread for XM playback =====
-#if HIMYM_USE_XM
+// ===== WinMM audio thread for music playback =====
+#if HIMYM_USE_XM || HIMYM_USE_AUDIO_FILE
 static const int kAudioSampleRate = 48000;
 static const int kAudioChannels   = 2;
 static const int kAudioFrames     = 2048;   // frames per waveOut buffer
 static const int kAudioBufCount   = 4;      // ring-buffer depth
 
 struct AudioState {
-    std::atomic<rev::xm::Player*> player;
+    std::atomic<rev::music::Player*> player;
     HWAVEOUT         wave_out;
     WAVEHDR          headers[kAudioBufCount];
     int16_t*         pcm[kAudioBufCount];
@@ -238,13 +245,13 @@ static void CaptureShaderAudioSamples(AudioState* state, const float* samples, i
            (size_t)captured_frames * 2 * sizeof(float));
 }
 
-static void FillAudioBufferFromPlayer(rev::xm::Player* player,
+static void FillAudioBufferFromPlayer(rev::music::Player* player,
                                       float* fbuf,
                                       int16_t* pcm,
                                       int frame_count) {
     const int sample_count = frame_count * kAudioChannels;
     if (player) {
-        rev::xm::Update(player, fbuf, frame_count);
+        rev::music::Update(player, fbuf, frame_count);
     } else {
         memset(fbuf, 0, sizeof(float) * sample_count);
     }
@@ -3455,7 +3462,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         if (runtime_shader_audio_texture && runtime_shader_audio_frame == frame)
             return runtime_shader_audio_texture;
         float samples[rev::runtime::kShaderAudioSampleFrames * 2] = {};
-#if HIMYM_USE_XM
+#if HIMYM_USE_XM || HIMYM_USE_AUDIO_FILE
         if (g_shader_audio_state) {
             std::lock_guard<std::mutex> lock(g_shader_audio_state->shader_audio_mutex);
             memcpy(samples, g_shader_audio_state->shader_audio_samples, sizeof(samples));
@@ -3895,10 +3902,10 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     }
 #endif
     
-#if HIMYM_USE_XM
+#if HIMYM_USE_XM || HIMYM_USE_AUDIO_FILE
     struct LoadedMusicPlayer {
         MusicCue cue;
-        rev::xm::Player* player;
+        rev::music::Player* player;
     };
     LoadedMusicPlayer music_players[kMaxMusicCues] = {};
     int loaded_music_player_count = 0;
@@ -3909,11 +3916,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             continue;
         }
 
-        rev::xm::Player* player = nullptr;
+        rev::music::Player* player = nullptr;
 #ifdef HIMYM_PACKED_ASSETS
         const rev::pack::PackedAsset* pa = rev::pack::GetPackedAsset(cue.asset_key, kPackedAssets, kPackedAssetCount);
         if (pa) {
-            player = rev::xm::CreatePlayer(pa->data, (long)pa->size);
+            player = rev::music::CreatePlayer(pa->data, (long)pa->size, cue.asset_key);
             if (player) {
                 LOGV("Loaded music cue %d (packed): %s\n", mi, cue.asset_key);
             }
@@ -3937,7 +3944,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 fclose(xm_file);
                 xm_file = nullptr;
 
-                player = rev::xm::CreatePlayer(xm_data, xm_size);
+                player = rev::music::CreatePlayer(xm_data, xm_size, cue.asset_path);
                 delete[] xm_data;
             }
         }
@@ -3954,7 +3961,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 #endif
 
         if (player) {
-            rev::xm::SetAudioEffects(player, &playback_settings.audio_effects);
+            rev::music::SetAudioEffects(player, &playback_settings.audio_effects);
             music_players[loaded_music_player_count].cue = cue;
             music_players[loaded_music_player_count].player = player;
             ++loaded_music_player_count;
@@ -4528,12 +4535,12 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     }
     
     // Start audio thread
-#if HIMYM_USE_XM
+#if HIMYM_USE_XM || HIMYM_USE_AUDIO_FILE
     AudioState* audio_state = nullptr;
     HANDLE audio_thread = nullptr;
     int active_music_index = -1;
     int finished_music_index = -1;
-    rev::xm::Player* active_music_player = nullptr;
+    rev::music::Player* active_music_player = nullptr;
     bool music_finish_latched = false;
     if (loaded_music_player_count > 0) {
         float latest_start = -1.0f;
@@ -4615,7 +4622,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 start_time = current_time - time;
                 menu_return_scene = -1;
                 menu_destination_scene = -1;
-#if HIMYM_USE_XM
+#if HIMYM_USE_XM || HIMYM_USE_AUDIO_FILE
                 finished_music_index = -1;
 #endif
             }
@@ -4647,13 +4654,13 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
             // Keep currently playing music continuous across timeline wraps when
             // music looping is enabled; otherwise reset it to cue starts.
-#if HIMYM_USE_XM
+#if HIMYM_USE_XM || HIMYM_USE_AUDIO_FILE
             if (!playback_settings.music_loop) {
                 active_music_index = -1;
                 if (audio_state) {
                     for (int mi = 0; mi < loaded_music_player_count; ++mi) {
                         if (music_players[mi].player) {
-                            rev::xm::SetPosition(music_players[mi].player, 0, 0);
+                            rev::music::SetPositionSeconds(music_players[mi].player, 0.0f);
                         }
                     }
                     audio_state->player.store(nullptr, std::memory_order_release);
@@ -4714,7 +4721,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     start_time = current_time - time;
                     current_scene_index = target;
                     active_menu_scene = -1;
-#if HIMYM_USE_XM
+#if HIMYM_USE_XM || HIMYM_USE_AUDIO_FILE
                     finished_music_index = -1;
 #endif
                 }
@@ -4722,7 +4729,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         }
         previous_up = up; previous_down = down; previous_enter = enter; previous_mouse = mouse;
 
-#if HIMYM_USE_XM
+#if HIMYM_USE_XM || HIMYM_USE_AUDIO_FILE
         if (audio_state && loaded_music_player_count > 0) {
             int new_music_index = -1;
             float latest_start = -1.0f;
@@ -4761,11 +4768,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     active_music_index = new_music_index;
                 } else {
                     active_music_index = new_music_index;
-                    rev::xm::Player* selected_player = nullptr;
+                    rev::music::Player* selected_player = nullptr;
                     if (active_music_index >= 0) {
                         selected_player = music_players[active_music_index].player;
                         if (selected_player) {
-                            rev::xm::SetPosition(selected_player, 0, 0);
+                            rev::music::SetPositionSeconds(selected_player, 0.0f);
                         }
                     }
                     audio_state->player.store(selected_player, std::memory_order_release);
@@ -4774,14 +4781,14 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
 
             if (active_music_index >= 0) {
-                rev::xm::Player* selected_player = audio_state->player.load(std::memory_order_acquire);
+                rev::music::Player* selected_player = audio_state->player.load(std::memory_order_acquire);
                 if (selected_player) {
                     rev::runtime::AudioEffects evaluated_audio = {};
                     rev::runtime::EvaluateAudioEffects(&playback_settings.audio_effects,
                                                        curves, curve_count, time,
                                                        &evaluated_audio);
-                    rev::xm::SetAudioEffects(selected_player, &evaluated_audio);
-                    bool finished = rev::xm::IsFinished(selected_player);
+                    rev::music::SetAudioEffects(selected_player, &evaluated_audio);
+                    bool finished = rev::music::IsFinished(selected_player);
                     if (finished) {
                         if (!playback_settings.music_loop) {
                             finished_music_index = active_music_index;
@@ -4799,7 +4806,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                 finished_music_index = -1;
                             }
                         } else if (!music_finish_latched) {
-                            rev::xm::SetPosition(selected_player, 0, 0);
+                            rev::music::SetPositionSeconds(selected_player, 0.0f);
                             music_finish_latched = true;
                         }
                     } else {
@@ -7247,7 +7254,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         if (rev::platform::IsKeyPressed(window, VK_ESCAPE)) {
             break;
         }
-        if (time > total_duration) {
+        if (!playback_settings.intro_loop && time > total_duration) {
             break;
         }
 
@@ -7255,7 +7262,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     }
     
     // Cleanup audio
-#if HIMYM_USE_XM
+#if HIMYM_USE_XM || HIMYM_USE_AUDIO_FILE
     if (audio_state) {
         g_shader_audio_state = nullptr;
         audio_state->stop.store(true, std::memory_order_release);
@@ -7268,7 +7275,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
     }
     for (int mi = 0; mi < loaded_music_player_count; ++mi) {
         if (music_players[mi].player) {
-            rev::xm::DestroyPlayer(music_players[mi].player);
+            rev::music::DestroyPlayer(music_players[mi].player);
             music_players[mi].player = nullptr;
         }
     }

@@ -181,7 +181,20 @@ void SetPosition(Player* player, int pattern, int row) {
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
-        xm_seek((xm_context_t*)player->context, (uint8_t)pattern, (uint8_t)row, 0);
+        if (pattern == 0 && row == 0) {
+            // xm_seek deliberately preserves channel and effect memory. That can
+            // leave a note sustaining on one channel when an intro/menu/music
+            // loop restarts. A start-of-song request needs a clean tracker state.
+            xm_reset_context((xm_context_t*)player->context);
+            // With XM_SAMPLE_RATE=0 the rate is runtime state, and libxm's full
+            // reset clears it along with the channel state.
+            xm_set_sample_rate((xm_context_t*)player->context, (uint16_t)player->sample_rate);
+            player->compressor_gain = 0.0f;
+            player->eq_low[0] = player->eq_low[1] = 0.0f;
+            player->eq_high[0] = player->eq_high[1] = 0.0f;
+        } else {
+            xm_seek((xm_context_t*)player->context, (uint8_t)pattern, (uint8_t)row, 0);
+        }
         return;
     }
 #endif

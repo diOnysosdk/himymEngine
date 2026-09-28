@@ -45,7 +45,8 @@ preserving normalized placement at 960x540 and other window sizes.
 
 | Exported content | C++ flag | Optional target dependency |
 |---|---|---|
-| Music cue | `HIMYM_USE_XM` | `rev_xm` and libxm |
+| XM music cue | `HIMYM_USE_XM` | `rev_xm` and libxm |
+| WAV or MP3 music cue | `HIMYM_USE_AUDIO_FILE` | `rev_audio_file` and Windows Media Foundation |
 | Pixel cue | `HIMYM_USE_PIXEL` | `rev_pixel` |
 | Pixel-emitter cue | `HIMYM_USE_PARTICLES` | `rev_particles` |
 | Any mesh cue | `HIMYM_USE_MESH` | `rev_mesh` |

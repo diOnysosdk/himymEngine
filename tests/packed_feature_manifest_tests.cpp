@@ -20,6 +20,7 @@ struct ExpectedFeatures {
     bool animated_sprite;
     bool scroll_text;
     bool shader_text;
+    bool audio_file;
 };
 
 int failures = 0;
@@ -71,6 +72,11 @@ void RunCase(const std::filesystem::path& root,
     if (needs_asset) {
         Check(WriteText(case_dir / "asset.bin", "test-asset"), case_name,
               "could not write test asset");
+        if (std::string(case_name) == "wav" || std::string(case_name) == "mp3") {
+            const char* leaf = std::string(case_name) == "wav" ? "asset.wav" : "asset.mp3";
+            Check(WriteText(case_dir / leaf, "test-audio"), case_name,
+                  "could not write test audio asset");
+        }
         if (std::string(case_name) == "transferred_absolute_path") {
             std::filesystem::create_directories(case_dir / "project_assets");
             Check(WriteText(case_dir / "project_assets" / "asset.bin", "test-asset"),
@@ -121,6 +127,7 @@ void RunCase(const std::filesystem::path& root,
         {"ANIMATED_SPRITE", expected.animated_sprite},
         {"SCROLL_TEXT", expected.scroll_text},
         {"SHADER_TEXT", expected.shader_text},
+        {"AUDIO_FILE", expected.audio_file},
     };
     for (const FeatureCheck& feature : features) {
         CheckFlag(header, case_name, "#define HIMYM_USE_", feature.name,
@@ -183,6 +190,10 @@ int main() {
             {false, false, false, false, false, false, false, true}, true);
     RunCase(root, "xm", "[music_cues]\nmusic|asset.bin\n",
             {true, false, false, false, false}, true);
+    RunCase(root, "wav", "[music_cues]\nmusic|asset.wav\n",
+            {false, false, false, false, false, false, false, false, false, false, false, true}, true);
+    RunCase(root, "mp3", "[music_cues]\nmusic|asset.mp3\n",
+            {false, false, false, false, false, false, false, false, false, false, false, true}, true);
     RunCase(root, "pixel", "[pixel_cues]\npixels|asset.bin\n",
             {false, true, false, false, false}, true);
     RunCase(root, "particle", "[pixel_emitter_cues]\nnone|unused|1\n",

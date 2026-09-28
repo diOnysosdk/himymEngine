@@ -16,6 +16,7 @@ A comprehensive framework for creating demoscene intros and interactive demos. B
 - ✅ `rev_platform` - Win32 window + WGL OpenGL 3.3 context + high-precision timing + input
 - ✅ `rev_shader` - GLSL shader compilation, linking, and uniform management
 - ✅ `rev_xm` - XM module music playback
+- ✅ `rev_audio_file` - embedded/file-backed WAV and MP3 playback
 - ✅ `rev_curve` - Time-value curves with 6 easing modes
 - ✅ `rev_sequence` - Timeline system with cues, fading, and opacity
 - ✅ `rev_mesh` - 3D mesh loading (glTF) and rendering with Phong shading
@@ -148,7 +149,7 @@ matrix utilities used by editor preview and standalone playback.
 
 ## Minimum Runtime
 
-Packed runtime size depends on authored cues and embedded assets. Optional XM,
+Packed runtime size depends on authored cues and embedded assets. Optional XM, WAV/MP3,
 pixel, particle, procedural-mesh, and glTF code is selected per project. See
 `PACKED_RUNTIME_SIZE.md` for controlled measurements; do not use old static
 per-library estimates for release planning.

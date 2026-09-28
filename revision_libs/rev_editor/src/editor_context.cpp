@@ -4,7 +4,9 @@
 #include "rev_mesh.h"
 #include "rev_mesh_shadow.h"
 #include "rev_gltf.h"
-#include "rev_xm.h"
+#define REV_MUSIC_USE_XM 1
+#define REV_MUSIC_USE_AUDIO_FILE 1
+#include "rev_music_player.h"
 #include "rev_pixel.h"
 #include "rev_particles.h"
 #include <cstring>
@@ -74,7 +76,7 @@ struct EditorAudioState {
     std::mutex player_mutex;
     std::mutex shader_audio_mutex;
     float shader_audio_samples[rev::runtime::kShaderAudioSampleFrames * 2] = {};
-    rev::xm::Player* player = nullptr;
+    rev::music::Player* player = nullptr;
     char cue_key[512] = {};
     float cue_start = 0.0f;
     float last_time = 0.0f;
@@ -257,7 +259,7 @@ static void FillEditorAudioBuffer(EditorAudioState* state, float* output, int fr
     memset(output, 0, (size_t)frame_count * 2 * sizeof(float));
     if (state->playing.load(std::memory_order_acquire)) {
         std::lock_guard<std::mutex> lock(state->player_mutex);
-        if (state->player) rev::xm::Update(state->player, output, frame_count);
+        if (state->player) rev::music::Update(state->player, output, frame_count);
     }
     const int captured_frames = frame_count < rev::runtime::kShaderAudioSampleFrames
         ? frame_count : rev::runtime::kShaderAudioSampleFrames;
@@ -278,7 +280,7 @@ void UpdateEditorAudioEffects(EditorContext* editor) {
                                        editor->project->curve_count,
                                        editor->current_time, &evaluated);
     std::lock_guard<std::mutex> lock(state->player_mutex);
-    if (state->player) rev::xm::SetAudioEffects(state->player, &evaluated);
+    if (state->player) rev::music::SetAudioEffects(state->player, &evaluated);
 }
 
 static DWORD WINAPI EditorAudioThreadProc(LPVOID param) {
@@ -363,7 +365,7 @@ static void DestroyEditorAudio(EditorAudioState* state) {
     }
     std::lock_guard<std::mutex> lock(state->player_mutex);
     if (state->player) {
-        rev::xm::DestroyPlayer(state->player);
+        rev::music::DestroyPlayer(state->player);
         state->player = nullptr;
     }
     delete state;
@@ -465,31 +467,31 @@ static bool ReplaceEditorMusic(EditorContext* editor, const MusicCue* cue, float
     std::vector<unsigned char> bytes;
     if (!ResolveEditorMusicPath(editor->project, cue, path, sizeof(path)) ||
         !ReadEditorFile(path, &bytes)) return false;
-    rev::xm::Player* replacement = rev::xm::CreatePlayer(bytes.data(), bytes.size());
+    rev::music::Player* replacement = rev::music::CreatePlayer(bytes.data(), bytes.size(), path);
     if (!replacement) return false;
     AudioEffects evaluated = {};
     rev::runtime::EvaluateAudioEffects(&editor->project->audio_effects,
                                        editor->project->curves,
                                        editor->project->curve_count,
                                        timeline_time, &evaluated);
-    rev::xm::SetAudioEffects(replacement, &evaluated);
+    rev::music::SetAudioEffects(replacement, &evaluated);
 
     float offset = timeline_time - cue_start;
     if (offset < 0.0f) offset = 0.0f;
-    float duration = rev::xm::GetDuration(replacement);
+    float duration = rev::music::GetDuration(replacement);
     if (duration > 0.0f && editor->project->loop_music) offset = fmodf(offset, duration);
     if (duration > 0.0f && offset > duration) offset = duration;
     float scratch[2048 * 2] = {};
     int frames_left = (int)(offset * 48000.0f);
     while (frames_left > 0) {
         int frames = frames_left > 2048 ? 2048 : frames_left;
-        rev::xm::Update(replacement, scratch, frames);
+        rev::music::Update(replacement, scratch, frames);
         frames_left -= frames;
     }
 
     {
         std::lock_guard<std::mutex> lock(state->player_mutex);
-        if (state->player) rev::xm::DestroyPlayer(state->player);
+        if (state->player) rev::music::DestroyPlayer(state->player);
         state->player = replacement;
         strncpy_s(state->cue_key, sizeof(state->cue_key), path, _TRUNCATE);
         state->cue_start = cue_start;
@@ -519,7 +521,7 @@ static void SyncEditorAudio(EditorContext* editor, float delta_time) {
     if (!has_cue) {
         std::lock_guard<std::mutex> lock(state->player_mutex);
         if (state->player) {
-            rev::xm::DestroyPlayer(state->player);
+            rev::music::DestroyPlayer(state->player);
             state->player = nullptr;
         }
         state->cue_key[0] = '\0';
@@ -541,7 +543,7 @@ static void ResetEditorAudio(EditorContext* editor) {
     state->generation.fetch_add(1, std::memory_order_release);
     std::lock_guard<std::mutex> lock(state->player_mutex);
     if (state->player) {
-        rev::xm::DestroyPlayer(state->player);
+        rev::music::DestroyPlayer(state->player);
         state->player = nullptr;
     }
     state->cue_key[0] = '\0';

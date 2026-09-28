@@ -87,6 +87,7 @@ add_subdirectory(revision_libs/rev_platform)
 add_subdirectory(revision_libs/rev_runtime)
 add_subdirectory(revision_libs/rev_shader)
 add_subdirectory(revision_libs/rev_xm)
+add_subdirectory(revision_libs/rev_audio_file)
 add_subdirectory(revision_libs/rev_curve)
 add_subdirectory(revision_libs/rev_sequence)
 add_subdirectory(revision_libs/rev_pack)
@@ -136,6 +137,10 @@ endif()
 # Packer contract tests for project-derived C++ and CMake feature manifests.
 add_executable(packed_feature_manifest_tests tests/packed_feature_manifest_tests.cpp)
 target_link_libraries(packed_feature_manifest_tests PRIVATE rev_pack)
+add_executable(audio_file_tests tests/audio_file_tests.cpp)
+target_link_libraries(audio_file_tests PRIVATE rev_audio_file)
+add_executable(xm_reset_tests tests/xm_reset_tests.cpp)
+target_link_libraries(xm_reset_tests PRIVATE rev_xm)
 if(MSVC)
     set_target_properties(packed_feature_manifest_tests PROPERTIES
         LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup"
