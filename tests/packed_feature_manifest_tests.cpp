@@ -111,6 +111,14 @@ void RunCase(const std::filesystem::path& root,
         Check(header.find("if (u_enabled[22]") == std::string::npos,
               case_name, "unused post-effect branch 22 should not be packed");
     }
+    if (std::string(case_name) == "shader_cue_texture_channels") {
+        for (int channel = 0; channel < 4; ++channel) {
+            const std::string key = "{ \"shader_cue_0_channel_" +
+                                    std::to_string(channel) + "\"";
+            Check(header.find(key) != std::string::npos, case_name,
+                  "shader cue texture channel is missing from packed assets");
+        }
+    }
 
     const struct FeatureCheck {
         const char* name;
@@ -154,6 +162,24 @@ void RunMissingAfterDuplicateCase(const std::filesystem::path& root) {
     Check(!result.ok, case_name, "missing required asset should fail cleanly");
 }
 
+void RunMissingShaderTextureCase(const std::filesystem::path& root) {
+    const char* case_name = "missing_shader_texture";
+    const std::filesystem::path case_dir = root / case_name;
+    std::filesystem::create_directories(case_dir);
+    Check(WriteText(case_dir / "cues.txt",
+                    "[shader_cues]\n"
+                    "0|0|0|0|0|0|0|0|0|0|1|1|0|1|0|1|0|0|10|0|0|0|1|0|0|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|0|0|0|0|0|0|0|0|0|0|0|1|1|1|2|0.5|0|0|0|0|0|missing.png|-|-|-\n"),
+          case_name, "could not write cues.txt");
+    const rev::pack::PackResult result = rev::pack::PackAssets(
+        (case_dir / "cues.txt").string().c_str(),
+        (case_dir / "packed_assets.h").string().c_str(),
+        (case_dir / "pack_cache.txt").string().c_str(),
+        case_dir.string().c_str());
+    Check(!result.ok, case_name, "missing shader texture should fail cleanly");
+    Check(std::string(result.error).find("missing.png") != std::string::npos,
+          case_name, "missing shader texture diagnostic should name the authored file");
+}
+
 }  // namespace
 
 int main() {
@@ -188,6 +214,10 @@ int main() {
     RunCase(root, "shader_texture_channel",
             "[shader_pipeline_channels]\n0|0|0|1|asset.bin\n",
             {false, false, false, false, false, false, false, true}, true);
+    RunCase(root, "shader_cue_texture_channels",
+            "[shader_cues]\n"
+            "0|0|0|0|0|0|0|0|0|0|1|1|0|1|0|1|0|0|10|0|0|0|1|0|0|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|0|0|0|0|0|0|0|0|0|0|0|1|1|1|2|0.5|0|0|0|0|0|asset.bin|asset.bin|asset.bin|asset.bin\n",
+            {false, false, false, false, false, false, false, true}, true);
     RunCase(root, "xm", "[music_cues]\nmusic|asset.bin\n",
             {true, false, false, false, false}, true);
     RunCase(root, "wav", "[music_cues]\nmusic|asset.wav\n",
@@ -208,6 +238,7 @@ int main() {
             "[music_cues]\nmusic|Z:\\OldMachine\\project_assets\\asset.bin\n",
             {true, false, false, false, false}, true);
     RunMissingAfterDuplicateCase(root);
+    RunMissingShaderTextureCase(root);
 
     std::error_code cleanup_error;
     std::filesystem::remove_all(root, cleanup_error);

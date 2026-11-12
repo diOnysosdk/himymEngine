@@ -399,7 +399,9 @@ static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
             break;
         case 0:
         default: // Alpha
-            glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+            // The compositor shader has already multiplied the sampled per-pixel
+            // alpha by authored opacity. Use that combined alpha exactly once.
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             break;
     }
 }
@@ -2863,11 +2865,35 @@ int main(int argc, char* argv[]) {
         for (int map_index = 0; map_index < 4; ++map_index) {
             const char* declared_path = shader_cues[cue_index].noise_textures.paths[map_index];
             if (!declared_path[0]) continue;
+#ifdef HIMYM_PACKED_ASSETS
+            char packed_key[128] = {};
+            snprintf(packed_key, sizeof(packed_key), "shader_cue_%d_channel_%d",
+                     cue_index, map_index);
+            const rev::pack::PackedAsset* asset = rev::pack::GetPackedAsset(
+                packed_key, kPackedAssets, kPackedAssetCount);
+            if (!asset) {
+                printf("WARNING: Missing packed shader texture %s (cue %d iChannel%d, authored path: %s)\n",
+                       packed_key, cue_index, map_index, declared_path);
+                continue;
+            }
+            if (!LoadImageTextureFromMemory(asset->data, asset->size,
+                                            &shader_noise_textures[cue_index][map_index])) {
+                printf("WARNING: Failed to decode packed shader texture %s (cue %d iChannel%d)\n",
+                       packed_key, cue_index, map_index);
+            } else {
+                LOGV("Loaded packed shader texture %s for cue %d iChannel%d\n",
+                     packed_key, cue_index, map_index);
+            }
+#else
             char resolved_path[512] = {};
             if (ResolveRuntimeAssetPath(declared_path, cues_path, resolved_path, sizeof(resolved_path)) &&
                 LoadImageTexture(resolved_path, &shader_noise_textures[cue_index][map_index])) {
                 LOGV("Loaded shader noise map %d for cue %d: %s\n", map_index, cue_index, resolved_path);
+            } else {
+                printf("WARNING: Failed to load shader texture for cue %d iChannel%d: %s\n",
+                       cue_index, map_index, declared_path);
             }
+#endif
         }
     }
 #endif
@@ -3341,7 +3367,14 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         }
         state.prog = rev::shader::CompileFromSource(vertex_shader, shader_source);
         if (!state.prog) {
-            printf("ERROR: Failed to compile shader %d\n", shader_id);
+            printf("ERROR: Failed to compile shader cue program %d (%s source registry)\n",
+                   shader_id,
+#ifdef HIMYM_PACKED_ASSETS
+                   "packed"
+#else
+                   "development"
+#endif
+            );
             state.compile_failed = true;
             return nullptr;
         }
@@ -5119,6 +5152,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         if (shader_state->u_noise_maps[map_index] >= 0) {
                             rev::shader::SetTextureUnit(shader_state->prog,
                                                         shader_state->u_noise_maps[map_index],
+                                                        4 + map_index);
+                        }
+                        if (shader_state->i_channels[map_index] >= 0) {
+                            rev::shader::SetTextureUnit(shader_state->prog,
+                                                        shader_state->i_channels[map_index],
                                                         4 + map_index);
                         }
                     }

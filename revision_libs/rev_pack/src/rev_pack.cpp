@@ -197,6 +197,28 @@ static bool ParseAssetLine(const char* line, char* key_out, char* path_out) {
     return key_out[0] != '\0' && path_out[0] != '\0';
 }
 
+static bool ParseShaderCueTextureAsset(const char* line, int cue_index, int map_index,
+                                       char* key_out, char* path_out) {
+    if (!line || map_index < 0 || map_index >= 4) return false;
+    const int target_field = 63 + map_index;
+    const char* field = line;
+    for (int field_index = 0; field_index < target_field; ++field_index) {
+        field = strchr(field, '|');
+        if (!field) return false;
+        ++field;
+    }
+    const char* end = strchr(field, '|');
+    if (!end) end = field + strcspn(field, "\r\n");
+    while (end > field && (end[-1] == ' ' || end[-1] == '\t')) --end;
+    const size_t length = (size_t)(end - field);
+    if (length == 0 || (length == 1 && field[0] == '-')) return false;
+    snprintf(key_out, 128, "shader_cue_%d_channel_%d", cue_index, map_index);
+    const size_t copy_length = length < 511 ? length : 511;
+    memcpy(path_out, field, copy_length);
+    path_out[copy_length] = '\0';
+    return true;
+}
+
 // Parse a [mesh_cues] line: asset_key|asset_path|mesh_type|...
 // Returns true only for mesh_type == 4 (external glTF/GLB).
 static bool ParseMeshAssetLine(const char* line, char* key_out, char* path_out) {
@@ -627,6 +649,7 @@ PackResult PackAssets(const char* cues_path,
          in_scene_menu = false;
     bool shader_ids[64] = {};
     bool post_effect_ids[23] = {};
+    int shader_cue_index = 0;
     shader_ids[0] = true; // Runtime fallback when a project has no shader cue.
     char line[8192];
 
@@ -691,6 +714,14 @@ PackResult PackAssets(const char* cues_path,
         if (in_shader) {
             int shader_id = atoi(s);
             if (shader_id >= 0 && shader_id < 64) shader_ids[shader_id] = true;
+            for (int map_index = 0; map_index < 4 && ref_count < kMaxAssets; ++map_index) {
+                if (ParseShaderCueTextureAsset(s, shader_cue_index, map_index,
+                                               refs[ref_count].key, refs[ref_count].path)) {
+                    features.image_decoder = true;
+                    ++ref_count;
+                }
+            }
+            ++shader_cue_index;
         }
         if (in_post_effect) {
             int effect_type = atoi(s);

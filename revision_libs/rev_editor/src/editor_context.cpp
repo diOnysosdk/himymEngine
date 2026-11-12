@@ -734,7 +734,7 @@ static void ApplySpriteBlendMode(int blend_mode) {
 }
 
 static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
-    typedef void (*PFNGLBLENDCOLORPROC)(float red, float green, float blue, float alpha);
+    typedef void (APIENTRY *PFNGLBLENDCOLORPROC)(float red, float green, float blue, float alpha);
     static PFNGLBLENDCOLORPROC glBlendColor_fn = nullptr;
     static bool blend_color_loaded = false;
     if (!blend_color_loaded) {
@@ -782,7 +782,9 @@ static void ApplyShaderLayerBlendMode(int blend_mode, float opacity) {
             break;
         case 0:
         default: // Alpha
-            glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+            // The compositor shader outputs sampled alpha multiplied by authored
+            // opacity, so normal blending must consume source alpha once.
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             break;
     }
 }

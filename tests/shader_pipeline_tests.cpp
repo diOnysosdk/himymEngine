@@ -8,6 +8,12 @@ static int Fail(const char* message) {
     return 1;
 }
 
+static float CompositeNormalShaderChannel(float source, float source_alpha,
+                                          float authored_opacity, float destination) {
+    const float combined_alpha = source_alpha * authored_opacity;
+    return source * combined_alpha + destination * (1.0f - combined_alpha);
+}
+
 int main() {
     using namespace rev::runtime;
     ShaderPipeline pipeline;
@@ -56,6 +62,11 @@ int main() {
     if (audio_texture[kShaderAudioTextureWidth] < 126 ||
         audio_texture[kShaderAudioTextureWidth] > 129)
         return Fail("Audio texture waveform row is not normalized around 0.5");
+
+    const float transparent_png_over_opaque =
+        CompositeNormalShaderChannel(1.0f, 0.25f, 0.5f, 0.2f);
+    if (fabsf(transparent_png_over_opaque - 0.3f) > 0.0001f)
+        return Fail("Shader layer alpha did not combine per-pixel alpha and authored opacity once");
 
     std::printf("[shader_pipeline_tests] PASS\n");
     return 0;

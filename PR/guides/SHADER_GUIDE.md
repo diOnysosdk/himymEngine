@@ -286,7 +286,10 @@ Opacity curves and cue fade-in/fade-out are applied universally by the final
 pipeline compositor; custom GLSL does not need to declare an opacity uniform.
 This also applies when the pipeline is the bottom shader layer: partial opacity
 is alpha-composited against the cleared black scene instead of merely reducing
-the framebuffer's stored alpha.
+the framebuffer's stored alpha. Normal blending combines the shader's per-pixel
+alpha (including transparent PNG channel textures) with authored cue opacity
+exactly once. Additive, multiply, screen, and subtract modes retain their
+authored constant-opacity blend behavior.
 Use `iTime` directly for globally synchronized animation. Pipeline files do not
 automatically receive preset-only palette, noise, speed, warp, transform, or
 curve uniforms; encode controls in GLSL or use timing/layer controls on the cue.
@@ -314,6 +317,12 @@ The packer scans enabled passes and embeds only referenced GLSL sources and
 texture channel assets. After changing exported pipeline data, re-export and
 repack before judging `minimal_intro_packed`; packed feature and asset manifests
 are generated from the exported cues.
+
+Preset shader cues also expose four optional image paths as `noise_map_0..3`.
+They are exported at the end of each `[shader_cues]` row, packed under stable
+cue/channel keys, and bound to both `u_noise_map_0..3` and `iChannel0..3` on
+texture units 4..7. Development playback resolves those same paths from disk;
+packed playback decodes the embedded bytes and does not require external files.
 
 Recommended workflow:
 
