@@ -298,7 +298,7 @@ The editor stores shader cues dynamically. Standalone playback supports up to
 64 exported shader cues across the whole project, including up to 64 cues that
 are active at the same time. This is a project-wide runtime limit, not a
 per-scene limit. Custom Shadertoy pipelines have a separate project-wide limit
-of 16 pipeline definitions; multiple cues may reference the same pipeline.
+of 64 pipeline definitions; multiple cues may reference the same pipeline.
 
 ## Saving, Exporting, and Packing
 

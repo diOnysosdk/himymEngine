@@ -2842,7 +2842,9 @@ int main(int argc, char* argv[]) {
     int shader_cue_count = LoadAllShaderCues(cues_path, shader_cues, kMaxShaderCues);
     for (int i = 0; i < shader_cue_count; ++i) shader_cues[i].shader_pipeline_index = -1;
     LoadShaderPipelineCueRefs(cues_path, shader_cues, shader_cue_count);
-    rev::runtime::ShaderPipeline shader_pipelines[rev::runtime::kMaxShaderPipelines];
+    // Pipeline definitions are large (five passes with source/channel paths),
+    // so keep the expanded project-wide table off the Windows stack.
+    static rev::runtime::ShaderPipeline shader_pipelines[rev::runtime::kMaxShaderPipelines];
     const int shader_pipeline_count = LoadShaderPipelines(
         cues_path, shader_pipelines, rev::runtime::kMaxShaderPipelines);
     for (int pipeline_index = 0; pipeline_index < shader_pipeline_count; ++pipeline_index) {
@@ -3508,7 +3510,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         int order_count;
         RuntimePipelinePassState passes[rev::runtime::kMaxShaderPasses];
     };
-    RuntimePipelineState runtime_pipelines[rev::runtime::kMaxShaderPipelines] = {};
+    static RuntimePipelineState runtime_pipelines[rev::runtime::kMaxShaderPipelines] = {};
 
     auto load_pipeline_source = [&](int pipeline_index, int pass_index,
                                     const char* declared_path, std::string* source) -> bool {
