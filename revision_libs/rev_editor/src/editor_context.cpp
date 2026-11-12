@@ -8583,14 +8583,14 @@ void RenderPreviewFrame(EditorContext* editor) {
             }
         }
 
-        for (int li = 0; li < layer_count; ++li) {
+        auto draw_shader_layer = [&](int li, bool blend_layer) {
             ShaderCue* cue = layers[li].cue;
-            if (!cue) continue;
+            if (!cue) return;
 
             rev::shader::Program* prog = nullptr;
             if (cue->shader_pipeline_index < 0)
                 prog = GetOrCompilePreviewShaderProgram(cue->shader_scene_id);
-            if (cue->shader_pipeline_index < 0 && !prog) continue;
+            if (cue->shader_pipeline_index < 0 && !prog) return;
 
             float speed = cue->speed;
             float intensity = cue->intensity;
@@ -8692,7 +8692,7 @@ void RenderPreviewFrame(EditorContext* editor) {
             if (exposure < 0.0f) exposure = 0.0f;
             if (fade < 0.0f) fade = 0.0f;
 
-            if (li == 0) {
+            if (!blend_layer) {
                 glDisable(GL_BLEND);
             } else {
                 glEnable(GL_BLEND);
@@ -8705,12 +8705,12 @@ void RenderPreviewFrame(EditorContext* editor) {
             if (cue->shader_pipeline_index >= 0 &&
                 RenderPreviewPipeline(editor, cue->shader_pipeline_index, editor->current_time,
                                       1.0f / 60.0f, (int)(editor->current_time * 60.0f),
-                                      li != 0, cue->blend_mode, composite_opacity)) {
-                continue;
+                                      blend_layer, cue->blend_mode, composite_opacity)) {
+                return;
             }
 
             if (!prog) prog = GetOrCompilePreviewShaderProgram(cue->shader_scene_id);
-            if (!prog) continue;
+            if (!prog) return;
 
             rev::shader::Use(prog);
             rev::shader::SetFloat(prog, rev::shader::GetUniformLocation(prog, "u_time"), editor->current_time);
@@ -8774,15 +8774,12 @@ void RenderPreviewFrame(EditorContext* editor) {
             }
 
             glDrawArrays(GL_TRIANGLES, 0, 3);
-        }
-
-        glDisable(GL_BLEND);
-    }
+        };
 
     // --- Unified layered draw pass ---
-    // Collect all active image/text/scroll/mesh cues across all scenes, sort by
+    // Collect every active visual cue across all scenes, sort by
     // layer_order (ascending = drawn first = further back), draw in order.
-    if (editor->project && (editor->sprite_shader || editor->mesh_shader)) {
+    if (editor->sprite_shader || editor->mesh_shader) {
         auto* sprite_prog = editor->sprite_shader ? (rev::shader::Program*)editor->sprite_shader : nullptr;
         auto* mesh_prog   = editor->mesh_shader   ? (rev::shader::Program*)editor->mesh_shader   : nullptr;
 
@@ -8838,7 +8835,8 @@ void RenderPreviewFrame(EditorContext* editor) {
         int sp_opa = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_opacity")  : -1;
         int sp_col = sprite_prog ? rev::shader::GetUniformLocation(sprite_prog, "u_color_tint") : -1;
 
-        // Build unified draw list: type 0=image 1=text 2=mesh 3=scroll text 4=animated sprite 5=pixel 6=emitter
+        // Build unified draw list: type 0=image 1=text 2=mesh 3=scroll text
+        // 4=animated sprite 5=pixel 6=emitter 7=shader text 8=shader cue.
         struct DrawItem {
             int type;
             void* cue;
@@ -8847,10 +8845,19 @@ void RenderPreviewFrame(EditorContext* editor) {
             const rev::runtime::MenuItem* menu_item = nullptr;
             int menu_item_index = -1;
             const rev::runtime::SceneMenu* menu = nullptr;
+            int shader_layer_index = -1;
         };
-        static const int kMaxItems = 512;
+        // Preserve the previous 512-object capacity now that up to 256 shader
+        // cues also occupy the same queue.
+        static const int kMaxItems = 768;
         DrawItem items[kMaxItems];
         int item_count = 0;
+
+        for (int shader_index = 0; shader_index < layer_count && item_count < kMaxItems; ++shader_index) {
+            ActiveShaderLayer& layer = layers[shader_index];
+            items[item_count++] = { 8, layer.cue, layer.layer_order, layer.absolute_start,
+                                    nullptr, -1, nullptr, shader_index };
+        }
 
         // Calculate scene start times for absolute time comparison
         float item_scene_start = 0.0f;
@@ -8962,16 +8969,18 @@ void RenderPreviewFrame(EditorContext* editor) {
         // Stable bubble sort by layer_order ascending
         // Tie-break rule for same layer: mesh behind image/sprite behind text/scroll.
         auto draw_priority = [](int type) {
-            // type: 0=image, 1=text, 2=mesh, 3=scroll text, 4=animated sprite, 5=pixel, 6=emitter
+            // Equal layers retain the historic category order; stable sorting
+            // preserves authored insertion order within a category.
             if (type == 2) return 0; // mesh first (back)
-            if (type == 0 || type == 4 || type == 5 || type == 6) return 1; // image middle
-            return 2;                // text/scroll front
+            if (type == 8) return 1; // shader
+            if (type == 0 || type == 4 || type == 5 || type == 6) return 2; // image middle
+            return 3;                // text/scroll front
         };
         for (int i = 0; i < item_count - 1; i++)
             for (int j = 0; j < item_count - i - 1; j++)
-                if (items[j].layer_order > items[j+1].layer_order ||
-                    (items[j].layer_order == items[j+1].layer_order &&
-                     draw_priority(items[j].type) > draw_priority(items[j+1].type))) {
+                if (rev::runtime::RenderQueueComesAfter(
+                        items[j].layer_order, draw_priority(items[j].type),
+                        items[j+1].layer_order, draw_priority(items[j+1].type))) {
                     DrawItem tmp = items[j]; items[j] = items[j+1]; items[j+1] = tmp;
                 }
 
@@ -8980,6 +8989,21 @@ void RenderPreviewFrame(EditorContext* editor) {
         for (int idx = 0; idx < item_count; idx++) {
             DrawItem& item = items[idx];
             glDisable(GL_CULL_FACE);
+
+            if (item.type == 8) {
+                if (editor->preview_vao) {
+                    typedef void (APIENTRY *PFNGLBINDVERTEXARRAYPROC)(unsigned int array);
+                    auto glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
+                    if (glBindVertexArray) glBindVertexArray(editor->preview_vao);
+                }
+                if (depth_on) glClear(GL_DEPTH_BUFFER_BIT);
+                glDisable(GL_DEPTH_TEST);
+                if (glDepthMask_mesh_fn) glDepthMask_mesh_fn(0);
+                depth_on = false;
+                draw_shader_layer(item.shader_layer_index, idx != 0);
+                blend_on = idx != 0;
+                continue;
+            }
 
             if (item.type == 7) {
                 glDisable(GL_DEPTH_TEST);
@@ -10926,6 +10950,7 @@ void RenderPreviewFrame(EditorContext* editor) {
             if (glDepthMask_mesh_fn) glDepthMask_mesh_fn(1); // GL_TRUE
             glDisable(0x0B71); // GL_DEPTH_TEST
         }
+    }
     }
 
     // Apply scene-level post-production after the complete layered scene draw.

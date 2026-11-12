@@ -281,6 +281,13 @@ The owning shader cue controls when and how the pipeline is composited:
 - Blend mode and opacity
 - Fade-in and fade-out envelope
 
+Shader cues participate in the same global visual render queue as image,
+animated-sprite, text, pixel, particle, shader-text, and mesh cues. Lower
+`layer_order` values render first and higher values render last, including when
+cue types are mixed. Equal-layer entries use a deterministic stable category
+order and retain authored insertion order within the same category. The editor
+preview and standalone/packed runtime use the same ordering predicate.
+
 Pipeline GLSL receives project timeline time, not time reset to the cue start.
 Opacity curves and cue fade-in/fade-out are applied universally by the final
 pipeline compositor; custom GLSL does not need to declare an opacity uniform.

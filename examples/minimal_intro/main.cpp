@@ -4939,14 +4939,11 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             }
         }
 
-        if (active_layer_count > 0) {
-            glDisable(GL_BLEND);
-
-            for (int li = 0; li < active_layer_count; ++li) {
+        auto draw_shader_layer = [&](int li, bool blend_layer) {
                 const ShaderCue& cue = shader_cues[active_layers[li].cue_index];
                 ShaderProgramState* shader_state = get_shader_program(cue.shader_scene_id);
                 if (!shader_state) {
-                    continue;
+                    return;
                 }
 
                 float elapsed_time = time - cue.cue_start;
@@ -5051,7 +5048,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                 // If the shader uses fade as alpha/intensity, fold layer opacity in there too.
                 anim_fade *= anim_opacity;
 
-                if (li == 0) {
+                if (!blend_layer) {
                     glDisable(GL_BLEND);
                 } else {
                     glEnable(GL_BLEND);
@@ -5060,8 +5057,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
                 if (cue.shader_pipeline_index >= 0 &&
                     render_shader_pipeline(cue.shader_pipeline_index, time, dt, shader_frame,
-                                           li != 0, cue.blend_mode, composite_opacity)) {
-                    continue;
+                                           blend_layer, cue.blend_mode, composite_opacity)) {
+                    return;
                 }
 
                 rev::shader::Use(shader_state->prog);
@@ -5172,16 +5169,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 #endif
 
                 glDrawArrays(GL_TRIANGLES, 0, 3);
-            }
-
-            glDisable(GL_BLEND);
-        }
+        };
         
         // --- Unified layered draw pass ---
-        // Collect active image/text/scroll/mesh cues, sort by layer_order, draw in order.
+        // Collect every active visual cue, sort by global layer_order, draw in order.
         {
-            struct DrawEntry { int type; int layer; int cue_idx; }; // 7=shader text
-            DrawEntry entries[kMaxImageCues + kMaxAnimatedSpriteCues + kMaxPixelCues + kMaxPixelEmitterCues + kMaxTextCues + kMaxScrollTextCues + kMaxShaderTextCues + kMaxMeshCues]; int ne = 0;
+            struct DrawEntry { int type; int layer; int cue_idx; }; // 7=shader text, 8=shader cue
+            DrawEntry entries[kMaxShaderCues + kMaxImageCues + kMaxAnimatedSpriteCues + kMaxPixelCues + kMaxPixelEmitterCues + kMaxTextCues + kMaxScrollTextCues + kMaxShaderTextCues + kMaxMeshCues]; int ne = 0;
+
+            for (int si = 0; si < active_layer_count; ++si)
+                entries[ne++] = {8, active_layers[si].layer_order, si};
 
             for (int ii = 0; ii < image_cue_count; ++ii) {
                 ImageCue& icue = image_cues[ii];
@@ -5240,23 +5237,25 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             // Bubble sort ascending (lower layer_order draws first = further back)
             // Tie-break rule for same layer: mesh behind image behind text/scroll.
             auto draw_priority = [](int type) {
-                // type: 0=image, 1=text, 2=mesh, 3=scroll, 4=animated sprite, 5=pixel, 6=emitter
+                // Equal layers preserve the historic category order. The stable
+                // sort keeps original insertion order within each category.
                 if (type == 2) return 0; // mesh first (back)
-                if (type == 0 || type == 4 || type == 5 || type == 6) return 1; // image middle
-                return 2;                // text/scroll front
+                if (type == 8) return 1; // shader
+                if (type == 0 || type == 4 || type == 5 || type == 6) return 2; // image middle
+                return 3;                // text/scroll front
             };
             for (int i = 0; i < ne - 1; i++)
                 for (int j = 0; j < ne - i - 1; j++)
-                    if (entries[j].layer > entries[j+1].layer ||
-                        (entries[j].layer == entries[j+1].layer &&
-                         draw_priority(entries[j].type) > draw_priority(entries[j+1].type))) {
+                    if (rev::runtime::RenderQueueComesAfter(
+                            entries[j].layer, draw_priority(entries[j].type),
+                            entries[j+1].layer, draw_priority(entries[j+1].type))) {
                         DrawEntry tmp = entries[j]; entries[j] = entries[j+1]; entries[j+1] = tmp;
                     }
 
             if (g_verbose_logging && (debug_frame < 240) && (debug_frame % 30 == 0)) {
                 LOGV("           draw_entries=%d", ne);
                 for (int di = 0; di < ne && di < 8; ++di) {
-                    const char* type_name = (entries[di].type == 0) ? "img" : (entries[di].type == 1) ? "txt" : (entries[di].type == 3) ? "scr" : (entries[di].type == 4) ? "asp" : (entries[di].type == 5) ? "pix" : (entries[di].type == 6) ? "emit" : "msh";
+                    const char* type_name = (entries[di].type == 8) ? "shader" : (entries[di].type == 0) ? "img" : (entries[di].type == 1) ? "txt" : (entries[di].type == 3) ? "scr" : (entries[di].type == 4) ? "asp" : (entries[di].type == 5) ? "pix" : (entries[di].type == 6) ? "emit" : "msh";
                     LOGV(" [%s L%d idx%d]", type_name, entries[di].layer, entries[di].cue_idx);
                 }
                 LOGV("\n");
@@ -5445,6 +5444,16 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
             for (int ei = 0; ei < ne; ei++) {
                 glDisable(GL_CULL_FACE);
+                if (entries[ei].type == 8) {
+                    glBindVertexArray(vao);
+                    if (depth_on) glClear(GL_DEPTH_BUFFER_BIT);
+                    glDisable(GL_DEPTH_TEST);
+                    glDepthMask(GL_FALSE);
+                    depth_on = false;
+                    draw_shader_layer(entries[ei].cue_idx, ei != 0);
+                    blend_on = ei != 0;
+                    continue;
+                }
                 if (entries[ei].type == 0) {
                     // Image sprite
                     int img_idx = entries[ei].cue_idx;

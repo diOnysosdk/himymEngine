@@ -52,6 +52,15 @@ constexpr int kMaxShaderChannels = 4;
 constexpr int kShaderAudioTextureWidth = 512;
 constexpr int kShaderAudioSampleFrames = 1024;
 
+// Shared ordering predicate for the editor and standalone visual queues.
+// Returning false for an exact tie lets their stable sort preserve authored
+// insertion order deterministically.
+inline bool RenderQueueComesAfter(int layer_a, int priority_a,
+                                  int layer_b, int priority_b) {
+    return layer_a > layer_b ||
+           (layer_a == layer_b && priority_a > priority_b);
+}
+
 enum ShaderPassKind {
     ShaderPassImage = 0,
     ShaderPassBufferA = 1,

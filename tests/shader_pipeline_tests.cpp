@@ -68,6 +68,28 @@ int main() {
     if (fabsf(transparent_png_over_opaque - 0.3f) > 0.0001f)
         return Fail("Shader layer alpha did not combine per-pixel alpha and authored opacity once");
 
+    struct QueueItem { int kind; int layer; int authored_index; } queue[] = {
+        {0, 10, 1},  // banner pole image
+        {1, 30, 3},  // foreground shader
+        {1, 0, 0},   // background shader
+        {1, 20, 2},  // animated banner shader
+        {0, 10, 4},  // equal-layer item must retain authored order
+    };
+    auto priority = [](int kind) { return kind == 1 ? 1 : 2; };
+    const int queue_count = (int)(sizeof(queue) / sizeof(queue[0]));
+    for (int i = 0; i < queue_count - 1; ++i)
+        for (int j = 0; j < queue_count - i - 1; ++j)
+            if (RenderQueueComesAfter(queue[j].layer, priority(queue[j].kind),
+                                      queue[j + 1].layer, priority(queue[j + 1].kind))) {
+                QueueItem temporary = queue[j];
+                queue[j] = queue[j + 1];
+                queue[j + 1] = temporary;
+            }
+    const int expected_order[] = {0, 1, 4, 2, 3};
+    for (int i = 0; i < queue_count; ++i)
+        if (queue[i].authored_index != expected_order[i])
+            return Fail("Mixed shader/image queue did not preserve global layer order and stable ties");
+
     std::printf("[shader_pipeline_tests] PASS\n");
     return 0;
 }
