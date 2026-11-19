@@ -1,6 +1,7 @@
 #include "rev_runtime.h"
 
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 
 using namespace rev::runtime;
@@ -67,6 +68,14 @@ int main()
                         &scroll_atlas, "AA", 0, 0.5f, 1.0f, 0.2f,
                         500.0f, 250.0f, 2.0f, 0.0f, 0), 0.6f),
                     "scaled scroll text preserves normalized travel");
+    char scroll_run[16] = {};
+    BuildScrollTextRun("We do like", scroll_run, sizeof(scroll_run));
+    passed &= Check(strcmp(scroll_run, "We do like") == 0,
+                    "looping scroll run contains one authored text copy");
+    char truncated_scroll_run[5] = {};
+    BuildScrollTextRun("abcdef", truncated_scroll_run, sizeof(truncated_scroll_run));
+    passed &= Check(strcmp(truncated_scroll_run, "abcd") == 0,
+                    "scroll run copy remains bounded and terminated");
 
     AudioEffects authored_audio = {};
     InitializeAudioEffects(&authored_audio);

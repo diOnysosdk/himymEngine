@@ -823,12 +823,17 @@ static bool UploadRgbaTexture(const unsigned char* pixels, int width, int height
     tex->height = height;
     glGenTextures(1, &tex->texture_id);
     glBindTexture(GL_TEXTURE_2D, tex->texture_id);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, 0x2703); // GL_LINEAR_MIPMAP_LINEAR
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
                  GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    typedef void (APIENTRY *GenerateMipmapProc)(GLenum target);
+    static GenerateMipmapProc generate_mipmap =
+        (GenerateMipmapProc)wglGetProcAddress("glGenerateMipmap");
+    if (generate_mipmap) generate_mipmap(GL_TEXTURE_2D);
+    else glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     return true;
 }
 
@@ -1379,6 +1384,20 @@ float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
     }
 
     return travel < 0.001f ? 0.001f : travel;
+}
+
+void BuildScrollTextRun(const char* text, char* output, size_t output_size)
+{
+    if (!output || output_size == 0) return;
+    output[0] = '\0';
+    if (!text) return;
+
+    size_t index = 0;
+    while (index + 1 < output_size && text[index]) {
+        output[index] = text[index];
+        ++index;
+    }
+    output[index] = '\0';
 }
 
 static bool GetPngEncoderClsid(CLSID* clsid)

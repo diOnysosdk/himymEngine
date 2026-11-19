@@ -100,6 +100,8 @@ Mesh* CreateMesh(uint32_t vertex_count, uint32_t index_count) {
     mesh->base_color_texture = 0;
     mesh->normal_texture = 0;
     mesh->metallic_roughness_texture = 0;
+    mesh->emissive_texture = 0;
+    mesh->occlusion_texture = 0;
     mesh->emissive_color[0] = 1.0f;
     mesh->emissive_color[1] = 1.0f;
     mesh->emissive_color[2] = 1.0f;
@@ -111,6 +113,11 @@ Mesh* CreateMesh(uint32_t vertex_count, uint32_t index_count) {
     mesh->imported_light_direction[0] = 0.0f;
     mesh->imported_light_direction[1] = -1.0f;
     mesh->imported_light_direction[2] = 0.0f;
+    mesh->imported_light_color[0] = mesh->imported_light_color[1] = mesh->imported_light_color[2] = 1.0f;
+    mesh->imported_light_intensity = 1.0f;
+    mesh->imported_light_range = 0.0f;
+    mesh->imported_light_inner_cone = 0.0f;
+    mesh->imported_light_outer_cone = 0.785398f;
     mesh->imported_light_type = 0;
     mesh->imported_light_node_index = -1;
     mesh->has_imported_camera = false;
@@ -202,6 +209,17 @@ void AddMaterialSlot(Mesh* mesh,
     new_slots[mesh->material_slot_count].diffuse_color = color;
     new_slots[mesh->material_slot_count].material_index = material_index;
     new_slots[mesh->material_slot_count].base_color_texture = base_color_texture;
+    new_slots[mesh->material_slot_count].normal_texture = 0;
+    new_slots[mesh->material_slot_count].metallic_roughness_texture = 0;
+    new_slots[mesh->material_slot_count].emissive_texture = 0;
+    new_slots[mesh->material_slot_count].occlusion_texture = 0;
+    new_slots[mesh->material_slot_count].metallic = 0.0f;
+    new_slots[mesh->material_slot_count].roughness = 1.0f;
+    new_slots[mesh->material_slot_count].normal_scale = 1.0f;
+    new_slots[mesh->material_slot_count].base_color_alpha = 1.0f;
+    new_slots[mesh->material_slot_count].occlusion_strength = 1.0f;
+    new_slots[mesh->material_slot_count].alpha_mode = 0;
+    new_slots[mesh->material_slot_count].alpha_cutoff = 0.5f;
     new_slots[mesh->material_slot_count].source_node_index = source_node_index;
     if (emissive_color) {
         new_slots[mesh->material_slot_count].emissive_color[0] = emissive_color[0];
@@ -255,6 +273,8 @@ void UploadToGPU(Mesh* mesh) {
     // UV (location 2)
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, tangent));
     
     glBindVertexArray(0);
 }

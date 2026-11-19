@@ -79,6 +79,29 @@ static void TransformPoint(const float m[16], const float p[3], float out[3]) {
     out[2]=m[2]*p[0]+m[6]*p[1]+m[10]*p[2]+m[14];
 }
 
+static bool RenderShadowMatrix(ShadowMap* shadow, Mesh* mesh, const float model[16]) {
+    auto bind=(BindFramebufferProc)wglGetProcAddress("glBindFramebuffer");
+    auto uniform=(UniformMatrix4fvProc)wglGetProcAddress("glUniformMatrix4fv");
+    if (!bind || !uniform) return false;
+    GLint old_fbo=0, viewport[4]={}, old_cull_mode=GL_BACK;
+    const GLboolean old_depth_test = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean old_cull_face = glIsEnabled(GL_CULL_FACE);
+    glGetIntegerv(0x8CA6,&old_fbo); glGetIntegerv(GL_VIEWPORT,viewport);
+    glGetIntegerv(GL_CULL_FACE_MODE, &old_cull_mode);
+    bind(0x8D40,shadow->framebuffer); glViewport(0,0,kShadowSize,kShadowSize);
+    glClear(GL_DEPTH_BUFFER_BIT); glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE); glCullFace(GL_FRONT);
+    rev::shader::Use(shadow->depth_program);
+    int lm=rev::shader::GetUniformLocation(shadow->depth_program,"u_light_matrix");
+    int mm=rev::shader::GetUniformLocation(shadow->depth_program,"u_model");
+    uniform(lm,1,GL_FALSE,shadow->light_matrix); uniform(mm,1,GL_FALSE,model);
+    rev::mesh::Render(mesh,-1);
+    glCullFace((GLenum)old_cull_mode);
+    if (!old_cull_face) glDisable(GL_CULL_FACE);
+    if (!old_depth_test) glDisable(GL_DEPTH_TEST);
+    bind(0x8D40,(GLuint)old_fbo); glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
+    return true;
+}
+
 bool RenderDirectionalShadow(ShadowMap* shadow, Mesh* mesh,
                              const float model[16], const float light_direction[3]) {
     if (!shadow || !mesh || !model || !light_direction ||
@@ -100,25 +123,28 @@ bool RenderDirectionalShadow(ShadowMap* shadow, Mesh* mesh,
     rev::runtime::Mat4LookAt(view,eye,center,up);
     rev::runtime::Mat4Orthographic(proj,radius*1.1f,radius*1.1f,.05f,radius*4.0f,0,0);
     rev::runtime::Mat4Multiply(shadow->light_matrix,proj,view);
-    auto bind=(BindFramebufferProc)wglGetProcAddress("glBindFramebuffer");
-    auto uniform=(UniformMatrix4fvProc)wglGetProcAddress("glUniformMatrix4fv");
-    GLint old_fbo=0, viewport[4]={}, old_cull_mode=GL_BACK;
-    const GLboolean old_depth_test = glIsEnabled(GL_DEPTH_TEST);
-    const GLboolean old_cull_face = glIsEnabled(GL_CULL_FACE);
-    glGetIntegerv(0x8CA6,&old_fbo); glGetIntegerv(GL_VIEWPORT,viewport);
-    glGetIntegerv(GL_CULL_FACE_MODE, &old_cull_mode);
-    bind(0x8D40,shadow->framebuffer); glViewport(0,0,kShadowSize,kShadowSize);
-    glClear(GL_DEPTH_BUFFER_BIT); glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE); glCullFace(GL_FRONT);
-    rev::shader::Use(shadow->depth_program);
-    int lm=rev::shader::GetUniformLocation(shadow->depth_program,"u_light_matrix");
-    int mm=rev::shader::GetUniformLocation(shadow->depth_program,"u_model");
-    if(uniform){uniform(lm,1,GL_FALSE,shadow->light_matrix);uniform(mm,1,GL_FALSE,model);}
-    rev::mesh::Render(mesh,-1);
-    glCullFace((GLenum)old_cull_mode);
-    if (!old_cull_face) glDisable(GL_CULL_FACE);
-    if (!old_depth_test) glDisable(GL_DEPTH_TEST);
-    bind(0x8D40,(GLuint)old_fbo); glViewport(viewport[0],viewport[1],viewport[2],viewport[3]);
-    return true;
+    return RenderShadowMatrix(shadow, mesh, model);
+}
+
+bool RenderSpotShadow(ShadowMap* shadow, Mesh* mesh, const float model[16],
+                      const float light_position[3], const float light_direction[3],
+                      float outer_cone_radians, float light_range) {
+    if (!shadow || !mesh || !model || !light_position || !light_direction ||
+        (!shadow->ready && !CreateShadowMap(shadow))) return false;
+    float direction[3] = {light_direction[0], light_direction[1], light_direction[2]};
+    float length = sqrtf(direction[0]*direction[0]+direction[1]*direction[1]+direction[2]*direction[2]);
+    if (length < .0001f) return false;
+    for (int i=0;i<3;++i) direction[i]/=length;
+    float target[3] = {light_position[0]+direction[0], light_position[1]+direction[1], light_position[2]+direction[2]};
+    float up[3] = {0,1,0}; if (fabsf(direction[1])>.95f){up[0]=1;up[1]=0;}
+    float view[16], projection[16];
+    rev::runtime::Mat4LookAt(view, light_position, target, up);
+    float fov = outer_cone_radians * 2.0f;
+    if (fov < .05f) fov=.05f; if (fov > 3.10f) fov=3.10f;
+    float far_plane = light_range > .1f ? light_range : 100.0f;
+    rev::runtime::Mat4Perspective(projection, fov, 1.0f, .05f, far_plane);
+    rev::runtime::Mat4Multiply(shadow->light_matrix, projection, view);
+    return RenderShadowMatrix(shadow, mesh, model);
 }
 
 void BindDirectionalShadow(const ShadowMap* shadow, rev::shader::Program* program, int texture_unit) {

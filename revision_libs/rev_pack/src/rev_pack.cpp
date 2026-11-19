@@ -10,6 +10,8 @@
 namespace rev {
 namespace pack {
 
+static constexpr int kMaxPackedShaderPipelines = 64; // rev_runtime contract
+
 // ---------------------------------------------------------------------------
 // CRC32 (ISO 3309 table)
 // ---------------------------------------------------------------------------
@@ -256,7 +258,8 @@ static bool ParseMeshAssetLine(const char* line, char* key_out, char* path_out) 
 }
 
 static bool ParseShaderPipelineAssetLine(const char* line, bool channel_row,
-                                         char* key_out, char* path_out) {
+                                         char* key_out, char* path_out,
+                                         int* pipeline_out = nullptr) {
     int pipeline = -1, pass = -1, channel = -1, value = 0;
     float scale = 1.0f;
     char path[512] = {};
@@ -267,6 +270,7 @@ static bool ParseShaderPipelineAssetLine(const char* line, bool channel_row,
                    &scale, path, (unsigned)_countof(path));
     if (parsed != 5 || pipeline < 0 || pass < 0 || !path[0] || strcmp(path, "-") == 0)
         return false;
+    if (pipeline_out) *pipeline_out = pipeline;
     if (channel_row) {
         if (value != 1 || channel < 0) return false; // ShaderChannelTexture
         snprintf(key_out, 128, "shader_pipeline_%d_pass_%d_channel_%d", pipeline, pass, channel);
@@ -641,13 +645,15 @@ PackResult PackAssets(const char* cues_path,
     AssetRef refs[kMaxAssets];
     int ref_count = 0;
     ProjectFeatures features = {};
-    bool in_shader = false, in_shader_pipeline_pass = false, in_shader_pipeline_channel = false,
+    bool in_shader = false, in_shader_pipeline_cue = false,
+         in_shader_pipeline_pass = false, in_shader_pipeline_channel = false,
          in_post_effect = false, in_scene_post_effect = false, in_image = false,
          in_music = false, in_mesh = false, in_text = false, in_scroll_text = false,
          in_shader_text = false,
          in_animated_sprite = false, in_pixel = false, in_pixel_emitter = false,
          in_scene_menu = false;
     bool shader_ids[64] = {};
+    bool used_shader_pipelines[kMaxPackedShaderPipelines] = {};
     bool post_effect_ids[23] = {};
     int shader_cue_index = 0;
     shader_ids[0] = true; // Runtime fallback when a project has no shader cue.
@@ -658,12 +664,13 @@ PackResult PackAssets(const char* cues_path,
         while (*s == ' ' || *s == '\t') s++;
         if (s[0] == '[') {
             in_shader = in_post_effect = in_scene_post_effect = false;
-            in_shader_pipeline_pass = in_shader_pipeline_channel = false;
+            in_shader_pipeline_cue = in_shader_pipeline_pass = in_shader_pipeline_channel = false;
             in_image = in_music = in_mesh = in_text = in_scroll_text = in_shader_text = false;
             in_animated_sprite = in_pixel = in_pixel_emitter = false;
             in_scene_menu = false;
         }
         if (strstr(s, "[shader_cues]"))      { in_shader = true; in_post_effect = false; in_scene_post_effect = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
+        if (strstr(s, "[shader_pipeline_cues]")) { in_shader_pipeline_cue = true; continue; }
         if (strstr(s, "[shader_pipeline_passes]")) { in_shader_pipeline_pass = true; continue; }
         if (strstr(s, "[shader_pipeline_channels]")) { in_shader_pipeline_channel = true; continue; }
         if (strstr(s, "[post_effects]"))     { in_shader = false; in_post_effect = true; in_scene_post_effect = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
@@ -680,6 +687,15 @@ PackResult PackAssets(const char* cues_path,
         if (strstr(s, "[scene_menus]")) { in_scene_menu = true; continue; }
         if (s[0] == '[') { in_shader = false; in_post_effect = false; in_scene_post_effect = false; in_image = false; in_music = false; in_mesh = false; in_text = false; in_scroll_text = false; in_animated_sprite = false; in_pixel = false; in_pixel_emitter = false; continue; }
         if (s[0] == '#' || s[0] == '\r' || s[0] == '\n' || s[0] == '\0') continue;
+
+        if (in_shader_pipeline_cue) {
+            int shader_cue = -1, pipeline = -1;
+            if (sscanf_s(s, "%d|%d", &shader_cue, &pipeline) == 2 && shader_cue >= 0 &&
+                pipeline >= 0 && pipeline < kMaxPackedShaderPipelines) {
+                used_shader_pipelines[pipeline] = true;
+            }
+            continue;
+        }
 
         if (in_music) {
             char music_key[128] = {}, music_path[512] = {};
@@ -780,8 +796,12 @@ PackResult PackAssets(const char* cues_path,
                 }
             }
         } else if ((in_shader_pipeline_pass || in_shader_pipeline_channel) && ref_count < kMaxAssets) {
+            int pipeline = -1;
             if (ParseShaderPipelineAssetLine(s, in_shader_pipeline_channel,
-                                             refs[ref_count].key, refs[ref_count].path)) {
+                                             refs[ref_count].key, refs[ref_count].path,
+                                             &pipeline) &&
+                pipeline >= 0 && pipeline < kMaxPackedShaderPipelines &&
+                used_shader_pipelines[pipeline]) {
                 if (in_shader_pipeline_channel) features.image_decoder = true;
                 ref_count++;
             }

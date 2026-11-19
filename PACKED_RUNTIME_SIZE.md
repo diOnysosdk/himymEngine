@@ -96,8 +96,10 @@ the deterministic fallback when a project has no shader cue. The universal
 but is not linked into a current-format packed runtime.
 
 Project-owned Shadertoy pipelines are discovered independently from the preset
-registry. The packer embeds only enabled Image/Buffer A-D GLSL sources and
-referenced texture channels. Previous-frame feedback and audio-spectrum
+registry. Only pipelines assigned by `[shader_pipeline_cues]` are live packed
+content; saved but unused pipeline drafts neither require their source assets
+nor retain decoder features. For live pipelines, the packer embeds only enabled
+Image/Buffer A-D GLSL sources and referenced texture channels. Previous-frame feedback and audio-spectrum
 channels add no packed asset bytes; they use runtime render targets and the
 active XM sample snapshot respectively.
 

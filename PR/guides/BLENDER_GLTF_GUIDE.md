@@ -71,17 +71,55 @@ the imported vertices to keep editor and packed playback compact and identical.
 Texture wrapping follows the glTF sampler; Blender's Repeat mode therefore
 continues to tile when transformed UVs leave the 0-to-1 range.
 
+## PBR material contract
+
+Each glTF primitive keeps its own material slot. HiMYM consumes the core
+metallic/roughness fields: base-color factor and texture, metallic factor,
+roughness factor, the metallic-roughness texture (roughness in G and metallic
+in B), tangent-space normal texture and scale, occlusion texture and strength,
+and emissive factor, texture,
+and `KHR_materials_emissive_strength`. Base-color and emissive images are
+decoded as sRGB; normal and metallic/roughness images are sampled as linear
+data. The compact preview and runtime shader uses GGX direct lighting.
+
+Tangents are generated from the transformed positions, inverse-transpose
+normals, and UVs. Their handedness is retained for mirrored UV islands and is
+corrected when a cue transform changes handedness. This avoids requiring a
+second packed tangent asset while supporting non-uniform object transforms.
+
+glTF `OPAQUE`, `MASK`, and `BLEND` are distinct. OPAQUE ignores base-color
+alpha, MASK stays in the depth-writing opaque pass and discards below
+`alphaCutoff`, and BLEND is drawn after opaque slots with depth writes disabled.
+
 ## Imported lights and compact shadows
 
 Enable **Use glTF Light** on a mesh cue to use the first punctual light in the
-active glTF scene. Point and spot lights retain the compact positional lighting
-path. A Blender Sun exports as a directional light; HiMYM imports its world
+active glTF scene. Color and authored intensity are retained. Directional
+intensity remains linear; point and spot candela-like values use a compact
+logarithmic exposure mapping before inverse-square/range attenuation so normal
+Blender power values do not immediately saturate the LDR framebuffer. Spot lights additionally apply the glTF
+inner/outer cone. Spot lights cast a single perspective 1024x1024 shadow map
+using the same compact depth/PCF path as directional lights. A Blender Sun exports as a directional light; HiMYM imports its world
 direction and renders a fixed 1024x1024 depth map for that imported mesh. The
 shadow pass is automatic, uses 3x3 percentage-closer filtering, and is identical
 in editor preview and standalone playback. It deliberately provides self-shadowing
 only: geometry from separate mesh cues does not cast into the imported mesh's map.
-Additional lights, cascades, point-light cubemap shadows, and Blender Eevee/Cycles
+Additional simultaneous lights, cascades, point-light cubemap shadows, and Blender Eevee/Cycles
 shadow settings are outside this compact contract.
+
+When no imported light is selected, the existing neutral key light and a small
+constant ambient fallback remain active. HiMYM does not currently import an
+HDR environment or generate reflection probes; bake important environment
+response into textures when it is required.
+
+## Transform animation
+
+Translation, rotation, and scale channels preserve glTF `LINEAR`, `STEP`, and
+`CUBICSPLINE` interpolation. Cubic channels retain their input/value/output
+tangent triplets, scale tangents by the keyframe interval during Hermite
+evaluation, and normalize quaternion results. Animated node hierarchies,
+cameras, lights, and HiMYM attachment sockets use the same evaluated local
+transforms. Skinning and morph targets remain outside this compact importer.
 
 ## Imported cameras
 
@@ -184,7 +222,8 @@ cmake --build build --config Release --target gltf_import_tests
 build\bin\Release\gltf_import_tests.exe tests\fixtures\blender_axis_material.gltf
 ```
 
-The test verifies transform orientation, inverse-transpose normals, camera
+The test verifies transform orientation, inverse-transpose normals, generated
+tangent handedness, per-slot PBR and alpha propagation, punctual-light fields, camera
 direction and projection fields, finite/infinite perspective matrices,
-orthographic projection, and material-extra parsing without requiring an
+orthographic projection, cubic animation evaluation, and material-extra parsing without requiring an
 OpenGL window.

@@ -2342,11 +2342,14 @@ const char* mesh_vertex_shader_src = R"(
 layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_uv;
+layout(location = 3) in vec4 a_tangent;
 out vec3 v_frag_pos;
 out vec3 v_normal;
 out vec2 v_uv;
 out vec3 v_noise_pos;
 out vec4 v_light_space_pos;
+out vec3 v_tangent;
+out float v_tangent_sign;
 uniform mat4 u_model;
 uniform mat4 u_view;
 uniform mat4 u_projection;
@@ -2355,6 +2358,8 @@ void main() {
     vec4 world_pos = u_model * vec4(a_pos, 1.0);
     v_frag_pos = world_pos.xyz;
     v_normal   = mat3(transpose(inverse(u_model))) * a_normal;
+    v_tangent  = mat3(u_model) * a_tangent.xyz;
+    v_tangent_sign = a_tangent.w * (determinant(mat3(u_model)) < 0.0 ? -1.0 : 1.0);
     v_uv       = a_uv;
     v_noise_pos = a_pos;
     v_light_space_pos = u_light_matrix * world_pos;
@@ -2369,10 +2374,18 @@ in vec3 v_normal;
 in vec2 v_uv;
 in vec3 v_noise_pos;
 in vec4 v_light_space_pos;
+in vec3 v_tangent;
+in float v_tangent_sign;
 out vec4 fragColor;
 uniform vec3  u_light_pos;
 uniform vec3  u_light_direction;
 uniform int   u_light_directional;
+uniform vec3 u_light_color;
+uniform float u_light_intensity;
+uniform int u_light_type;
+uniform float u_light_range;
+uniform float u_spot_inner;
+uniform float u_spot_outer;
 uniform sampler2D u_shadow_map;
 uniform int u_shadow_enabled;
 uniform vec3  u_view_pos;
@@ -2383,6 +2396,19 @@ uniform vec3  u_emissive_color;
 uniform float u_emissive_strength;
 uniform sampler2D u_base_color_texture;
 uniform int u_has_texture;
+uniform sampler2D u_normal_texture;
+uniform sampler2D u_metallic_roughness_texture;
+uniform sampler2D u_emissive_texture;
+uniform sampler2D u_occlusion_texture;
+uniform int u_has_normal_texture;
+uniform int u_has_metallic_roughness_texture;
+uniform int u_has_emissive_texture;
+uniform int u_has_occlusion_texture;
+uniform float u_occlusion_strength;
+uniform float u_normal_scale;
+uniform float u_base_color_alpha;
+uniform int u_alpha_mode;
+uniform float u_alpha_cutoff;
 uniform int u_noise_target;
 uniform float u_noise_scale;
 uniform float u_noise_detail;
@@ -2417,7 +2443,7 @@ float shadow_visibility(vec3 normal, vec3 light_dir) {
     if (u_shadow_enabled == 0) return 1.0;
     vec3 p = v_light_space_pos.xyz / v_light_space_pos.w;
     p = p * 0.5 + 0.5;
-    if (p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 1.0;
+    if (p.z < 0.0 || p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 1.0;
     float bias = max(0.0015 * (1.0 - dot(normal, light_dir)), 0.0003);
     vec2 texel = 1.0 / vec2(textureSize(u_shadow_map, 0));
     float visible = 0.0;
@@ -2430,30 +2456,60 @@ void main() {
     float alpha = u_color.a;
     if (u_has_texture != 0) {
         vec4 tex_color = texture(u_base_color_texture, v_uv);
-        base *= tex_color.rgb;
+        base *= pow(tex_color.rgb,vec3(2.2));
         alpha *= tex_color.a;
     }
+    if (u_alpha_mode != 0) alpha *= u_base_color_alpha;
     float noise_value = u_noise_target != 0 ? material_noise(v_noise_pos) : 0.0;
     if (u_noise_target == 1) base *= mix(1.0, noise_value, u_noise_strength);
     float material_roughness = u_noise_target == 2
         ? mix(u_roughness, noise_value, u_noise_strength) : u_roughness;
-    vec3  norm     = normalize(v_normal);
+    float material_metallic = u_metallic;
+    if (u_has_metallic_roughness_texture != 0) {
+        vec4 mr = texture(u_metallic_roughness_texture, v_uv);
+        material_roughness *= mr.g;
+        material_metallic *= mr.b;
+    }
+    if (u_alpha_mode == 1 && alpha < u_alpha_cutoff) discard;
+    vec3 norm = normalize(v_normal);
+    if (u_has_normal_texture != 0) {
+        vec3 tangent = normalize(v_tangent - norm * dot(norm, v_tangent));
+        vec3 bitangent = normalize(cross(norm, tangent)) * v_tangent_sign;
+        vec3 map_normal = texture(u_normal_texture, v_uv).xyz * 2.0 - 1.0;
+        map_normal.xy *= u_normal_scale;
+        norm = normalize(mat3(tangent, bitangent, norm) * map_normal);
+    }
     vec3  ldir     = u_light_directional != 0 ? normalize(-u_light_direction) : normalize(u_light_pos - v_frag_pos);
+    float light_weight=u_light_type==1 ? u_light_intensity : log2(1.0+max(u_light_intensity,0.0));
+    if(u_light_type!=1){float d=length(u_light_pos-v_frag_pos);light_weight/=max(d*d,1.0);if(u_light_range>0.0){float r=clamp(1.0-d/u_light_range,0.0,1.0);light_weight*=r*r;}if(u_light_type==3){float cone=dot(normalize(v_frag_pos-u_light_pos),normalize(u_light_direction));light_weight*=smoothstep(cos(u_spot_outer),cos(u_spot_inner),cone);}}
     vec3  vdir     = normalize(u_view_pos  - v_frag_pos);
     vec3  hdir     = normalize(ldir + vdir);
-    float ambient  = 0.15;
-    float diff     = max(dot(norm, ldir), 0.0) * (1.0 - u_metallic * 0.9);
-    float shininess   = mix(2.0, 256.0, 1.0 - material_roughness);
-    float spec_fac    = pow(max(dot(norm, hdir), 0.0), shininess);
-    vec3  spec_col    = mix(vec3(0.04), base, u_metallic);
-    vec3  spec        = spec_col * spec_fac * (1.0 - material_roughness * 0.85);
+    float ndotl=max(dot(norm,ldir),0.0), ndotv=max(dot(norm,vdir),0.0);
+    float ndoth=max(dot(norm,hdir),0.0), vdoth=max(dot(vdir,hdir),0.0);
+    float a=max(material_roughness*material_roughness,0.0025), a2=a*a;
+    float denominator=ndoth*ndoth*(a2-1.0)+1.0;
+    float distribution=a2/max(3.14159265*denominator*denominator,0.0001);
+    float k=(material_roughness+1.0); k=k*k*0.125;
+    float geometry=ndotv/(ndotv*(1.0-k)+k)*ndotl/(ndotl*(1.0-k)+k);
+    vec3 f0=mix(vec3(0.04),base,material_metallic);
+    vec3 fresnel=f0+(1.0-f0)*pow(1.0-vdoth,5.0);
+    vec3 spec=distribution*geometry*fresnel/max(4.0*ndotv*ndotl,0.0001);
+    vec3 diffuse=(1.0-fresnel)*(1.0-material_metallic)*base/3.14159265;
     vec3  emissive    = u_emissive_color * u_emissive_strength;
+    if (u_has_emissive_texture != 0) emissive *= pow(texture(u_emissive_texture,v_uv).rgb,vec3(2.2));
     if (u_noise_target == 3) emissive *= mix(1.0, noise_value, u_noise_strength);
     float visibility  = shadow_visibility(norm, ldir);
-    vec3  result      = base * (ambient + diff * visibility) + spec * visibility + emissive;
-    fragColor = vec4(result, alpha);
+    float occlusion = u_has_occlusion_texture != 0
+        ? mix(1.0, texture(u_occlusion_texture, v_uv).r, u_occlusion_strength) : 1.0;
+    vec3  result      = base*0.15*occlusion+(diffuse+spec)*ndotl*visibility*u_light_color*light_weight+emissive;
+    fragColor = vec4(pow(max(result,vec3(0.0)),vec3(1.0/2.2)),alpha);
 }
 )";
+
+static uint32_t LoadGltfMaterialTexture(const char* path, bool, void*) {
+    rev::runtime::ImageTexture texture{};
+    return rev::runtime::LoadImageTexture(path, &texture) ? texture.texture_id : 0;
+}
 
 static void SetMeshNoiseUniforms(rev::shader::Program* program,
                                  const rev::mesh::MaterialSlot* slot) {
@@ -2471,6 +2527,40 @@ static void SetMeshNoiseUniforms(rev::shader::Program* program,
     if (loc >= 0) rev::shader::SetFloat(program, loc, slot->noise_distortion);
     loc = rev::shader::GetUniformLocation(program, "u_noise_strength");
     if (loc >= 0) rev::shader::SetFloat(program, loc, slot->noise_strength);
+}
+
+static void SetMeshPbrSlot(rev::shader::Program* program,
+                           const rev::mesh::MaterialSlot& slot) {
+    auto set_int = [program](const char* name, int value) {
+        int location = rev::shader::GetUniformLocation(program, name);
+        if (location >= 0) rev::shader::SetInt(program, location, value);
+    };
+    auto set_float = [program](const char* name, float value) {
+        int location = rev::shader::GetUniformLocation(program, name);
+        if (location >= 0) rev::shader::SetFloat(program, location, value);
+    };
+    set_float("u_metallic", slot.metallic);
+    set_float("u_roughness", slot.roughness);
+    set_float("u_normal_scale", slot.normal_scale);
+    set_float("u_base_color_alpha", slot.base_color_alpha);
+    set_float("u_occlusion_strength", slot.occlusion_strength);
+    set_int("u_alpha_mode", slot.alpha_mode);
+    set_float("u_alpha_cutoff", slot.alpha_cutoff);
+    const uint32_t textures[4] = {slot.normal_texture, slot.metallic_roughness_texture,
+                                  slot.emissive_texture, slot.occlusion_texture};
+    const char* samplers[4] = {"u_normal_texture", "u_metallic_roughness_texture",
+                               "u_emissive_texture", "u_occlusion_texture"};
+    const char* flags[4] = {"u_has_normal_texture", "u_has_metallic_roughness_texture",
+                            "u_has_emissive_texture", "u_has_occlusion_texture"};
+    for (int index = 0; index < 4; ++index) {
+        set_int(flags[index], textures[index] ? 1 : 0);
+        if (textures[index] && glActiveTexture) {
+            glActiveTexture(0x84C1u + (unsigned int)index);
+            glBindTexture(0x0DE1, textures[index]);
+            set_int(samplers[index], index + 1);
+        }
+    }
+    if (glActiveTexture) glActiveTexture(GL_TEXTURE0);
 }
 
 static void BuildMeshProjection(float out[16], const rev::mesh::Mesh* mesh,
@@ -3593,6 +3683,14 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
 
     if (scene_fbo_ready) {
         for (int pipeline_index = 0; pipeline_index < shader_pipeline_count; ++pipeline_index) {
+            bool pipeline_referenced = false;
+            for (int cue_index = 0; cue_index < shader_cue_count; ++cue_index) {
+                if (shader_cues[cue_index].shader_pipeline_index == pipeline_index) {
+                    pipeline_referenced = true;
+                    break;
+                }
+            }
+            if (!pipeline_referenced) continue;
             RuntimePipelineState& state = runtime_pipelines[pipeline_index];
             char error[256] = {};
             state.order_count = rev::runtime::BuildShaderPassOrder(
@@ -3835,6 +3933,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                     }
                                     delete[] material_textures;
                                 }
+                                rev::gltf::ConnectMaterialTextures(ir, mesh_obj, LoadGltfMaterialTexture);
 
                                 // Transfer animations to mesh
                                 if (ir->animation_count > 0) {
@@ -3923,6 +4022,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                                 }
                                 delete[] material_textures;
                             }
+                            rev::gltf::ConnectMaterialTextures(ir, mesh_obj, LoadGltfMaterialTexture);
 
                             // Transfer animations to mesh
                             if (ir->animation_count > 0) {
@@ -4474,7 +4574,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float light_direction[3] = {0.0f, -1.0f, 0.0f};
                     const bool directional_light = mesh_cue.use_imported_light &&
                         mesh_obj->has_imported_light && mesh_obj->imported_light_type == 1;
-                    if (directional_light) {
+                    const bool spot_light = mesh_cue.use_imported_light &&
+                        mesh_obj->has_imported_light && mesh_obj->imported_light_type == 3;
+                    if (directional_light || spot_light) {
                         memcpy(light_direction, mesh_obj->imported_light_direction, sizeof(light_direction));
                         if (node_delta_mats && mesh_obj->imported_light_node_index >= 0 &&
                             mesh_obj->imported_light_node_index < (int)mesh_obj->imported_node_count) {
@@ -4484,12 +4586,19 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             light_direction[1]=d[1]*x+d[5]*y+d[9]*z;
                             light_direction[2]=d[2]*x+d[6]*y+d[10]*z;
                         }
-                        rev::mesh::RenderDirectionalShadow(&mesh_shadow, mesh_obj, model_mat, light_direction);
-                        rev::shader::Use(mesh_shader);
+                        if (directional_light) {
+                            rev::mesh::RenderDirectionalShadow(&mesh_shadow, mesh_obj, model_mat, light_direction);
+                            rev::shader::Use(mesh_shader);
+                        }
                     }
                     rev::shader::SetInt(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_directional"), directional_light ? 1 : 0);
+                    rev::shader::SetVec3(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_color"), mesh_obj->imported_light_color[0], mesh_obj->imported_light_color[1], mesh_obj->imported_light_color[2]);
+                    rev::shader::SetFloat(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_intensity"), mesh_cue.use_imported_light ? mesh_obj->imported_light_intensity : 1.0f);
+                    rev::shader::SetInt(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_type"), mesh_cue.use_imported_light ? mesh_obj->imported_light_type : 2);
+                    rev::shader::SetFloat(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_range"), mesh_obj->imported_light_range);
+                    rev::shader::SetFloat(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_spot_inner"), mesh_obj->imported_light_inner_cone);
+                    rev::shader::SetFloat(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_spot_outer"), mesh_obj->imported_light_outer_cone);
                     rev::shader::SetVec3(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_direction"), light_direction[0], light_direction[1], light_direction[2]);
-                    rev::mesh::BindDirectionalShadow(directional_light ? &mesh_shadow : nullptr, mesh_shader);
                     if (glUniformMatrix4fv_fn && loc_model >= 0) glUniformMatrix4fv_fn(loc_model, 1, 0, model_mat);
 
                     float light_pos[3] = {3.0f, 5.0f, 4.0f};
@@ -4511,6 +4620,13 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                         }
                     }
                     if (loc_light >= 0) rev::shader::SetVec3(mesh_shader, loc_light, light_pos[0], light_pos[1], light_pos[2]);
+                    if (spot_light) {
+                        rev::mesh::RenderSpotShadow(&mesh_shadow, mesh_obj, model_mat, light_pos,
+                            light_direction, mesh_obj->imported_light_outer_cone,
+                            mesh_obj->imported_light_range);
+                        rev::shader::Use(mesh_shader);
+                    }
+                    rev::mesh::BindDirectionalShadow((directional_light || spot_light) ? &mesh_shadow : nullptr, mesh_shader);
 
                     if (loc_metal >= 0) rev::shader::SetFloat(mesh_shader, loc_metal, mesh_cue.metallic);
                     if (loc_rough >= 0) rev::shader::SetFloat(mesh_shader, loc_rough, mesh_cue.roughness);
@@ -4546,6 +4662,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             rev::shader::SetInt(mesh_shader, loc_has_tex, 0);
                         }
                         SetMeshNoiseUniforms(mesh_shader, &slot);
+                        SetMeshPbrSlot(mesh_shader, slot);
                         rev::mesh::Render(mesh_obj, (int)si);
                         rendered_slot = true;
                     }
@@ -6447,11 +6564,8 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     if (effective_size < 4.0f) effective_size = 4.0f;
 
                     char glyph_scroll_text[512] = {};
-                    if (cue.direction <= 1 && cue.loop_mode == 0) {
-                        snprintf(glyph_scroll_text, sizeof(glyph_scroll_text), "%s   %s", cue.text, cue.text);
-                    } else {
-                        strncpy_s(glyph_scroll_text, sizeof(glyph_scroll_text), cue.text, _TRUNCATE);
-                    }
+                    rev::runtime::BuildScrollTextRun(
+                        cue.text, glyph_scroll_text, sizeof(glyph_scroll_text));
 
                     TextTexture frame_text_tex = {};
                     bool frame_tex_transient = false;
@@ -6708,7 +6822,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     float light_direction[3] = {0.0f, -1.0f, 0.0f};
                     const bool directional_light = mesh_cue.use_imported_light &&
                         mesh_obj->has_imported_light && mesh_obj->imported_light_type == 1;
-                    if (directional_light) {
+                    const bool spot_light = mesh_cue.use_imported_light &&
+                        mesh_obj->has_imported_light && mesh_obj->imported_light_type == 3;
+                    if (directional_light || spot_light) {
                         memcpy(light_direction, mesh_obj->imported_light_direction, sizeof(light_direction));
                         if (node_delta_mats && mesh_obj->imported_light_node_index >= 0 &&
                             mesh_obj->imported_light_node_index < (int)mesh_obj->imported_node_count) {
@@ -6718,12 +6834,19 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             light_direction[1]=d[1]*x+d[5]*y+d[9]*z;
                             light_direction[2]=d[2]*x+d[6]*y+d[10]*z;
                         }
-                        rev::mesh::RenderDirectionalShadow(&mesh_shadow, mesh_obj, model_mat, light_direction);
-                        rev::shader::Use(mesh_shader);
+                        if (directional_light) {
+                            rev::mesh::RenderDirectionalShadow(&mesh_shadow, mesh_obj, model_mat, light_direction);
+                            rev::shader::Use(mesh_shader);
+                        }
                     }
                     rev::shader::SetInt(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_directional"), directional_light ? 1 : 0);
+                    rev::shader::SetVec3(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_color"), mesh_obj->imported_light_color[0], mesh_obj->imported_light_color[1], mesh_obj->imported_light_color[2]);
+                    rev::shader::SetFloat(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_intensity"), mesh_cue.use_imported_light ? mesh_obj->imported_light_intensity : 1.0f);
+                    rev::shader::SetInt(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_type"), mesh_cue.use_imported_light ? mesh_obj->imported_light_type : 2);
+                    rev::shader::SetFloat(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_range"), mesh_obj->imported_light_range);
+                    rev::shader::SetFloat(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_spot_inner"), mesh_obj->imported_light_inner_cone);
+                    rev::shader::SetFloat(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_spot_outer"), mesh_obj->imported_light_outer_cone);
                     rev::shader::SetVec3(mesh_shader, rev::shader::GetUniformLocation(mesh_shader, "u_light_direction"), light_direction[0], light_direction[1], light_direction[2]);
-                    rev::mesh::BindDirectionalShadow(directional_light ? &mesh_shadow : nullptr, mesh_shader);
                     typedef void (APIENTRY *PFNGLUNIFORMMATRIX4FVPROC)(int, int, unsigned char, const float*);
                     auto glUniformMatrix4fv_fn = (PFNGLUNIFORMMATRIX4FVPROC)wglGetProcAddress("glUniformMatrix4fv");
                     int loc_model = rev::shader::GetUniformLocation(mesh_shader, "u_model");
@@ -6807,6 +6930,13 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                     int loc_metal = rev::shader::GetUniformLocation(mesh_shader, "u_metallic");
                     int loc_rough = rev::shader::GetUniformLocation(mesh_shader, "u_roughness");
                     if (loc_light >= 0) rev::shader::SetVec3(mesh_shader, loc_light, light_pos[0], light_pos[1], light_pos[2]);
+                    if (spot_light) {
+                        rev::mesh::RenderSpotShadow(&mesh_shadow, mesh_obj, model_mat, light_pos,
+                            light_direction, mesh_obj->imported_light_outer_cone,
+                            mesh_obj->imported_light_range);
+                        rev::shader::Use(mesh_shader);
+                    }
+                    rev::mesh::BindDirectionalShadow((directional_light || spot_light) ? &mesh_shadow : nullptr, mesh_shader);
                     if (loc_vpos  >= 0) rev::shader::SetVec3(mesh_shader, loc_vpos, eye[0], eye[1], eye[2]);
                     float opa = ComputeEffectOpacity(mesh_cue.effect_type,
                         mesh_cue.fade_in_start, mesh_cue.fade_in_end,
@@ -6912,6 +7042,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
                             }
 
                             SetMeshNoiseUniforms(mesh_shader, &slot);
+                            SetMeshPbrSlot(mesh_shader, slot);
                             rev::mesh::Render(mesh_obj, (int)si);
                             rendered_slot = true;
                         }

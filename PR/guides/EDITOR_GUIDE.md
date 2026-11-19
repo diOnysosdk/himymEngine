@@ -226,8 +226,14 @@ Scrolling text measures its glyph extent automatically; do not add leading or
 trailing spaces to push it offscreen. In **Clamp** mode HiMYM renders one copy
 and calculates travel from the authored starting position until the final glyph
 has fully cleared the destination edge. **Loop** mode repeats the text and uses
-**Wrap Gap** as the separation between cycles. Direction selects the movement
-axis; X/Y provide the starting position and cross-axis placement.
+**Wrap Gap** as the separation between cycles. Each cycle renders one authored
+text run; HiMYM does not concatenate a second visible copy into the run.
+Direction selects the movement axis; X/Y provide the starting position and
+cross-axis placement.
+
+Shader Text uses procedural `gl_VertexID` glyphs. Preview and standalone
+playback bind their own draw VAO before rendering it, so preceding mesh cues do
+not affect whether the text is visible.
 
 ### Workflow 4b: Add Animated Sprite Overlay
 

@@ -212,8 +212,17 @@ int main() {
     RunCase(root, "scene_menu", "[scene_menus]\nmenu row\n",
             {false, false, false, false, false, false, true, true}, false);
     RunCase(root, "shader_texture_channel",
-            "[shader_pipeline_channels]\n0|0|0|1|asset.bin\n",
+            "[shader_pipeline_cues]\n0|0\n[shader_pipeline_channels]\n0|0|0|1|asset.bin\n",
             {false, false, false, false, false, false, false, true}, true);
+    RunCase(root, "unused_shader_pipeline_missing_source",
+            "[shader_pipeline_cues]\n"
+            "[shader_pipeline_passes]\n0|0|1|1.0|missing.glsl\n"
+            "[shader_pipeline_channels]\n0|0|0|1|missing.png\n",
+            {}, false);
+    RunCase(root, "used_shader_pipeline_source",
+            "[shader_pipeline_cues]\n0|0\n"
+            "[shader_pipeline_passes]\n0|0|1|1.0|asset.bin\n",
+            {}, true);
     RunCase(root, "shader_cue_texture_channels",
             "[shader_cues]\n"
             "0|0|0|0|0|0|0|0|0|0|1|1|0|1|0|1|0|0|10|0|0|0|1|0|0|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|-1|0|0|0|0|0|0|0|0|0|0|0|1|1|1|2|0.5|0|0|0|0|0|asset.bin|asset.bin|asset.bin|asset.bin\n",

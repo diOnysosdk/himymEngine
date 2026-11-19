@@ -3,7 +3,7 @@
     "version": "2.0",
     "generator": "Blender 5.2 HiMYM regression fixture"
   },
-  "extensionsUsed": ["KHR_texture_transform", "KHR_lights_punctual"],
+  "extensionsUsed": ["KHR_texture_transform", "KHR_lights_punctual", "KHR_materials_emissive_strength"],
   "extensions": {
     "KHR_lights_punctual": {
       "lights": [ { "name": "Sun", "type": "directional", "color": [1, 1, 1], "intensity": 2 } ]
@@ -66,6 +66,12 @@
   "materials": [
     {
       "name": "HiMYM Noise",
+      "alphaMode": "MASK",
+      "alphaCutoff": 0.37,
+      "normalTexture": { "index": 0, "scale": 0.35 },
+      "occlusionTexture": { "index": 0, "strength": 0.6 },
+      "emissiveFactor": [0.1, 0.2, 0.3],
+      "extensions": { "KHR_materials_emissive_strength": { "emissiveStrength": 4.0 } },
       "pbrMetallicRoughness": {
         "baseColorFactor": [0.8, 0.6, 0.4, 1],
         "metallicFactor": 0.2,

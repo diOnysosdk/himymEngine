@@ -871,6 +871,9 @@ float ComputeScrollTextTravel(const TextGlyphAtlas* atlas, const char* text,
                               float wrap_gap, float viewport_width,
                               float viewport_height, float start_x,
                               float start_y, int loop_mode);
+// Copies the authored run used by scrolling text. Looping is performed by the
+// travel calculation, so the run itself must contain exactly one text copy.
+void BuildScrollTextRun(const char* text, char* output, size_t output_size);
 // Pixel metrics are authored against the editor's 1920x1080 canvas. Scale
 // them uniformly for other framebuffers while normalized anchors remain
 // unchanged.

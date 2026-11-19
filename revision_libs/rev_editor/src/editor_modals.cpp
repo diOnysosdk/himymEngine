@@ -4737,6 +4737,12 @@ void RenderMeshModal(EditorContext* editor) {
                         delete[] material_textures;
                     }
 
+                    rev::gltf::ConnectMaterialTextures(ir, mesh,
+                        [](const char* path, bool, void*) -> uint32_t {
+                            rev::runtime::ImageTexture texture{};
+                            return rev::runtime::LoadImageTexture(path, &texture) ? texture.texture_id : 0;
+                        });
+
                     if (mesh && ir->animation_count > 0) {
                         mesh->animation_data = ir->animations;
                         mesh->animation_count = ir->animation_count;

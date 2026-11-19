@@ -35,6 +35,9 @@ static void SetMaterialDefaults(Material* m) {
     m->metallic  = 0.0f;
     m->roughness = 1.0f;
     m->emissive_strength = 1.0f;
+    m->normal_scale = 1.0f;
+    m->occlusion_strength = 1.0f;
+    m->alpha_cutoff = 0.5f;
     m->noise_scale = 5.0f;
     m->noise_detail = 2.0f;
     m->noise_roughness = 0.5f;
@@ -271,6 +274,11 @@ static void FillMaterial(Material* out, const cgltf_material* mat,
 
     if (mat->name) strncpy_s(out->name, mat->name, _TRUNCATE);
     out->double_sided = mat->double_sided != 0;
+    out->normal_scale = mat->normal_texture.scale;
+    out->occlusion_strength = mat->occlusion_texture.scale;
+    out->alpha_mode = mat->alpha_mode == cgltf_alpha_mode_mask ? 1 :
+                      (mat->alpha_mode == cgltf_alpha_mode_blend ? 2 : 0);
+    out->alpha_cutoff = mat->alpha_cutoff;
     FillNoiseExtras(out, mat, data);
     
     GLTF_LOGV("[glTF] Material: name='%s' has_pbr=%d\n", 
@@ -340,6 +348,12 @@ static void FillMaterial(Material* out, const cgltf_material* mat,
                          gltf_path, output_dir,
                          out->emissive_texture, sizeof(out->emissive_texture));
         }
+        if (mat->occlusion_texture.texture && mat->occlusion_texture.texture->image) {
+            int img_idx = (int)(mat->occlusion_texture.texture->image - data->images);
+            ExtractImage(data, mat->occlusion_texture.texture->image, img_idx,
+                         gltf_path, output_dir,
+                         out->occlusion_texture, sizeof(out->occlusion_texture));
+        }
     }
 }
 
@@ -351,6 +365,61 @@ static void ReadVec3(const cgltf_accessor* acc, cgltf_size elem, float dest[3]) 
 // Read a float2 attribute from a glTF accessor into dest[2]
 static void ReadVec2(const cgltf_accessor* acc, cgltf_size elem, float dest[2]) {
     cgltf_accessor_read_float(acc, elem, dest, 2);
+}
+
+static void GenerateTangents(rev::mesh::Mesh* mesh) {
+    if (!mesh) return;
+    for (uint32_t ii = 0; ii + 2 < mesh->index_count; ii += 3) {
+        rev::mesh::Vertex& a = mesh->vertices[mesh->indices[ii + 0]];
+        rev::mesh::Vertex& b = mesh->vertices[mesh->indices[ii + 1]];
+        rev::mesh::Vertex& c = mesh->vertices[mesh->indices[ii + 2]];
+        const float e1[3] = {b.pos[0]-a.pos[0], b.pos[1]-a.pos[1], b.pos[2]-a.pos[2]};
+        const float e2[3] = {c.pos[0]-a.pos[0], c.pos[1]-a.pos[1], c.pos[2]-a.pos[2]};
+        const float du1 = b.uv[0]-a.uv[0], dv1 = b.uv[1]-a.uv[1];
+        const float du2 = c.uv[0]-a.uv[0], dv2 = c.uv[1]-a.uv[1];
+        const float determinant = du1 * dv2 - du2 * dv1;
+        if (fabsf(determinant) < 0.0000001f) continue;
+        const float inverse = 1.0f / determinant;
+        const float tangent[3] = {
+            (e1[0] * dv2 - e2[0] * dv1) * inverse,
+            (e1[1] * dv2 - e2[1] * dv1) * inverse,
+            (e1[2] * dv2 - e2[2] * dv1) * inverse};
+        const float bitangent[3] = {
+            (e2[0] * du1 - e1[0] * du2) * inverse,
+            (e2[1] * du1 - e1[1] * du2) * inverse,
+            (e2[2] * du1 - e1[2] * du2) * inverse};
+        rev::mesh::Vertex* vertices[3] = {&a, &b, &c};
+        for (rev::mesh::Vertex* vertex : vertices) {
+            for (int k = 0; k < 3; ++k) {
+                vertex->tangent[k] += tangent[k];
+                // Temporarily accumulate the bitangent sign contribution in w.
+            }
+            const float cross_nt[3] = {
+                vertex->normal[1] * tangent[2] - vertex->normal[2] * tangent[1],
+                vertex->normal[2] * tangent[0] - vertex->normal[0] * tangent[2],
+                vertex->normal[0] * tangent[1] - vertex->normal[1] * tangent[0]};
+            vertex->tangent[3] += (cross_nt[0]*bitangent[0] + cross_nt[1]*bitangent[1] +
+                                   cross_nt[2]*bitangent[2]) < 0.0f ? -1.0f : 1.0f;
+        }
+    }
+    for (uint32_t vi = 0; vi < mesh->vertex_count; ++vi) {
+        rev::mesh::Vertex& vertex = mesh->vertices[vi];
+        const float dot_nt = vertex.normal[0]*vertex.tangent[0] +
+                             vertex.normal[1]*vertex.tangent[1] +
+                             vertex.normal[2]*vertex.tangent[2];
+        float length_sq = 0.0f;
+        for (int k = 0; k < 3; ++k) {
+            vertex.tangent[k] -= vertex.normal[k] * dot_nt;
+            length_sq += vertex.tangent[k] * vertex.tangent[k];
+        }
+        if (length_sq > 0.0000001f) {
+            const float inverse_length = 1.0f / sqrtf(length_sq);
+            for (int k = 0; k < 3; ++k) vertex.tangent[k] *= inverse_length;
+        } else {
+            vertex.tangent[0] = 1.0f; vertex.tangent[1] = vertex.tangent[2] = 0.0f;
+        }
+        vertex.tangent[3] = vertex.tangent[3] < 0.0f ? -1.0f : 1.0f;
+    }
 }
 
 static void Mat4IdentityLocal(float* m) {
@@ -631,12 +700,13 @@ static Animation* ExtractAnimations(const cgltf_data* data, int* out_count) {
             }
             
             // Extract keyframe values
-            int value_count = dst_chan->keyframe_count * dst_chan->components;
+            const int value_stride = dst_chan->interpolation == ANIM_INTERP_CUBIC ? 3 : 1;
+            int value_count = dst_chan->keyframe_count * dst_chan->components * value_stride;
             dst_chan->values = new float[value_count];
             
-            for (int ki = 0; ki < dst_chan->keyframe_count; ++ki) {
-                cgltf_accessor_read_float(value_acc, ki, 
-                                         &dst_chan->values[ki * dst_chan->components], 
+            for (int vi = 0; vi < dst_chan->keyframe_count * value_stride; ++vi) {
+                cgltf_accessor_read_float(value_acc, vi,
+                                         &dst_chan->values[vi * dst_chan->components],
                                          dst_chan->components);
             }
         }
@@ -723,12 +793,38 @@ static void EvaluateChannel(const AnimationChannel* chan, float time, float* out
     }
     
     // Interpolate based on type
-    const float* val0 = &chan->values[key0 * chan->components];
-    const float* val1 = &chan->values[key1 * chan->components];
+    const int stride = chan->interpolation == ANIM_INTERP_CUBIC ? 3 : 1;
+    const float* val0 = &chan->values[(key0 * stride + (stride == 3 ? 1 : 0)) * chan->components];
+    const float* val1 = &chan->values[(key1 * stride + (stride == 3 ? 1 : 0)) * chan->components];
     
     if (chan->interpolation == ANIM_INTERP_STEP) {
         // Step: use val0
         for (int i = 0; i < chan->components; ++i) out[i] = val0[i];
+    } else if (chan->interpolation == ANIM_INTERP_CUBIC && key0 != key1) {
+        const float dt = chan->times[key1] - chan->times[key0];
+        const float* tangent0 = &chan->values[(key0 * 3 + 2) * chan->components];
+        const float* tangent1 = &chan->values[(key1 * 3 + 0) * chan->components];
+        const float t2 = t * t;
+        const float t3 = t2 * t;
+        const float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+        const float h10 = t3 - 2.0f * t2 + t;
+        const float h01 = -2.0f * t3 + 3.0f * t2;
+        const float h11 = t3 - t2;
+        for (int i = 0; i < chan->components; ++i) {
+            out[i] = h00 * val0[i] + h10 * dt * tangent0[i] +
+                     h01 * val1[i] + h11 * dt * tangent1[i];
+        }
+        if (chan->path == ANIM_PATH_ROTATION) {
+            float length_sq = 0.0f;
+            for (int i = 0; i < 4; ++i) length_sq += out[i] * out[i];
+            const float length = sqrtf(length_sq);
+            if (length > 0.000001f) {
+                for (int i = 0; i < 4; ++i) out[i] /= length;
+            } else {
+                out[0] = out[1] = out[2] = 0.0f;
+                out[3] = 1.0f;
+            }
+        }
     } else if (chan->path == ANIM_PATH_ROTATION) {
         // Quaternion slerp
         QuatSlerp(val0, val1, t, out);
@@ -814,6 +910,11 @@ static bool FindFirstSceneLight(const cgltf_data* data, cgltf_node* node, Import
         const float local_forward[3] = {0.0f, 0.0f, -1.0f};
         TransformVector(m, local_forward, result->light_direction);
         result->light_type = (int)node->light->type;
+        memcpy(result->light_color, node->light->color, sizeof(result->light_color));
+        result->light_intensity = node->light->intensity;
+        result->light_range = node->light->range;
+        result->light_inner_cone = node->light->spot_inner_cone_angle;
+        result->light_outer_cone = node->light->spot_outer_cone_angle;
         if (data) result->light_node_index = (int)cgltf_node_index(data, node);
         return true;
     }
@@ -966,6 +1067,11 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
     result->light_direction[1] = -1.0f;
     result->light_direction[2] = 0.0f;
     result->light_type = 0;
+    result->light_color[0] = result->light_color[1] = result->light_color[2] = 1.0f;
+    result->light_intensity = 1.0f;
+    result->light_range = 0.0f;
+    result->light_inner_cone = 0.0f;
+    result->light_outer_cone = 0.785398f;
     result->light_node_index = -1;
     if (data->scene && data->scene->nodes_count > 0) {
         for (cgltf_size ni = 0; ni < data->scene->nodes_count; ++ni) {
@@ -985,6 +1091,11 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
                 const float local_forward[3] = {0.0f, 0.0f, -1.0f};
                 TransformVector(m, local_forward, result->light_direction);
                 result->light_type = (int)data->nodes[ni].light->type;
+                memcpy(result->light_color, data->nodes[ni].light->color, sizeof(result->light_color));
+                result->light_intensity = data->nodes[ni].light->intensity;
+                result->light_range = data->nodes[ni].light->range;
+                result->light_inner_cone = data->nodes[ni].light->spot_inner_cone_angle;
+                result->light_outer_cone = data->nodes[ni].light->spot_outer_cone_angle;
                 result->light_node_index = (int)ni;
                 result->has_light = true;
                 break;
@@ -1157,21 +1268,14 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
                 uint8_t r = (uint8_t)(mat.base_color[0] * 255.0f);
                 uint8_t g = (uint8_t)(mat.base_color[1] * 255.0f);
                 uint8_t b = (uint8_t)(mat.base_color[2] * 255.0f);
-                uint8_t a = (uint8_t)(mat.base_color[3] * 255.0f);
-                if (prim->material && prim->material->alpha_mode != cgltf_alpha_mode_opaque && a == 255) {
-                    // Preserve alpha-blended rendering intent even when base_color alpha is 1.
-                    a = 254;
-                }
+                uint8_t a = prim->material && prim->material->alpha_mode == cgltf_alpha_mode_blend ? 254 : 255;
                 slot_color = (a << 24) | (b << 16) | (g << 8) | r;
             } else if (prim->material && prim->material->has_pbr_metallic_roughness) {
                 const float* bc = prim->material->pbr_metallic_roughness.base_color_factor;
                 uint8_t r = (uint8_t)(bc[0] * 255.0f);
                 uint8_t g = (uint8_t)(bc[1] * 255.0f);
                 uint8_t b = (uint8_t)(bc[2] * 255.0f);
-                uint8_t a = (uint8_t)(bc[3] * 255.0f);
-                if (prim->material->alpha_mode != cgltf_alpha_mode_opaque && a == 255) {
-                    a = 254;
-                }
+                uint8_t a = prim->material->alpha_mode == cgltf_alpha_mode_blend ? 254 : 255;
                 slot_color = (a << 24) | (b << 16) | (g << 8) | r;
             }
 
@@ -1198,6 +1302,13 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
                 slot.noise_roughness = mat.noise_roughness;
                 slot.noise_distortion = mat.noise_distortion;
                 slot.noise_strength = mat.noise_strength;
+                slot.metallic = mat.metallic;
+                slot.roughness = mat.roughness;
+                slot.normal_scale = mat.normal_scale;
+                slot.base_color_alpha = mat.base_color[3];
+                slot.occlusion_strength = mat.occlusion_strength;
+                slot.alpha_mode = mat.alpha_mode;
+                slot.alpha_cutoff = mat.alpha_cutoff;
             }
 
             vert_offset += prim_vert_count;
@@ -1211,10 +1322,18 @@ static ImportResult* BuildFromData(ImportResult* result, cgltf_data* data,
     }
 
     // Keep imported light data on the mesh for renderer fallback behavior.
+    GenerateTangents(mesh);
     mesh->has_imported_light = result->has_light;
     mesh->imported_light_pos[0] = result->light_pos[0];
     mesh->imported_light_pos[1] = result->light_pos[1];
     mesh->imported_light_pos[2] = result->light_pos[2];
+    memcpy(mesh->imported_light_direction, result->light_direction, sizeof(mesh->imported_light_direction));
+    memcpy(mesh->imported_light_color, result->light_color, sizeof(mesh->imported_light_color));
+    mesh->imported_light_intensity = result->light_intensity;
+    mesh->imported_light_range = result->light_range;
+    mesh->imported_light_inner_cone = result->light_inner_cone;
+    mesh->imported_light_outer_cone = result->light_outer_cone;
+    mesh->imported_light_type = result->light_type;
     mesh->imported_light_node_index = result->light_node_index;
     mesh->has_imported_camera = result->has_camera;
     mesh->imported_camera_pos[0] = result->camera_pos[0];
@@ -1679,6 +1798,34 @@ int ExtractTextures(const char* gltf_path,
 
     cgltf_free(data);
     return count;
+}
+
+void ConnectMaterialTextures(const ImportResult* result,
+                             rev::mesh::Mesh* mesh,
+                             MaterialTextureLoader loader,
+                             void* user_data) {
+    if (!result || !mesh || !loader || !result->materials || result->material_count <= 0) return;
+    uint32_t* handles = new uint32_t[(size_t)result->material_count * 5]();
+    for (int mi = 0; mi < result->material_count; ++mi) {
+        const Material& material = result->materials[mi];
+        uint32_t* h = &handles[(size_t)mi * 5];
+        if (material.base_color_texture[0]) h[0] = loader(material.base_color_texture, true, user_data);
+        if (material.normal_texture[0]) h[1] = loader(material.normal_texture, false, user_data);
+        if (material.metallic_roughness_texture[0]) h[2] = loader(material.metallic_roughness_texture, false, user_data);
+        if (material.emissive_texture[0]) h[3] = loader(material.emissive_texture, true, user_data);
+        if (material.occlusion_texture[0]) h[4] = loader(material.occlusion_texture, false, user_data);
+    }
+    for (uint32_t si = 0; si < mesh->material_slot_count; ++si) {
+        rev::mesh::MaterialSlot& slot = mesh->material_slots[si];
+        if (slot.material_index < 0 || slot.material_index >= result->material_count) continue;
+        const uint32_t* h = &handles[(size_t)slot.material_index * 5];
+        if (!slot.base_color_texture) slot.base_color_texture = h[0];
+        slot.normal_texture = h[1];
+        slot.metallic_roughness_texture = h[2];
+        slot.emissive_texture = h[3];
+        slot.occlusion_texture = h[4];
+    }
+    delete[] handles;
 }
 
 } // namespace gltf

@@ -28,7 +28,50 @@ static void TransformPoint(const float matrix[16], const float point[3], float o
              matrix[10] * point[2] + matrix[14];
 }
 
+static void CheckCubicInterpolation() {
+    rev::gltf::AnimationChannel channels[2] = {};
+    float times[2] = {0.0f, 2.0f};
+    // Each cubic key is in-tangent, value, out-tangent. A unit outgoing
+    // tangent over a two-second interval proves that interval scaling occurs.
+    float translation_values[18] = {
+        0,0,0,  0,0,0,  1,0,0,
+        0,0,0,  2,0,0,  0,0,0
+    };
+    channels[0].path = rev::gltf::ANIM_PATH_TRANSLATION;
+    channels[0].interpolation = rev::gltf::ANIM_INTERP_CUBIC;
+    channels[0].times = times;
+    channels[0].values = translation_values;
+    channels[0].keyframe_count = 2;
+    channels[0].components = 3;
+
+    float rotation_values[24] = {
+        0,0,0,0,  0,0,0,1,  0,0,0,0,
+        0,0,0,0,  0,0,2,0,  0,0,0,0
+    };
+    channels[1].path = rev::gltf::ANIM_PATH_ROTATION;
+    channels[1].interpolation = rev::gltf::ANIM_INTERP_CUBIC;
+    channels[1].times = times;
+    channels[1].values = rotation_values;
+    channels[1].keyframe_count = 2;
+    channels[1].components = 4;
+
+    rev::gltf::Animation anim = {};
+    anim.channels = channels;
+    anim.channel_count = 2;
+    anim.duration = 2.0f;
+    float translation[3] = {};
+    float rotation[4] = {};
+    rev::gltf::EvaluateAnimation(&anim, 1.0f, translation, rotation, nullptr);
+    Check(Near(translation[0], 1.25f), "CUBICSPLINE Hermite tangents use interval scaling");
+    const float rotation_length = std::sqrt(rotation[0] * rotation[0] +
+                                            rotation[1] * rotation[1] +
+                                            rotation[2] * rotation[2] +
+                                            rotation[3] * rotation[3]);
+    Check(Near(rotation_length, 1.0f), "CUBICSPLINE quaternion result is normalized");
+}
+
 int main(int argc, char** argv) {
+    CheckCubicInterpolation();
     if (argc >= 3 && std::strcmp(argv[1], "--attachment-smoke") == 0) {
         rev::gltf::ImportResult* smoke = rev::gltf::LoadMesh(argv[2]);
         Check(smoke != nullptr, "attachment smoke LoadMesh returned null");
@@ -98,6 +141,16 @@ int main(int argc, char** argv) {
         Check(result->mesh->material_slot_count == 1, "fixture material slot count");
         if (result->mesh->material_slot_count == 1) {
             const rev::mesh::MaterialSlot& slot = result->mesh->material_slots[0];
+            Check(Near(slot.metallic, 0.2f) && Near(slot.roughness, 0.7f),
+                  "per-slot metallic/roughness factors");
+            Check(Near(slot.normal_scale, 0.35f), "per-slot normal scale");
+            Check(Near(slot.occlusion_strength, 0.6f), "per-slot occlusion strength");
+            Check(slot.alpha_mode == 1 && Near(slot.alpha_cutoff, 0.37f),
+                  "per-slot MASK alpha semantics");
+            Check(Near(slot.emissive_color[0], 0.1f) &&
+                  Near(slot.emissive_color[1], 0.2f) &&
+                  Near(slot.emissive_color[2], 0.3f) && Near(slot.emissive_strength, 4.0f),
+                  "per-slot emissive factor and strength");
             Check(slot.noise_target == 2, "material extras roughness target");
             Check(Near(slot.noise_scale, 6.5f) &&
                   Near(slot.noise_detail, 3.0f) &&
@@ -106,11 +159,22 @@ int main(int argc, char** argv) {
                   Near(slot.noise_strength, 0.75f),
                   "material extras noise parameters");
         }
+        const rev::mesh::Vertex& tangent_vertex = result->mesh->vertices[0];
+        const float tangent_length = std::sqrt(tangent_vertex.tangent[0] * tangent_vertex.tangent[0] +
+                                               tangent_vertex.tangent[1] * tangent_vertex.tangent[1] +
+                                               tangent_vertex.tangent[2] * tangent_vertex.tangent[2]);
+        Check(Near(tangent_length, 1.0f) &&
+              (Near(tangent_vertex.tangent[3], 1.0f) || Near(tangent_vertex.tangent[3], -1.0f)),
+              "generated tangent basis has normalized tangent and handedness");
     }
 
     Check(result->has_camera, "fixture camera import");
     Check(result->has_light && result->light_type == 1,
           "first imported directional light type");
+    Check(Near(result->light_intensity, 2.0f) &&
+          Near(result->light_color[0], 1.0f) && Near(result->light_color[1], 1.0f) &&
+          Near(result->light_color[2], 1.0f),
+          "punctual light color and intensity import");
     Check(Near(result->light_direction[0], 0.0f) &&
           Near(result->light_direction[1], 1.0f) &&
           Near(result->light_direction[2], 0.0f),

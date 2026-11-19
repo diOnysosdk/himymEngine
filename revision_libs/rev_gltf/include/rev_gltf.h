@@ -42,7 +42,9 @@ struct AnimationChannel {
     int                   target_node_index; // Source glTF node animated by this channel
     
     float* times;           // Keyframe times (seconds)
-    float* values;          // Keyframe values (vec3 for trans/scale, vec4 quaternion for rotation)
+    // LINEAR/STEP: one value per keyframe. CUBIC: glTF's packed
+    // in-tangent/value/out-tangent triplet per keyframe.
+    float* values;
     int    keyframe_count;  // Number of keyframes
     int    components;      // 3 for translation/scale, 4 for rotation
 };
@@ -67,6 +69,10 @@ struct Material {
     float roughness;        // roughness factor [0..1]
     float emissive[3];      // emissive factor  (default 0,0,0)
     float emissive_strength; // emissive strength (KHR_materials_emissive_strength, default 1)
+    float normal_scale;
+    float occlusion_strength;
+    int   alpha_mode;        // 0=OPAQUE, 1=MASK, 2=BLEND
+    float alpha_cutoff;
     bool  double_sided;
 
     // Optional HiMYM procedural material exported as Blender custom properties
@@ -85,6 +91,7 @@ struct Material {
     char  normal_texture[512];
     char  metallic_roughness_texture[512];
     char  emissive_texture[512];
+    char  occlusion_texture[512];
     int   base_color_wrap_s; // glTF sampler wrapS (default REPEAT)
     int   base_color_wrap_t; // glTF sampler wrapT (default REPEAT)
 };
@@ -102,6 +109,11 @@ struct ImportResult {
     bool             has_light;
     float            light_pos[3];
     float            light_direction[3]; // world-space direction toward the scene
+    float            light_color[3];
+    float            light_intensity;
+    float            light_range;
+    float            light_inner_cone;
+    float            light_outer_cone;
     int              light_type;         // 0=unknown, 1=directional, 2=point, 3=spot
     int              light_node_index;
     bool             has_camera;
@@ -200,6 +212,14 @@ int ExtractTextures(const char* gltf_path,
                     const char* output_dir,
                     char        extracted_paths[][512],
                     int         max_paths);
+
+// Resolve imported material image paths into renderer-owned texture handles.
+// The callback keeps rev_gltf independent of the runtime image loader.
+typedef uint32_t (*MaterialTextureLoader)(const char* path, bool srgb, void* user_data);
+void ConnectMaterialTextures(const ImportResult* result,
+                             rev::mesh::Mesh* mesh,
+                             MaterialTextureLoader loader,
+                             void* user_data = nullptr);
 
 } // namespace gltf
 } // namespace rev

@@ -9,6 +9,7 @@ struct Vertex {
     float pos[3];
     float normal[3];
     float uv[2];
+    float tangent[4]; // xyz tangent, w bitangent handedness
 };
 
 struct MaterialSlot {
@@ -17,6 +18,17 @@ struct MaterialSlot {
     uint32_t diffuse_color;  // RGBA packed as uint32
     int      material_index; // Source material index for imported meshes (-1 if unknown)
     uint32_t base_color_texture; // Optional per-slot texture override (0 = none)
+    uint32_t normal_texture;
+    uint32_t metallic_roughness_texture;
+    uint32_t emissive_texture;
+    uint32_t occlusion_texture;
+    float    metallic;
+    float    roughness;
+    float    normal_scale;
+    float    base_color_alpha;
+    float    occlusion_strength;
+    int      alpha_mode; // 0=OPAQUE, 1=MASK, 2=BLEND
+    float    alpha_cutoff;
     int      source_node_index; // Source glTF node for imported meshes (-1 if unknown)
     float    emissive_color[3];
     float    emissive_strength;
@@ -55,6 +67,8 @@ struct Mesh {
     uint32_t base_color_texture;
     uint32_t normal_texture;
     uint32_t metallic_roughness_texture;
+    uint32_t emissive_texture;
+    uint32_t occlusion_texture;
     float    emissive_color[3];
     float    emissive_strength;
 
@@ -62,6 +76,11 @@ struct Mesh {
     bool     has_imported_light;
     float    imported_light_pos[3];
     float    imported_light_direction[3];
+    float    imported_light_color[3];
+    float    imported_light_intensity;
+    float    imported_light_range;
+    float    imported_light_inner_cone;
+    float    imported_light_outer_cone;
     int      imported_light_type;
     int      imported_light_node_index;
     // Imported camera placement from glTF (if present)
