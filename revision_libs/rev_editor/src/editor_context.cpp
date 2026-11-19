@@ -6699,7 +6699,7 @@ bool BuildCompetitionSize(EditorContext* editor, int size_limit_kb, const char* 
     }
 
     snprintf(editor->build_status_message, sizeof(editor->build_status_message),
-             "Competition build complete: Crinkler x86 fits %d KiB (%s).",
+             "Competition build complete: Crinkler x86 (%d KiB budget, %s).",
              size_limit_kb, competition_mode);
     editor->build_status_timer = 10.0f;
     return true;

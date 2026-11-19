@@ -13,10 +13,15 @@ but does not replace the supported x64 `minimal_intro_packed.exe`. Crinkler is
 a replacement linker rather than an x64 post-link compressor, so its isolated
 build disables `/GL` and `/LTCG` and requires competition-machine smoke tests.
 The wrapper preserves Crinkler's generated reuse layout and automatically
-splits code into multiple parts when the uncompressed 64 KiB part limit is hit.
+splits code, data, and text across eight parts when the uncompressed 64 KiB
+part limit is hit.
 It fingerprints both packed manifests so feature or project changes regenerate
 that layout. XM-enabled builds also disable libxm IPO in the Crinkler tree and
-link WinMM explicitly; the supported normal build retains its existing flags.
+link WinMM explicitly. Competition objects use the dynamic MSVC runtime with
+Crinkler `/TINYIMPORT`; this keeps CRT code outside the payload and handles the
+runtime DLL's forwarded imports without the condition-variable API-set cycle.
+Because tiny imports can be affected by future Windows export additions, the
+supported normal x64 build remains the compatibility fallback.
 Every OpenGL function pointer obtained from `wglGetProcAddress` is declared
 with `APIENTRY`. This is a competition correctness requirement: missing
 `__stdcall` annotations are masked on x64 but corrupt the x86 stack, often as
@@ -24,11 +29,18 @@ brief shader flicker followed by black output. Shader-pipeline and mesh paths
 must therefore receive an actual x86 playback check, not link-only validation.
 
 The editor's 64 KiB, 128 KiB, and custom choices are final executable budgets,
-independent of Crinkler's 64 KiB uncompressed-part ceiling. The wrapper checks
-that an existing competition executable is writable before linking and reports
-the running/stale process directly. In Crinkler builds, `rev_mesh` uses a small
-single-threaded guarded GL loader rather than `std::call_once` to avoid the
-Win32 InitOnce API-set forwarding cycle; the normal x64 loader remains unchanged.
+independent of Crinkler's 64 KiB uncompressed-part ceiling. Exceeding the final
+budget produces a warning while retaining the executable and report. The
+wrapper checks that an existing competition executable is writable before
+linking and reports the running/stale process directly. In Crinkler builds,
+`rev_mesh` uses a small single-threaded guarded GL loader rather than
+`std::call_once` to avoid the Win32 InitOnce API-set forwarding cycle; the
+normal x64 loader remains unchanged.
+
+Crinkler 3.0b has its own 128 KiB final-file implementation limit. When it
+writes a larger output and then returns that limit error, the wrapper retains
+the fresh artifact but marks it unsupported; the preserved x64 packed build is
+the reliable output for projects above that boundary.
 
 The 64 KiB uncompressed-part ceiling also applies to data and text. Reuse-file
 partitioning can move independent sections, but cannot split one oversized

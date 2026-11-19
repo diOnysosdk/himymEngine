@@ -37,6 +37,9 @@ if(MSVC)
         if(NOT EXISTS "${HIMYM_CRINKLER_EXECUTABLE}")
             message(FATAL_ERROR "Crinkler executable not found: ${HIMYM_CRINKLER_EXECUTABLE}")
         endif()
+        # Keep the CRT outside the compressed payload. Crinkler's tiny-import
+        # path handles the forwarded imports used by the current MSVC DLLs.
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
         set(CMAKE_CXX_USING_LINKER_crinkler "${HIMYM_CRINKLER_EXECUTABLE}")
         if(CMAKE_VERSION VERSION_LESS 4.0)
             set(CMAKE_CXX_USING_LINKER_MODE TOOL)
@@ -52,8 +55,8 @@ if(MSVC)
         if(HIMYM_CRINKLER_EXECUTABLE)
             # Crinkler consumes ordinary COFF objects and cannot consume MSVC
             # whole-program optimization (/GL) objects.
-            set(CMAKE_CXX_FLAGS_RELEASE "/O1 /Os /GS- /Gy /Gw /GR- /EHs-c- /MT")
-            set(CMAKE_C_FLAGS_RELEASE "/O1 /Os /GS- /Gy /Gw /MT")
+            set(CMAKE_CXX_FLAGS_RELEASE "/O1 /Os /GS- /Gy /Gw /GR- /EHs-c- /Zc:threadSafeInit-")
+            set(CMAKE_C_FLAGS_RELEASE "/O1 /Os /GS- /Gy /Gw")
         else()
             set(CMAKE_CXX_FLAGS_RELEASE "/O1 /Os /GS- /GL /Gy /Gw /GR- /EHs-c- /MT")
             set(CMAKE_C_FLAGS_RELEASE "/O1 /Os /GS- /GL /Gy /Gw /MT")

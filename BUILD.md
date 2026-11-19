@@ -172,20 +172,33 @@ The equivalent command-line workflow is:
 The wrapper defaults to Crinkler's `SLOW` competition mode. Pass
 `-CompetitionMode FAST` for iteration. `-SizeLimitKB` enables the final budget
 check; omitting it preserves compatibility with older command-line workflows
-and performs no category-size check. On a fresh build tree it bootstraps a
-reuse file and, when required, distributes code sections across four parts so
-no Crinkler part exceeds its 64 KiB uncompressed limit.
+and performs no category-size check. Exceeding the selected final-size budget
+emits a warning but still preserves and copies the completed executable and
+report. On a fresh build tree the wrapper bootstraps a reuse file and, when
+required, distributes code, data, and text sections across eight parts so no Crinkler part
+exceeds its 64 KiB uncompressed limit.
 
-The selected 64 KiB, 128 KiB, or custom budget limits the final executable;
-it does not change Crinkler's separate 64 KiB ceiling for each initialized
-reuse part. If `minimal_intro_competition.exe` is still running, the wrapper
-stops before linking with an explicit instruction to close the intro (or a
-stale `crinkler.exe`) instead of emitting a long linker error cascade.
+The selected 64 KiB, 128 KiB, or custom value is a final-executable budget,
+not a hard build limit; it does not change Crinkler's separate 64 KiB ceiling
+for each initialized reuse part. If `minimal_intro_competition.exe` is still
+running, the wrapper stops before linking with an explicit instruction to close
+the intro (or a stale `crinkler.exe`) instead of emitting a long linker error
+cascade.
+
+Crinkler 3.0b itself reports final files above 128 KiB as unsupported and exits
+with an error after writing the output. The wrapper preserves and copies that
+freshly written artifact with a warning, but it may not be runnable; the normal
+x64 `minimal_intro_packed.exe` remains the supported fallback for such projects.
 
 Crinkler builds require CMake 3.29 or newer, the Visual Studio 2022 Win32
 compiler components, and an SSE4.2-capable competition machine. They use the
 `INTRO` profile without `/GL` or `/LTCG`, because Crinkler consumes ordinary
-COFF objects. Always smoke-test both executables on the competition machine.
+COFF objects. The x86 competition target uses the dynamic MSVC runtime and
+Crinkler's `/TINYIMPORT` mode to keep the CRT outside the compressed payload and
+handle its forwarded RVA imports without entering an API-set cycle. Tiny import
+is less resilient to future Windows DLL export changes, so always preserve and
+smoke-test the normal x64 artifact and the competition executable on the target
+machine.
 The Crinkler target maps the SDK's forwarded `ole32` COM imports to their
 physical Windows implementation in `combase.dll`; this avoids API-set DLL
 resolution failures while retaining normal x64 linkage for the primary build.
@@ -206,7 +219,8 @@ black even though `minimal_intro_packed.exe` works. A successful x86 link does
 not validate this ABI contract; visually smoke-test the competition executable.
 
 Crinkler's 64 KiB rule applies to every uncompressed initialized part, not only
-code. The wrapper can redistribute separate code sections automatically, but a
+code. The wrapper can redistribute separate code, data, and text sections
+across eight parts automatically, but a
 single very large embedded image, XM, glTF/GLB, font atlas, or shader-source
 section may still require packer-side chunking. Keep the normal x64 artifact as
 the release fallback and test representative production assets.

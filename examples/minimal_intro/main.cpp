@@ -84,7 +84,9 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#ifndef HIMYM_CRINKLER_BUILD
 #include <mutex>
+#endif
 
 #include "rev_shader_presets.h"
 
@@ -227,9 +229,26 @@ struct AudioState {
     WAVEHDR          headers[kAudioBufCount];
     int16_t*         pcm[kAudioBufCount];
     float            fbuf[kAudioFrames * kAudioChannels];
+#ifdef HIMYM_CRINKLER_BUILD
+    CRITICAL_SECTION shader_audio_mutex;
+#else
     std::mutex       shader_audio_mutex;
+#endif
     float            shader_audio_samples[rev::runtime::kShaderAudioSampleFrames * 2];
     std::atomic<bool> stop;
+};
+
+struct ShaderAudioLock {
+#ifdef HIMYM_CRINKLER_BUILD
+    CRITICAL_SECTION* mutex;
+    explicit ShaderAudioLock(CRITICAL_SECTION& value) : mutex(&value) {
+        EnterCriticalSection(mutex);
+    }
+    ~ShaderAudioLock() { LeaveCriticalSection(mutex); }
+#else
+    std::lock_guard<std::mutex> lock;
+    explicit ShaderAudioLock(std::mutex& value) : lock(value) {}
+#endif
 };
 
 static AudioState* g_shader_audio_state = nullptr;
@@ -239,7 +258,7 @@ static void CaptureShaderAudioSamples(AudioState* state, const float* samples, i
     const int captured_frames = frame_count < rev::runtime::kShaderAudioSampleFrames
         ? frame_count : rev::runtime::kShaderAudioSampleFrames;
     const int first_frame = frame_count - captured_frames;
-    std::lock_guard<std::mutex> lock(state->shader_audio_mutex);
+    ShaderAudioLock lock(state->shader_audio_mutex);
     memset(state->shader_audio_samples, 0, sizeof(state->shader_audio_samples));
     memcpy(state->shader_audio_samples, samples + (size_t)first_frame * 2,
            (size_t)captured_frames * 2 * sizeof(float));
@@ -3504,7 +3523,7 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         float samples[rev::runtime::kShaderAudioSampleFrames * 2] = {};
 #if HIMYM_USE_XM || HIMYM_USE_AUDIO_FILE
         if (g_shader_audio_state) {
-            std::lock_guard<std::mutex> lock(g_shader_audio_state->shader_audio_mutex);
+            ShaderAudioLock lock(g_shader_audio_state->shader_audio_mutex);
             memcpy(samples, g_shader_audio_state->shader_audio_samples, sizeof(samples));
         }
 #endif
@@ -4617,6 +4636,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
         wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign;
 
         audio_state = new AudioState{};
+#ifdef HIMYM_CRINKLER_BUILD
+        InitializeCriticalSection(&audio_state->shader_audio_mutex);
+#endif
         audio_state->player.store(active_music_player, std::memory_order_release);
         audio_state->stop.store(false, std::memory_order_release);
 
@@ -4626,6 +4648,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             LOGV("Audio started: %d Hz stereo\n", kAudioSampleRate);
         } else {
             printf("ERROR: waveOutOpen failed\n");
+#ifdef HIMYM_CRINKLER_BUILD
+            DeleteCriticalSection(&audio_state->shader_audio_mutex);
+#endif
             delete audio_state;
             audio_state = nullptr;
         }
@@ -7325,6 +7350,9 @@ printf("Summary: shaders=%d curves=%d image=%d anim_sprite=%d text=%d scroll=%d 
             CloseHandle(audio_thread);
         }
         waveOutClose(audio_state->wave_out);
+#ifdef HIMYM_CRINKLER_BUILD
+        DeleteCriticalSection(&audio_state->shader_audio_mutex);
+#endif
         delete audio_state;
     }
     for (int mi = 0; mi < loaded_music_player_count; ++mi) {

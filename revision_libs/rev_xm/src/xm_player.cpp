@@ -1,7 +1,6 @@
 #include "rev_xm.h"
 #include <cstring>
 #include <cmath>
-#include <mutex>
 
 #ifdef _MSC_VER
 #include <malloc.h>  // For alloca on MSVC
@@ -17,6 +16,14 @@ extern "C" {
 
 namespace rev {
 namespace xm {
+
+struct PlayerLockGuard {
+    PlayerMutex& mutex;
+    explicit PlayerLockGuard(PlayerMutex& value) : mutex(value) { mutex.lock(); }
+    ~PlayerLockGuard() { mutex.unlock(); }
+    PlayerLockGuard(const PlayerLockGuard&) = delete;
+    PlayerLockGuard& operator=(const PlayerLockGuard&) = delete;
+};
 
 static float Clamp(float value, float low, float high) {
     return value < low ? low : (value > high ? high : value);
@@ -128,7 +135,7 @@ void DestroyPlayer(Player* player) {
     if (!player) return;
 
     {
-        std::lock_guard<std::mutex> lock(player->mutex);
+        PlayerLockGuard lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
         if (player->context) {
@@ -147,7 +154,7 @@ void DestroyPlayer(Player* player) {
 void Update(Player* player, float* output, int frame_count) {
     if (!player || !output) return;
 
-    std::lock_guard<std::mutex> lock(player->mutex);
+    PlayerLockGuard lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -163,7 +170,7 @@ void Update(Player* player, float* output, int frame_count) {
 
 void SetAudioEffects(Player* player, const rev::runtime::AudioEffects* effects) {
     if (!player || !effects) return;
-    std::lock_guard<std::mutex> lock(player->mutex);
+    PlayerLockGuard lock(player->mutex);
     const bool compressor_started = !player->effects.compressor_enabled && effects->compressor_enabled;
     const bool eq_started = !player->effects.eq_enabled && effects->eq_enabled;
     player->effects = *effects;
@@ -177,7 +184,7 @@ void SetAudioEffects(Player* player, const rev::runtime::AudioEffects* effects) 
 void SetPosition(Player* player, int pattern, int row) {
     if (!player) return;
 
-    std::lock_guard<std::mutex> lock(player->mutex);
+    PlayerLockGuard lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -205,7 +212,7 @@ void SetPosition(Player* player, int pattern, int row) {
 int GetPosition(Player* player) {
     if (!player) return 0;
 
-    std::lock_guard<std::mutex> lock(player->mutex);
+    PlayerLockGuard lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -219,7 +226,7 @@ int GetPosition(Player* player) {
 bool IsFinished(Player* player) {
     if (!player) return true;
 
-    std::lock_guard<std::mutex> lock(player->mutex);
+    PlayerLockGuard lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -233,7 +240,7 @@ bool IsFinished(Player* player) {
 int GetPatternCount(Player* player) {
     if (!player) return 0;
 
-    std::lock_guard<std::mutex> lock(player->mutex);
+    PlayerLockGuard lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -247,7 +254,7 @@ int GetPatternCount(Player* player) {
 int GetChannelCount(Player* player) {
     if (!player) return 0;
 
-    std::lock_guard<std::mutex> lock(player->mutex);
+    PlayerLockGuard lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {
@@ -261,7 +268,7 @@ int GetChannelCount(Player* player) {
 float GetDuration(Player* player) {
     if (!player) return 0.0f;
 
-    std::lock_guard<std::mutex> lock(player->mutex);
+    PlayerLockGuard lock(player->mutex);
     
 #ifdef REV_XM_ENABLED
     if (player->context) {

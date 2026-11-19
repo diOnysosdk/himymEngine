@@ -1,11 +1,29 @@
 #pragma once
 
 #include <cstddef>
+#ifdef HIMYM_CRINKLER_BUILD
+#include <windows.h>
+#else
 #include <mutex>
+#endif
 #include "rev_runtime.h"
 
 namespace rev {
 namespace xm {
+
+#ifdef HIMYM_CRINKLER_BUILD
+struct PlayerMutex {
+    CRITICAL_SECTION section;
+    PlayerMutex() { InitializeCriticalSection(&section); }
+    ~PlayerMutex() { DeleteCriticalSection(&section); }
+    void lock() { EnterCriticalSection(&section); }
+    void unlock() { LeaveCriticalSection(&section); }
+    PlayerMutex(const PlayerMutex&) = delete;
+    PlayerMutex& operator=(const PlayerMutex&) = delete;
+};
+#else
+using PlayerMutex = std::mutex;
+#endif
 
 // Opaque XM player handle
 struct Player {
@@ -17,7 +35,7 @@ struct Player {
     float compressor_gain;
     float eq_low[2];
     float eq_high[2];
-    std::mutex mutex;
+    PlayerMutex mutex;
 };
 
 // Lifecycle

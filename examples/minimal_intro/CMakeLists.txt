@@ -103,9 +103,10 @@ if(MSVC)
         )
     endif()
     if(HIMYM_CRINKLER_EXECUTABLE)
+        target_compile_definitions(minimal_intro_packed PRIVATE HIMYM_CRINKLER_BUILD)
         # Crinkler does not follow MSVC's embedded /DEFAULTLIB directives.
-        # CMake's Visual Studio generator compiles this target with /MD, so
-        # pass the matching modern x86 CRT import libraries explicitly.
+        # Pass the /MD import libraries explicitly and use /TINYIMPORT below
+        # so forwarded imports in current MSVC runtime DLLs do not recurse.
         target_link_libraries(minimal_intro_packed PRIVATE
             msvcprt.lib
             vcruntime.lib
@@ -122,6 +123,7 @@ if(MSVC)
         )
         target_link_options(minimal_intro_packed PRIVATE
             /CRINKLER
+            /TINYIMPORT
             "/COMPMODE:${HIMYM_CRINKLER_COMPMODE}"
             /HASHSIZE:100
             /REPLACEDLL:ole32=combase
