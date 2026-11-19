@@ -97,6 +97,9 @@ The packed post-effect fragment shader contains only enabled effect branches
 referenced globally, by a scene-layer stack, or by an image/sprite/pixel cue.
 
 The packer also writes `packed_features.cmake` beside the generated header.
+For a project with one XM/MOD/S3M music asset, this manifest includes libxm's
+analyzed effect and feature masks. They specialize only the isolated Crinkler
+build; editor preview and the supported x64 build keep universal XM support.
 The editor reconfigures the existing build after packing so the packed target
 does not depend on unused XM, WAV/MP3, pixel, particle, mesh, or glTF libraries. WAV and
 MP3 music assets are embedded byte-for-byte like other project assets, and

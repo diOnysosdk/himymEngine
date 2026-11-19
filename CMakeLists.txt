@@ -86,6 +86,12 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # Add library subdirectories
+# Competition builds are isolated, so their libxm target can safely consume the
+# project-specific feature mask emitted beside packed_assets.h. Normal builds
+# retain libxm's universal configuration for editor preview and arbitrary files.
+if(HIMYM_CRINKLER_EXECUTABLE AND HIMYM_PACKED_MANIFEST_DIR)
+    include("${HIMYM_PACKED_MANIFEST_DIR}/packed_features.cmake" OPTIONAL)
+endif()
 add_subdirectory(revision_libs/rev_platform)
 add_subdirectory(revision_libs/rev_runtime)
 add_subdirectory(revision_libs/rev_shader)

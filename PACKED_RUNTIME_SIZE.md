@@ -75,6 +75,16 @@ scene-local animated-sprite cue; that cue selects
 `HIMYM_USE_ANIMATED_SPRITE` and supplies the packed frame assets. Reusing the
 same cue for several menu icons therefore adds item rows, not duplicate images.
 
+For a packed project with exactly one tracker module, `rev_pack` runs libxm's
+module analyzer and writes project-specific disabled-effect, disabled-volume-
+effect, disabled-feature, and panning values to `packed_features.cmake`. The
+isolated Crinkler tree consumes those values while the normal editor and x64
+build retain universal libxm playback. Competition libxm also omits verbose
+messages, stored names, timing queries, and muting APIs, and hardcodes the
+runtime's 48 kHz output rate. Projects containing multiple tracker modules use
+the universal masks because libxm's analyzed tempo, BPM, and channel-count
+fields cannot be combined safely without inspecting their encoded constants.
+
 `HIMYM_USE_IMAGE_DECODER` is enabled by image and text cues, scrolling text,
 animated sprites, image-backed particle emitters, shader-pipeline texture
 channels, and interactive menus. Primitive-only particles and shader pipelines
@@ -276,6 +286,19 @@ profile harness to verify this assumption against the INTRO map.
 7. Apply the chosen executable compressor and record compressed size separately.
 
 ## Compressor measurements
+
+Measured November 19, 2026 with the retained `E:\Demos\64kb` XM-only project
+and Crinkler 3.0b FAST mode:
+
+| Crinkler XM configuration | Final EXE |
+|---|---:|
+| Universal libxm | 63,020 bytes |
+| Project-analyzed libxm | 51,730 bytes |
+
+Automatic XM specialization saved **11,290 bytes (17.9%)**. The analyzed
+module used mono panning and only a small subset of libxm effects. Results vary
+with tracker content; no interpolation, ramping, or sample-precision quality
+setting is changed by this optimization.
 
 Measured August 9, 2026 from the retained transferred `rectruitro` manifests.
 Both profiles used the identical XM-only packed assets and the same three

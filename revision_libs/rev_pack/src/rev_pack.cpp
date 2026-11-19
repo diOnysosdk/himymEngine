@@ -6,6 +6,9 @@
 #include <mutex>
 #include <string>
 #include <windows.h>
+extern "C" {
+#include <xm.h>
+}
 
 namespace rev {
 namespace pack {
@@ -199,6 +202,14 @@ static bool ParseAssetLine(const char* line, char* key_out, char* path_out) {
     return key_out[0] != '\0' && path_out[0] != '\0';
 }
 
+static bool IsTrackerModulePath(const char* path) {
+    if (!path) return false;
+    const char* extension = strrchr(path, '.');
+    return extension && (_stricmp(extension, ".xm") == 0 ||
+                         _stricmp(extension, ".mod") == 0 ||
+                         _stricmp(extension, ".s3m") == 0);
+}
+
 static bool ParseShaderCueTextureAsset(const char* line, int cue_index, int map_index,
                                        char* key_out, char* path_out) {
     if (!line || map_index < 0 || map_index >= 4) return false;
@@ -326,6 +337,77 @@ struct ProjectFeatures {
     bool shader_text;
 };
 
+struct PackedXmFeatures {
+    unsigned long long disabled_effects;
+    unsigned long long disabled_volume_effects;
+    unsigned long long disabled_features;
+    int panning_type;
+    int module_count;
+    bool valid;
+};
+
+static bool ParseXmAnalyzeValue(const char* text, const char* key,
+                                unsigned long long* value) {
+    const char* field = strstr(text, key);
+    if (!field) return false;
+    field += strlen(key);
+    char* end = nullptr;
+    *value = _strtoui64(field, &end, 0);
+    return end && end != field;
+}
+
+static bool AnalyzePackedXm(const unsigned char* data, size_t size,
+                            PackedXmFeatures* features) {
+    if (!features) return false;
+    if (features->module_count != 0) {
+        ++features->module_count;
+        features->valid = false;
+        return true;
+    }
+    features->module_count = 1;
+    features->valid = false;
+    if (!data || !size || size > UINT32_MAX) return false;
+    xm_prescan_data_t* prescan = (xm_prescan_data_t*)malloc(XM_PRESCAN_DATA_SIZE);
+    if (!prescan) return false;
+    if (!xm_prescan_module((const char*)data, (uint32_t)size, prescan)) {
+        free(prescan);
+        return false;
+    }
+    const uint32_t context_size = xm_size_for_context(prescan);
+    char* context_memory = (char*)malloc(context_size);
+    xm_context_t* context = context_memory
+        ? xm_create_context(context_memory, prescan, (const char*)data, (uint32_t)size)
+        : nullptr;
+    free(prescan);
+    if (!context) {
+        free(context_memory);
+        return false;
+    }
+    char* output = (char*)malloc(XM_ANALYZE_OUTPUT_SIZE);
+    if (!output) {
+        free(context_memory);
+        return false;
+    }
+    xm_analyze(context, output);
+    unsigned long long effects = 0, volume_effects = 0, module_features = 0;
+    unsigned long long panning = 0;
+    const bool ok =
+        ParseXmAnalyzeValue(output, "XM_DISABLED_EFFECTS=", &effects) &&
+        ParseXmAnalyzeValue(output, "XM_DISABLED_VOLUME_EFFECTS=", &volume_effects) &&
+        ParseXmAnalyzeValue(output, "XM_DISABLED_FEATURES=", &module_features) &&
+        ParseXmAnalyzeValue(output, "XM_PANNING_TYPE=", &panning);
+    free(output);
+    free(context_memory);
+    if (!ok || panning > 9) return false;
+
+    features->disabled_effects = effects;
+    features->disabled_volume_effects = volume_effects;
+    features->disabled_features = module_features;
+    features->panning_type = (int)panning;
+    features->valid = true;
+    return true;
+}
+
 static void WriteProjectFeatures(FILE* header, const ProjectFeatures& features) {
     fprintf(header, "// Project-derived packed-runtime feature manifest.\n");
     fprintf(header, "#define HIMYM_USE_XM %d\n", features.xm ? 1 : 0);
@@ -343,7 +425,8 @@ static void WriteProjectFeatures(FILE* header, const ProjectFeatures& features) 
 }
 
 static bool WriteProjectFeatureCMake(const char* output_header,
-                                     const ProjectFeatures& features) {
+                                     const ProjectFeatures& features,
+                                     const PackedXmFeatures& xm_features) {
     char output_dir[640] = {};
     GetDirectoryOfPath(output_header, output_dir, sizeof(output_dir));
     char feature_path[768] = {};
@@ -368,6 +451,12 @@ static bool WriteProjectFeatureCMake(const char* output_header,
     fprintf(feature_file, "set(HIMYM_PACKED_USE_ANIMATED_SPRITE %s)\n", features.animated_sprite ? "ON" : "OFF");
     fprintf(feature_file, "set(HIMYM_PACKED_USE_SCROLL_TEXT %s)\n", features.scroll_text ? "ON" : "OFF");
     fprintf(feature_file, "set(HIMYM_PACKED_USE_SHADER_TEXT %s)\n", features.shader_text ? "ON" : "OFF");
+    if (features.xm && xm_features.valid && xm_features.module_count == 1) {
+        fprintf(feature_file, "set(HIMYM_PACKED_XM_DISABLED_EFFECTS \"0x%llX\")\n", xm_features.disabled_effects);
+        fprintf(feature_file, "set(HIMYM_PACKED_XM_DISABLED_VOLUME_EFFECTS \"0x%llX\")\n", xm_features.disabled_volume_effects);
+        fprintf(feature_file, "set(HIMYM_PACKED_XM_DISABLED_FEATURES \"0x%llX\")\n", xm_features.disabled_features);
+        fprintf(feature_file, "set(HIMYM_PACKED_XM_PANNING_TYPE %d)\n", xm_features.panning_type);
+    }
     fclose(feature_file);
     return true;
 }
@@ -645,6 +734,7 @@ PackResult PackAssets(const char* cues_path,
     AssetRef refs[kMaxAssets];
     int ref_count = 0;
     ProjectFeatures features = {};
+    PackedXmFeatures xm_features = {};
     bool in_shader = false, in_shader_pipeline_cue = false,
          in_shader_pipeline_pass = false, in_shader_pipeline_channel = false,
          in_post_effect = false, in_scene_post_effect = false, in_image = false,
@@ -852,7 +942,7 @@ PackResult PackAssets(const char* cues_path,
                 }
             }
             fclose(hdr);
-            if (!WriteProjectFeatureCMake(output_header, features)) {
+            if (!WriteProjectFeatureCMake(output_header, features, xm_features)) {
                 snprintf(result.error, sizeof(result.error),
                          "Cannot write packed_features.cmake beside: %s", output_header);
                 return result;
@@ -1007,6 +1097,13 @@ PackResult PackAssets(const char* cues_path,
         }
         loaded_count++;
 
+        if (loaded[loaded_count - 1].data_owner == loaded_count - 1 &&
+            IsTrackerModulePath(loaded[loaded_count - 1].rel_path) &&
+            !AnalyzePackedXm(loaded[loaded_count - 1].data,
+                             loaded[loaded_count - 1].size, &xm_features)) {
+            xm_features.valid = false;
+        }
+
         if (loaded[loaded_count - 1].changed) result.packed++;
         else result.skipped++;
     }
@@ -1083,7 +1180,7 @@ PackResult PackAssets(const char* cues_path,
     fprintf(hdr, "static const int kPackedAssetCount = %d;\n", loaded_count);
     fclose(hdr);
 
-    if (!WriteProjectFeatureCMake(output_header, features)) {
+    if (!WriteProjectFeatureCMake(output_header, features, xm_features)) {
         snprintf(result.error, sizeof(result.error),
                  "Cannot write packed_features.cmake beside: %s", output_header);
         for (int i = 0; i < loaded_count; ++i)

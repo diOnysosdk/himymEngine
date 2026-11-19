@@ -105,7 +105,9 @@ Player* CreatePlayer(const void* xm_data, size_t xm_size, int sample_rate) {
     }
     
     // Set sample rate
+#if XM_SAMPLE_RATE == 0
     xm_set_sample_rate(ctx, (uint16_t)sample_rate);
+#endif
     
     // Create player
     Player* player = new Player();
@@ -195,7 +197,9 @@ void SetPosition(Player* player, int pattern, int row) {
             xm_reset_context((xm_context_t*)player->context);
             // With XM_SAMPLE_RATE=0 the rate is runtime state, and libxm's full
             // reset clears it along with the channel state.
+#if XM_SAMPLE_RATE == 0
             xm_set_sample_rate((xm_context_t*)player->context, (uint16_t)player->sample_rate);
+#endif
             player->compressor_gain = 0.0f;
             player->eq_low[0] = player->eq_low[1] = 0.0f;
             player->eq_high[0] = player->eq_high[1] = 0.0f;
